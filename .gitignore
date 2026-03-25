@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+coverage/
+.turbo/
+.cache/
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local runtime artifacts
+tmp/
+temp/
+artifacts/
+reports/
+sandbox-data/
+
+# Test outputs
+playwright-report/
+test-results/
+
+# Package manager stores
+.pnpm-store/
+
+# Misc
+*.local
