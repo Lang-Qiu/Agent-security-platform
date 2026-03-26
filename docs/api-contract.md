@@ -1263,3 +1263,14 @@ Both commands are expected to cover all current contract consumers:
 - frontend rendering and integration tests
 
 This rule exists so a green root test run means the current platform skeleton is green across shared, backend, and frontend boundaries instead of only across a subset of the repository.
+
+## REQ-10 Frontend Data Source Indicator Scope
+
+Frontend data-source indicators are page-scoped status signals, not global layout state.
+
+- `Backend API`
+- `Degraded API Data`
+- `Integration Error`
+- `Mock Fallback`
+
+These labels should only appear inside pages or page-level sections that have actually resolved their own data source. The shared console layout header must stay neutral so it does not conflict with page-specific integration state.

@@ -174,3 +174,17 @@ Recommended fields:
   - root `npm run test` now delegates to `npm run test:all`
   - `test:all` now covers repository script checks, shared contracts, backend tests, and frontend tests
   - a green root test run now means the current platform skeleton is green across all three active layers
+
+## 2026-03-26 - neutralize global layout data-source badge
+- requirement: fix the misleading hard-coded `Mock Data Mode` badge in the shared console layout header
+- scope: keep page-level data source indicators unchanged, but remove the layout-level mock badge so global shell chrome stays neutral during frontend-backend integration
+- tests:
+  - `frontend/src/app/app-shell.spec.tsx`
+- test result: pass; `cmd /c npm run test --prefix frontend -- src/app/app-shell.spec.tsx`, `cmd /c npm run test:frontend`, and `cmd /c npm run test`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - the shared layout header no longer claims a global mock state
+  - `Backend API`, `Degraded API Data`, `Integration Error`, and `Mock Fallback` remain page-scoped signals owned by page-level data loading
+  - this removes the visual conflict between shell chrome and real page integration status

@@ -1,5 +1,5 @@
 import { BellOutlined, PlusOutlined, SafetyOutlined } from "@ant-design/icons";
-import { Avatar, Button, Layout, Menu, Space, Tag, Typography } from "antd";
+import { Avatar, Button, Layout, Menu, Space, Typography } from "antd";
 import { Link, Outlet, useLocation } from "react-router-dom";
 
 import { consoleNavigation, type ConsoleNavigationItem } from "../app/navigation";
@@ -74,9 +74,6 @@ export function ConsoleLayout() {
             </Title>
           </div>
           <Space size="middle">
-            <Tag color="cyan" variant="filled">
-              Mock Data Mode
-            </Tag>
             <Button type="text" icon={<BellOutlined />} aria-label="Notifications" />
             <Button type="primary" icon={<PlusOutlined />}>
               Create Task
