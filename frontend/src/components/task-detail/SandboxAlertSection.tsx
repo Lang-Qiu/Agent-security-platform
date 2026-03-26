@@ -14,7 +14,13 @@ function hasSandboxDetails(details: SandboxRunResultDetails): boolean {
   );
 }
 
-export function SandboxAlertSection({ details }: { details: SandboxRunResultDetails }) {
+export function SandboxAlertSection({
+  details,
+  summary
+}: {
+  details: SandboxRunResultDetails;
+  summary?: string;
+}) {
   if (!hasSandboxDetails(details)) {
     return (
       <section className="console-panel">
@@ -29,6 +35,7 @@ export function SandboxAlertSection({ details }: { details: SandboxRunResultDeta
   return (
     <section className="console-panel">
       <Title level={2}>Sandbox Alert Section</Title>
+      {summary ? <Paragraph className="task-detail-copy">{summary}</Paragraph> : null}
       <Paragraph className="task-detail-copy">
         A stable placeholder for future runtime timelines, policy hits, and sandbox alert evidence.
       </Paragraph>

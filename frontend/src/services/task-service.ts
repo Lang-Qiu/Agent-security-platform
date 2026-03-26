@@ -1,15 +1,25 @@
-import type { ApiResponse } from "../../../shared/types/api-response";
-import type { BaseResult } from "../../../shared/types/result";
-import type { Task } from "../../../shared/types/task";
+import { normalizeBaseResult } from "../../../shared/contracts/result";
+import { normalizeRiskSummary, normalizeTask } from "../../../shared/contracts/task";
+import type { BaseResult, ResultDetails } from "../../../shared/types/result";
+import type { RiskSummary, Task } from "../../../shared/types/task";
+import { taskRiskSummaryMocks } from "../mocks/task-risk-summaries";
 import { taskQueueMocks } from "../mocks/tasks";
 import { taskResultMocks } from "../mocks/task-results";
+import { requestApiData, type ApiClientOptions } from "./api-client";
 
 const TASKS_ENDPOINT = "/api/tasks";
 const DEFAULT_RESULT_SUMMARY = "Result details are not available yet.";
 
+export interface TaskListData {
+  tasks: Task[];
+  source: "api" | "mock";
+}
+
 export interface TaskDetailData {
   task: Task;
-  result: BaseResult<Record<string, unknown>>;
+  result: BaseResult<ResultDetails>;
+  riskSummary: RiskSummary;
+  source: "api" | "mock";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -24,7 +34,34 @@ function findMockResult(taskId: string): BaseResult | null {
   return taskResultMocks[taskId] ?? null;
 }
 
-function normalizeResult(task: Task, rawResult: unknown): BaseResult<Record<string, unknown>> {
+function findMockRiskSummary(taskId: string): RiskSummary | null {
+  return taskRiskSummaryMocks[taskId] ?? null;
+}
+
+function buildFallbackRiskSummary(task: Task): RiskSummary {
+  return {
+    task_id: task.task_id,
+    task_type: task.task_type,
+    status: task.status,
+    risk_level: task.risk_level ?? "info",
+    summary: task.summary ?? DEFAULT_RESULT_SUMMARY,
+    total_findings: 0,
+    info_count: 0,
+    low_count: 0,
+    medium_count: 0,
+    high_count: 0,
+    critical_count: 0,
+    updated_at: task.updated_at
+  };
+}
+
+function normalizeResult(task: Task, rawResult: unknown): BaseResult<ResultDetails> {
+  const normalizedResult = normalizeBaseResult(rawResult);
+
+  if (normalizedResult) {
+    return normalizedResult;
+  }
+
   if (!isRecord(rawResult)) {
     return {
       task_id: task.task_id,
@@ -37,6 +74,22 @@ function normalizeResult(task: Task, rawResult: unknown): BaseResult<Record<stri
       created_at: task.created_at,
       updated_at: task.updated_at
     };
+  }
+
+  const fallbackDetails = normalizeBaseResult({
+    task_id: task.task_id,
+    task_type: task.task_type,
+    engine_type: task.engine_type,
+    status: task.status,
+    risk_level: task.risk_level ?? "info",
+    summary: typeof rawResult.summary === "string" ? rawResult.summary : task.summary ?? DEFAULT_RESULT_SUMMARY,
+    details: rawResult.details,
+    created_at: typeof rawResult.created_at === "string" ? rawResult.created_at : task.created_at,
+    updated_at: typeof rawResult.updated_at === "string" ? rawResult.updated_at : task.updated_at
+  });
+
+  if (fallbackDetails) {
+    return fallbackDetails;
   }
 
   return {
@@ -63,103 +116,79 @@ function normalizeResult(task: Task, rawResult: unknown): BaseResult<Record<stri
   };
 }
 
-async function readSuccessPayload<T>(response: { ok: boolean; json: () => Promise<unknown> }): Promise<T | null> {
-  if (!response.ok) {
-    return null;
-  }
-
-  const payload = (await response.json()) as ApiResponse<T>;
-
-  if (!payload.success) {
-    return null;
-  }
-
-  return payload.data;
-}
-
 export async function listTasks(input: {
-  fetchImpl?: typeof fetch;
-  signal?: AbortSignal;
-} = {}): Promise<Task[]> {
-  const fetchImpl = input.fetchImpl ?? globalThis.fetch;
+} & ApiClientOptions = {}): Promise<TaskListData> {
+  const apiTasks = await requestApiData({
+    path: TASKS_ENDPOINT,
+    options: input,
+    normalize: (value) => {
+      if (!Array.isArray(value)) {
+        return null;
+      }
 
-  if (!fetchImpl) {
-    return taskQueueMocks;
+      const normalizedTasks = value
+        .map((item) => normalizeTask(item))
+        .filter((task): task is Task => task !== null);
+
+      return normalizedTasks;
+    }
+  });
+
+  if (apiTasks) {
+    return {
+      tasks: apiTasks,
+      source: "api"
+    };
   }
 
-  try {
-    const response = await fetchImpl(TASKS_ENDPOINT, {
-      method: "GET",
-      headers: {
-        accept: "application/json"
-      },
-      signal: input.signal
-    });
-
-    if (!response.ok) {
-      return taskQueueMocks;
-    }
-
-    const payload = (await response.json()) as ApiResponse<Task[]>;
-
-    if (!payload.success || !Array.isArray(payload.data)) {
-      return taskQueueMocks;
-    }
-
-    return payload.data;
-  } catch {
-    return taskQueueMocks;
-  }
+  return {
+    tasks: taskQueueMocks,
+    source: "mock"
+  };
 }
 
 export async function getTaskDetail(
   taskId: string,
-  input: {
-    fetchImpl?: typeof fetch;
-    signal?: AbortSignal;
-  } = {}
+  input: ApiClientOptions = {}
 ): Promise<TaskDetailData | null> {
-  const fetchImpl = input.fetchImpl ?? globalThis.fetch;
   const mockTask = findMockTask(taskId);
   const mockResult = findMockResult(taskId);
+  const mockRiskSummary = findMockRiskSummary(taskId);
 
-  if (!fetchImpl) {
-    if (!mockTask) {
-      return null;
-    }
+  const [taskData, resultData, riskSummaryData] = await Promise.all([
+    requestApiData({
+      path: `${TASKS_ENDPOINT}/${taskId}`,
+      options: input,
+      normalize: normalizeTask
+    }),
+    requestApiData({
+      path: `${TASKS_ENDPOINT}/${taskId}/result`,
+      options: input,
+      normalize: normalizeBaseResult
+    }),
+    requestApiData({
+      path: `${TASKS_ENDPOINT}/${taskId}/risk-summary`,
+      options: input,
+      normalize: normalizeRiskSummary
+    })
+  ]);
 
+  if (taskData && resultData && riskSummaryData) {
     return {
-      task: mockTask,
-      result: normalizeResult(mockTask, mockResult)
+      task: taskData,
+      result: resultData,
+      riskSummary: riskSummaryData,
+      source: "api"
     };
   }
 
-  try {
-    const [taskData, resultData] = await Promise.all([
-      fetchImpl(`${TASKS_ENDPOINT}/${taskId}`, {
-        method: "GET",
-        headers: {
-          accept: "application/json"
-        },
-        signal: input.signal
-      }).then(readSuccessPayload<Task>),
-      fetchImpl(`${TASKS_ENDPOINT}/${taskId}/result`, {
-        method: "GET",
-        headers: {
-          accept: "application/json"
-        },
-        signal: input.signal
-      }).then(readSuccessPayload<unknown>)
-    ]);
-
-    if (taskData && typeof taskData.task_id === "string") {
-      return {
-        task: taskData,
-        result: normalizeResult(taskData, resultData)
-      };
-    }
-  } catch {
-    // Fallback to local mocks below when the backend is unavailable.
+  if (taskData) {
+    return {
+      task: taskData,
+      result: resultData ?? normalizeResult(taskData, null),
+      riskSummary: riskSummaryData ?? buildFallbackRiskSummary(taskData),
+      source: "api"
+    };
   }
 
   if (!mockTask) {
@@ -168,6 +197,8 @@ export async function getTaskDetail(
 
   return {
     task: mockTask,
-    result: normalizeResult(mockTask, mockResult)
+    result: normalizeResult(mockTask, mockResult),
+    riskSummary: mockRiskSummary ?? buildFallbackRiskSummary(mockTask),
+    source: "mock"
   };
 }

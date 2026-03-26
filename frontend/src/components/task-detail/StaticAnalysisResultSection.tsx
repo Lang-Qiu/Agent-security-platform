@@ -14,7 +14,13 @@ function hasStaticDetails(details: StaticAnalysisResultDetails): boolean {
   );
 }
 
-export function StaticAnalysisResultSection({ details }: { details: StaticAnalysisResultDetails }) {
+export function StaticAnalysisResultSection({
+  details,
+  summary
+}: {
+  details: StaticAnalysisResultDetails;
+  summary?: string;
+}) {
   if (!hasStaticDetails(details)) {
     return (
       <section className="console-panel">
@@ -29,6 +35,7 @@ export function StaticAnalysisResultSection({ details }: { details: StaticAnalys
   return (
     <section className="console-panel">
       <Title level={2}>Static Analysis Result Section</Title>
+      {summary ? <Paragraph className="task-detail-copy">{summary}</Paragraph> : null}
       <Paragraph className="task-detail-copy">
         A stable placeholder for rule hits, capability summaries, and source-level review in later slices.
       </Paragraph>

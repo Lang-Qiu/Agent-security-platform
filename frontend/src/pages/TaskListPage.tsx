@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import type { Task } from "../../../../shared/types/task";
+import { DataSourceTag } from "../components/DataSourceTag";
 import { RiskTag } from "../components/RiskTag";
 import { StatusTag } from "../components/StatusTag";
 import { listTasks } from "../services/task-service";
@@ -104,18 +105,20 @@ function TaskTable({ tasks, loading }: { tasks: Task[]; loading: boolean }) {
 
 export function TaskListPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [source, setSource] = useState<"api" | "mock">("mock");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const controller = new AbortController();
     let isActive = true;
 
-    void listTasks({ signal: controller.signal }).then((nextTasks) => {
+    void listTasks({ signal: controller.signal }).then((nextData) => {
       if (!isActive) {
         return;
       }
 
-      setTasks(nextTasks);
+      setTasks(nextData.tasks);
+      setSource(nextData.source);
       setLoading(false);
     });
 
@@ -153,7 +156,10 @@ export function TaskListPage() {
               consistent detail entry for each task.
             </Paragraph>
           </div>
-          <Text type="secondary">{tasks.length} task(s)</Text>
+          <Space wrap>
+            <DataSourceTag source={source} />
+            <Text type="secondary">{tasks.length} task(s)</Text>
+          </Space>
         </div>
 
         <TaskTable tasks={tasks} loading={loading} />

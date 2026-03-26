@@ -13,7 +13,13 @@ function hasAssetDetails(details: AssetScanResultDetails): boolean {
   );
 }
 
-export function AssetScanResultSection({ details }: { details: AssetScanResultDetails }) {
+export function AssetScanResultSection({
+  details,
+  summary
+}: {
+  details: AssetScanResultDetails;
+  summary?: string;
+}) {
   if (!hasAssetDetails(details)) {
     return (
       <section className="console-panel">
@@ -29,6 +35,7 @@ export function AssetScanResultSection({ details }: { details: AssetScanResultDe
   return (
     <section className="console-panel">
       <Title level={2}>Asset Scan Result Section</Title>
+      {summary ? <Paragraph className="task-detail-copy">{summary}</Paragraph> : null}
       <Paragraph className="task-detail-copy">
         A stable placeholder for future asset fingerprint, endpoint exposure, and finding breakdown views.
       </Paragraph>

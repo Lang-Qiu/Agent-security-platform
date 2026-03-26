@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import type { ApiResponse } from "../../../../shared/types/api-response";
 import type { BaseResult } from "../../../../shared/types/result";
-import type { Task } from "../../../../shared/types/task";
+import type { RiskSummary, Task } from "../../../../shared/types/task";
 import { renderAppAtRoute } from "../test/app-test-harness";
 
 const TASK_FIXTURES: Record<string, Task> = {
@@ -107,6 +107,52 @@ const RESULT_FIXTURES: Record<string, BaseResult | Record<string, unknown>> = {
   }
 };
 
+const RISK_SUMMARY_FIXTURES: Record<string, RiskSummary> = {
+  task_asset_001: {
+    task_id: "task_asset_001",
+    task_type: "asset_scan",
+    status: "running",
+    risk_level: "high",
+    summary: "1 high risk finding requires follow-up",
+    total_findings: 3,
+    info_count: 0,
+    low_count: 1,
+    medium_count: 1,
+    high_count: 1,
+    critical_count: 0,
+    updated_at: "2026-03-26T09:18:00Z"
+  },
+  task_static_001: {
+    task_id: "task_static_001",
+    task_type: "static_analysis",
+    status: "partial_success",
+    risk_level: "medium",
+    summary: "Static review found 2 medium issues",
+    total_findings: 2,
+    info_count: 0,
+    low_count: 0,
+    medium_count: 2,
+    high_count: 0,
+    critical_count: 0,
+    updated_at: "2026-03-26T08:57:00Z"
+  },
+  task_sandbox_001: {
+    task_id: "task_sandbox_001",
+    task_type: "sandbox_run",
+    status: "blocked",
+    risk_level: "critical",
+    summary: "A blocked runtime action was captured in sandbox",
+    total_findings: 2,
+    info_count: 0,
+    low_count: 0,
+    medium_count: 0,
+    high_count: 1,
+    critical_count: 1,
+    blocked_count: 1,
+    updated_at: "2026-03-26T07:41:00Z"
+  }
+};
+
 function createSuccessResponse<T>(data: T): ApiResponse<T> {
   return {
     success: true,
@@ -120,14 +166,26 @@ function createSuccessResponse<T>(data: T): ApiResponse<T> {
 function mockTaskDetailFetch(input: {
   tasks?: Record<string, Task>;
   results?: Record<string, BaseResult | Record<string, unknown>>;
+  riskSummaries?: Record<string, RiskSummary>;
 }) {
   const tasks = input.tasks ?? TASK_FIXTURES;
   const results = input.results ?? RESULT_FIXTURES;
+  const riskSummaries = input.riskSummaries ?? RISK_SUMMARY_FIXTURES;
 
   vi.stubGlobal(
     "fetch",
     vi.fn().mockImplementation(async (resource: string | URL) => {
       const url = String(resource);
+      const summaryMatch = url.match(/\/api\/tasks\/([^/]+)\/risk-summary$/);
+
+      if (summaryMatch) {
+        const taskId = summaryMatch[1];
+        return {
+          ok: true,
+          json: async () => createSuccessResponse(riskSummaries[taskId] ?? null)
+        };
+      }
+
       const resultMatch = url.match(/\/api\/tasks\/([^/]+)\/result$/);
 
       if (resultMatch) {
@@ -170,6 +228,7 @@ describe("task detail page", () => {
     await renderAppAtRoute("/tasks/task_asset_001");
 
     expect(await screen.findByRole("heading", { level: 1, name: /task detail/i })).toBeInTheDocument();
+    expect(screen.getByText(/backend api/i)).toBeInTheDocument();
     expect(screen.getAllByText("task_asset_001").length).toBeGreaterThan(0);
     expect(screen.getByText("Scan public agent surface")).toBeInTheDocument();
     expect(screen.getByText("Running")).toBeInTheDocument();
@@ -182,8 +241,18 @@ describe("task detail page", () => {
     await renderAppAtRoute("/tasks/task_asset_001");
 
     expect(await screen.findByRole("heading", { level: 2, name: /asset scan result section/i })).toBeInTheDocument();
+    expect(screen.getByText(/detected open ports and a partially identified fingerprint/i)).toBeInTheDocument();
     expect(screen.getByText(/fingerprint confidence/i)).toBeInTheDocument();
     expect(screen.getByText(/2 open ports/i)).toBeInTheDocument();
+  });
+
+  test("renders the risk summary section with backend counts for the selected task", async () => {
+    await renderAppAtRoute("/tasks/task_asset_001");
+
+    expect(await screen.findByRole("heading", { level: 2, name: /risk summary/i })).toBeInTheDocument();
+    expect(screen.getByText(/1 high risk finding requires follow-up/i)).toBeInTheDocument();
+    expect(screen.getByText(/3 total findings/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 high severity/i)).toBeInTheDocument();
   });
 
   test("renders the static analysis result section for static_analysis tasks", async () => {

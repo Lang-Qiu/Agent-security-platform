@@ -282,6 +282,11 @@ a {
   gap: 20px;
 }
 
+.task-detail-sidebar {
+  display: grid;
+  gap: 20px;
+}
+
 .task-detail-tags {
   margin-bottom: 16px;
 }

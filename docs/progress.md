@@ -97,3 +97,19 @@ Recommended fields:
   - Task detail now has one shared information area plus three task-type-specific result placeholders: asset scan, static analysis, and sandbox alerts
   - the detail service fetches `/api/tasks/:taskId` and `/api/tasks/:taskId/result` in parallel, then falls back to local mocks when the backend is unavailable
   - missing or empty `details` no longer breaks the page; the result region stays structurally stable and shows a unified fallback message instead
+
+## 2026-03-26 - REQ-06 frontend-backend task integration loop
+- requirement: `REQ-06` frontend Tasks page and Task detail page backend integration
+- scope: connect frontend services to the existing backend tasks API, normalize API payloads through shared contracts, add a visible backend-vs-mock data source indicator, and extend Task detail to read `result` plus `risk-summary`
+- tests:
+  - `frontend/src/services/task-service.spec.ts`
+  - `frontend/src/pages/tasks.page.spec.tsx`
+  - `frontend/src/pages/task-detail.page.spec.tsx`
+- test result: pass; `cmd /c npm run test:frontend`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - the frontend list route now reads `GET /api/tasks` through a shared-contract-aware service instead of depending only on static page mocks
+  - the frontend detail route now reads `GET /api/tasks/:taskId`, `GET /api/tasks/:taskId/result`, and `GET /api/tasks/:taskId/risk-summary`
+  - local frontend development now proxies `/api` to the backend on `127.0.0.1:3000`, while service-level fallback keeps isolated frontend work possible when the backend is offline

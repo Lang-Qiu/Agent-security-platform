@@ -1191,3 +1191,25 @@
 4. 在前端先基于 `Task`、`RiskSummary` 和三类结果对象完成静态页面联调。
 
 以上步骤完成后，再进入引擎实际接入与状态流转细化阶段。
+## REQ-06 Frontend Integration Baseline
+
+当前前端最小联调闭环已经消费以下后端路径：
+
+- `GET /api/tasks`
+- `GET /api/tasks/:taskId`
+- `GET /api/tasks/:taskId/result`
+- `GET /api/tasks/:taskId/risk-summary`
+
+前端 service 层默认采用 `api-preferred` 模式：
+
+- 优先请求 backend tasks API
+- 若接口不可用、响应不合法或本地未启动后端，则回退到 frontend mock 数据
+- 测试或纯前端隔离场景可使用 `mock-only` 模式，避免真实网络请求
+
+页面数据流约定如下：
+
+- Tasks page 通过 `GET /api/tasks` 获取任务列表，并使用 `shared` 契约规范化为 `Task[]`
+- Task detail page 并行获取任务详情、统一结果外壳和风险摘要，并在前端合成为稳定页面模型
+- 所有联调数据都必须先经过 `shared/contracts/*` 归一化，再进入 React 页面和组件
+
+本地开发环境下，frontend dev server 通过 Vite proxy 将 `/api` 与 `/health` 转发到 `http://127.0.0.1:3000`。

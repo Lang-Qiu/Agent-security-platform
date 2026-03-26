@@ -4,10 +4,12 @@ import { Link, useParams } from "react-router-dom";
 
 import type { AssetScanResultDetails, StaticAnalysisResultDetails, SandboxRunResultDetails } from "../../../../shared/types/result";
 import type { Task } from "../../../../shared/types/task";
+import { DataSourceTag } from "../components/DataSourceTag";
 import { AssetScanResultSection } from "../components/task-detail/AssetScanResultSection";
 import { SandboxAlertSection } from "../components/task-detail/SandboxAlertSection";
 import { StaticAnalysisResultSection } from "../components/task-detail/StaticAnalysisResultSection";
 import { TaskOverviewSection } from "../components/task-detail/TaskOverviewSection";
+import { TaskRiskSummarySection } from "../components/task-detail/TaskRiskSummarySection";
 import { getTaskDetail, type TaskDetailData } from "../services/task-service";
 
 const { Paragraph, Text, Title } = Typography;
@@ -17,15 +19,15 @@ function TaskDetailSections({ detail }: { detail: TaskDetailData }) {
 
   switch (detail.task.task_type) {
     case "asset_scan":
-      return <AssetScanResultSection details={details as AssetScanResultDetails} />;
+      return <AssetScanResultSection details={details as AssetScanResultDetails} summary={detail.result.summary} />;
     case "static_analysis":
-      return <StaticAnalysisResultSection details={details as StaticAnalysisResultDetails} />;
+      return <StaticAnalysisResultSection details={details as StaticAnalysisResultDetails} summary={detail.result.summary} />;
     case "sandbox_run":
-      return <SandboxAlertSection details={details as SandboxRunResultDetails} />;
+      return <SandboxAlertSection details={details as SandboxRunResultDetails} summary={detail.result.summary} />;
   }
 }
 
-function TaskDetailHero({ task }: { task: Task }) {
+function TaskDetailHero({ task, source }: { task: Task; source: "api" | "mock" }) {
   return (
     <section className="console-panel task-detail-hero">
       <div>
@@ -37,6 +39,7 @@ function TaskDetailHero({ task }: { task: Task }) {
         </Paragraph>
       </div>
       <Space wrap>
+        <DataSourceTag source={source} />
         <Button>
           <Link to="/tasks">Back to Tasks</Link>
         </Button>
@@ -96,9 +99,12 @@ export function TaskDetailPage() {
 
   return (
     <div className="task-detail-page">
-      <TaskDetailHero task={detail.task} />
+      <TaskDetailHero task={detail.task} source={detail.source} />
       <div className="task-detail-grid">
-        <TaskOverviewSection task={detail.task} />
+        <div className="task-detail-sidebar">
+          <TaskOverviewSection task={detail.task} />
+          <TaskRiskSummarySection riskSummary={detail.riskSummary} />
+        </div>
         <TaskDetailSections detail={detail} />
       </div>
     </div>

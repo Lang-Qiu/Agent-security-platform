@@ -80,6 +80,7 @@ describe("tasks page", () => {
     }
 
     expect(await screen.findByRole("heading", { level: 1, name: /tasks/i })).toBeInTheDocument();
+    expect(screen.getByText(/backend api/i)).toBeInTheDocument();
     expect(await screen.findByRole("table")).toBeInTheDocument();
     expect(await screen.findByText("task_asset_001")).toBeInTheDocument();
   });
