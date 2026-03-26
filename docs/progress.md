@@ -160,3 +160,17 @@ Recommended fields:
   - `integration-error` now means the backend answered but failed shared contract normalization on one or more required payloads
   - `degraded` remains reserved for pages that can still render from a valid backend `Task` while synthesizing missing dependent payloads
   - frontend mock fallback no longer masquerades as healthy backend API data when the backend response shape drifts from the shared contract
+
+## 2026-03-26 - repository full-stack test gate
+- requirement: fix the must-fix review issue where root `npm run test` did not cover frontend verification
+- scope: add a repository-level script-definition test, introduce a canonical `test:all` gate, and make root `test` delegate to the full-stack gate
+- tests:
+  - `tests/repository/root-test-entry.spec.ts`
+- test result: pass; `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/root-test-entry.spec.ts` and `cmd /c npm run test`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - root `npm run test` now delegates to `npm run test:all`
+  - `test:all` now covers repository script checks, shared contracts, backend tests, and frontend tests
+  - a green root test run now means the current platform skeleton is green across all three active layers

@@ -1248,3 +1248,18 @@ The frontend integration layer uses four source states when reading the existing
 - `mock`: the frontend is intentionally running in `mock-only` mode, or the backend is unavailable.
 
 This distinction is part of the local integration contract because contract-invalid responses must stay visible during platform skeleton development instead of being misreported as healthy backend API data.
+## REQ-09 Repository Contract Verification Gate
+
+The repository-level contract verification gate now has one canonical full-stack entry:
+
+- `npm run test`
+- `npm run test:all`
+
+Both commands are expected to cover all current contract consumers:
+
+- repository script-definition checks
+- shared contract tests
+- backend unit and integration tests
+- frontend rendering and integration tests
+
+This rule exists so a green root test run means the current platform skeleton is green across shared, backend, and frontend boundaries instead of only across a subset of the repository.
