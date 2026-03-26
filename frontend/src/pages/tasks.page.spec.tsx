@@ -139,6 +139,24 @@ describe("tasks page", () => {
     expect(screen.getByText("task_asset_001")).toBeInTheDocument();
   });
 
+  test("renders an integration error badge when the backend list payload is contract-invalid", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () =>
+          createTaskListResponse({
+            invalid: true
+          } as unknown as Task[])
+      })
+    );
+
+    await renderAppAtRoute("/tasks");
+
+    expect(await screen.findByText(/integration error/i)).toBeInTheDocument();
+    expect(screen.getByText("task_asset_001")).toBeInTheDocument();
+  });
+
   test("navigates to the task detail route when the operator clicks view details", async () => {
     await renderAppAtRoute("/tasks");
 

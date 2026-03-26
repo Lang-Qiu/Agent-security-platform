@@ -11,5 +11,9 @@ export function DataSourceTag({ source }: { source: TaskDataSource }) {
     return <Tag color="orange">Degraded API Data</Tag>;
   }
 
+  if (source === "integration-error") {
+    return <Tag color="red">Integration Error</Tag>;
+  }
+
   return <Tag color="gold">Mock Fallback</Tag>;
 }

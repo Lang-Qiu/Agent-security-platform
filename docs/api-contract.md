@@ -1238,3 +1238,13 @@
 - `RiskSummary`
 
 `TaskEngineService.createInitialArtifacts(task)` 会基于 adapter 生成三类任务的初始结果细节，但这些 adapter payload 属于 backend 内部契约，不应直接暴露给 frontend。
+## REQ-08 Frontend Contract Health States
+
+The frontend integration layer uses four source states when reading the existing tasks API:
+
+- `api`: every payload required by the current page passed shared contract normalization.
+- `degraded`: the backend returned a valid `Task`, but dependent payloads such as `result` or `risk-summary` had to be synthesized locally.
+- `integration-error`: the backend responded, but at least one required payload failed shared contract normalization, so the UI fell back to mock-backed data instead of claiming a healthy backend connection.
+- `mock`: the frontend is intentionally running in `mock-only` mode, or the backend is unavailable.
+
+This distinction is part of the local integration contract because contract-invalid responses must stay visible during platform skeleton development instead of being misreported as healthy backend API data.

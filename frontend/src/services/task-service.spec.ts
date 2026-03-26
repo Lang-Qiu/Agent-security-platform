@@ -224,6 +224,79 @@ describe("task service", () => {
     expect(result?.riskSummary.total_findings).toBe(0);
   });
 
+  test("listTasks marks the data source as integration-error when the backend response does not match the shared contract", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () =>
+        createSuccessResponse({
+          task_id: "not-a-list"
+        })
+    });
+
+    const result = await listTasks({
+      fetchImpl: fetchMock as unknown as typeof fetch
+    });
+
+    expect(result.source).toBe("integration-error");
+    expect(result.tasks.length).toBeGreaterThan(0);
+  });
+
+  test("getTaskDetail marks the data source as integration-error when the backend task payload is contract-invalid", async () => {
+    const fetchMock = vi.fn().mockImplementation(async (resource: string | URL) => {
+      const url = String(resource);
+
+      if (url.endsWith("/api/tasks/task_asset_001")) {
+        return {
+          ok: true,
+          json: async () =>
+            createSuccessResponse({
+              task_id: "task_asset_001",
+              task_type: "asset_scan",
+              engine_type: "skills_static",
+              status: "pending",
+              title: "Broken task shell",
+              target: {
+                target_type: "url",
+                target_value: "https://broken.example.com"
+              },
+              created_at: "2026-03-26T12:00:00Z",
+              updated_at: "2026-03-26T12:00:00Z"
+            })
+        };
+      }
+
+      if (url.endsWith("/api/tasks/task_asset_001/result")) {
+        return {
+          ok: true,
+          json: async () => createSuccessResponse(RESULT_FIXTURE)
+        };
+      }
+
+      if (url.endsWith("/api/tasks/task_asset_001/risk-summary")) {
+        return {
+          ok: true,
+          json: async () =>
+            createSuccessResponse({
+              ...RISK_SUMMARY_FIXTURE,
+              task_id: "task_asset_001"
+            })
+        };
+      }
+
+      return {
+        ok: false,
+        json: async () => createSuccessResponse(null)
+      };
+    });
+
+    const result = await getTaskDetail("task_asset_001", {
+      fetchImpl: fetchMock as unknown as typeof fetch
+    });
+
+    expect(result?.source).toBe("integration-error");
+    expect(result?.task.task_id).toBe("task_asset_001");
+  });
+
   test("listTasks returns mock data without calling fetch when mode is mock-only", async () => {
     const fetchMock = vi.fn();
 

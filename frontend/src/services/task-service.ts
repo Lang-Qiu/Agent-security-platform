@@ -9,7 +9,7 @@ import { requestApiDataWithStatus, type ApiClientOptions } from "./api-client";
 
 const TASKS_ENDPOINT = "/api/tasks";
 const DEFAULT_RESULT_SUMMARY = "Result details are not available yet.";
-export type TaskDataSource = "api" | "degraded" | "mock";
+export type TaskDataSource = "api" | "degraded" | "integration-error" | "mock";
 
 export interface TaskListData {
   tasks: Task[];
@@ -145,6 +145,13 @@ export async function listTasks(input: {
     };
   }
 
+  if (apiTasks.status === "invalid") {
+    return {
+      tasks: taskQueueMocks,
+      source: "integration-error"
+    };
+  }
+
   return {
     tasks: taskQueueMocks,
     source: "mock"
@@ -201,10 +208,13 @@ export async function getTaskDetail(
     return null;
   }
 
+  const hasInvalidApiResponse =
+    taskData.status === "invalid" || resultData.status === "invalid" || riskSummaryData.status === "invalid";
+
   return {
     task: mockTask,
     result: normalizeResult(mockTask, mockResult),
     riskSummary: mockRiskSummary ?? buildFallbackRiskSummary(mockTask),
-    source: "mock"
+    source: hasInvalidApiResponse ? "integration-error" : "mock"
   };
 }

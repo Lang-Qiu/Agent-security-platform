@@ -144,3 +144,19 @@ Recommended fields:
   - frontend services now distinguish between fully valid backend responses, partially degraded backend responses, and pure mock fallback
   - invalid rows in `GET /api/tasks` now keep valid rows but surface a degraded state instead of silently claiming full backend health
   - task detail now marks the page as degraded when `task` exists but `result` or `risk-summary` must be synthesized locally
+
+## 2026-03-26 - frontend integration error visibility
+- requirement: fix the must-fix review issue where contract-invalid backend responses were still shown as healthy backend integration
+- scope: keep the current backend routes and page structure unchanged, but distinguish contract-invalid API responses from backend-unavailable mock fallback
+- tests:
+  - `frontend/src/services/task-service.spec.ts`
+  - `frontend/src/pages/tasks.page.spec.tsx`
+  - `frontend/src/pages/task-detail.page.spec.tsx`
+- test result: pass; `cmd /c npm run test --prefix frontend -- src/services/task-service.spec.ts src/pages/tasks.page.spec.tsx src/pages/task-detail.page.spec.tsx`, `cmd /c npm run test:frontend`, and `cmd /c npm run test`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - `integration-error` now means the backend answered but failed shared contract normalization on one or more required payloads
+  - `degraded` remains reserved for pages that can still render from a valid backend `Task` while synthesizing missing dependent payloads
+  - frontend mock fallback no longer masquerades as healthy backend API data when the backend response shape drifts from the shared contract

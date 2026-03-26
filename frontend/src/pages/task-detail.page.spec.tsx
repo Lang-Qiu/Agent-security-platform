@@ -310,4 +310,20 @@ describe("task detail page", () => {
     expect(screen.getByText(/risk summary/i)).toBeInTheDocument();
     expect(screen.getByText(/0 total findings/i)).toBeInTheDocument();
   });
+
+  test("renders an integration error badge when the backend task shell is contract-invalid", async () => {
+    mockTaskDetailFetch({
+      tasks: {
+        task_asset_001: {
+          ...TASK_FIXTURES.task_asset_001,
+          engine_type: "skills_static"
+        }
+      }
+    });
+
+    await renderAppAtRoute("/tasks/task_asset_001");
+
+    expect(await screen.findByText(/integration error/i)).toBeInTheDocument();
+    expect(screen.getAllByText("task_asset_001").length).toBeGreaterThan(0);
+  });
 });
