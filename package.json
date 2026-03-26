@@ -9,6 +9,7 @@
   "scripts": {
     "test": "node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/task-contract.spec.ts shared/tests/api-response.contract.spec.ts shared/tests/result-contract.spec.ts backend/tests/task-center.service.spec.ts tests/integration/backend-task-center.api.spec.ts",
     "test:shared": "node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/task-contract.spec.ts shared/tests/api-response.contract.spec.ts shared/tests/result-contract.spec.ts",
-    "test:backend": "node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/task-center.service.spec.ts tests/integration/backend-task-center.api.spec.ts"
+    "test:backend": "node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/task-center.service.spec.ts tests/integration/backend-task-center.api.spec.ts",
+    "test:frontend": "node node_modules/vitest/vitest.mjs run --root frontend --config vitest.config.mjs --configLoader native --pool threads --maxWorkers 1 --no-file-parallelism"
   }
 }

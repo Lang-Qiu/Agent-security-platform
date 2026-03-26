@@ -53,3 +53,20 @@ Recommended fields:
   - backend now exposes `GET /health`, `POST /api/tasks`, `GET /api/tasks`, `GET /api/tasks/:taskId`, `GET /api/tasks/:taskId/result`, and `GET /api/tasks/:taskId/risk-summary`
   - task center keeps `module/controller/service/repository` boundaries while staying decoupled from real engine execution
   - current implementation materializes initial `BaseResult` and `RiskSummary` placeholders in memory when a task is created
+
+## 2026-03-26 - REQ-03 frontend console shell and overview
+- requirement: `REQ-03` 前端最小后台 layout 与 Overview page
+- scope: add a React + TypeScript + Ant Design frontend shell, stable admin-console routing, overview workspace panels, placeholder pages for future task/result routes, and frontend rendering tests
+- tests:
+  - `frontend/src/app/app-shell.spec.tsx`
+  - `frontend/src/layouts/console-menu.spec.tsx`
+  - `frontend/src/pages/overview.page.spec.tsx`
+- test result: pass; `cmd /c npm run test --prefix frontend`
+- docs updated:
+  - `README.md`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+- notes:
+  - frontend now exposes a stable control-plane shell for future Tasks and Task Detail work
+  - overview, task queue, task detail, and result routes all sit behind one reusable layout
+  - overview uses shared `TaskStatus` and `RiskLevel` driven mock view models instead of introducing frontend-private enums

@@ -26,6 +26,7 @@
 ## 技术栈
 
 - 前端：React + TypeScript
+- 前端 UI：Ant Design，信息架构参考 Ant Design Pro simple
 - 后端：Node.js + TypeScript
 - 工程组织：推荐 `pnpm workspace` 作为 monorepo 管理方式
 - 后端风格：模块化组织，设计上接近 NestJS 的分层与模块边界
@@ -132,6 +133,13 @@ agent-security-platform/
    - 后端收集结果
    - 前端展示结果
 
+当前已落地的本地验证命令：
+
+- 共享契约测试：`cmd /c npm run test:shared`
+- 后端任务中枢测试：`cmd /c npm run test:backend`
+- 前端后台骨架测试：`cmd /c npm run test:frontend`
+- 在 `frontend/` 下启动前端开发环境：`cmd /c npm run dev`
+
 ## 当前交付范围
 
 本次初始化已包含：
@@ -140,6 +148,9 @@ agent-security-platform/
 - 仓库根说明文档
 - 架构说明、开发计划、接口契约草案
 - 前后端与三个引擎的职责说明
+- `shared` 第一版共享契约与运行时规范化能力
+- `backend` 最小任务中枢与内存级 API
+- `frontend` 最小后台壳子、路由骨架和 `Overview` 页面
 
 本次初始化暂未包含：
 
@@ -147,4 +158,5 @@ agent-security-platform/
 - workspace 配置文件
 - CI/CD 脚本
 - 数据库 Schema
-- 实际可运行服务
+- 登录与权限系统
+- 真实引擎联调与实时日志流
