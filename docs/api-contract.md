@@ -50,6 +50,8 @@
 - 时间字段统一使用 ISO 8601 字符串，例如 `2026-04-01T09:30:00Z`
 - 所有 ID 字段统一使用字符串，不在 API 层暴露自增整数
 - 第一版接口不引入分页、排序、筛选等复杂协议，先保证主流程稳定
+- 当前第一版共享契约以 `shared/` 中的 TypeScript 定义和运行时规范化函数为准，文档与代码应保持一致
+- 当前工程基线先冻结为 `pnpm workspace`、`Node.js 22.17.0`、`TypeScript strict`，用于支撑平台骨架阶段的契约开发与测试
 
 ### 3.2 TaskType
 
@@ -93,6 +95,12 @@
 ### 4.1 Task
 
 `Task` 是平台层统一的任务对象。前端创建任务、后端调度执行、引擎返回结果、平台查询展示，全部围绕 `task_id` 展开。
+
+当前 `Task` 契约还要求 `task_type` 与 `engine_type` 之间满足固定映射关系：
+
+- `asset_scan` -> `asset_scan`
+- `static_analysis` -> `skills_static`
+- `sandbox_run` -> `sandbox`
 
 #### 字段定义
 
@@ -167,26 +175,65 @@
 
 ### 4.2 BaseResult
 
-`BaseResult` 是三类结果对象的公共外层结构。每个具体结果对象都应包含这些字段，以便平台统一存储、查询和渲染。
+`BaseResult` 是三类结果对象的公共外层结构。第一版共享契约要求所有结果先收敛成统一外层，再通过 `details` 承载任务类型对应的细节字段。这样前端和后端都可以先依赖稳定的结果壳，再逐步细化三类任务的详情结构。
 
 #### 字段定义
 
 | 字段 | 类型 | 必填 | 含义 |
 | --- | --- | --- | --- |
-| `result_id` | string | 是 | 结果对象唯一标识 |
 | `task_id` | string | 是 | 关联任务 ID |
 | `task_type` | string | 是 | 关联任务类型 |
 | `engine_type` | string | 是 | 产生结果的引擎类型 |
 | `status` | string | 是 | 结果对应的执行状态 |
 | `risk_level` | string | 是 | 结果汇总风险等级 |
 | `summary` | string | 是 | 结果摘要 |
+| `details` | object | 是 | 结果细节对象，按 `task_type` 承载不同结构 |
 | `created_at` | string | 是 | 结果创建时间 |
 | `updated_at` | string | 是 | 最近更新时间 |
+| `result_id` | string | 否 | 结果对象唯一标识，后续落库或归档时可补齐 |
 | `started_at` | string | 否 | 该结果对应执行开始时间 |
 | `finished_at` | string | 否 | 该结果对应执行完成时间 |
 | `metadata` | object | 否 | 保留扩展字段 |
 
 #### JSON 示例
+
+```json
+{
+  "task_id": "task_20260401_0001",
+  "task_type": "asset_scan",
+  "engine_type": "asset_scan",
+  "status": "finished",
+  "risk_level": "high",
+  "summary": "Detected 2 open management endpoints and missing authentication",
+  "details": {
+    "target": {
+      "target_type": "url",
+      "target_value": "https://demo-agent.example.com",
+      "display_name": "Demo Agent"
+    },
+    "findings": [
+      {
+        "title": "Management endpoint exposed",
+        "risk_level": "high"
+      }
+    ]
+  },
+  "created_at": "2026-04-01T09:30:12Z",
+  "updated_at": "2026-04-01T09:31:30Z"
+}
+```
+
+#### details 细化约定
+
+- `asset_scan`：`details` 主要承载 `target`、`fingerprint`、`matched_features`、`open_ports`、`http_endpoints`、`auth_detected`、`findings`
+- `static_analysis`：`details` 主要承载 `sample_name`、`language`、`entry_files`、`files_scanned`、`rule_hits`、`sensitive_capabilities`、`dependency_summary`
+- `sandbox_run`：`details` 主要承载 `session_id`、`target`、`alerts`、`blocked`、`event_count`
+
+第一版共享规范化逻辑会剥离结果外层和 `details` 中未声明的私有字段，避免把引擎内部调试数据直接泄露到平台 API 或前端页面。
+
+#### 与具体结果对象的关系
+
+本文件第 5 章中保留三类结果对象的业务字段说明，用于解释各任务类型的细节结构；在实际共享契约中，这些细节字段都应投影到 `BaseResult.details` 下，而不是各自再定义一套不同的结果外层。
 
 ```json
 {
@@ -197,8 +244,23 @@
   "status": "finished",
   "risk_level": "high",
   "summary": "Detected 2 open management endpoints and missing authentication",
-  "created_at": "2026-04-01T09:30:12Z",
-  "updated_at": "2026-04-01T09:31:30Z",
+  "details": {
+    "target": {
+      "target_type": "url",
+      "target_value": "https://demo-agent.example.com",
+      "display_name": "Demo Agent"
+    },
+    "fingerprint": {
+      "agent_name": "demo-agent",
+      "framework": "langchain"
+    },
+    "findings": [
+      {
+        "title": "Management endpoint exposed",
+        "risk_level": "high"
+      }
+    ]
+  },
   "started_at": "2026-04-01T09:30:08Z",
   "finished_at": "2026-04-01T09:31:28Z"
 }
@@ -628,39 +690,62 @@
 
 ### 6.1 统一说明
 
-第一版 REST API 只定义平台对前端暴露的最小联调接口，默认由后端对三个引擎完成内部调度。
+当前仓库已落地的第一版 REST API 只定义平台对前端暴露的最小联调接口，默认由后端对三个引擎完成内部调度。
 
 约定如下：
 
-- 创建任务接口在任务成功落库后立即返回 `task_id`
+- 当前 `REQ-02` 已实现的接口包括：
+  - `GET /health`
+  - `POST /api/tasks`
+  - `GET /api/tasks`
+  - `GET /api/tasks/:taskId`
+  - `GET /api/tasks/:taskId/result`
+  - `GET /api/tasks/:taskId/risk-summary`
+- 创建任务接口在任务成功写入内存仓库后立即返回 `Task`
 - 创建成功后默认返回 HTTP `201`
 - 查询成功返回 HTTP `200`
 - 参数错误返回 HTTP `400`
 - 未找到任务返回 HTTP `404`
-- 结果尚未就绪返回 HTTP `409`
 - 服务内部异常返回 HTTP `500`
+- 当前最小任务中枢会在创建任务时同步生成初始 `BaseResult` 与初始 `RiskSummary` 占位对象，因此 `GET /result` 与 `GET /risk-summary` 在 `pending` 状态下也返回 `200`
 
-### 6.2 POST /api/tasks/asset-scan
+### 6.2 GET /health
 
 #### 用途
 
-创建资产测绘任务。
+健康检查，用于本地联调与后续部署探活。
+
+#### 返回结构
+
+```json
+{
+  "success": true,
+  "message": "Service is healthy",
+  "data": {
+    "status": "ok"
+  },
+  "error_code": null,
+  "request_id": "req_000001"
+}
+```
+
+### 6.3 POST /api/tasks
+
+#### 用途
+
+创建统一任务。当前通过 `task_type` 区分 `asset_scan`、`static_analysis`、`sandbox_run` 三类任务。
 
 #### 请求参数
 
 ```json
 {
+  "task_type": "asset_scan",
   "title": "Scan demo public agent",
   "requested_by": "alice",
   "target": {
     "target_type": "url",
     "target_value": "https://demo-agent.example.com",
     "display_name": "Demo Agent"
-  },
-  "parameters": {
-    "enable_http_probe": true,
-    "enable_port_scan": true,
-    "timeout_seconds": 60
   }
 }
 ```
@@ -674,7 +759,7 @@
 ```json
 {
   "success": true,
-  "message": "Asset scan task created",
+  "message": "Task created successfully",
   "data": {
     "task_id": "task_20260401_0001",
     "task_type": "asset_scan",
@@ -707,164 +792,69 @@
 ```json
 {
   "success": false,
-  "message": "Invalid target_value for asset scan task",
+  "message": "Invalid task creation request",
   "data": null,
-  "error_code": "INVALID_TARGET",
+  "error_code": "INVALID_REQUEST",
   "request_id": "req_9aef002"
 }
 ```
 
-### 6.3 POST /api/tasks/static-analysis
+### 6.4 GET /api/tasks
 
 #### 用途
 
-创建 Skills 静态安全检测任务。
-
-#### 请求参数
-
-```json
-{
-  "title": "Analyze demo email skill",
-  "requested_by": "alice",
-  "target": {
-    "target_type": "skill_package",
-    "target_value": "samples/skills/demo-email-skill",
-    "display_name": "demo-email-skill"
-  },
-  "parameters": {
-    "language": "typescript",
-    "rule_pack": "default-v1",
-    "include_dependencies": true
-  }
-}
-```
+查询当前内存仓库中的任务列表。
 
 #### 返回结构
 
-- `data` 返回 `Task`
+- `data` 返回 `Task[]`
 
 #### 成功示例
 
 ```json
 {
   "success": true,
-  "message": "Static analysis task created",
-  "data": {
-    "task_id": "task_20260401_0002",
-    "task_type": "static_analysis",
-    "engine_type": "skills_static",
-    "status": "pending",
-    "title": "Analyze demo email skill",
-    "requested_by": "alice",
-    "target": {
-      "target_type": "skill_package",
-      "target_value": "samples/skills/demo-email-skill",
-      "display_name": "demo-email-skill"
+  "message": "Tasks fetched successfully",
+  "data": [
+    {
+      "task_id": "task_20260401_0001",
+      "task_type": "asset_scan",
+      "engine_type": "asset_scan",
+      "status": "pending",
+      "title": "Scan demo public agent",
+      "target": {
+        "target_type": "url",
+        "target_value": "https://demo-agent.example.com",
+        "display_name": "Demo Agent"
+      },
+      "risk_level": "info",
+      "summary": "Task accepted and waiting for engine dispatch",
+      "created_at": "2026-04-01T09:30:00Z",
+      "updated_at": "2026-04-01T09:30:00Z"
     },
-    "parameters": {
-      "language": "typescript",
-      "rule_pack": "default-v1",
-      "include_dependencies": true
-    },
-    "risk_level": "info",
-    "summary": "Task accepted and waiting for engine dispatch",
-    "created_at": "2026-04-01T10:00:00Z",
-    "updated_at": "2026-04-01T10:00:00Z"
-  },
+    {
+      "task_id": "task_20260401_0002",
+      "task_type": "static_analysis",
+      "engine_type": "skills_static",
+      "status": "pending",
+      "title": "Analyze demo email skill",
+      "target": {
+        "target_type": "skill_package",
+        "target_value": "samples/skills/demo-email-skill",
+        "display_name": "demo-email-skill"
+      },
+      "risk_level": "info",
+      "summary": "Task accepted and waiting for engine dispatch",
+      "created_at": "2026-04-01T10:00:00Z",
+      "updated_at": "2026-04-01T10:00:00Z"
+    }
+  ],
   "error_code": null,
   "request_id": "req_9aef010"
 }
 ```
 
-#### 失败示例
-
-```json
-{
-  "success": false,
-  "message": "rule_pack is not supported",
-  "data": null,
-  "error_code": "UNSUPPORTED_RULE_PACK",
-  "request_id": "req_9aef011"
-}
-```
-
-### 6.4 POST /api/tasks/sandbox-run
-
-#### 用途
-
-创建动态沙箱运行任务。
-
-#### 请求参数
-
-```json
-{
-  "title": "Run demo agent in strict sandbox",
-  "requested_by": "alice",
-  "target": {
-    "target_type": "session",
-    "target_value": "demo-agent-run",
-    "display_name": "Demo Agent Runtime Session"
-  },
-  "parameters": {
-    "sandbox_profile": "strict",
-    "duration_seconds": 180,
-    "block_on_high_risk": true
-  }
-}
-```
-
-#### 返回结构
-
-- `data` 返回 `Task`
-
-#### 成功示例
-
-```json
-{
-  "success": true,
-  "message": "Sandbox run task created",
-  "data": {
-    "task_id": "task_20260401_0003",
-    "task_type": "sandbox_run",
-    "engine_type": "sandbox",
-    "status": "pending",
-    "title": "Run demo agent in strict sandbox",
-    "requested_by": "alice",
-    "target": {
-      "target_type": "session",
-      "target_value": "demo-agent-run",
-      "display_name": "Demo Agent Runtime Session"
-    },
-    "parameters": {
-      "sandbox_profile": "strict",
-      "duration_seconds": 180,
-      "block_on_high_risk": true
-    },
-    "risk_level": "info",
-    "summary": "Task accepted and waiting for engine dispatch",
-    "created_at": "2026-04-01T11:00:00Z",
-    "updated_at": "2026-04-01T11:00:00Z"
-  },
-  "error_code": null,
-  "request_id": "req_9aef020"
-}
-```
-
-#### 失败示例
-
-```json
-{
-  "success": false,
-  "message": "sandbox_profile is required",
-  "data": null,
-  "error_code": "MISSING_SANDBOX_PROFILE",
-  "request_id": "req_9aef021"
-}
-```
-
 ### 6.5 GET /api/tasks/:taskId
-
-#### 用途
 
 查询任务详情与当前状态。
 
@@ -888,7 +878,7 @@
     "task_id": "task_20260401_0002",
     "task_type": "static_analysis",
     "engine_type": "skills_static",
-    "status": "finished",
+    "status": "pending",
     "title": "Analyze demo email skill",
     "requested_by": "alice",
     "target": {
@@ -901,16 +891,10 @@
       "rule_pack": "default-v1",
       "include_dependencies": true
     },
-    "risk_level": "critical",
-    "summary": "Static analysis finished with 2 high-severity findings",
-    "result_ref": {
-      "result_type": "static_analysis_result",
-      "result_id": "result_static_0001"
-    },
+    "risk_level": "info",
+    "summary": "Task accepted and waiting for engine dispatch",
     "created_at": "2026-04-01T10:00:00Z",
-    "updated_at": "2026-04-01T10:10:30Z",
-    "started_at": "2026-04-01T10:00:05Z",
-    "finished_at": "2026-04-01T10:10:28Z"
+    "updated_at": "2026-04-01T10:00:00Z"
   },
   "error_code": null,
   "request_id": "req_9aef100"
@@ -933,7 +917,7 @@
 
 #### 用途
 
-查询任务结果详情。返回的 `data` 外层统一，`result` 字段按任务类型承载对应对象。
+查询任务结果详情。当前最小后端骨架会在创建任务时同步生成统一 `BaseResult` 外层，并将任务细节放入 `details`。
 
 #### 路径参数
 
@@ -948,8 +932,10 @@
   "task_id": "task_20260401_0001",
   "task_type": "asset_scan",
   "engine_type": "asset_scan",
-  "status": "finished",
-  "result": {}
+  "status": "pending",
+  "risk_level": "info",
+  "summary": "Task accepted and waiting for engine dispatch",
+  "details": {}
 }
 ```
 
@@ -963,59 +949,20 @@
     "task_id": "task_20260401_0001",
     "task_type": "asset_scan",
     "engine_type": "asset_scan",
-    "status": "finished",
-    "result": {
-      "result_id": "result_asset_0001",
-      "task_id": "task_20260401_0001",
-      "task_type": "asset_scan",
-      "engine_type": "asset_scan",
-      "status": "finished",
-      "risk_level": "high",
-      "summary": "Detected exposed management endpoints and missing authentication",
+    "status": "pending",
+    "risk_level": "info",
+    "summary": "Task accepted and waiting for engine dispatch",
+    "details": {
       "target": {
         "target_type": "url",
         "target_value": "https://demo-agent.example.com",
         "display_name": "Demo Agent"
       },
-      "fingerprint": {
-        "agent_name": "demo-agent",
-        "framework": "langchain",
-        "model_provider": "openai",
-        "runtime": "nodejs",
-        "version": "0.9.3"
-      },
-      "confidence": 0.93,
-      "matched_features": [
-        "x-agent-framework: langchain"
-      ],
-      "open_ports": [
-        {
-          "port": 443,
-          "protocol": "tcp",
-          "service": "https",
-          "status": "open"
-        }
-      ],
-      "http_endpoints": [
-        {
-          "method": "GET",
-          "path": "/api/admin/config",
-          "status_code": 200,
-          "auth_required": false,
-          "description": "Management configuration endpoint"
-        }
-      ],
-      "auth_detected": false,
       "findings": [
-        {
-          "title": "Management endpoint exposed",
-          "risk_level": "high",
-          "reason": "Sensitive management endpoint is reachable without authentication"
-        }
-      ],
-      "created_at": "2026-04-01T09:30:12Z",
-      "updated_at": "2026-04-01T09:31:30Z"
-    }
+      ]
+    },
+    "created_at": "2026-04-01T09:30:12Z",
+    "updated_at": "2026-04-01T09:30:12Z"
   },
   "error_code": null,
   "request_id": "req_9aef110"
@@ -1027,92 +974,14 @@
 ```json
 {
   "success": false,
-  "message": "Task result is not ready",
+  "message": "Task not found",
   "data": null,
-  "error_code": "RESULT_NOT_READY",
+  "error_code": "TASK_NOT_FOUND",
   "request_id": "req_9aef111"
 }
 ```
 
-### 6.7 GET /api/tasks/:taskId/logs
-
-#### 用途
-
-查询任务执行日志，供前端展示任务进度、错误上下文和调试信息。
-
-#### 路径参数
-
-| 参数 | 类型 | 必填 | 含义 |
-| --- | --- | --- | --- |
-| `taskId` | string | 是 | 任务 ID |
-
-#### 返回结构
-
-```json
-{
-  "task_id": "task_20260401_0001",
-  "logs": [
-    {
-      "log_id": "log_001",
-      "timestamp": "2026-04-01T09:30:08Z",
-      "level": "info",
-      "stage": "dispatch",
-      "message": "Task dispatched to asset scan engine"
-    }
-  ]
-}
-```
-
-#### 成功示例
-
-```json
-{
-  "success": true,
-  "message": "Task logs fetched successfully",
-  "data": {
-    "task_id": "task_20260401_0001",
-    "logs": [
-      {
-        "log_id": "log_001",
-        "timestamp": "2026-04-01T09:30:08Z",
-        "level": "info",
-        "stage": "dispatch",
-        "message": "Task dispatched to asset scan engine"
-      },
-      {
-        "log_id": "log_002",
-        "timestamp": "2026-04-01T09:30:20Z",
-        "level": "info",
-        "stage": "fingerprint",
-        "message": "Detected langchain response characteristics"
-      },
-      {
-        "log_id": "log_003",
-        "timestamp": "2026-04-01T09:31:28Z",
-        "level": "warn",
-        "stage": "finding",
-        "message": "Management endpoint exposed without authentication"
-      }
-    ]
-  },
-  "error_code": null,
-  "request_id": "req_9aef120"
-}
-```
-
-#### 失败示例
-
-```json
-{
-  "success": false,
-  "message": "Task not found",
-  "data": null,
-  "error_code": "TASK_NOT_FOUND",
-  "request_id": "req_9aef121"
-}
-```
-
-### 6.8 GET /api/tasks/:taskId/risk-summary
+### 6.7 GET /api/tasks/:taskId/risk-summary
 
 #### 用途
 
@@ -1135,23 +1004,18 @@
   "success": true,
   "message": "Risk summary fetched successfully",
   "data": {
-    "task_id": "task_20260401_0003",
-    "task_type": "sandbox_run",
-    "status": "blocked",
-    "risk_level": "critical",
-    "summary": "1 critical alert blocked and 1 high-risk alert observed",
-    "total_findings": 2,
+    "task_id": "task_20260401_0001",
+    "task_type": "asset_scan",
+    "status": "pending",
+    "risk_level": "info",
+    "summary": "Task accepted and waiting for engine dispatch",
+    "total_findings": 0,
     "info_count": 0,
     "low_count": 0,
     "medium_count": 0,
-    "high_count": 1,
-    "critical_count": 1,
-    "blocked_count": 1,
-    "top_risks": [
-      "Remote script execution was blocked",
-      "Suspicious write to startup path"
-    ],
-    "updated_at": "2026-04-01T11:00:15Z"
+    "high_count": 0,
+    "critical_count": 0,
+    "updated_at": "2026-04-01T09:30:12Z"
   },
   "error_code": null,
   "request_id": "req_9aef130"
@@ -1163,12 +1027,16 @@
 ```json
 {
   "success": false,
-  "message": "Risk summary is not available before task starts",
+  "message": "Task not found",
   "data": null,
-  "error_code": "RISK_SUMMARY_NOT_AVAILABLE",
+  "error_code": "TASK_NOT_FOUND",
   "request_id": "req_9aef131"
 }
 ```
+
+### 6.8 保留接口：GET /api/tasks/:taskId/logs
+
+当前该接口仍处于文档保留状态，尚未在 `REQ-02` 中实现。后续如果任务中心开始接入真实调度与执行日志，再补充日志对象契约与接口测试。
 
 ## 7. 统一返回格式
 
@@ -1317,7 +1185,7 @@
 
 为了尽快把本契约落到代码中，建议按以下顺序推进：
 
-1. 在 `shared/contracts` 中定义本文件对应的 TypeScript 接口。
+1. 在 `shared/contracts` 中定义本文件对应的 TypeScript 接口与运行时规范化函数。该步骤已在 `REQ-01` 中完成第一版落地。
 2. 在 `backend` 中先实现任务创建、任务查询和结果查询的 mock API。
 3. 在 `engines/*` 中为三类结果各准备一份样例 JSON。
 4. 在前端先基于 `Task`、`RiskSummary` 和三类结果对象完成静态页面联调。

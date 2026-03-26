@@ -21,3 +21,35 @@ Recommended fields:
 - notes:
   - future business requirements can now follow both `AGENTS.md` and `metadata.md`
   - `package manager`, `Node.js version`, `database/storage`, and `auth/authz` are still pending decisions
+
+## 2026-03-26 - REQ-01 shared contracts and test baseline
+- requirement: `REQ-01` 共享契约与测试基线
+- scope: add root workspace baseline, freeze the first shared-engineering baseline, and implement shared task/result/api-response contracts with runtime normalization
+- tests:
+  - `shared/tests/task-contract.spec.ts`
+  - `shared/tests/api-response.contract.spec.ts`
+  - `shared/tests/result-contract.spec.ts`
+- test result: pass; `node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/task-contract.spec.ts shared/tests/api-response.contract.spec.ts shared/tests/result-contract.spec.ts`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+- notes:
+  - shared now provides the first source of truth for `Task`, `BaseResult`, `RiskSummary`, and `ApiResponse`
+  - current skeleton baseline is frozen as `pnpm workspace`, `Node.js 22.17.0`, and `TypeScript strict`
+  - next requirement should build on these contracts instead of redefining local DTOs in `backend` or `frontend`
+
+## 2026-03-26 - REQ-02 minimal backend task center
+- requirement: `REQ-02` 后端最小任务中枢
+- scope: add a NestJS-style backend skeleton with controller/service/repository separation, in-memory task storage, health check, generic task creation, task query, result query, risk summary query, and engine adapter placeholders
+- tests:
+  - `backend/tests/task-center.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- test result: pass; `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/task-center.service.spec.ts tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - backend now exposes `GET /health`, `POST /api/tasks`, `GET /api/tasks`, `GET /api/tasks/:taskId`, `GET /api/tasks/:taskId/result`, and `GET /api/tasks/:taskId/risk-summary`
+  - task center keeps `module/controller/service/repository` boundaries while staying decoupled from real engine execution
+  - current implementation materializes initial `BaseResult` and `RiskSummary` placeholders in memory when a task is created

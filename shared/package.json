@@ -1,0 +1,11 @@
+{
+  "name": "@agent-security-platform/shared",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --experimental-test-isolation=none --test tests/task-contract.spec.ts tests/api-response.contract.spec.ts tests/result-contract.spec.ts"
+  }
+}
