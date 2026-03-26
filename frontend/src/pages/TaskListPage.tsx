@@ -8,7 +8,7 @@ import type { Task } from "../../../../shared/types/task";
 import { DataSourceTag } from "../components/DataSourceTag";
 import { RiskTag } from "../components/RiskTag";
 import { StatusTag } from "../components/StatusTag";
-import { listTasks } from "../services/task-service";
+import { listTasks, type TaskDataSource } from "../services/task-service";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -105,7 +105,7 @@ function TaskTable({ tasks, loading }: { tasks: Task[]; loading: boolean }) {
 
 export function TaskListPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [source, setSource] = useState<"api" | "mock">("mock");
+  const [source, setSource] = useState<TaskDataSource>("mock");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {

@@ -295,4 +295,19 @@ describe("task detail page", () => {
     expect(await screen.findByRole("heading", { level: 2, name: /sandbox alert section/i })).toBeInTheDocument();
     expect(screen.getByText(/result details are not available yet/i)).toBeInTheDocument();
   });
+
+  test("renders a degraded source badge when backend detail data is only partially available", async () => {
+    mockTaskDetailFetch({
+      riskSummaries: {
+        task_static_001: RISK_SUMMARY_FIXTURES.task_static_001,
+        task_sandbox_001: RISK_SUMMARY_FIXTURES.task_sandbox_001
+      }
+    });
+
+    await renderAppAtRoute("/tasks/task_asset_001");
+
+    expect(await screen.findByText(/degraded api data/i)).toBeInTheDocument();
+    expect(screen.getByText(/risk summary/i)).toBeInTheDocument();
+    expect(screen.getByText(/0 total findings/i)).toBeInTheDocument();
+  });
 });

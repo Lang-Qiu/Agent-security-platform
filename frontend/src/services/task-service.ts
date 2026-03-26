@@ -5,21 +5,22 @@ import type { RiskSummary, Task } from "../../../shared/types/task";
 import { taskRiskSummaryMocks } from "../mocks/task-risk-summaries";
 import { taskQueueMocks } from "../mocks/tasks";
 import { taskResultMocks } from "../mocks/task-results";
-import { requestApiData, type ApiClientOptions } from "./api-client";
+import { requestApiDataWithStatus, type ApiClientOptions } from "./api-client";
 
 const TASKS_ENDPOINT = "/api/tasks";
 const DEFAULT_RESULT_SUMMARY = "Result details are not available yet.";
+export type TaskDataSource = "api" | "degraded" | "mock";
 
 export interface TaskListData {
   tasks: Task[];
-  source: "api" | "mock";
+  source: TaskDataSource;
 }
 
 export interface TaskDetailData {
   task: Task;
   result: BaseResult<ResultDetails>;
   riskSummary: RiskSummary;
-  source: "api" | "mock";
+  source: TaskDataSource;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -118,7 +119,7 @@ function normalizeResult(task: Task, rawResult: unknown): BaseResult<ResultDetai
 
 export async function listTasks(input: {
 } & ApiClientOptions = {}): Promise<TaskListData> {
-  const apiTasks = await requestApiData({
+  const apiTasks = await requestApiDataWithStatus({
     path: TASKS_ENDPOINT,
     options: input,
     normalize: (value) => {
@@ -130,14 +131,17 @@ export async function listTasks(input: {
         .map((item) => normalizeTask(item))
         .filter((task): task is Task => task !== null);
 
-      return normalizedTasks;
+      return {
+        tasks: normalizedTasks,
+        hasInvalidRows: normalizedTasks.length !== value.length
+      };
     }
   });
 
-  if (apiTasks) {
+  if (apiTasks.data) {
     return {
-      tasks: apiTasks,
-      source: "api"
+      tasks: apiTasks.data.tasks,
+      source: apiTasks.data.hasInvalidRows ? "degraded" : "api"
     };
   }
 
@@ -156,38 +160,40 @@ export async function getTaskDetail(
   const mockRiskSummary = findMockRiskSummary(taskId);
 
   const [taskData, resultData, riskSummaryData] = await Promise.all([
-    requestApiData({
+    requestApiDataWithStatus({
       path: `${TASKS_ENDPOINT}/${taskId}`,
       options: input,
       normalize: normalizeTask
     }),
-    requestApiData({
+    requestApiDataWithStatus({
       path: `${TASKS_ENDPOINT}/${taskId}/result`,
       options: input,
       normalize: normalizeBaseResult
     }),
-    requestApiData({
+    requestApiDataWithStatus({
       path: `${TASKS_ENDPOINT}/${taskId}/risk-summary`,
       options: input,
       normalize: normalizeRiskSummary
     })
   ]);
 
-  if (taskData && resultData && riskSummaryData) {
+  if (taskData.data && resultData.data && riskSummaryData.data) {
     return {
-      task: taskData,
-      result: resultData,
-      riskSummary: riskSummaryData,
+      task: taskData.data,
+      result: resultData.data,
+      riskSummary: riskSummaryData.data,
       source: "api"
     };
   }
 
-  if (taskData) {
+  if (taskData.data) {
+    const isDegraded = resultData.status !== "ok" || riskSummaryData.status !== "ok";
+
     return {
-      task: taskData,
-      result: resultData ?? normalizeResult(taskData, null),
-      riskSummary: riskSummaryData ?? buildFallbackRiskSummary(taskData),
-      source: "api"
+      task: taskData.data,
+      result: resultData.data ?? normalizeResult(taskData.data, null),
+      riskSummary: riskSummaryData.data ?? buildFallbackRiskSummary(taskData.data),
+      source: isDegraded ? "degraded" : "api"
     };
   }
 

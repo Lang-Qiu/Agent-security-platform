@@ -108,6 +108,37 @@ describe("tasks page", () => {
     expect(screen.getByText(/create or sync tasks to populate the queue workspace/i)).toBeInTheDocument();
   });
 
+  test("renders a degraded source badge when backend data is partially invalid", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () =>
+          createTaskListResponse([
+            TASK_ROWS[0],
+            {
+              task_id: "task_invalid_001",
+              task_type: "asset_scan",
+              engine_type: "skills_static",
+              status: "pending",
+              title: "Broken task row",
+              target: {
+                target_type: "url",
+                target_value: "https://broken.example.com"
+              },
+              created_at: "2026-03-26T10:00:00Z",
+              updated_at: "2026-03-26T10:00:00Z"
+            }
+          ])
+      })
+    );
+
+    await renderAppAtRoute("/tasks");
+
+    expect(await screen.findByText(/degraded api data/i)).toBeInTheDocument();
+    expect(screen.getByText("task_asset_001")).toBeInTheDocument();
+  });
+
   test("navigates to the task detail route when the operator clicks view details", async () => {
     await renderAppAtRoute("/tasks");
 

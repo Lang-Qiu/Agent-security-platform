@@ -10,7 +10,7 @@ import { SandboxAlertSection } from "../components/task-detail/SandboxAlertSecti
 import { StaticAnalysisResultSection } from "../components/task-detail/StaticAnalysisResultSection";
 import { TaskOverviewSection } from "../components/task-detail/TaskOverviewSection";
 import { TaskRiskSummarySection } from "../components/task-detail/TaskRiskSummarySection";
-import { getTaskDetail, type TaskDetailData } from "../services/task-service";
+import { getTaskDetail, type TaskDataSource, type TaskDetailData } from "../services/task-service";
 
 const { Paragraph, Text, Title } = Typography;
 
@@ -27,7 +27,7 @@ function TaskDetailSections({ detail }: { detail: TaskDetailData }) {
   }
 }
 
-function TaskDetailHero({ task, source }: { task: Task; source: "api" | "mock" }) {
+function TaskDetailHero({ task, source }: { task: Task; source: TaskDataSource }) {
   return (
     <section className="console-panel task-detail-hero">
       <div>

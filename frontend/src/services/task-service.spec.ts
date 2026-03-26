@@ -152,6 +152,78 @@ describe("task service", () => {
     expect(result?.riskSummary.total_findings).toBe(0);
   });
 
+  test("listTasks marks the data source as degraded when the api shell includes invalid task rows", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () =>
+        createSuccessResponse([
+          TASK_FIXTURE,
+          {
+            task_id: "task_invalid_001",
+            task_type: "asset_scan",
+            engine_type: "skills_static",
+            status: "pending",
+            title: "Broken row",
+            target: {
+              target_type: "url",
+              target_value: "https://broken.example.com"
+            },
+            created_at: "2026-03-26T12:01:00Z",
+            updated_at: "2026-03-26T12:01:00Z"
+          }
+        ])
+    });
+
+    const result = await listTasks({
+      fetchImpl: fetchMock as unknown as typeof fetch
+    });
+
+    expect(result.source).toBe("degraded");
+    expect(result.tasks).toHaveLength(1);
+    expect(result.tasks[0]?.task_id).toBe("task_asset_201");
+  });
+
+  test("getTaskDetail marks the data source as degraded when the task exists but risk summary is missing", async () => {
+    const fetchMock = vi.fn().mockImplementation(async (resource: string | URL) => {
+      const url = String(resource);
+
+      if (url.endsWith("/api/tasks/task_asset_201")) {
+        return {
+          ok: true,
+          json: async () => createSuccessResponse(TASK_FIXTURE)
+        };
+      }
+
+      if (url.endsWith("/api/tasks/task_asset_201/result")) {
+        return {
+          ok: true,
+          json: async () => createSuccessResponse(RESULT_FIXTURE)
+        };
+      }
+
+      if (url.endsWith("/api/tasks/task_asset_201/risk-summary")) {
+        return {
+          ok: true,
+          json: async () => createSuccessResponse(null)
+        };
+      }
+
+      return {
+        ok: false,
+        json: async () => createSuccessResponse(null)
+      };
+    });
+
+    const result = await getTaskDetail("task_asset_201", {
+      fetchImpl: fetchMock as unknown as typeof fetch
+    });
+
+    expect(result?.source).toBe("degraded");
+    expect(result?.task.task_id).toBe("task_asset_201");
+    expect(result?.result.task_id).toBe("task_asset_201");
+    expect(result?.riskSummary.total_findings).toBe(0);
+  });
+
   test("listTasks returns mock data without calling fetch when mode is mock-only", async () => {
     const fetchMock = vi.fn();
 

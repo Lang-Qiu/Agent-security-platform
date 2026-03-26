@@ -1,8 +1,14 @@
 import { Tag } from "antd";
 
-export function DataSourceTag({ source }: { source: "api" | "mock" }) {
+import type { TaskDataSource } from "../services/task-service";
+
+export function DataSourceTag({ source }: { source: TaskDataSource }) {
   if (source === "api") {
     return <Tag color="green">Backend API</Tag>;
+  }
+
+  if (source === "degraded") {
+    return <Tag color="orange">Degraded API Data</Tag>;
   }
 
   return <Tag color="gold">Mock Fallback</Tag>;

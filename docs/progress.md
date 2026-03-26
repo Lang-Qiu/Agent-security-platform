@@ -129,3 +129,18 @@ Recommended fields:
   - backend now uses `TaskEngineService` as the stable platform-to-engine handoff point instead of letting `TaskCenterService` manage adapter details directly
   - each adapter now reserves both dispatch-payload creation and initial result-detail creation for `asset-scan`, `skills-static`, and `sandbox`
   - future engine submit/poll/callback logic can extend `TaskEngineService` and adapter implementations without changing the current public task APIs
+
+## 2026-03-26 - frontend data source state refinement
+- requirement: refine frontend integration state from `api/mock` into `api/degraded/mock`
+- scope: keep the existing tasks pages and backend API unchanged, but make partial contract failures visible instead of silently presenting them as healthy backend data
+- tests:
+  - `frontend/src/services/task-service.spec.ts`
+  - `frontend/src/pages/tasks.page.spec.tsx`
+  - `frontend/src/pages/task-detail.page.spec.tsx`
+- test result: pass; `cmd /c npm run test --prefix frontend -- src/services/task-service.spec.ts src/pages/tasks.page.spec.tsx src/pages/task-detail.page.spec.tsx` and `cmd /c npm run test:frontend`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - frontend services now distinguish between fully valid backend responses, partially degraded backend responses, and pure mock fallback
+  - invalid rows in `GET /api/tasks` now keep valid rows but surface a degraded state instead of silently claiming full backend health
+  - task detail now marks the page as degraded when `task` exists but `result` or `risk-summary` must be synthesized locally
