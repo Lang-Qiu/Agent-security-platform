@@ -1274,3 +1274,19 @@ Frontend data-source indicators are page-scoped status signals, not global layou
 - `Mock Fallback`
 
 These labels should only appear inside pages or page-level sections that have actually resolved their own data source. The shared console layout header must stay neutral so it does not conflict with page-specific integration state.
+
+## REQ-11 Backend Adapter Registration Guards
+
+The backend engine handoff layer now enforces two internal consistency rules before a task is dispatched or mapped into initial artifacts:
+
+- only one adapter may be registered for a given `task_type`
+- `task.engine_type` must match the resolved adapter `engineType`
+
+If either rule is violated, the backend raises a `DomainError` instead of silently continuing with an inconsistent engine handoff.
+
+Current internal error codes:
+
+- `ENGINE_ADAPTER_DUPLICATE_REGISTRATION`
+- `ENGINE_ADAPTER_ENGINE_TYPE_MISMATCH`
+
+These guards are internal backend contract protections. They are meant to surface wiring mistakes early while the three engine adapters remain placeholders and before real engine submit/poll/callback flows are added.

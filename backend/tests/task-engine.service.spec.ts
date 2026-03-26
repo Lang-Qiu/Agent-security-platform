@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import type { Task } from "../../shared/types/task.ts";
 
 const engineServicePath = resolve(import.meta.dirname, "../src/modules/task-center/task-engine.service.ts");
+const registryPath = resolve(import.meta.dirname, "../src/modules/task-center/adapters/engine-adapter-registry.ts");
 const assetAdapterPath = resolve(import.meta.dirname, "../src/modules/task-center/adapters/asset-scan.adapter.ts");
 const skillsAdapterPath = resolve(import.meta.dirname, "../src/modules/task-center/adapters/skills-static.adapter.ts");
 const sandboxAdapterPath = resolve(import.meta.dirname, "../src/modules/task-center/adapters/sandbox.adapter.ts");
@@ -36,6 +37,12 @@ type TaskEngineServiceModule = {
   TaskEngineService?: new (options: { adapters: unknown[] }) => {
     createDispatchTicket: (task: Task) => unknown;
     createInitialArtifacts: (task: Task) => unknown;
+  };
+};
+
+type EngineAdapterRegistryModule = {
+  EngineAdapterRegistry?: new (adapters: unknown[]) => {
+    getRequiredAdapter: (taskType: Task["task_type"]) => unknown;
   };
 };
 
@@ -376,5 +383,58 @@ test("task engine service maps tasks into initial result and risk summary shells
         }
       }
     ]
+  );
+});
+
+test("engine adapter registry rejects duplicate adapter registration for the same task type", async () => {
+  const registryModule = await importIfExists<EngineAdapterRegistryModule>(registryPath);
+  const assetAdapterModule = await importIfExists<AdapterModule>(assetAdapterPath);
+
+  assert.notEqual(registryModule, null, "engine adapter registry module should exist before duplicate registration protection can be verified");
+  assert.notEqual(assetAdapterModule, null, "asset-scan adapter should exist before duplicate registration protection can be verified");
+  assert.ok(registryModule?.EngineAdapterRegistry, "engine adapter registry should expose a concrete registry class");
+  assert.ok(assetAdapterModule?.AssetScanTaskAdapter, "asset-scan adapter should expose a concrete adapter class");
+
+  assert.throws(
+    () =>
+      new registryModule.EngineAdapterRegistry([
+        new assetAdapterModule.AssetScanTaskAdapter(),
+        new assetAdapterModule.AssetScanTaskAdapter()
+      ]),
+    (error: unknown) => {
+      assert.equal(typeof error, "object");
+      assert.notEqual(error, null);
+      assert.equal((error as { name?: string }).name, "DomainError");
+      assert.equal((error as { code?: string }).code, "ENGINE_ADAPTER_DUPLICATE_REGISTRATION");
+      return true;
+    }
+  );
+});
+
+test("task engine service rejects a misconfigured adapter whose engine type does not match the task contract", async () => {
+  const serviceModule = await importIfExists<TaskEngineServiceModule>(engineServicePath);
+  const assetAdapterModule = await importIfExists<AdapterModule>(assetAdapterPath);
+
+  assert.notEqual(serviceModule, null, "task-engine service module should exist before adapter engine type validation can be verified");
+  assert.notEqual(assetAdapterModule, null, "asset-scan adapter should exist before adapter engine type validation can be verified");
+  assert.ok(serviceModule?.TaskEngineService, "task-engine service should expose a concrete service class");
+  assert.ok(assetAdapterModule?.AssetScanTaskAdapter, "asset-scan adapter should expose a concrete adapter class");
+
+  const misconfiguredAdapter = new assetAdapterModule.AssetScanTaskAdapter();
+  misconfiguredAdapter.engineType = "sandbox";
+
+  const service = new serviceModule.TaskEngineService({
+    adapters: [misconfiguredAdapter]
+  });
+
+  assert.throws(
+    () => service.createDispatchTicket(createTask("asset_scan")),
+    (error: unknown) => {
+      assert.equal(typeof error, "object");
+      assert.notEqual(error, null);
+      assert.equal((error as { name?: string }).name, "DomainError");
+      assert.equal((error as { code?: string }).code, "ENGINE_ADAPTER_ENGINE_TYPE_MISMATCH");
+      return true;
+    }
   );
 });

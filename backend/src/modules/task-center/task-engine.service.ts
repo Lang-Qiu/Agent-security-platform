@@ -1,5 +1,6 @@
 import type { BaseResult, ResultDetails } from "../../../../shared/types/result.ts";
 import type { RiskSummary, Task } from "../../../../shared/types/task.ts";
+import { DomainError } from "../../common/errors/domain-error.ts";
 import { EngineAdapterRegistry } from "./adapters/engine-adapter-registry.ts";
 import type { EngineDispatchTicket, TaskEngineAdapter } from "./adapters/engine-adapter.ts";
 
@@ -17,8 +18,22 @@ export class TaskEngineService {
     this.adapterRegistry = new EngineAdapterRegistry(options.adapters);
   }
 
-  createDispatchTicket(task: Task): EngineDispatchTicket {
+  getValidatedAdapter(task: Task): TaskEngineAdapter {
     const adapter = this.adapterRegistry.getRequiredAdapter(task.task_type);
+
+    if (task.engine_type !== adapter.engineType) {
+      throw new DomainError(
+        "The registered engine adapter does not match the task engine type",
+        "ENGINE_ADAPTER_ENGINE_TYPE_MISMATCH",
+        500
+      );
+    }
+
+    return adapter;
+  }
+
+  createDispatchTicket(task: Task): EngineDispatchTicket {
+    const adapter = this.getValidatedAdapter(task);
 
     return {
       task_id: task.task_id,
@@ -29,7 +44,7 @@ export class TaskEngineService {
   }
 
   createInitialArtifacts(task: Task): TaskInitialArtifacts {
-    const adapter = this.adapterRegistry.getRequiredAdapter(task.task_type);
+    const adapter = this.getValidatedAdapter(task);
     const summary = task.summary ?? DEFAULT_PENDING_TASK_SUMMARY;
 
     const result: BaseResult<ResultDetails> = {

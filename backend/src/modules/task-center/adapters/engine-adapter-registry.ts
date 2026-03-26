@@ -6,9 +6,19 @@ export class EngineAdapterRegistry {
   adaptersByTaskType: Map<TaskType, TaskEngineAdapter>;
 
   constructor(adapters: TaskEngineAdapter[]) {
-    this.adaptersByTaskType = new Map(
-      adapters.map((adapter) => [adapter.taskType, adapter as TaskEngineAdapter])
-    );
+    this.adaptersByTaskType = new Map();
+
+    for (const adapter of adapters) {
+      if (this.adaptersByTaskType.has(adapter.taskType)) {
+        throw new DomainError(
+          "An engine adapter is already registered for the requested task type",
+          "ENGINE_ADAPTER_DUPLICATE_REGISTRATION",
+          500
+        );
+      }
+
+      this.adaptersByTaskType.set(adapter.taskType, adapter as TaskEngineAdapter);
+    }
   }
 
   getRequiredAdapter(taskType: TaskType): TaskEngineAdapter {

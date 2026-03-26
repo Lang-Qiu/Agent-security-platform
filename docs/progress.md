@@ -188,3 +188,17 @@ Recommended fields:
   - the shared layout header no longer claims a global mock state
   - `Backend API`, `Degraded API Data`, `Integration Error`, and `Mock Fallback` remain page-scoped signals owned by page-level data loading
   - this removes the visual conflict between shell chrome and real page integration status
+
+## 2026-03-26 - backend adapter guardrails
+- requirement: fix backend adapter registry and task-engine service so duplicate adapter registration and engine-type mismatches fail fast
+- scope: add explicit registry protection for duplicate `task_type` registration and add task-to-adapter engine-type validation before dispatch ticket or initial artifact creation
+- tests:
+  - `backend/tests/task-engine.service.spec.ts`
+- test result: pass; `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/task-engine.service.spec.ts`, `cmd /c npm run test:backend`, and `cmd /c npm run test`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - the adapter registry now rejects multiple adapters claiming the same `task_type`
+  - the task-engine service now fails fast when `task.engine_type` and adapter `engineType` drift apart
+  - backend engine handoff no longer silently hides placeholder wiring mistakes that would become harder to debug once real engines are connected
