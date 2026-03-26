@@ -26,3 +26,13 @@ if (!globalThis.ResizeObserver) {
 if (!HTMLElement.prototype.scrollIntoView) {
   HTMLElement.prototype.scrollIntoView = vi.fn();
 }
+
+const originalGetComputedStyle = window.getComputedStyle.bind(window);
+
+window.getComputedStyle = ((element: Element, pseudoElt?: string | null) => {
+  if (pseudoElt) {
+    return originalGetComputedStyle(element);
+  }
+
+  return originalGetComputedStyle(element);
+}) as typeof window.getComputedStyle;

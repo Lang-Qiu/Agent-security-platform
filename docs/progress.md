@@ -70,3 +70,16 @@ Recommended fields:
   - frontend now exposes a stable control-plane shell for future Tasks and Task Detail work
   - overview, task queue, task detail, and result routes all sit behind one reusable layout
   - overview uses shared `TaskStatus` and `RiskLevel` driven mock view models instead of introducing frontend-private enums
+
+## 2026-03-26 - REQ-04 frontend tasks page
+- requirement: `REQ-04` frontend Tasks page
+- scope: replace the `/tasks` placeholder with a minimal queue workspace, add a thin frontend task service, keep the list aligned to shared task contracts, and preserve a stable entry into `/tasks/:taskId`
+- tests:
+  - `frontend/src/pages/tasks.page.spec.tsx`
+- test result: pass; `cmd /c npm run test:frontend`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - Tasks page now renders a minimal operator-facing table with `task_id`, `task_type`, `status`, `risk_level`, and `created_at`
+  - the frontend service prefers the existing `GET /api/tasks` contract and falls back to local mock rows when the backend is unavailable
+  - each row now exposes a stable detail-route entry point so the next requirement can deepen `/tasks/:taskId` without rewriting the list shell

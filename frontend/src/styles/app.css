@@ -131,6 +131,11 @@ a {
   gap: 20px;
 }
 
+.tasks-page {
+  display: grid;
+  gap: 20px;
+}
+
 .overview-hero {
   display: flex;
   align-items: flex-end;
@@ -156,7 +161,31 @@ a {
   pointer-events: none;
 }
 
+.tasks-hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  overflow: hidden;
+  position: relative;
+}
+
+.tasks-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(135deg, rgba(20, 108, 114, 0.12), transparent 42%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.35), transparent 70%);
+  pointer-events: none;
+}
+
 .overview-hero > * {
+  position: relative;
+  z-index: 1;
+}
+
+.tasks-hero > * {
   position: relative;
   z-index: 1;
 }
@@ -172,6 +201,11 @@ a {
 }
 
 .overview-copy {
+  max-width: 720px;
+  color: var(--console-muted);
+}
+
+.tasks-copy {
   max-width: 720px;
   color: var(--console-muted);
 }
@@ -192,6 +226,14 @@ a {
   display: grid;
   grid-template-columns: 1.15fr 0.85fr;
   gap: 20px;
+}
+
+.tasks-table-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
 }
 
 .stack-list {
@@ -232,6 +274,11 @@ a {
     flex-direction: column;
     align-items: flex-start;
   }
+
+  .tasks-hero {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 
 @media (max-width: 900px) {
@@ -259,6 +306,11 @@ a {
   .console-panel {
     padding: 20px;
     border-radius: 20px;
+  }
+
+  .tasks-table-header {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }
 
