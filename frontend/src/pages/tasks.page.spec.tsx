@@ -112,7 +112,7 @@ describe("tasks page", () => {
 
     fireEvent.click(await screen.findByRole("link", { name: /view details for task_asset_001/i }));
 
-    expect(await screen.findByRole("heading", { level: 1, name: /task detail/i })).toBeInTheDocument();
-    expect(screen.getByText("task_asset_001")).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { level: 2, name: /task overview/i })).toBeInTheDocument();
+    expect(screen.getAllByText("task_asset_001").length).toBeGreaterThan(0);
   });
 });

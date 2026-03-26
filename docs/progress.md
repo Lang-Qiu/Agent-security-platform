@@ -83,3 +83,17 @@ Recommended fields:
   - Tasks page now renders a minimal operator-facing table with `task_id`, `task_type`, `status`, `risk_level`, and `created_at`
   - the frontend service prefers the existing `GET /api/tasks` contract and falls back to local mock rows when the backend is unavailable
   - each row now exposes a stable detail-route entry point so the next requirement can deepen `/tasks/:taskId` without rewriting the list shell
+
+## 2026-03-26 - REQ-05 frontend task detail page
+- requirement: `REQ-05` frontend Task detail page
+- scope: replace the `/tasks/:taskId` placeholder with a stable detail workspace, add a shared task overview section, map `task_type` to three result sections, and fall back cleanly when result details are missing
+- tests:
+  - `frontend/src/pages/task-detail.page.spec.tsx`
+  - `frontend/src/pages/tasks.page.spec.tsx`
+- test result: pass; `cmd /c npm run test:frontend`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - Task detail now has one shared information area plus three task-type-specific result placeholders: asset scan, static analysis, and sandbox alerts
+  - the detail service fetches `/api/tasks/:taskId` and `/api/tasks/:taskId/result` in parallel, then falls back to local mocks when the backend is unavailable
+  - missing or empty `details` no longer breaks the page; the result region stays structurally stable and shows a unified fallback message instead
