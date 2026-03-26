@@ -1290,3 +1290,14 @@ Current internal error codes:
 - `ENGINE_ADAPTER_ENGINE_TYPE_MISMATCH`
 
 These guards are internal backend contract protections. They are meant to surface wiring mistakes early while the three engine adapters remain placeholders and before real engine submit/poll/callback flows are added.
+
+## REQ-12 Frontend Task Presentation Formatters
+
+Task presentation labels that are reused across multiple frontend pages should be centralized behind shared frontend formatter utilities instead of being redefined per page.
+
+Current shared formatter responsibilities:
+
+- `task_type` -> stable operator-facing label
+- task timestamps -> stable UTC `en-US` display label
+
+This keeps the Tasks page and Task detail page aligned while the admin console grows. Shared platform contracts still live in `shared/`, but repeated view-only formatting logic should stay in one frontend utility instead of drifting across multiple components.

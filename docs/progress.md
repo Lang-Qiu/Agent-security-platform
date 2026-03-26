@@ -202,3 +202,18 @@ Recommended fields:
   - the adapter registry now rejects multiple adapters claiming the same `task_type`
   - the task-engine service now fails fast when `task.engine_type` and adapter `engineType` drift apart
   - backend engine handoff no longer silently hides placeholder wiring mistakes that would become harder to debug once real engines are connected
+
+## 2026-03-26 - frontend shared task formatters
+- requirement: remove repeated task label and timestamp formatting logic from multiple frontend presentation components
+- scope: extract shared task presentation helpers, reuse them in the Tasks page and Task detail overview section, and enforce the boundary with a repository-level structure test
+- tests:
+  - `frontend/src/utils/task-formatters.spec.ts`
+  - `tests/repository/frontend-formatting-boundary.spec.ts`
+- test result: pass; `cmd /c npm run test --prefix frontend -- src/utils/task-formatters.spec.ts`, `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/frontend-formatting-boundary.spec.ts`, `cmd /c npm run test:frontend`, and `cmd /c npm run test`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - `TaskListPage` and `TaskOverviewSection` now share one formatter source for `task_type` and timestamp labels
+  - root `test:repo` now includes a structure guard so these two pages do not silently drift back into duplicated presentation helpers
+  - the refactor keeps page behavior stable while reducing future formatting drift as more task-facing pages are added

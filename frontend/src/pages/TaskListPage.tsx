@@ -9,30 +9,9 @@ import { DataSourceTag } from "../components/DataSourceTag";
 import { RiskTag } from "../components/RiskTag";
 import { StatusTag } from "../components/StatusTag";
 import { listTasks, type TaskDataSource } from "../services/task-service";
+import { formatTaskTimestamp, formatTaskTypeLabel } from "../utils/task-formatters";
 
 const { Paragraph, Text, Title } = Typography;
-
-function formatTaskType(taskType: Task["task_type"]): string {
-  switch (taskType) {
-    case "asset_scan":
-      return "Asset Scan";
-    case "static_analysis":
-      return "Static Analysis";
-    case "sandbox_run":
-      return "Sandbox Run";
-  }
-}
-
-function formatCreatedAt(value: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: "UTC"
-  }).format(new Date(value));
-}
 
 function createTaskColumns(): ColumnsType<Task> {
   return [
@@ -46,7 +25,7 @@ function createTaskColumns(): ColumnsType<Task> {
       title: "Task Type",
       dataIndex: "task_type",
       key: "task_type",
-      render: (value: Task["task_type"]) => formatTaskType(value)
+      render: (value: Task["task_type"]) => formatTaskTypeLabel(value)
     },
     {
       title: "Status",
@@ -64,7 +43,7 @@ function createTaskColumns(): ColumnsType<Task> {
       title: "Created At",
       dataIndex: "created_at",
       key: "created_at",
-      render: (value: string) => <Text>{formatCreatedAt(value)}</Text>
+      render: (value: string) => <Text>{formatTaskTimestamp(value)}</Text>
     },
     {
       title: "Action",

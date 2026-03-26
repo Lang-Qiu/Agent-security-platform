@@ -9,7 +9,7 @@
   "scripts": {
     "test": "npm run test:all",
     "test:all": "npm run test:repo && npm run test:shared && npm run test:backend && npm run test:frontend",
-    "test:repo": "node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/root-test-entry.spec.ts",
+    "test:repo": "node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/root-test-entry.spec.ts tests/repository/frontend-formatting-boundary.spec.ts",
     "test:shared": "node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/task-contract.spec.ts shared/tests/api-response.contract.spec.ts shared/tests/result-contract.spec.ts",
     "test:backend": "node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/task-center.service.spec.ts backend/tests/task-engine.service.spec.ts tests/integration/backend-task-center.api.spec.ts",
     "test:frontend": "npm run test --prefix frontend"

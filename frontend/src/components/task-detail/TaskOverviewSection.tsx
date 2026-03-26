@@ -3,30 +3,9 @@ import { Descriptions, Space, Tag, Typography } from "antd";
 import type { Task } from "../../../../../shared/types/task";
 import { RiskTag } from "../RiskTag";
 import { StatusTag } from "../StatusTag";
+import { formatTaskTimestamp, formatTaskTypeLabel } from "../../utils/task-formatters";
 
 const { Paragraph, Text, Title } = Typography;
-
-function formatTaskType(taskType: Task["task_type"]): string {
-  switch (taskType) {
-    case "asset_scan":
-      return "Asset Scan";
-    case "static_analysis":
-      return "Static Analysis";
-    case "sandbox_run":
-      return "Sandbox Run";
-  }
-}
-
-function formatTimestamp(value: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: "UTC"
-  }).format(new Date(value));
-}
 
 export function TaskOverviewSection({ task }: { task: Task }) {
   return (
@@ -35,7 +14,7 @@ export function TaskOverviewSection({ task }: { task: Task }) {
       <Space wrap className="task-detail-tags">
         <StatusTag status={task.status} />
         {task.risk_level ? <RiskTag level={task.risk_level} /> : null}
-        <Tag color="geekblue">{formatTaskType(task.task_type)}</Tag>
+        <Tag color="geekblue">{formatTaskTypeLabel(task.task_type)}</Tag>
       </Space>
       <Paragraph className="task-detail-copy">{task.summary ?? "Task summary is not available yet."}</Paragraph>
       <Descriptions column={1} size="small" bordered>
@@ -45,8 +24,8 @@ export function TaskOverviewSection({ task }: { task: Task }) {
         <Descriptions.Item label="Title">{task.title}</Descriptions.Item>
         <Descriptions.Item label="Target">{task.target.display_name ?? task.target.target_value}</Descriptions.Item>
         <Descriptions.Item label="Target Type">{task.target.target_type}</Descriptions.Item>
-        <Descriptions.Item label="Created At">{formatTimestamp(task.created_at)}</Descriptions.Item>
-        <Descriptions.Item label="Updated At">{formatTimestamp(task.updated_at)}</Descriptions.Item>
+        <Descriptions.Item label="Created At">{formatTaskTimestamp(task.created_at)}</Descriptions.Item>
+        <Descriptions.Item label="Updated At">{formatTaskTimestamp(task.updated_at)}</Descriptions.Item>
       </Descriptions>
     </section>
   );
