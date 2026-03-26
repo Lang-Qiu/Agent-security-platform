@@ -113,3 +113,19 @@ Recommended fields:
   - the frontend list route now reads `GET /api/tasks` through a shared-contract-aware service instead of depending only on static page mocks
   - the frontend detail route now reads `GET /api/tasks/:taskId`, `GET /api/tasks/:taskId/result`, and `GET /api/tasks/:taskId/risk-summary`
   - local frontend development now proxies `/api` to the backend on `127.0.0.1:3000`, while service-level fallback keeps isolated frontend work possible when the backend is offline
+
+## 2026-03-26 - backend engine adapter baseline
+- requirement: backend engine adapter/service integration points
+- scope: keep the public task-center API unchanged, add a stable internal handoff from `Task` to engine adapters, and centralize initial `BaseResult` / `RiskSummary` creation behind a dedicated service
+- tests:
+  - `backend/tests/task-engine.service.spec.ts`
+  - `backend/tests/task-center.service.spec.ts`
+- test result: pass; `cmd /c npm run test:backend` and `cmd /c npm run test`
+- docs updated:
+  - `docs/architecture.md`
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - backend now uses `TaskEngineService` as the stable platform-to-engine handoff point instead of letting `TaskCenterService` manage adapter details directly
+  - each adapter now reserves both dispatch-payload creation and initial result-detail creation for `asset-scan`, `skills-static`, and `sandbox`
+  - future engine submit/poll/callback logic can extend `TaskEngineService` and adapter implementations without changing the current public task APIs

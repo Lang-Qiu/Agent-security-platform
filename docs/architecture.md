@@ -230,3 +230,25 @@ engines/<engine-name>/
 - TypeScript 约束：`strict: true`
 
 以上基线用于平台骨架阶段的契约与测试落地，后续如果项目级工具链决策变化，应先更新 `metadata.md` 再统一调整。
+## REQ-07 Backend Engine Adapter Baseline
+
+当前 backend 在 `task-center` 内新增了一层稳定的引擎接入边界：
+
+- `TaskCenterService` 继续负责任务创建、任务查询和仓储写入
+- `TaskEngineService` 负责把 `Task` 转成未来引擎会消费的 dispatch ticket，并生成平台统一的初始 `BaseResult` 与 `RiskSummary`
+- `EngineAdapterRegistry` 负责按 `task_type` 查找 adapter，避免平台主流程散落引擎分支判断
+- 三个 adapter 目前都只保留占位职责，不承载真实引擎执行逻辑
+
+当前 adapter 的稳定接口包括：
+
+- `taskType`
+- `engineType`
+- `createDispatchPayload(task)`
+- `createInitialDetails(task)`
+
+后续真实引擎接入时，优先保持以下位置稳定：
+
+- 对外 HTTP API 不变
+- `Task`、`BaseResult`、`RiskSummary` 的平台壳子不变
+- `TaskCenterService` 的任务中心职责不变
+- 新的引擎提交、轮询、回调或结果回填逻辑优先落在 `TaskEngineService` 与 adapter 层，而不是直接写进 controller

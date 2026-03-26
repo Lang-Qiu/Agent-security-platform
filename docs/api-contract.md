@@ -1213,3 +1213,28 @@
 - 所有联调数据都必须先经过 `shared/contracts/*` 归一化，再进入 React 页面和组件
 
 本地开发环境下，frontend dev server 通过 Vite proxy 将 `/api` 与 `/health` 转发到 `http://127.0.0.1:3000`。
+## REQ-07 Backend Engine Adapter Baseline
+
+本 requirement 不新增新的对外 HTTP 路由，但补充 backend 内部稳定的引擎接入边界，供后续真实引擎实现复用。
+
+当前 backend 内部保留的稳定 handoff 对象为：
+
+- `EngineDispatchTicket`
+  - `task_id`
+  - `task_type`
+  - `engine_type`
+  - `payload`
+
+当前三类任务预留的 dispatch payload 形状如下：
+
+- `asset_scan` -> `{ target, scan_parameters }`
+- `static_analysis` -> `{ target, analysis_parameters }`
+- `sandbox_run` -> `{ target, runtime_parameters }`
+
+平台在真实引擎输出返回前，仍以统一壳子持有初始状态：
+
+- `Task`
+- `BaseResult`
+- `RiskSummary`
+
+`TaskEngineService.createInitialArtifacts(task)` 会基于 adapter 生成三类任务的初始结果细节，但这些 adapter payload 属于 backend 内部契约，不应直接暴露给 frontend。
