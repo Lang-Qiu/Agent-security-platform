@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --config vite.config.mjs --configLoader native",
-    "build": "vite build --config vite.config.mjs --configLoader native",
-    "test": "vitest run --config vitest.config.mjs --configLoader native --pool threads --maxWorkers 1 --no-file-parallelism"
+    "dev": "node ../node_modules/vite/bin/vite.js --config vite.config.mjs --configLoader native",
+    "build": "node ../node_modules/vite/bin/vite.js build --config vite.config.mjs --configLoader native",
+    "test": "node node_modules/vitest/vitest.mjs run --config vitest.config.mjs --configLoader native --pool threads --maxWorkers 1 --no-file-parallelism"
   },
   "dependencies": {
     "@ant-design/icons": "6.1.0",
