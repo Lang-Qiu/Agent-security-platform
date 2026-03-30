@@ -1,0 +1,44 @@
+version: "1.0"
+updated_at: "2026-03-30"
+owner: "asset-scan"
+description: "Probe catalog for asset exposure and fingerprint signal collection"
+
+probes:
+  - probe_id: "tcp_connect_default"
+    layer: "L1"
+    category: "port"
+    enabled: true
+    request:
+      protocol: "tcp"
+      method: "connect"
+      ports: [80, 443]
+      timeout_ms: 800
+      retry: 1
+    expected_signals:
+      - "open_port"
+    fallback:
+      action: "continue"
+      note: "Do not stop pipeline on single port timeout"
+    risk:
+      false_positive_risk: "low"
+      scope_note: "Generic exposure signal"
+
+  - probe_id: "http_root_head"
+    layer: "L1"
+    category: "http"
+    enabled: true
+    request:
+      protocol: "http"
+      method: "HEAD"
+      path: "/"
+      timeout_ms: 1200
+      retry: 1
+    expected_signals:
+      - "status_code"
+      - "headers"
+    fallback:
+      action: "degrade_to_get"
+      note: "If HEAD blocked, try GET /"
+    risk:
+      false_positive_risk: "medium"
+      scope_note: "Dependent on reverse proxy behavior"

@@ -1,0 +1,43 @@
+version: "1.0"
+updated_at: "2026-03-30"
+owner: "asset-scan"
+description: "Fingerprint rule table with weighted signals and evidence trace"
+
+fingerprints:
+  - fingerprint_id: "sample-agent-001"
+    product_name: "sample-agent"
+    product_version: "unknown"
+    priority: "P0"
+    signals:
+      - signal_id: "sig-port-1"
+        signal_type: "port"
+        match_operator: "equals"
+        match_value: "443"
+        weight: 0.35
+      - signal_id: "sig-header-1"
+        signal_type: "header"
+        key: "server"
+        match_operator: "contains"
+        match_value: "sample-agent"
+        weight: 0.40
+      - signal_id: "sig-path-1"
+        signal_type: "path"
+        match_operator: "equals"
+        match_value: "/health"
+        weight: 0.15
+      - signal_id: "sig-negative-1"
+        signal_type: "body"
+        match_operator: "contains"
+        match_value: "nginx default page"
+        weight: -0.20
+    confidence_hint:
+      high_threshold: 0.80
+      medium_threshold: 0.60
+    false_positive_notes:
+      - "Reverse proxy can mask backend identity"
+      - "Single header match is not enough"
+    evidence_source:
+      - source_type: "doc"
+        source_ref: "TBD"
+      - source_type: "sample"
+        source_ref: "samples/assets/fingerprint-positive/TBD.json"
