@@ -26,6 +26,7 @@ yarn-error.log*
 Thumbs.db
 .idea/
 .vscode/
+.history/
 
 # Local runtime artifacts
 tmp/
