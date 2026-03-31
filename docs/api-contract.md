@@ -124,6 +124,11 @@
 | `finished_at` | string | 否 | 实际完成时间 |
 | `metadata` | object | 否 | 平台保留扩展字段 |
 
+补充说明：
+
+- 当前离线 TDD 阶段，`asset_scan` 允许通过 `parameters.sample_ref` 指向仓库内 `samples/assets/` 下的样本 JSON。
+- 该参数仅用于规则消费与测试闭环，不代表已经接入真实扫描执行器。
+
 #### target 子对象
 
 | 字段 | 类型 | 必填 | 含义 |
@@ -343,6 +348,11 @@
 | `started_at` | string | 否 | 执行开始时间 |
 | `finished_at` | string | 否 | 执行完成时间 |
 | `metadata` | object | 否 | 资产扫描扩展字段 |
+
+补充说明：
+
+- 当前 backend 在 `asset_scan` 任务创建阶段不会执行真实探测，但如果任务参数提供 `sample_ref`，初始结果会基于离线样本预填 `fingerprint`、`confidence`、`matched_features`、`open_ports` 与 `http_endpoints`。
+- 当规则命中分数低于 `0.70` 时，结果仍会保留 `confidence` 与辅助线索，但不会输出 `fingerprint` 直出结论。
 
 #### fingerprint 子对象
 
@@ -746,6 +756,9 @@
     "target_type": "url",
     "target_value": "https://demo-agent.example.com",
     "display_name": "Demo Agent"
+  },
+  "parameters": {
+    "sample_ref": "samples/assets/fingerprint-positive/ollama.s001.json"
   }
 }
 ```

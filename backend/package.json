@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --experimental-strip-types --experimental-test-isolation=none --test tests/task-center.service.spec.ts ../tests/integration/backend-task-center.api.spec.ts"
+    "test": "node --experimental-strip-types --experimental-test-isolation=none --test tests/task-center.service.spec.ts tests/task-engine.service.spec.ts tests/asset-fingerprint.service.spec.ts ../tests/integration/backend-task-center.api.spec.ts"
   }
 }

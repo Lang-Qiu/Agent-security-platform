@@ -386,6 +386,36 @@ test("task engine service maps tasks into initial result and risk summary shells
   );
 });
 
+test("asset-scan adapter materializes offline fingerprint details when a bundled sample reference is provided", async () => {
+  const assetAdapterModule = await importIfExists<AdapterModule>(assetAdapterPath);
+
+  assert.notEqual(assetAdapterModule, null, "asset-scan adapter module should exist before sample-backed fingerprint details can be verified");
+  assert.ok(assetAdapterModule?.AssetScanTaskAdapter, "asset-scan adapter should expose a concrete adapter class");
+
+  if (!assetAdapterModule?.AssetScanTaskAdapter) {
+    return;
+  }
+
+  const assetAdapter = new assetAdapterModule.AssetScanTaskAdapter();
+  const task = createTask("asset_scan");
+  task.parameters = {
+    sample_ref: "samples/assets/fingerprint-positive/ollama.s001.json"
+  };
+
+  const details = assetAdapter.createInitialDetails(task) as {
+    fingerprint?: { framework?: string; agent_name?: string };
+    confidence?: number;
+    matched_features?: string[];
+    findings?: unknown[];
+  };
+
+  assert.equal(details.fingerprint?.framework, "ollama");
+  assert.equal(details.fingerprint?.agent_name, "Ollama");
+  assert.ok((details.confidence ?? 0) >= 0.8);
+  assert.ok((details.matched_features?.length ?? 0) >= 2);
+  assert.deepEqual(details.findings, []);
+});
+
 test("engine adapter registry rejects duplicate adapter registration for the same task type", async () => {
   const registryModule = await importIfExists<EngineAdapterRegistryModule>(registryPath);
   const assetAdapterModule = await importIfExists<AdapterModule>(assetAdapterPath);

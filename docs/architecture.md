@@ -252,3 +252,18 @@ engines/<engine-name>/
 - `Task`、`BaseResult`、`RiskSummary` 的平台壳子不变
 - `TaskCenterService` 的任务中心职责不变
 - 新的引擎提交、轮询、回调或结果回填逻辑优先落在 `TaskEngineService` 与 adapter 层，而不是直接写进 controller
+
+## REQ-ASSET-FINGERPRINT-002 Offline Matcher Baseline
+
+当前 `asset_scan` adapter 在占位基线之上新增了一条仅用于 TDD 的离线路径：
+
+- `AssetFingerprintService` 直接消费 `engines/asset-scan/rules/fingerprints.v1.yaml`
+- 服务读取 `samples/assets/fingerprint-positive` 与 `samples/assets/fingerprint-negative` 下的 JSON 样本，按权重规则计算置信度
+- `AssetScanTaskAdapter` 在收到 `parameters.sample_ref` 时，会把离线匹配结果映射为统一的 `AssetScanResultDetails`
+- 对外 HTTP API 保持原路径不变，新增能力只体现在 `details` 的初始内容上
+
+当前仍然明确不做：
+
+- 不发起真实网络请求
+- 不做后台异步执行或状态推进
+- 不把样本驱动逻辑泄漏成 engine 私有结构之外的额外平台契约

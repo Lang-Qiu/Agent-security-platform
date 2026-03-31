@@ -233,3 +233,38 @@ Recommended fields:
   - conservative confidence policy is aligned to `>=0.80 direct`, `0.70-0.79 suspected`, `<0.70 log only`
   - phase-B drafts now include target-specific probes for `openclaw-gateway`, `ollama`, `langflow`, and `autogpt`
   - next blocker: provide positive/negative sample JSON files for each P0 target to replace placeholder sample refs
+
+## 2026-03-31 - REQ-ASSET-FINGERPRINT-002 offline matcher baseline
+- requirement: `REQ-ASSET-FINGERPRINT-002` 基于离线样本的资产指纹匹配 TDD 实现
+- scope: consume the existing fingerprint rule YAML and bundled positive/negative samples, add a minimal backend matcher, and surface sample-backed initial asset-scan results through the existing task-center flow
+- tests:
+  - `backend/tests/asset-fingerprint.service.spec.ts`
+  - `backend/tests/task-engine.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- test result: pass; `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/asset-fingerprint.service.spec.ts backend/tests/task-engine.service.spec.ts tests/integration/backend-task-center.api.spec.ts` and `npm run test:backend`
+- docs updated:
+  - `docs/sprint-current.md`
+  - `docs/api-contract.md`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+  - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
+- notes:
+  - backend now reads `engines/asset-scan/rules/fingerprints.v1.yaml` directly instead of duplicating rule data in code
+  - `asset_scan` tasks can use `parameters.sample_ref` to hydrate initial fingerprint details from a bundled sample JSON during TDD
+  - `ollama`、`langflow`、`autogpt` positive samples now reach direct output thresholds in the offline matcher baseline
+  - `openclaw-gateway` positive sample currently reaches `0.65` and stays `log_only` because the bundled sample lacks the rule-required port evidence
+
+## 2026-03-31 - asset fingerprint documentation consolidation and next-step planning
+- requirement: consolidate the completed offline matcher work into beginner-facing and planning documents, and define the recommended next requirement
+- scope: update beginner guidance, refresh the master plan with current status plus next phases, switch sprint-current to the recommended evidence-strengthening requirement, and record the expected user inputs for the next step
+- tests: none; this iteration is documentation/planning only
+- test result: not run; no runtime behavior changed in this update
+- docs updated:
+  - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
+  - `docs/plans/agent-asset-fingerprinting-discovery-plan.md`
+  - `docs/sprint-current.md`
+  - `docs/progress.md`
+- notes:
+  - beginner guidance now reflects the real current state instead of the older “first make 8 samples” baseline
+  - the recommended next requirement is now `REQ-ASSET-EVIDENCE-003` rather than jumping straight into a real probe executor
+  - the plan now separates immediate evidence strengthening from the later minimal real probe execution phase

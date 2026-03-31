@@ -228,6 +228,63 @@ test("backend task center returns a created task together with its initial resul
   assert.equal(summaryBody.data.total_findings, 0);
 });
 
+test("backend task center exposes offline asset fingerprint details when an asset sample reference is provided", async (t) => {
+  const mainModule = await importIfExists<MainModule>(mainModulePath);
+
+  assert.notEqual(mainModule, null, "backend main module should exist before sample-backed asset fingerprint responses can be verified");
+
+  if (!mainModule?.createAppServer) {
+    return;
+  }
+
+  const server = mainModule.createAppServer();
+  const { baseUrl, close } = await startServer(server);
+  t.after(close);
+
+  const createdTaskResponse = await createTask(baseUrl, {
+    task_type: "asset_scan",
+    title: "Scan local ollama sample",
+    target: {
+      target_type: "url",
+      target_value: "https://demo-agent.example.com"
+    },
+    parameters: {
+      sample_ref: "samples/assets/fingerprint-positive/ollama.s001.json"
+    }
+  });
+
+  assert.equal(createdTaskResponse.status, 201);
+
+  const taskId = ((createdTaskResponse.body.data as { task_id: string }).task_id);
+  const resultResponse = await fetch(`${baseUrl}/api/tasks/${taskId}/result`);
+  const resultBody = (await resultResponse.json()) as {
+    success: boolean;
+    data: {
+      task_id: string;
+      task_type: string;
+      status: string;
+      details: {
+        fingerprint?: { framework?: string; agent_name?: string };
+        confidence?: number;
+        matched_features?: string[];
+        open_ports?: Array<{ port: number }>;
+        http_endpoints?: Array<{ path: string; status_code: number }>;
+      };
+    };
+  };
+
+  assert.equal(resultResponse.status, 200);
+  assert.equal(resultBody.success, true);
+  assert.equal(resultBody.data.task_id, taskId);
+  assert.equal(resultBody.data.task_type, "asset_scan");
+  assert.equal(resultBody.data.details.fingerprint?.framework, "ollama");
+  assert.equal(resultBody.data.details.fingerprint?.agent_name, "Ollama");
+  assert.ok((resultBody.data.details.confidence ?? 0) >= 0.8);
+  assert.ok((resultBody.data.details.matched_features?.length ?? 0) >= 2);
+  assert.equal(resultBody.data.details.open_ports?.[0]?.port, 11434);
+  assert.equal(resultBody.data.details.http_endpoints?.[0]?.path, "/api/tags");
+});
+
 test("backend task center returns TASK_NOT_FOUND when a task id does not exist", async (t) => {
   const mainModule = await importIfExists<MainModule>(mainModulePath);
 
