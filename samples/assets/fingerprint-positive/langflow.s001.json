@@ -1,0 +1,12 @@
+{
+  "sample_id": "s001",
+  "target_id": "langflow",
+  "request_summary": "GET /api/v1/flows",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json"
+  },
+  "response_body_excerpt": "{\"flows\":[{\"flow_id\":\"d2bbd92b-187e-4c84-b2d4-5df365704201\",\"name\":\"Basic Prompting\"}]}",
+  "source": "official-doc: Langflow API /flows endpoint (dltHub docs)",
+  "collected_at": "2026-03-31T00:00:00Z"
+}

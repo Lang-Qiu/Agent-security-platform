@@ -1,0 +1,12 @@
+{
+  "sample_id": "s001",
+  "target_id": "openclaw-gateway",
+  "request_summary": "WebSocket handshake: send connect request with role=operator",
+  "response_status": 101,
+  "response_headers": {
+    "upgrade": "websocket"
+  },
+  "response_body_excerpt": "{\"type\":\"res\",\"ok\":true,\"payload\":{\"type\":\"hello-ok\",\"protocol\":3,\"policy\":{\"tickIntervalMs\":15000}}}",
+  "source": "official-doc: https://docs.openclaw.ai/gateway/protocol",
+  "collected_at": "2026-03-31T00:00:00Z"
+}

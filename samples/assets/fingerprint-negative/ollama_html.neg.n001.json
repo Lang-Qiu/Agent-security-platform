@@ -1,0 +1,14 @@
+{
+  "sample_id": "n002",
+  "target_id": "ollama",
+  "request_summary": "GET /api/tags",
+  "response_status": 404,
+  "response_headers": {
+    "server": "nginx",
+    "content-type": "text/html"
+  },
+  "response_body_excerpt": "<html><body><h1>404 Not Found</h1></body></html>",
+  "source": "local-test-nginx",
+  "collected_at": "2026-03-31T08:00:00Z",
+  "exclusion_reason": "Response is HTML not JSON, no models array"
+}

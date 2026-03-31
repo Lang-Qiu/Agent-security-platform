@@ -1,0 +1,13 @@
+{
+  "sample_id": "s001",
+  "target_id": "autogpt",
+  "request_summary": "GET /api/agent/status",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json"
+  },
+  "response_body_excerpt": "{\"agent_id\":\"agent-12345\",\"status\":\"running\",\"current_task\":\"Executing task\"}",
+  "source": "inferred from AutoGPT architecture docs: https://agpt.co/docs/classic/forge/component-agent-introduction/built-in-components",
+  "collected_at": "2026-03-31T00:00:00Z",
+  "note": "No official API response example found; structure inferred from agent lifecycle components (ActionHistoryComponent, etc.)"
+}

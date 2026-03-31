@@ -1,0 +1,13 @@
+{
+  "sample_id": "n004",
+  "target_id": "autogpt",
+  "request_summary": "GET /api/status",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json"
+  },
+  "response_body_excerpt": "{\"status\":\"ok\",\"version\":\"1.0.0\",\"uptime\":12345}",
+  "source": "mock-api",
+  "collected_at": "2026-03-31T08:00:00Z",
+  "exclusion_reason": "Response missing agent_id field"
+}

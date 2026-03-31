@@ -1,0 +1,13 @@
+{
+  "sample_id": "n001",
+  "target_id": "openclaw-gateway",
+  "request_summary": "GET /",
+  "response_status": 200,
+  "response_headers": {
+    "server": "nginx/1.18.0"
+  },
+  "response_body_excerpt": "<!DOCTYPE html><html><head><title>Welcome to nginx!</title></head>...",
+  "source": "local-test-nginx",
+  "collected_at": "2026-03-31T08:00:00Z",
+  "exclusion_reason": "No WebSocket upgrade header, no hello-ok JSON response"
+}

@@ -3,41 +3,227 @@ updated_at: "2026-03-30"
 owner: "asset-scan"
 description: "Fingerprint rule table with weighted signals and evidence trace"
 
+confidence_policy:
+  conservative_mode: true
+  direct_output_threshold: 0.80
+  suspected_threshold: 0.70
+  below_threshold_action: "log_only"
+
 fingerprints:
-  - fingerprint_id: "sample-agent-001"
-    product_name: "sample-agent"
+  - fingerprint_id: "openclaw-gateway-p0"
+    target_id: "openclaw-gateway"
+    product_name: "OpenClaw Gateway"
     product_version: "unknown"
     priority: "P0"
     signals:
-      - signal_id: "sig-port-1"
+      - signal_id: "sig-port-openclaw"
         signal_type: "port"
-        match_operator: "equals"
-        match_value: "443"
-        weight: 0.35
-      - signal_id: "sig-header-1"
-        signal_type: "header"
-        key: "server"
-        match_operator: "contains"
-        match_value: "sample-agent"
-        weight: 0.40
-      - signal_id: "sig-path-1"
-        signal_type: "path"
-        match_operator: "equals"
-        match_value: "/health"
-        weight: 0.15
-      - signal_id: "sig-negative-1"
+        match_operator: "in"
+        match_value: "18789,18791,18793"
+        weight: 0.30
+      - signal_id: "sig-ws-hello-ok"
         signal_type: "body"
         match_operator: "contains"
-        match_value: "nginx default page"
+        match_value: "type\":\"hello-ok\""
+        weight: 0.45
+      - signal_id: "sig-ws-presence"
+        signal_type: "body"
+        match_operator: "contains"
+        match_value: "presence"
+        weight: 0.20
+      - signal_id: "sig-negative-generic-gateway"
+        signal_type: "body"
+        match_operator: "contains"
+        match_value: "welcome to nginx"
         weight: -0.20
     confidence_hint:
       high_threshold: 0.80
-      medium_threshold: 0.60
+      medium_threshold: 0.70
     false_positive_notes:
-      - "Reverse proxy can mask backend identity"
-      - "Single header match is not enough"
+      - "WS 握手必须和端口信号组合使用"
     evidence_source:
       - source_type: "doc"
-        source_ref: "TBD"
+        source_ref: "docs/temp/stage_A_330.md"
       - source_type: "sample"
-        source_ref: "samples/assets/fingerprint-positive/TBD.json"
+        source_ref: "samples/assets/fingerprint-positive/openclaw-gateway.s001.json"
+
+  - fingerprint_id: "ollama-p0"
+    target_id: "ollama"
+    product_name: "Ollama"
+    product_version: "unknown"
+    priority: "P0"
+    signals:
+      - signal_id: "sig-port-ollama"
+        signal_type: "port"
+        match_operator: "equals"
+        match_value: "11434"
+        weight: 0.25
+      - signal_id: "sig-path-ollama-tags"
+        signal_type: "path"
+        match_operator: "equals"
+        match_value: "/api/tags"
+        weight: 0.20
+      - signal_id: "sig-json-ollama-models"
+        signal_type: "body"
+        match_operator: "contains"
+        match_value: "\"models\""
+        weight: 0.45
+      - signal_id: "sig-negative-generic"
+        signal_type: "body"
+        match_operator: "contains"
+        match_value: "welcome to nginx"
+        weight: -0.20
+    confidence_hint:
+      high_threshold: 0.80
+      medium_threshold: 0.70
+    false_positive_notes:
+      - "仅命中端口不应直接输出"
+    evidence_source:
+      - source_type: "doc"
+        source_ref: "docs/temp/stage_A_330.md"
+      - source_type: "sample"
+        source_ref: "samples/assets/fingerprint-positive/ollama.s001.json"
+
+  - fingerprint_id: "langflow-p0"
+    target_id: "langflow"
+    product_name: "LangFlow"
+    product_version: "unknown"
+    priority: "P0"
+    signals:
+      - signal_id: "sig-port-langflow"
+        signal_type: "port"
+        match_operator: "in"
+        match_value: "3000,8080,9090"
+        weight: 0.20
+      - signal_id: "sig-path-langflow-flows"
+        signal_type: "path"
+        match_operator: "equals"
+        match_value: "/api/v1/flows"
+        weight: 0.30
+      - signal_id: "sig-json-langflow-flows"
+        signal_type: "body"
+        match_operator: "contains"
+        match_value: "\"flows\""
+        weight: 0.30
+      - signal_id: "sig-json-langflow-flow-id"
+        signal_type: "body"
+        match_operator: "contains"
+        match_value: "flow_id"
+        weight: 0.20
+    confidence_hint:
+      high_threshold: 0.80
+      medium_threshold: 0.70
+    false_positive_notes:
+      - "自定义 API 可能复用 /api/v1/flows 路由"
+    evidence_source:
+      - source_type: "doc"
+        source_ref: "docs/temp/stage_A_330.md"
+      - source_type: "sample"
+        source_ref: "samples/assets/fingerprint-positive/langflow.s001.json"
+
+  - fingerprint_id: "autogpt-p0"
+    target_id: "autogpt"
+    product_name: "AutoGPT"
+    product_version: "unknown"
+    priority: "P0"
+    signals:
+      - signal_id: "sig-port-autogpt"
+        signal_type: "port"
+        match_operator: "equals"
+        match_value: "8000"
+        weight: 0.20
+      - signal_id: "sig-path-autogpt-status"
+        signal_type: "path"
+        match_operator: "equals"
+        match_value: "/api/agent/status"
+        weight: 0.35
+      - signal_id: "sig-json-autogpt-agent-id"
+        signal_type: "body"
+        match_operator: "contains"
+        match_value: "agent_id"
+        weight: 0.45
+    confidence_hint:
+      high_threshold: 0.80
+      medium_threshold: 0.70
+    false_positive_notes:
+      - "仅状态码 200 不能作为强特征"
+    evidence_source:
+      - source_type: "doc"
+        source_ref: "docs/temp/stage_A_330.md"
+      - source_type: "sample"
+        source_ref: "samples/assets/fingerprint-positive/autogpt.s001.json"
+
+  - fingerprint_id: "mcp-server-p1"
+    target_id: "mcp-server"
+    product_name: "MCP Server (Generic)"
+    product_version: "unknown"
+    priority: "P1"
+    signals:
+      - signal_id: "sig-jsonrpc-2"
+        signal_type: "body"
+        match_operator: "contains"
+        match_value: "\"jsonrpc\":\"2.0\""
+        weight: 0.60
+      - signal_id: "sig-jsonrpc-method"
+        signal_type: "body"
+        match_operator: "contains"
+        match_value: "method"
+        weight: 0.20
+    confidence_hint:
+      high_threshold: 0.85
+      medium_threshold: 0.70
+    false_positive_notes:
+      - "普通 JSON-RPC 服务可能误命中"
+    evidence_source:
+      - source_type: "doc"
+        source_ref: "docs/temp/stage_A_330.md"
+
+  - fingerprint_id: "dify-p1"
+    target_id: "dify"
+    product_name: "Dify"
+    product_version: "unknown"
+    priority: "P1"
+    signals:
+      - signal_id: "sig-port-dify"
+        signal_type: "port"
+        match_operator: "equals"
+        match_value: "5000"
+        weight: 0.30
+      - signal_id: "sig-path-dify-api"
+        signal_type: "path"
+        match_operator: "contains"
+        match_value: "/api"
+        weight: 0.20
+    confidence_hint:
+      high_threshold: 0.85
+      medium_threshold: 0.70
+    false_positive_notes:
+      - "通用 /api 路径特异性较弱"
+    evidence_source:
+      - source_type: "doc"
+        source_ref: "docs/temp/stage_A_330.md"
+
+  - fingerprint_id: "anythingllm-p1"
+    target_id: "anythingllm"
+    product_name: "AnythingLLM"
+    product_version: "unknown"
+    priority: "P1"
+    signals:
+      - signal_id: "sig-port-anythingllm"
+        signal_type: "port"
+        match_operator: "equals"
+        match_value: "3001"
+        weight: 0.30
+      - signal_id: "sig-path-anythingllm-api"
+        signal_type: "path"
+        match_operator: "contains"
+        match_value: "/api"
+        weight: 0.20
+    confidence_hint:
+      high_threshold: 0.85
+      medium_threshold: 0.70
+    false_positive_notes:
+      - "需结合后续样本补强特征"
+    evidence_source:
+      - source_type: "doc"
+        source_ref: "docs/temp/stage_A_330.md"

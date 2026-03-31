@@ -217,3 +217,19 @@ Recommended fields:
   - `TaskListPage` and `TaskOverviewSection` now share one formatter source for `task_type` and timestamp labels
   - root `test:repo` now includes a structure guard so these two pages do not silently drift back into duplicated presentation helpers
   - the refactor keeps page behavior stable while reducing future formatting drift as more task-facing pages are added
+
+## 2026-03-30 - REQ-ASSET-DISCOVERY-001 phase A freeze and phase B draft
+- requirement: `REQ-ASSET-DISCOVERY-001` 智能体资产测绘与指纹识别查找产物落地（非引擎实现）
+- scope: freeze phase-A inputs (targets, boundaries, confidence policy), convert target-specific signals into probe/rule draft artifacts, and prepare phase-B review-ready catalog files
+- tests: none; this iteration is documentation/rule-modeling only with no production behavior change
+- test result: not run (no code-path behavior changes)
+- docs updated:
+  - `docs/temp/stage_A_330.md`
+  - `docs/progress.md`
+  - `engines/asset-scan/rules/probes.v1.yaml`
+  - `engines/asset-scan/rules/fingerprints.v1.yaml`
+- notes:
+  - phase-A now has unique `target_id` set and P1 denominator fixed to 3 with target >= 2/3 coverage
+  - conservative confidence policy is aligned to `>=0.80 direct`, `0.70-0.79 suspected`, `<0.70 log only`
+  - phase-B drafts now include target-specific probes for `openclaw-gateway`, `ollama`, `langflow`, and `autogpt`
+  - next blocker: provide positive/negative sample JSON files for each P0 target to replace placeholder sample refs

@@ -1,0 +1,13 @@
+{
+  "sample_id": "n003",
+  "target_id": "langflow",
+  "request_summary": "GET /api/v1/flows",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json"
+  },
+  "response_body_excerpt": "{\"data\":[{\"id\":1,\"name\":\"user\"}]}",
+  "source": "mock-api",
+  "collected_at": "2026-03-31T08:00:00Z",
+  "exclusion_reason": "Response has data array not flows array, no flow_id field"
+}
