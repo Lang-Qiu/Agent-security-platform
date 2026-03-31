@@ -1,0 +1,14 @@
+{
+  "sample_id": "n006",
+  "target_id": "autogpt",
+  "request_summary": "GET http://127.0.0.1:18000/api/agents/status",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json",
+    "server": "autogpt-mock/1.0 Python/3.12.13, autogpt-mock/1.0"
+  },
+  "response_body_excerpt": "{\"agents\": [{\"id\": \"agent-123\", \"status\": \"idle\"}]}",
+  "source": "verified-capture: curl GET http://127.0.0.1:18000/api/agents/status (docker container asp-autogpt-mock; script scripts/dev/autogpt-negative-mock.py)",
+  "collected_at": "2026-03-31T14:15:43Z",
+  "exclusion_reason": "Path is near-match of /api/agent/status, but response exposes agents list and no required agent_id signal for AutoGPT fingerprint rule."
+}

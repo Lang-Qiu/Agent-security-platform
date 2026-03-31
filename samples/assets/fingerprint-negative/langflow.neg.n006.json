@@ -1,0 +1,14 @@
+{
+  "sample_id": "n006",
+  "target_id": "langflow",
+  "request_summary": "GET http://127.0.0.1:18001/api/v1/flow",
+  "response_status": 404,
+  "response_headers": {
+    "content-type": "application/json",
+    "server": "BaseHTTP/0.6 Python/3.12.13, p0-negative-mock/1.0"
+  },
+  "response_body_excerpt": "{\"error\": \"not found\"}",
+  "source": "verified-capture: curl GET http://127.0.0.1:18001/api/v1/flow (docker container asp-p0-neg-mock)",
+  "collected_at": "2026-03-31T13:58:18Z",
+  "exclusion_reason": "Near-miss route without /api/v1/flows schema and without flow_id marker, so confidence remains suppressed."
+}

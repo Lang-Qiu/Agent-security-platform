@@ -1,0 +1,16 @@
+{
+  "sample_id": "n007",
+  "target_id": "ollama",
+  "request_summary": "GET http://127.0.0.1:18001/api/tags",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json",
+    "server": "p0-negative-mock/2.0 Python/3.12.13, p0-negative-mock/2.0",
+    "x-upstream-service": "ollama",
+    "via": "1.1 nginx"
+  },
+  "response_body_excerpt": "{\"items\": [{\"name\": \"demo\"}], \"middleware\": \"oauth2-proxy\"}",
+  "source": "verified-capture: curl GET http://127.0.0.1:18001/api/tags (docker container asp-p0-neg-mock; script scripts/dev/p0-negative-mock.py)",
+  "collected_at": "2026-03-31T14:26:26Z",
+  "exclusion_reason": "Path and upstream header are similar, but body is middleware-wrapped and lacks Ollama models marker."
+}

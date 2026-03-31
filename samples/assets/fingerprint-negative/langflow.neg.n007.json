@@ -1,0 +1,16 @@
+{
+  "sample_id": "n007",
+  "target_id": "langflow",
+  "request_summary": "GET http://127.0.0.1:18001/api/v1/flows",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json",
+    "server": "p0-negative-mock/2.0 Python/3.12.13, p0-negative-mock/2.0",
+    "x-proxy-target": "langflow",
+    "via": "1.1 istio"
+  },
+  "response_body_excerpt": "{\"flows\": [{\"id\": 1, \"name\": \"pipeline\"}], \"injected_by\": \"api-gateway\"}",
+  "source": "verified-capture: curl GET http://127.0.0.1:18001/api/v1/flows (docker container asp-p0-neg-mock; script scripts/dev/p0-negative-mock.py)",
+  "collected_at": "2026-03-31T14:26:26Z",
+  "exclusion_reason": "Proxy target and flows field exist, but flow_id marker is absent so confidence remains below suspected threshold."
+}

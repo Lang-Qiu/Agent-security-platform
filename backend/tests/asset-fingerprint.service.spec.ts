@@ -123,11 +123,20 @@ test("asset fingerprint service suppresses negative samples below the conservati
   const negativeSamples = [
     resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/openclaw_gateway.neg.n001.json"),
     resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/openclaw_gateway.neg.n005.json"),
+    resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/openclaw_gateway.neg.n006.json"),
+    resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/openclaw_gateway.neg.n007.json"),
     resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/ollama_html.neg.n001.json"),
     resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/ollama.neg.n005.json"),
+    resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/ollama.neg.n006.json"),
+    resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/ollama.neg.n007.json"),
     resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/langflow.neg.n001.json"),
     resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/langflow.neg.n005.json"),
-    resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/autogpt.neg.n001.json")
+    resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/langflow.neg.n006.json"),
+    resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/langflow.neg.n007.json"),
+    resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/autogpt.neg.n001.json"),
+    resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/autogpt.neg.n005.json"),
+    resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/autogpt.neg.n006.json"),
+    resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/autogpt.neg.n007.json")
   ];
 
   for (const samplePath of negativeSamples) {

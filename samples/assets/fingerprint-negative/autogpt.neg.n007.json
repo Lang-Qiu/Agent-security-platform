@@ -1,0 +1,16 @@
+{
+  "sample_id": "n007",
+  "target_id": "autogpt",
+  "request_summary": "GET http://127.0.0.1:18000/api/agent/status",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json",
+    "server": "autogpt-mock/1.0 Python/3.12.13, autogpt-mock/1.0",
+    "x-forwarded-host": "autogpt.internal",
+    "via": "1.1 edge-proxy"
+  },
+  "response_body_excerpt": "{\"status\": \"running\", \"current_task\": \"demo\", \"uptime_seconds\": 4523}",
+  "source": "verified-capture: curl GET http://127.0.0.1:18000/api/agent/status (docker container asp-autogpt-mock; script scripts/dev/autogpt-negative-mock.py)",
+  "collected_at": "2026-03-31T14:26:26Z",
+  "exclusion_reason": "Exact path is present with proxy headers, but payload omits required agent_id marker for AutoGPT fingerprint confidence."
+}

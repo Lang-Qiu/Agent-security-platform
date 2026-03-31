@@ -1,0 +1,14 @@
+{
+  "sample_id": "n006",
+  "target_id": "openclaw-gateway",
+  "request_summary": "GET http://127.0.0.1:18001/",
+  "response_status": 404,
+  "response_headers": {
+    "content-type": "application/json",
+    "server": "BaseHTTP/0.6 Python/3.12.13, p0-negative-mock/1.0"
+  },
+  "response_body_excerpt": "{\"error\": \"not found\"}",
+  "source": "verified-capture: curl GET http://127.0.0.1:18001/ (docker container asp-p0-neg-mock)",
+  "collected_at": "2026-03-31T13:58:18Z",
+  "exclusion_reason": "Near-miss path with 404 response and no websocket hello-ok/presence markers required by OpenClaw rules."
+}
