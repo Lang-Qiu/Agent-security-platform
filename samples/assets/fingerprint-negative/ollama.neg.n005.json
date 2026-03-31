@@ -1,0 +1,14 @@
+{
+  "sample_id": "n005",
+  "target_id": "ollama",
+  "request_summary": "GET http://127.0.0.1:18001/api/tags",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json",
+    "server": "BaseHTTP/0.6 Python/3.12.13, p0-negative-mock/1.0"
+  },
+  "response_body_excerpt": "{\"items\": [{\"name\": \"demo\"}]}",
+  "source": "verified-capture: curl GET http://127.0.0.1:18001/api/tags (docker container asp-p0-neg-mock)",
+  "collected_at": "2026-03-31T13:40:34Z",
+  "exclusion_reason": "Path matches /api/tags but response body lacks the models key used as a strong Ollama signal."
+}

@@ -1,0 +1,13 @@
+{
+  "sample_id": "n004",
+  "target_id": "openclaw-gateway",
+  "request_summary": "GET http://127.0.0.1:18789/health",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json"
+  },
+  "response_body_excerpt": "{\"status\":\"ok\",\"service\":\"gateway\"}",
+  "source": "mock-http-capture",
+  "collected_at": "2026-03-31T11:10:00Z",
+  "exclusion_reason": "Openclaw port is present, but no websocket hello-ok or presence protocol markers"
+}

@@ -1,0 +1,13 @@
+{
+  "sample_id": "n003",
+  "target_id": "langflow",
+  "request_summary": "GET http://127.0.0.1:3000/",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "text/html"
+  },
+  "response_body_excerpt": "<html><body><h1>Dashboard</h1></body></html>",
+  "source": "mock-http-capture",
+  "collected_at": "2026-03-31T11:35:00Z",
+  "exclusion_reason": "Priority port is open but no /api/v1/flows response schema"
+}

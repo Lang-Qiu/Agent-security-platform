@@ -1,0 +1,13 @@
+{
+  "sample_id": "n003",
+  "target_id": "openclaw-gateway",
+  "request_summary": "WebSocket handshake to ws://127.0.0.1:8080: send connect request",
+  "response_status": 101,
+  "response_headers": {
+    "upgrade": "websocket"
+  },
+  "response_body_excerpt": "{\"type\":\"res\",\"ok\":true,\"payload\":{\"type\":\"hello-ok\",\"presence\":{\"state\":\"available\"}}}",
+  "source": "mock-ws-capture",
+  "collected_at": "2026-03-31T11:05:00Z",
+  "exclusion_reason": "Body looks similar, but service does not run on openclaw priority ports (18789/18791/18793)"
+}

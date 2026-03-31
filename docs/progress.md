@@ -236,7 +236,7 @@ Recommended fields:
 
 ## 2026-03-31 - REQ-ASSET-FINGERPRINT-002 offline matcher baseline
 - requirement: `REQ-ASSET-FINGERPRINT-002` 基于离线样本的资产指纹匹配 TDD 实现
-- scope: consume the existing fingerprint rule YAML and bundled positive/negative samples, add a minimal backend matcher, and surface sample-backed initial asset-scan results through the existing task-center flow
+- scope: 消费现有指纹规则 YAML 与正/负样本，新增最小 backend 离线 matcher，并通过现有 task-center 流程暴露基于样本的初始 asset-scan 结果
 - tests:
   - `backend/tests/asset-fingerprint.service.spec.ts`
   - `backend/tests/task-engine.service.spec.ts`
@@ -249,22 +249,68 @@ Recommended fields:
   - `docs/progress.md`
   - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
 - notes:
-  - backend now reads `engines/asset-scan/rules/fingerprints.v1.yaml` directly instead of duplicating rule data in code
-  - `asset_scan` tasks can use `parameters.sample_ref` to hydrate initial fingerprint details from a bundled sample JSON during TDD
-  - `ollama`、`langflow`、`autogpt` positive samples now reach direct output thresholds in the offline matcher baseline
-  - `openclaw-gateway` positive sample currently reaches `0.65` and stays `log_only` because the bundled sample lacks the rule-required port evidence
+  - backend 已可直接读取 `engines/asset-scan/rules/fingerprints.v1.yaml`，无需在代码中重复维护规则
+  - `asset_scan` 任务可通过 `parameters.sample_ref` 在 TDD 流程中加载样本并回填初始指纹详情
+  - `ollama`、`langflow`、`autogpt` 的正样本已达到离线 matcher 的 direct 阈值
+  - 当时 `openclaw-gateway` 正样本因缺少端口证据，分数为 `0.65`，结论为 `log_only`
 
 ## 2026-03-31 - asset fingerprint documentation consolidation and next-step planning
-- requirement: consolidate the completed offline matcher work into beginner-facing and planning documents, and define the recommended next requirement
-- scope: update beginner guidance, refresh the master plan with current status plus next phases, switch sprint-current to the recommended evidence-strengthening requirement, and record the expected user inputs for the next step
-- tests: none; this iteration is documentation/planning only
-- test result: not run; no runtime behavior changed in this update
+- requirement: 将已完成的离线 matcher 工作收敛到 beginner 与计划文档，并明确推荐的下一条 requirement
+- scope: 更新 beginner 指引、刷新总计划（当前状态 + 下一阶段）、将 sprint-current 切换到证据补强 requirement，并记录下一步所需用户输入
+- tests: 无；本次仅涉及文档与规划调整
+- test result: 未执行；本次更新不涉及运行时行为变更
 - docs updated:
   - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
   - `docs/plans/agent-asset-fingerprinting-discovery-plan.md`
   - `docs/sprint-current.md`
   - `docs/progress.md`
 - notes:
-  - beginner guidance now reflects the real current state instead of the older “first make 8 samples” baseline
-  - the recommended next requirement is now `REQ-ASSET-EVIDENCE-003` rather than jumping straight into a real probe executor
-  - the plan now separates immediate evidence strengthening from the later minimal real probe execution phase
+  - beginner 指引已从旧的“先补 8 个样本”基线切换为当前真实状态
+  - 推荐下一条 requirement 为 `REQ-ASSET-EVIDENCE-003`，而不是直接跳到真实探针执行器
+  - 计划已拆分为“先证据补强，再最小真实探针执行”两阶段
+
+## 2026-03-31 - REQ-ASSET-EVIDENCE-003 openclaw sample strengthening checkpoint
+- requirement: 通过补齐 openclaw 正样本端口证据并对齐过程文档，稳定证据补强阶段
+- scope: 确认补强后的 openclaw 样本达到 direct，更新 sprint 文案到新基线，并将 beginner 转为全过程记录格式
+- tests:
+  - `npm run test:backend`
+- test result: pass; 在更新 openclaw 正样本预期后 backend 测试全绿
+- docs updated:
+  - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
+  - `docs/sprint-current.md`
+  - `docs/progress.md`
+- notes:
+  - openclaw 正样本已包含端口证据，结果达到 `confidence=0.95`、`disposition=direct`
+  - beginner 文档已切换为含“已完成/进行中/待开始”状态的过程日志
+  - 下一执行重点仍是扩展 P0 负样本回归覆盖
+
+## 2026-03-31 - REQ-ASSET-EVIDENCE-003 autogpt negative samples verified capture
+- requirement: 将 AutoGPT 负样本从 synthetic/mock 升级为 Docker 本地实采证据
+- scope: 启动本地 Docker mock 服务并采集 `/api/agent/status`、`/health`、`/api/status` 响应，回填 `autogpt.neg.n002/n003/n004` 的 source、headers、body 摘要与时间戳
+- tests:
+  - `npm run test:backend`
+- test result: pass; 样本回填后 backend 测试保持全绿
+- docs updated:
+  - `docs/sprint-current.md`
+  - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
+  - `docs/progress.md`
+- notes:
+  - AutoGPT 三条负样本已统一标记为 `verified-capture`
+  - 当前阶段目标从“样本数量”进一步推进到“证据可信度”
+  - 下一步建议按同样方式补齐其余 P0 的至少 1 条 verified-capture 负样本
+
+## 2026-03-31 - REQ-ASSET-EVIDENCE-003 P0 verified-capture negatives (openclaw/ollama/langflow)
+- requirement: 为其余 P0 目标各补至少 1 条 Docker 本地实采负样本，并接入 matcher 回归
+- scope: 通过 `asp-p0-neg-mock` 采集 `/openclaw/health`、`/api/tags`、`/api/v1/flows`，新增 `openclaw_gateway.neg.n005`、`ollama.neg.n005`、`langflow.neg.n005`，并将回归测试扩展到 n005
+- tests:
+  - `backend/tests/asset-fingerprint.service.spec.ts`
+  - `npm run test:backend`
+- test result: pass; 先在测试中引入 n005 触发 RED（文件缺失），补齐样本后回归 GREEN（14/14）
+- docs updated:
+  - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
+  - `docs/progress.md`
+  - `docs/sprint-current.md`
+- notes:
+  - `REQ-ASSET-EVIDENCE-003` 的“每个 P0 至少 1 条 verified-capture 负样本”已满足
+  - 新样本覆盖了“路径命中但核心字段缺失”场景，避免通过硬调权重掩盖证据不足
+  - openclaw/ollama/langflow 新增回归后，matcher 保持 conservative 阈值语义不变

@@ -1,0 +1,13 @@
+{
+  "sample_id": "n004",
+  "target_id": "langflow",
+  "request_summary": "GET /api/v1/flows",
+  "response_status": 401,
+  "response_headers": {
+    "content-type": "application/json"
+  },
+  "response_body_excerpt": "{\"detail\":\"Unauthorized\"}",
+  "source": "mock-api",
+  "collected_at": "2026-03-31T11:40:00Z",
+  "exclusion_reason": "Path exists but no flows/flow_id signals in response body"
+}

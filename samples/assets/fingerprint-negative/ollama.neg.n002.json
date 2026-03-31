@@ -1,0 +1,13 @@
+{
+  "sample_id": "n002",
+  "target_id": "ollama",
+  "request_summary": "GET /api/tags",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json"
+  },
+  "response_body_excerpt": "{\"items\":[{\"name\":\"demo\"}]}",
+  "source": "mock-api",
+  "collected_at": "2026-03-31T11:15:00Z",
+  "exclusion_reason": "Path is similar but response has no models array"
+}

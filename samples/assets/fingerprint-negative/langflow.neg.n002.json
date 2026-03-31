@@ -1,0 +1,13 @@
+{
+  "sample_id": "n002",
+  "target_id": "langflow",
+  "request_summary": "GET /api/v1/flows",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json"
+  },
+  "response_body_excerpt": "{\"flows\":[{\"id\":1,\"name\":\"pipeline\"}]}",
+  "source": "mock-api",
+  "collected_at": "2026-03-31T11:30:00Z",
+  "exclusion_reason": "Flows list exists but items do not contain flow_id"
+}

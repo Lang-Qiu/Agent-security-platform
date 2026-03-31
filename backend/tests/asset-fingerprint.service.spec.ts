@@ -84,8 +84,8 @@ test("asset fingerprint service classifies P0 positive samples with rule-driven 
     {
       samplePath: resolve(import.meta.dirname, "../../samples/assets/fingerprint-positive/openclaw-gateway.s001.json"),
       expectedTargetId: "openclaw-gateway",
-      expectedDisposition: "log_only",
-      minimumConfidence: 0.65
+      expectedDisposition: "direct",
+      minimumConfidence: 0.8
     }
   ] as const;
 
@@ -122,8 +122,11 @@ test("asset fingerprint service suppresses negative samples below the conservati
   const service = new serviceModule.AssetFingerprintService();
   const negativeSamples = [
     resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/openclaw_gateway.neg.n001.json"),
+    resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/openclaw_gateway.neg.n005.json"),
     resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/ollama_html.neg.n001.json"),
+    resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/ollama.neg.n005.json"),
     resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/langflow.neg.n001.json"),
+    resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/langflow.neg.n005.json"),
     resolve(import.meta.dirname, "../../samples/assets/fingerprint-negative/autogpt.neg.n001.json")
   ];
 
