@@ -14,8 +14,8 @@ REQ-ASSET-PROBE-004
 ## Goal
 在不扩展为生产级扫描器的前提下，完成真实探针执行最小闭环：
 - 先通过 RED 测试定义 probe runner、adapter 和 API 联调边界
-- 支持最小探针集合：TCP connect + HTTP HEAD/GET
-- 在 localhost/测试容器/mock server 约束内验证至少 2 个 P0 目标
+- 支持最小探针集合：TCP connect + HTTP HEAD/GET + OpenClaw 专用 WebSocket 探针
+- 在 localhost/测试容器/mock server 约束内验证 P0 目标 live probe 闭环
 - 保持离线 matcher 既有样本回归基线不被破坏
 
 ## In Scope
@@ -27,14 +27,13 @@ REQ-ASSET-PROBE-004
 
 ## Acceptance Criteria
 - 与阶段 G 相关的新增测试必须先 RED 后 GREEN
-- 不依赖 `parameters.sample_ref`，也能跑通至少 2 个 P0 目标的真实探针识别流程
+- 不依赖 `parameters.sample_ref`，也能跑通 P0 目标的真实探针识别流程
 - 新增真实探针能力后，既有离线 matcher 回归测试保持通过
 - 执行边界限定在 localhost/测试容器/mock server，不触达公网目标
 - 现有 `npm run test` 保持全绿
 
 ## Out of Scope
 - 不实现生产级扫描调度、分布式执行或公网扩散
-- 不在本轮纳入 WebSocket 探针
 - 不新增前端页面或可视化能力
 - 不扩展为 P1/P2 的完整识别实现
 
@@ -50,7 +49,9 @@ REQ-ASSET-PROBE-004
 - 已完成：`scripts/dev/negative-sample-mock.py` + `scripts/dev/mock-containers.sh` 的统一采样链路稳定可复用
 - 已完成：最近 `npm run test:backend` 与 `npm run test` 持续全绿
 - 已完成：阶段 G 第一刀 RED -> GREEN，`asset_scan` 已支持 `probe_mode=live + probe_target_id` 的最小真实探针闭环
-- 当前状态：`langflow` 与 `autogpt` 已可在无 `sample_ref` 前提下通过本地 live probe 路径产出识别结果
+- 已完成：`ollama` 已支持带 `probe_port_hint` 的 live probe 识别
+- 已完成：`openclaw-gateway` 已支持最小 WebSocket live probe 识别
+- 当前状态：P0 四个目标（`langflow`、`autogpt`、`ollama`、`openclaw-gateway`）均可在无 `sample_ref` 前提下通过本地 live probe 路径产出识别结果；本轮最小闭环验收项已完成
 
 ## Related Plan
 - docs/plans/agent-asset-fingerprinting-discovery-plan.md

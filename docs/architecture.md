@@ -272,10 +272,11 @@ engines/<engine-name>/
 
 阶段 G 在保持离线样本路径可用的前提下，新增了最小真实探针执行通道：
 
-- 新增 `AssetProbeService`，按 `engines/asset-scan/rules/probes.v1.yaml` 的 target 级 HTTP 探针配置执行最小 GET/HEAD 采集
+- 新增 `AssetProbeService`，按 `engines/asset-scan/rules/probes.v1.yaml` 的 target 级探针配置执行最小 HTTP / WebSocket 采集
 - `AssetScanTaskAdapter` 支持两条输入路径并存：
     - `sample_ref`：离线样本回放
     - `probe_mode=live + probe_target_id`：本地受控目标实时采集
+- 在受控测试环境下，可通过 `probe_port_hint` 保持逻辑端口信号与真实识别规则一致
 - live probe 采集结果会转成 matcher 可消费的 observation，再通过 `AssetFingerprintService` 统一产出 `AssetScanResultDetails`
 
 为支持 live probe 的异步 I/O，任务创建链路已调整为异步：
@@ -287,4 +288,4 @@ engines/<engine-name>/
 该阶段仍遵守边界：
 
 - 仅允许 localhost/测试容器/mock server 受控目标
-- 不引入公网扫描、分布式调度与 WebSocket 探针
+- 不引入公网扫描与分布式调度

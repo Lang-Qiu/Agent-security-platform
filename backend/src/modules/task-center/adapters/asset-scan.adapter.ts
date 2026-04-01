@@ -28,13 +28,16 @@ export class AssetScanTaskAdapter implements TaskEngineAdapter<"asset_scan"> {
     const sampleRef = typeof task.parameters?.sample_ref === "string" ? task.parameters.sample_ref : undefined;
     const probeMode = typeof task.parameters?.probe_mode === "string" ? task.parameters.probe_mode : undefined;
     const probeTargetId = typeof task.parameters?.probe_target_id === "string" ? task.parameters.probe_target_id : undefined;
+    const probePortHint = typeof task.parameters?.probe_port_hint === "number" ? task.parameters.probe_port_hint : undefined;
 
     if (sampleRef) {
       return this.fingerprintService.createInitialDetailsFromSampleRef(sampleRef, task.target);
     }
 
     if (probeMode === "live" && probeTargetId) {
-      const observation = await this.probeService.collectObservation(probeTargetId, task.target.target_value);
+      const observation = await this.probeService.collectObservation(probeTargetId, task.target.target_value, {
+        portHint: probePortHint
+      });
 
       if (observation) {
         return this.fingerprintService.createInitialDetailsFromObservation(observation, task.target);

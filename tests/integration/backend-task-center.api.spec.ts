@@ -443,3 +443,232 @@ test("backend task center supports live probe mode for langflow and autogpt with
   assert.ok((autogptResultBody.data.details.confidence ?? 0) >= 0.7);
   assert.ok((autogptResultBody.data.details.matched_features?.length ?? 0) >= 2);
 });
+
+test("backend task center supports live probe mode for ollama with a probe port hint", async (t) => {
+  const mainModule = await importIfExists<MainModule>(mainModulePath);
+
+  assert.ok(mainModule?.createAppServer);
+
+  if (!mainModule?.createAppServer) {
+    return;
+  }
+
+  const probeServer = await import("node:http").then(({ createServer }) =>
+    createServer((request, response) => {
+      if (request.url === "/api/tags") {
+        response.statusCode = 200;
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ models: [{ name: "qwen2.5:latest" }] }));
+        return;
+      }
+
+      response.statusCode = 404;
+      response.end(JSON.stringify({ error: "not_found" }));
+    })
+  );
+
+  const probeBaseUrl = await new Promise<{ baseUrl: string; close: () => Promise<void> }>((resolvePromise, rejectPromise) => {
+    probeServer.once("error", rejectPromise);
+    probeServer.listen(0, "127.0.0.1", () => {
+      const address = probeServer.address();
+
+      if (!address || typeof address === "string") {
+        rejectPromise(new Error("probe server did not expose a numeric port"));
+        return;
+      }
+
+      resolvePromise({
+        baseUrl: `http://127.0.0.1:${address.port}`,
+        close: () =>
+          new Promise<void>((resolveClose, rejectClose) => {
+            probeServer.close((error) => {
+              if (error) {
+                rejectClose(error);
+                return;
+              }
+
+              resolveClose();
+            });
+          })
+      });
+    });
+  });
+
+  t.after(async () => {
+    await probeBaseUrl.close();
+  });
+
+  const server = mainModule.createAppServer();
+  const { baseUrl, close } = await startServer(server);
+  t.after(close);
+
+  const createdTask = await createTask(baseUrl, {
+    task_type: "asset_scan",
+    title: "Live probe ollama",
+    target: {
+      target_type: "url",
+      target_value: probeBaseUrl.baseUrl
+    },
+    parameters: {
+      probe_mode: "live",
+      probe_target_id: "ollama",
+      probe_port_hint: 11434
+    }
+  });
+
+  assert.equal(createdTask.status, 201);
+
+  const taskId = ((createdTask.body.data as { task_id: string }).task_id);
+  const resultResponse = await fetch(`${baseUrl}/api/tasks/${taskId}/result`);
+  const resultBody = (await resultResponse.json()) as {
+    success: boolean;
+    data: {
+      details: {
+        fingerprint?: { framework?: string; agent_name?: string };
+        confidence?: number;
+        matched_features?: string[];
+        open_ports?: Array<{ port?: number }>;
+      };
+    };
+  };
+
+  assert.equal(resultResponse.status, 200);
+  assert.equal(resultBody.success, true);
+  assert.equal(resultBody.data.details.fingerprint?.framework, "ollama");
+  assert.equal(resultBody.data.details.fingerprint?.agent_name, "Ollama");
+  assert.ok((resultBody.data.details.confidence ?? 0) >= 0.8);
+  assert.equal(resultBody.data.details.open_ports?.[0]?.port, 11434);
+  assert.ok((resultBody.data.details.matched_features?.length ?? 0) >= 3);
+});
+
+test("backend task center supports live probe mode for openclaw gateway over websocket", async (t) => {
+  const mainModule = await importIfExists<MainModule>(mainModulePath);
+
+  assert.ok(mainModule?.createAppServer);
+
+  if (!mainModule?.createAppServer) {
+    return;
+  }
+
+  const { createServer } = await import("node:http");
+  const { createHash } = await import("node:crypto");
+  const websocketServer = createServer();
+
+  websocketServer.on("upgrade", (request, socket) => {
+    const websocketKey = request.headers["sec-websocket-key"];
+
+    if (typeof websocketKey !== "string") {
+      socket.destroy();
+      return;
+    }
+
+    const acceptKey = createHash("sha1")
+      .update(`${websocketKey}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+      .digest("base64");
+
+    socket.write(
+      [
+        "HTTP/1.1 101 Switching Protocols",
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        `Sec-WebSocket-Accept: ${acceptKey}`,
+        "",
+        ""
+      ].join("\r\n")
+    );
+
+    socket.once("data", () => {
+      const payload = JSON.stringify({
+        type: "res",
+        ok: true,
+        payload: {
+          type: "hello-ok",
+          protocol: 3,
+          presence: {
+            state: "available"
+          }
+        }
+      });
+      const payloadBuffer = Buffer.from(payload);
+      const frame = Buffer.alloc(2 + payloadBuffer.length);
+      frame[0] = 0x81;
+      frame[1] = payloadBuffer.length;
+      payloadBuffer.copy(frame, 2);
+      socket.write(frame);
+      socket.end();
+    });
+  });
+
+  const probeBaseUrl = await new Promise<{ baseUrl: string; close: () => Promise<void> }>((resolvePromise, rejectPromise) => {
+    websocketServer.once("error", rejectPromise);
+    websocketServer.listen(0, "127.0.0.1", () => {
+      const address = websocketServer.address();
+
+      if (!address || typeof address === "string") {
+        rejectPromise(new Error("websocket server did not expose a numeric port"));
+        return;
+      }
+
+      resolvePromise({
+        baseUrl: `ws://127.0.0.1:${address.port}`,
+        close: () =>
+          new Promise<void>((resolveClose, rejectClose) => {
+            websocketServer.close((error) => {
+              if (error) {
+                rejectClose(error);
+                return;
+              }
+
+              resolveClose();
+            });
+          })
+      });
+    });
+  });
+
+  t.after(async () => {
+    await probeBaseUrl.close();
+  });
+
+  const server = mainModule.createAppServer();
+  const { baseUrl, close } = await startServer(server);
+  t.after(close);
+
+  const createdTask = await createTask(baseUrl, {
+    task_type: "asset_scan",
+    title: "Live probe openclaw gateway",
+    target: {
+      target_type: "url",
+      target_value: probeBaseUrl.baseUrl
+    },
+    parameters: {
+      probe_mode: "live",
+      probe_target_id: "openclaw-gateway",
+      probe_port_hint: 18789
+    }
+  });
+
+  assert.equal(createdTask.status, 201);
+
+  const taskId = ((createdTask.body.data as { task_id: string }).task_id);
+  const resultResponse = await fetch(`${baseUrl}/api/tasks/${taskId}/result`);
+  const resultBody = (await resultResponse.json()) as {
+    success: boolean;
+    data: {
+      details: {
+        fingerprint?: { framework?: string; agent_name?: string };
+        confidence?: number;
+        matched_features?: string[];
+        open_ports?: Array<{ port?: number }>;
+      };
+    };
+  };
+
+  assert.equal(resultResponse.status, 200);
+  assert.equal(resultBody.success, true);
+  assert.equal(resultBody.data.details.fingerprint?.framework, "openclaw-gateway");
+  assert.equal(resultBody.data.details.fingerprint?.agent_name, "OpenClaw Gateway");
+  assert.ok((resultBody.data.details.confidence ?? 0) >= 0.8);
+  assert.equal(resultBody.data.details.open_ports?.[0]?.port, 18789);
+  assert.ok((resultBody.data.details.matched_features?.length ?? 0) >= 3);
+});

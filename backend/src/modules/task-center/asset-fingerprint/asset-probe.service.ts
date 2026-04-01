@@ -10,11 +10,16 @@ interface ProbeRule {
     protocol?: string;
     method?: string;
     path?: string;
+    payload?: string;
     timeout_ms?: number;
   };
   fallback?: {
     action?: string;
   };
+}
+
+interface ProbeCollectionOptions {
+  portHint?: number;
 }
 
 interface ProbeRulesDocument {
@@ -43,6 +48,16 @@ function isNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+function createLogicalEndpoint(baseUrl: string, path: string, portHint?: number): string {
+  const logicalUrl = new URL(path, baseUrl);
+
+  if (isNumber(portHint) && portHint > 0) {
+    logicalUrl.port = String(portHint);
+  }
+
+  return logicalUrl.toString();
+}
+
 function normalizeProbeRulesDocument(value: unknown): ProbeRulesDocument {
   if (!isPlainObject(value) || !Array.isArray(value.probes)) {
     return { probes: [] };
@@ -61,6 +76,7 @@ function normalizeProbeRulesDocument(value: unknown): ProbeRulesDocument {
           protocol: isString(probe.request.protocol) ? probe.request.protocol : undefined,
           method: isString(probe.request.method) ? probe.request.method : undefined,
           path: isString(probe.request.path) ? probe.request.path : undefined,
+          payload: isString(probe.request.payload) ? probe.request.payload : undefined,
           timeout_ms: isNumber(probe.request.timeout_ms) ? probe.request.timeout_ms : undefined
         };
       }
@@ -87,51 +103,72 @@ export class AssetProbeService {
     this.probesFilePath = options?.probesFilePath ?? resolve(this.workspaceRoot, "engines/asset-scan/rules/probes.v1.yaml");
   }
 
-  async collectObservation(targetId: string, baseUrl: string): Promise<ProbeObservation | null> {
+  async collectObservation(targetId: string, baseUrl: string, options?: ProbeCollectionOptions): Promise<ProbeObservation | null> {
     const rules = this.getRulesDocument();
     const candidates = (rules.probes ?? []).filter((probe) => {
       const method = probe.request?.method?.toUpperCase();
+      const protocol = probe.request?.protocol;
 
       return (
         probe.enabled !== false &&
         probe.target_id === targetId &&
-        probe.request?.protocol === "http" &&
-        (method === "GET" || method === "HEAD") &&
+        (protocol === "http" || protocol === "ws") &&
+        (protocol === "ws" || method === "GET" || method === "HEAD") &&
         isString(probe.request?.path)
       );
     });
 
     for (const probe of candidates) {
-      const method = probe.request?.method?.toUpperCase() as "GET" | "HEAD";
       const path = probe.request?.path as string;
       const timeoutMs = probe.request?.timeout_ms ?? 1200;
-      const endpoint = new URL(path, baseUrl).toString();
+      const actualEndpoint = new URL(path, baseUrl).toString();
+      const logicalEndpoint = createLogicalEndpoint(baseUrl, path, options?.portHint);
 
-      const firstAttempt = await this.requestEndpoint(endpoint, method, timeoutMs);
+      if (probe.request?.protocol === "ws") {
+        const websocketAttempt = await this.requestWebSocketEndpoint(actualEndpoint, probe.request.payload, timeoutMs);
+
+        if (websocketAttempt) {
+          return {
+            targetId,
+            requestSummary: `WS ${logicalEndpoint}`,
+            responseStatus: websocketAttempt.status,
+            responseHeaders: websocketAttempt.headers,
+            responseBodyExcerpt: websocketAttempt.body,
+            source: logicalEndpoint,
+            collectedAt: new Date().toISOString()
+          };
+        }
+
+        continue;
+      }
+
+      const method = probe.request?.method?.toUpperCase() as "GET" | "HEAD";
+
+      const firstAttempt = await this.requestEndpoint(actualEndpoint, method, timeoutMs);
 
       if (firstAttempt) {
         return {
           targetId,
-          requestSummary: `${method} ${endpoint}`,
+          requestSummary: `${method} ${logicalEndpoint}`,
           responseStatus: firstAttempt.status,
           responseHeaders: firstAttempt.headers,
           responseBodyExcerpt: firstAttempt.body,
-          source: endpoint,
+          source: logicalEndpoint,
           collectedAt: new Date().toISOString()
         };
       }
 
       if (method === "HEAD" && probe.fallback?.action === "degrade_to_get") {
-        const fallbackAttempt = await this.requestEndpoint(endpoint, "GET", timeoutMs);
+        const fallbackAttempt = await this.requestEndpoint(actualEndpoint, "GET", timeoutMs);
 
         if (fallbackAttempt) {
           return {
             targetId,
-            requestSummary: `GET ${endpoint}`,
+            requestSummary: `GET ${logicalEndpoint}`,
             responseStatus: fallbackAttempt.status,
             responseHeaders: fallbackAttempt.headers,
             responseBodyExcerpt: fallbackAttempt.body,
-            source: endpoint,
+            source: logicalEndpoint,
             collectedAt: new Date().toISOString()
           };
         }
@@ -173,6 +210,73 @@ export class AssetProbeService {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  async requestWebSocketEndpoint(
+    endpoint: string,
+    payload: string | undefined,
+    timeoutMs: number
+  ): Promise<{ status: number; headers: Record<string, string>; body: string } | null> {
+    const websocketConstructor = (globalThis as unknown as {
+      WebSocket?: new (url: string) => {
+        addEventListener: (type: string, listener: (event: { data?: unknown }) => void, options?: { once?: boolean }) => void;
+        send: (data: string) => void;
+        close: () => void;
+      };
+    }).WebSocket;
+
+    if (!websocketConstructor) {
+      return null;
+    }
+
+    const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 1500;
+
+    return new Promise((resolvePromise) => {
+      const websocket = new websocketConstructor(endpoint);
+      const timer = setTimeout(() => {
+        websocket.close();
+        resolvePromise(null);
+      }, timeout);
+
+      const finalize = (result: { status: number; headers: Record<string, string>; body: string } | null) => {
+        clearTimeout(timer);
+        resolvePromise(result);
+      };
+
+      websocket.addEventListener(
+        "open",
+        () => {
+          if (payload) {
+            websocket.send(payload);
+          }
+        },
+        { once: true }
+      );
+
+      websocket.addEventListener(
+        "message",
+        (event) => {
+          websocket.close();
+          finalize({
+            status: 101,
+            headers: {
+              upgrade: "websocket"
+            },
+            body: typeof event.data === "string" ? event.data : String(event.data ?? "")
+          });
+        },
+        { once: true }
+      );
+
+      websocket.addEventListener(
+        "error",
+        () => {
+          websocket.close();
+          finalize(null);
+        },
+        { once: true }
+      );
+    });
   }
 
   getRulesDocument(): ProbeRulesDocument {

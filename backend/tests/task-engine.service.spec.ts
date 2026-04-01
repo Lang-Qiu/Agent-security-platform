@@ -495,6 +495,249 @@ test("asset adapter supports live probe mode for langflow without sample_ref", a
   }
 });
 
+test("asset adapter supports live probe mode for ollama with a probe port hint", async () => {
+  const serviceModule = await importIfExists<TaskEngineServiceModule>(engineServicePath);
+  const assetAdapterModule = await importIfExists<AdapterModule>(assetAdapterPath);
+  const skillsAdapterModule = await importIfExists<AdapterModule>(skillsAdapterPath);
+  const sandboxAdapterModule = await importIfExists<AdapterModule>(sandboxAdapterPath);
+
+  assert.ok(serviceModule?.TaskEngineService);
+  assert.ok(assetAdapterModule?.AssetScanTaskAdapter);
+  assert.ok(skillsAdapterModule?.SkillsStaticTaskAdapter);
+  assert.ok(sandboxAdapterModule?.SandboxTaskAdapter);
+
+  if (
+    !serviceModule?.TaskEngineService ||
+    !assetAdapterModule?.AssetScanTaskAdapter ||
+    !skillsAdapterModule?.SkillsStaticTaskAdapter ||
+    !sandboxAdapterModule?.SandboxTaskAdapter
+  ) {
+    return;
+  }
+
+  const probeServer = await import("node:http").then(({ createServer }) =>
+    createServer((request, response) => {
+      if (request.url === "/api/tags") {
+        response.statusCode = 200;
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ models: [{ name: "qwen2.5:latest" }] }));
+        return;
+      }
+
+      response.statusCode = 404;
+      response.end(JSON.stringify({ error: "not_found" }));
+    })
+  );
+
+  const startedProbeServer = await new Promise<{ baseUrl: string; close: () => Promise<void> }>((resolvePromise, rejectPromise) => {
+    probeServer.once("error", rejectPromise);
+    probeServer.listen(0, "127.0.0.1", () => {
+      const address = probeServer.address();
+
+      if (!address || typeof address === "string") {
+        rejectPromise(new Error("probe server did not expose a numeric port"));
+        return;
+      }
+
+      resolvePromise({
+        baseUrl: `http://127.0.0.1:${address.port}`,
+        close: () =>
+          new Promise<void>((resolveClose, rejectClose) => {
+            probeServer.close((error) => {
+              if (error) {
+                rejectClose(error);
+                return;
+              }
+
+              resolveClose();
+            });
+          })
+      });
+    });
+  });
+
+  try {
+    const service = new serviceModule.TaskEngineService({
+      adapters: [
+        new assetAdapterModule.AssetScanTaskAdapter(),
+        new skillsAdapterModule.SkillsStaticTaskAdapter(),
+        new sandboxAdapterModule.SandboxTaskAdapter()
+      ]
+    });
+
+    const liveProbeTask = {
+      ...createTask("asset_scan"),
+      target: {
+        target_type: "url",
+        target_value: startedProbeServer.baseUrl
+      },
+      parameters: {
+        probe_mode: "live",
+        probe_target_id: "ollama",
+        probe_port_hint: 11434
+      }
+    } as Task;
+
+    const artifacts = (await service.createInitialArtifacts(liveProbeTask)) as {
+      result: {
+        details: {
+          fingerprint?: { framework?: string; agent_name?: string };
+          confidence?: number;
+          matched_features?: string[];
+          open_ports?: Array<{ port?: number }>;
+        };
+      };
+    };
+
+    assert.equal(artifacts.result.details.fingerprint?.framework, "ollama");
+    assert.equal(artifacts.result.details.fingerprint?.agent_name, "Ollama");
+    assert.ok((artifacts.result.details.confidence ?? 0) >= 0.8);
+    assert.equal(artifacts.result.details.open_ports?.[0]?.port, 11434);
+    assert.ok((artifacts.result.details.matched_features?.length ?? 0) >= 3);
+  } finally {
+    await startedProbeServer.close();
+  }
+});
+
+test("asset adapter supports live probe mode for openclaw gateway over websocket", async () => {
+  const serviceModule = await importIfExists<TaskEngineServiceModule>(engineServicePath);
+  const assetAdapterModule = await importIfExists<AdapterModule>(assetAdapterPath);
+  const skillsAdapterModule = await importIfExists<AdapterModule>(skillsAdapterPath);
+  const sandboxAdapterModule = await importIfExists<AdapterModule>(sandboxAdapterPath);
+
+  assert.ok(serviceModule?.TaskEngineService);
+  assert.ok(assetAdapterModule?.AssetScanTaskAdapter);
+  assert.ok(skillsAdapterModule?.SkillsStaticTaskAdapter);
+  assert.ok(sandboxAdapterModule?.SandboxTaskAdapter);
+
+  if (
+    !serviceModule?.TaskEngineService ||
+    !assetAdapterModule?.AssetScanTaskAdapter ||
+    !skillsAdapterModule?.SkillsStaticTaskAdapter ||
+    !sandboxAdapterModule?.SandboxTaskAdapter
+  ) {
+    return;
+  }
+
+  const { createServer } = await import("node:http");
+  const { createHash } = await import("node:crypto");
+  const websocketServer = createServer();
+
+  websocketServer.on("upgrade", (request, socket) => {
+    const websocketKey = request.headers["sec-websocket-key"];
+
+    if (typeof websocketKey !== "string") {
+      socket.destroy();
+      return;
+    }
+
+    const acceptKey = createHash("sha1")
+      .update(`${websocketKey}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+      .digest("base64");
+
+    socket.write(
+      [
+        "HTTP/1.1 101 Switching Protocols",
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        `Sec-WebSocket-Accept: ${acceptKey}`,
+        "",
+        ""
+      ].join("\r\n")
+    );
+
+    socket.once("data", () => {
+      const payload = JSON.stringify({
+        type: "res",
+        ok: true,
+        payload: {
+          type: "hello-ok",
+          protocol: 3,
+          presence: {
+            state: "available"
+          }
+        }
+      });
+      const payloadBuffer = Buffer.from(payload);
+      const frame = Buffer.alloc(2 + payloadBuffer.length);
+      frame[0] = 0x81;
+      frame[1] = payloadBuffer.length;
+      payloadBuffer.copy(frame, 2);
+      socket.write(frame);
+      socket.end();
+    });
+  });
+
+  const startedWebsocketServer = await new Promise<{ baseUrl: string; close: () => Promise<void> }>((resolvePromise, rejectPromise) => {
+    websocketServer.once("error", rejectPromise);
+    websocketServer.listen(0, "127.0.0.1", () => {
+      const address = websocketServer.address();
+
+      if (!address || typeof address === "string") {
+        rejectPromise(new Error("websocket server did not expose a numeric port"));
+        return;
+      }
+
+      resolvePromise({
+        baseUrl: `ws://127.0.0.1:${address.port}`,
+        close: () =>
+          new Promise<void>((resolveClose, rejectClose) => {
+            websocketServer.close((error) => {
+              if (error) {
+                rejectClose(error);
+                return;
+              }
+
+              resolveClose();
+            });
+          })
+      });
+    });
+  });
+
+  try {
+    const service = new serviceModule.TaskEngineService({
+      adapters: [
+        new assetAdapterModule.AssetScanTaskAdapter(),
+        new skillsAdapterModule.SkillsStaticTaskAdapter(),
+        new sandboxAdapterModule.SandboxTaskAdapter()
+      ]
+    });
+
+    const liveProbeTask = {
+      ...createTask("asset_scan"),
+      target: {
+        target_type: "url",
+        target_value: startedWebsocketServer.baseUrl
+      },
+      parameters: {
+        probe_mode: "live",
+        probe_target_id: "openclaw-gateway",
+        probe_port_hint: 18789
+      }
+    } as Task;
+
+    const artifacts = (await service.createInitialArtifacts(liveProbeTask)) as {
+      result: {
+        details: {
+          fingerprint?: { framework?: string; agent_name?: string };
+          confidence?: number;
+          matched_features?: string[];
+          open_ports?: Array<{ port?: number }>;
+        };
+      };
+    };
+
+    assert.equal(artifacts.result.details.fingerprint?.framework, "openclaw-gateway");
+    assert.equal(artifacts.result.details.fingerprint?.agent_name, "OpenClaw Gateway");
+    assert.ok((artifacts.result.details.confidence ?? 0) >= 0.8);
+    assert.equal(artifacts.result.details.open_ports?.[0]?.port, 18789);
+    assert.ok((artifacts.result.details.matched_features?.length ?? 0) >= 3);
+  } finally {
+    await startedWebsocketServer.close();
+  }
+});
+
 test("asset-scan adapter materializes offline fingerprint details when a bundled sample reference is provided", async () => {
   const assetAdapterModule = await importIfExists<AdapterModule>(assetAdapterPath);
 

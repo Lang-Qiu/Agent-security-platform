@@ -131,6 +131,10 @@
 - 阶段 G 起，`asset_scan` 还支持最小 live probe 参数：
   - `parameters.probe_mode = "live"`
   - `parameters.probe_target_id`（如 `langflow`、`autogpt`）
+  - `parameters.probe_port_hint`（可选；用于受控测试环境下补齐逻辑端口信号，如 `11434`、`18789`）
+- 当前 live probe 已覆盖：
+  - HTTP: `langflow`、`autogpt`、`ollama`
+  - WebSocket: `openclaw-gateway`
 - live probe 仅允许在 localhost/测试容器/mock server 等受控目标上执行，本阶段不包含公网扫描和分布式调度。
 
 #### target 子对象

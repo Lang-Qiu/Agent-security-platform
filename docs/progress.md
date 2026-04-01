@@ -340,3 +340,24 @@ Recommended fields:
   - `AssetScanTaskAdapter` 现支持 `sample_ref` 与 `probe_mode=live + probe_target_id` 双路径
   - `TaskCenterController/TaskCenterService/TaskEngineService` 的任务创建链路已异步化
   - live probe 在当前实现中仅面向 localhost/测试容器/mock server 受控目标
+
+## 2026-04-01 - REQ-ASSET-PROBE-004 expand live probe to ollama and openclaw-gateway
+- requirement: `REQ-ASSET-PROBE-004` 阶段 G 第二刀：补齐剩余 P0 live probe 覆盖
+- scope: 为 `ollama` 增加带 `probe_port_hint` 的 live probe 识别，为 `openclaw-gateway` 增加最小 WebSocket probe 识别，并补齐 task-engine/API 两层回归
+- tests:
+  - `backend/tests/task-engine.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+  - `npm run test:backend`
+  - `npm run test`
+- test result: pass; `ollama` 与 `openclaw-gateway` 的新增 RED 用例在实现后转 GREEN，最终全仓测试保持通过
+- docs updated:
+  - `docs/sprint-current.md`
+  - `docs/api-contract.md`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+  - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
+- notes:
+  - `ollama` 通过 `probe_port_hint=11434` 补齐逻辑端口信号，live probe 结果达到 direct 阈值
+  - `openclaw-gateway` 通过最小 WebSocket 探针采集 `hello-ok` 与 `presence`，live probe 结果达到 direct 阈值
+  - 当前 P0 四个目标均已具备无 `sample_ref` 的 live probe 识别能力
+  - `REQ-ASSET-PROBE-004` 当前最小闭环验收项已满足，可在此停下并等待下一条 requirement
