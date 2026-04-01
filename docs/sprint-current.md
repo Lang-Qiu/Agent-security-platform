@@ -50,10 +50,11 @@ REQ-ASSET-EVIDENCE-003
 - 已完成：`autogpt`、`openclaw-gateway`、`ollama`、`langflow` 均已具备至少 1 条 `verified-capture` 负样本
 - 已完成：`backend/tests/asset-fingerprint.service.spec.ts` 已纳入上述新增负样本回归，采用先 RED（样本缺失）后 GREEN（补齐样本）流程
 - 已完成：第二轮近似路由负样本（`openclaw_gateway.neg.n006`、`ollama.neg.n006`、`langflow.neg.n006`、`autogpt.neg.n005`）已接入回归
-- 已完成：AutoGPT 固定 mock 脚本与命令（`scripts/dev/autogpt-negative-mock.py`、`mock:autogpt:start`/`mock:autogpt:stop`）已落地，并新增 `autogpt.neg.n006`
-- 已完成：P0 固定 mock 脚本与命令（`scripts/dev/p0-negative-mock.py`、`mock:p0:start`/`mock:p0:stop`）已落地
+- 已完成：负样本固定 mock 已合并为单脚本 `scripts/dev/negative-sample-mock.py` 与单容器 `asp-negative-mock`，统一由 `bash scripts/dev/mock-containers.sh <start|stop|restart|status>` 管理
 - 已完成：代理头污染/中间件注入负样本（`openclaw_gateway.neg.n007`、`ollama.neg.n007`、`langflow.neg.n007`、`autogpt.neg.n007`）已接入回归
-- 当前结论：`REQ-ASSET-EVIDENCE-003` 的核心验收项已达成，且“路径近似 + 404 + 代理头污染 + 固定容器采样链路”均已覆盖，下一步可扩展跨产品字段复用（交叉污染）类负样本
+- 已完成：跨产品字段复用（交叉污染）负样本（`openclaw_gateway.neg.n008`、`ollama.neg.n008`、`langflow.neg.n008`、`autogpt.neg.n008`）已接入回归
+- 已完成：字段格式伪装负样本（`openclaw_gateway.neg.n009`、`ollama.neg.n009`、`langflow.neg.n009`、`autogpt.neg.n009`）已接入回归
+- 当前结论：`REQ-ASSET-EVIDENCE-003` 的核心验收项已达成，且“路径近似 + 404 + 代理头污染 + 交叉污染 + 格式伪装 + 固定容器采样链路”均已覆盖
 
 ## Related Plan
 - docs/plans/agent-asset-fingerprinting-discovery-plan.md

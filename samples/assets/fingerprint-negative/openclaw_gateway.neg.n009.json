@@ -1,0 +1,16 @@
+{
+  "sample_id": "n009",
+  "target_id": "openclaw-gateway",
+  "request_summary": "GET http://127.0.0.1:18001/openclaw/health?spoof=1",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json",
+    "server": "negative-sample-mock/1.0 Python/3.12.13, negative-sample-mock/1.0",
+    "x-format-spoof": "openclaw-like",
+    "via": "1.1 schema-mask"
+  },
+  "response_body_excerpt": "{\"status\": \"ok\", \"type\": \"hello_ko\", \"presence_state\": \"available\"}",
+  "source": "verified-capture: curl GET http://127.0.0.1:18001/openclaw/health?spoof=1 (docker container asp-negative-mock; script scripts/dev/negative-sample-mock.py)",
+  "collected_at": "2026-04-01T08:20:16Z",
+  "exclusion_reason": "Shape looks OpenClaw-like, but key markers do not match exact required signals (hello-ok and presence), so confidence remains suppressed."
+}

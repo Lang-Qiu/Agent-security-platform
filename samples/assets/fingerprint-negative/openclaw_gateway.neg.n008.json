@@ -1,0 +1,16 @@
+{
+  "sample_id": "n008",
+  "target_id": "openclaw-gateway",
+  "request_summary": "GET http://127.0.0.1:18001/openclaw/health?cross=1",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json",
+    "server": "negative-sample-mock/1.0 Python/3.12.13, negative-sample-mock/1.0",
+    "x-upstream-service": "ollama",
+    "via": "1.1 cross-gateway"
+  },
+  "response_body_excerpt": "{\"status\": \"ok\", \"models\": [{\"name\": \"llama3\"}], \"agent_id\": \"agent-shadow\"}",
+  "source": "verified-capture: curl GET http://127.0.0.1:18001/openclaw/health?cross=1 (docker container asp-negative-mock; script scripts/dev/negative-sample-mock.py)",
+  "collected_at": "2026-04-01T08:10:01Z",
+  "exclusion_reason": "OpenClaw-like path is present, but payload is cross-contaminated with Ollama/AutoGPT fields and lacks required hello-ok plus presence markers."
+}

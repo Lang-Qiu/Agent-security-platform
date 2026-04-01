@@ -1,0 +1,16 @@
+{
+  "sample_id": "n009",
+  "target_id": "autogpt",
+  "request_summary": "GET http://127.0.0.1:18001/api/agent/status?spoof=1",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json",
+    "server": "negative-sample-mock/1.0 Python/3.12.13, negative-sample-mock/1.0",
+    "x-format-spoof": "autogpt-like",
+    "via": "1.1 schema-mask"
+  },
+  "response_body_excerpt": "{\"status\": \"running\", \"agentId\": \"agent-123\", \"agent-id\": \"agent-123\"}",
+  "source": "verified-capture: curl GET http://127.0.0.1:18001/api/agent/status?spoof=1 (docker container asp-negative-mock; script scripts/dev/negative-sample-mock.py)",
+  "collected_at": "2026-04-01T08:20:16Z",
+  "exclusion_reason": "AutoGPT path is present, but agentId/agent-id are format variants and do not satisfy exact agent_id signal."
+}

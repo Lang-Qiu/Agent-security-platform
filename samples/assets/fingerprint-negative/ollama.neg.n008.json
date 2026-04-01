@@ -1,0 +1,16 @@
+{
+  "sample_id": "n008",
+  "target_id": "ollama",
+  "request_summary": "GET http://127.0.0.1:18001/api/tags?cross=1",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json",
+    "server": "negative-sample-mock/1.0 Python/3.12.13, negative-sample-mock/1.0",
+    "x-proxy-target": "langflow",
+    "via": "1.1 cross-gateway"
+  },
+  "response_body_excerpt": "{\"items\": [{\"name\": \"demo\"}], \"flow_id\": \"lf-123\", \"agent_id\": \"agent-shadow\"}",
+  "source": "verified-capture: curl GET http://127.0.0.1:18001/api/tags?cross=1 (docker container asp-negative-mock; script scripts/dev/negative-sample-mock.py)",
+  "collected_at": "2026-04-01T08:10:01Z",
+  "exclusion_reason": "Ollama route is present, but body reuses LangFlow/AutoGPT fields and still does not provide the required models marker."
+}

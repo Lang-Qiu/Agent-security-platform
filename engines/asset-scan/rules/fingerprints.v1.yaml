@@ -24,7 +24,7 @@ fingerprints:
       - signal_id: "sig-ws-hello-ok"
         signal_type: "body"
         match_operator: "contains"
-        match_value: "type\":\"hello-ok\""
+        match_value: 'type":"hello-ok"'
         weight: 0.45
       - signal_id: "sig-ws-presence"
         signal_type: "body"
@@ -66,7 +66,7 @@ fingerprints:
       - signal_id: "sig-json-ollama-models"
         signal_type: "body"
         match_operator: "contains"
-        match_value: "\"models\""
+        match_value: '"models"'
         weight: 0.45
       - signal_id: "sig-negative-generic"
         signal_type: "body"
@@ -103,7 +103,7 @@ fingerprints:
       - signal_id: "sig-json-langflow-flows"
         signal_type: "body"
         match_operator: "contains"
-        match_value: "\"flows\""
+        match_value: '"flows"'
         weight: 0.30
       - signal_id: "sig-json-langflow-flow-id"
         signal_type: "body"
@@ -162,7 +162,7 @@ fingerprints:
       - signal_id: "sig-jsonrpc-2"
         signal_type: "body"
         match_operator: "contains"
-        match_value: "\"jsonrpc\":\"2.0\""
+        match_value: '"jsonrpc":"2.0"'
         weight: 0.60
       - signal_id: "sig-jsonrpc-method"
         signal_type: "body"

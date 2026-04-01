@@ -334,7 +334,7 @@ Recommended fields:
 
 ## 2026-03-31 - REQ-ASSET-EVIDENCE-003 persistent autogpt mock build
 - requirement: 按“非临时”要求固化 AutoGPT 负样本采集链路，并补一条专属容器来源样本
-- scope: 新增 `scripts/dev/autogpt-negative-mock.py` 与 npm 脚本 `mock:autogpt:start`/`mock:autogpt:stop`，启动 `asp-autogpt-mock` 后采集 `/api/agents/status` 生成 `autogpt.neg.n006`
+- scope: 负样本 mock 架构已收敛为单脚本 `scripts/dev/negative-sample-mock.py` + 单容器 `asp-negative-mock`，通过 `bash scripts/dev/mock-containers.sh start` 启动后采集 `/api/agents/status` 生成 `autogpt.neg.n006`
 - tests:
   - `backend/tests/asset-fingerprint.service.spec.ts`
   - `npm run test:backend`
@@ -346,12 +346,12 @@ Recommended fields:
   - `docs/sprint-current.md`
 - notes:
   - AutoGPT 负样本采样已从临时 `/tmp` 脚本迁移到仓库固定脚本
-  - 新样本来源明确绑定 `asp-autogpt-mock` 容器，证据链更可追溯
+  - 新样本来源已绑定统一容器 `asp-negative-mock`，证据链更可追溯
   - 当前 requirement 下的样本补强流程可复用为后续 P1 目标的采样模板
 
 ## 2026-03-31 - REQ-ASSET-EVIDENCE-003 proxy-header and middleware-injection negatives
 - requirement: 扩展“代理头污染 / 中间件注入字段”负样本并保持固定容器采样链路
-- scope: 新增仓库脚本 `scripts/dev/p0-negative-mock.py` 与 npm 脚本 `mock:p0:start`/`mock:p0:stop`；新增 `openclaw_gateway.neg.n007`、`ollama.neg.n007`、`langflow.neg.n007`、`autogpt.neg.n007` 并接入 matcher 回归
+- scope: 由统一脚本 `scripts/dev/negative-sample-mock.py` 提供 P0 与 autogpt 近似场景端点；新增 `openclaw_gateway.neg.n007`、`ollama.neg.n007`、`langflow.neg.n007`、`autogpt.neg.n007` 并接入 matcher 回归
 - tests:
   - `backend/tests/asset-fingerprint.service.spec.ts`
   - `npm run test:backend`
@@ -365,3 +365,37 @@ Recommended fields:
   - 本轮样本覆盖代理头 `via`/`x-forwarded-*`/`x-upstream-service` 与中间件注入字段场景
   - `autogpt` 与 `p0` 两类负样本采样均已具备固定脚本 + 固定命令的可重复链路
   - 当前 P0 负样本矩阵已具备字段缺失、路径近似、401/404、代理头污染四类基础误报抑制覆盖
+
+## 2026-04-01 - REQ-ASSET-EVIDENCE-003 cross-product field reuse negatives
+- requirement: 扩展“跨产品字段复用（交叉污染）”负样本并保持 matcher 抑制稳定
+- scope: 新增 `openclaw_gateway.neg.n008`、`ollama.neg.n008`、`langflow.neg.n008`、`autogpt.neg.n008`；通过 `scripts/dev/negative-sample-mock.py` 的 `cross=1` 端点进行实采，并接入 matcher 回归
+- tests:
+  - `backend/tests/asset-fingerprint.service.spec.ts`
+  - `npm run test:backend`
+  - `npm run test`
+- test result: pass; 先在测试中引入 n008 触发 RED（文件缺失），补齐样本后 GREEN，且全仓测试保持全绿
+- docs updated:
+  - `docs/sprint-current.md`
+  - `docs/progress.md`
+  - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
+- notes:
+  - 本轮样本覆盖“目标路径命中但字段来自其他产品”的交叉污染场景
+  - 对 `ollama/langflow/autogpt` 保持路径命中条件下的字段抑制，避免误升到 suspected/direct
+  - 当前 P0 负样本矩阵已包含字段缺失、路径近似、404、代理头污染、交叉污染五类基础抑制覆盖
+
+## 2026-04-01 - REQ-ASSET-EVIDENCE-003 format-masquerading negatives
+- requirement: 扩展“字段格式伪装（类型相似但关键键名不匹配）”负样本并保持 matcher 稳定抑制
+- scope: 新增 `openclaw_gateway.neg.n009`、`ollama.neg.n009`、`langflow.neg.n009`、`autogpt.neg.n009`；通过 `scripts/dev/negative-sample-mock.py` 的 `spoof=1` 端点进行实采，并接入 matcher 回归
+- tests:
+  - `backend/tests/asset-fingerprint.service.spec.ts`
+  - `npm run test:backend`
+  - `npm run test`
+- test result: pass; 先在测试中引入 n009 触发 RED（文件缺失），补齐样本后 GREEN，且全仓测试保持全绿
+- docs updated:
+  - `docs/sprint-current.md`
+  - `docs/progress.md`
+  - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
+- notes:
+  - 本轮样本覆盖“路径命中 + 响应形态接近 + 关键键名偏差”的格式伪装场景
+  - `openclaw` 的 hello_ko/presence_state、`ollama` 的 model_list/models_count、`langflow` 的 flows_meta/flowId、`autogpt` 的 agentId/agent-id 均未触发强信号
+  - 当前 P0 负样本矩阵已包含字段缺失、路径近似、404、代理头污染、交叉污染、格式伪装六类基础抑制覆盖

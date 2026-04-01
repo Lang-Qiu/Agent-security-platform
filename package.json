@@ -12,11 +12,7 @@
     "test:repo": "node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/root-test-entry.spec.ts tests/repository/frontend-formatting-boundary.spec.ts",
     "test:shared": "node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/task-contract.spec.ts shared/tests/api-response.contract.spec.ts shared/tests/result-contract.spec.ts",
     "test:backend": "node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/task-center.service.spec.ts backend/tests/task-engine.service.spec.ts backend/tests/asset-fingerprint.service.spec.ts tests/integration/backend-task-center.api.spec.ts",
-    "test:frontend": "npm run test --prefix frontend",
-    "mock:p0:start": "docker rm -f asp-p0-neg-mock >/dev/null 2>&1 || true && docker run --name asp-p0-neg-mock -d -p 18001:8000 -v \"$PWD/scripts/dev/p0-negative-mock.py:/app/mock.py:ro\" python:3.12-alpine python /app/mock.py",
-    "mock:p0:stop": "docker rm -f asp-p0-neg-mock >/dev/null 2>&1 || true",
-    "mock:autogpt:start": "docker rm -f asp-autogpt-mock >/dev/null 2>&1 || true && docker run --name asp-autogpt-mock -d -p 18000:8000 -v \"$PWD/scripts/dev/autogpt-negative-mock.py:/app/mock.py:ro\" python:3.12-alpine python /app/mock.py",
-    "mock:autogpt:stop": "docker rm -f asp-autogpt-mock >/dev/null 2>&1 || true"
+    "test:frontend": "npm run test --prefix frontend"
   },
   "dependencies": {
     "yaml": "^2.8.3"

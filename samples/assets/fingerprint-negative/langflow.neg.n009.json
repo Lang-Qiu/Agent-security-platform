@@ -1,0 +1,16 @@
+{
+  "sample_id": "n009",
+  "target_id": "langflow",
+  "request_summary": "GET http://127.0.0.1:18001/api/v1/flows?spoof=1",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json",
+    "server": "negative-sample-mock/1.0 Python/3.12.13, negative-sample-mock/1.0",
+    "x-format-spoof": "langflow-like",
+    "via": "1.1 schema-mask"
+  },
+  "response_body_excerpt": "{\"flows_meta\": [{\"id\": \"f1\", \"name\": \"pipeline\"}], \"flowId\": \"f1\", \"status\": \"ok\"}",
+  "source": "verified-capture: curl GET http://127.0.0.1:18001/api/v1/flows?spoof=1 (docker container asp-negative-mock; script scripts/dev/negative-sample-mock.py)",
+  "collected_at": "2026-04-01T08:20:16Z",
+  "exclusion_reason": "LangFlow-like shape is present, but exact flows and flow_id markers are absent due to format masquerading."
+}
