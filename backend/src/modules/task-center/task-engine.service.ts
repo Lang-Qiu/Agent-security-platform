@@ -43,9 +43,10 @@ export class TaskEngineService {
     };
   }
 
-  createInitialArtifacts(task: Task): TaskInitialArtifacts {
+  async createInitialArtifacts(task: Task): Promise<TaskInitialArtifacts> {
     const adapter = this.getValidatedAdapter(task);
     const summary = task.summary ?? DEFAULT_PENDING_TASK_SUMMARY;
+    const initialDetails = await adapter.createInitialDetails(task);
 
     const result: BaseResult<ResultDetails> = {
       task_id: task.task_id,
@@ -54,7 +55,7 @@ export class TaskEngineService {
       status: task.status,
       risk_level: task.risk_level ?? "info",
       summary,
-      details: adapter.createInitialDetails(task),
+      details: initialDetails,
       created_at: task.created_at,
       updated_at: task.updated_at
     };

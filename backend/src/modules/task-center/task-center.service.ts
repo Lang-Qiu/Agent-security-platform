@@ -32,7 +32,7 @@ export class TaskCenterService {
       (() => `task_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`);
   }
 
-  createTask(input: CreateTaskRequest): Task {
+  async createTask(input: CreateTaskRequest): Promise<Task> {
     const timestamp = this.now();
     const taskId = this.nextTaskId();
     const engineType = TASK_TYPE_TO_ENGINE_TYPE[input.task_type];
@@ -57,7 +57,7 @@ export class TaskCenterService {
       task.parameters = { ...input.parameters };
     }
 
-    const { result, riskSummary } = this.taskEngineService.createInitialArtifacts(task);
+    const { result, riskSummary } = await this.taskEngineService.createInitialArtifacts(task);
 
     this.repository.save({
       task,

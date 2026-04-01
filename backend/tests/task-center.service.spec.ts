@@ -13,7 +13,7 @@ type ServiceModule = {
     now?: () => string;
     nextTaskId?: () => string;
   }) => {
-    createTask: (input: unknown) => unknown;
+    createTask: (input: unknown) => Promise<unknown>;
     getTaskById: (taskId: string) => unknown;
     listTasks: () => unknown[];
     getTaskResult: (taskId: string) => unknown;
@@ -93,7 +93,7 @@ test("task center service creates asset, static-analysis, and sandbox tasks with
     })()
   });
 
-  const createdAssetTask = service.createTask({
+  const createdAssetTask = await service.createTask({
     task_type: "asset_scan",
     title: "Scan demo target",
     target: {
@@ -107,7 +107,7 @@ test("task center service creates asset, static-analysis, and sandbox tasks with
     summary: string;
   };
 
-  const createdStaticTask = service.createTask({
+  const createdStaticTask = await service.createTask({
     task_type: "static_analysis",
     title: "Analyze demo skill",
     target: {
@@ -121,7 +121,7 @@ test("task center service creates asset, static-analysis, and sandbox tasks with
     summary: string;
   };
 
-  const createdSandboxTask = service.createTask({
+  const createdSandboxTask = await service.createTask({
     task_type: "sandbox_run",
     title: "Run demo sandbox session",
     target: {

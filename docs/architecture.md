@@ -267,3 +267,24 @@ engines/<engine-name>/
 - 不发起真实网络请求
 - 不做后台异步执行或状态推进
 - 不把样本驱动逻辑泄漏成 engine 私有结构之外的额外平台契约
+
+## REQ-ASSET-PROBE-004 Phase G Minimal Live Probe
+
+阶段 G 在保持离线样本路径可用的前提下，新增了最小真实探针执行通道：
+
+- 新增 `AssetProbeService`，按 `engines/asset-scan/rules/probes.v1.yaml` 的 target 级 HTTP 探针配置执行最小 GET/HEAD 采集
+- `AssetScanTaskAdapter` 支持两条输入路径并存：
+    - `sample_ref`：离线样本回放
+    - `probe_mode=live + probe_target_id`：本地受控目标实时采集
+- live probe 采集结果会转成 matcher 可消费的 observation，再通过 `AssetFingerprintService` 统一产出 `AssetScanResultDetails`
+
+为支持 live probe 的异步 I/O，任务创建链路已调整为异步：
+
+- `TaskCenterController.createTask` -> async
+- `TaskCenterService.createTask` -> async
+- `TaskEngineService.createInitialArtifacts` -> async
+
+该阶段仍遵守边界：
+
+- 仅允许 localhost/测试容器/mock server 受控目标
+- 不引入公网扫描、分布式调度与 WebSocket 探针

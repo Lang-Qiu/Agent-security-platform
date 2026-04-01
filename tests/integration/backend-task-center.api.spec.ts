@@ -306,3 +306,140 @@ test("backend task center returns TASK_NOT_FOUND when a task id does not exist",
   assert.equal(body.error_code, "TASK_NOT_FOUND");
   assert.equal(typeof body.request_id, "string");
 });
+
+test("backend task center supports live probe mode for langflow and autogpt without sample_ref", async (t) => {
+  const mainModule = await importIfExists<MainModule>(mainModulePath);
+
+  assert.notEqual(mainModule, null, "backend main module should exist before live probe mode can be verified");
+
+  if (!mainModule?.createAppServer) {
+    return;
+  }
+
+  const probeServer = await import("node:http").then(({ createServer }) =>
+    createServer((request, response) => {
+      if (request.url === "/api/v1/flows") {
+        response.statusCode = 200;
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ flows: [{ flow_id: "flow-live-001" }] }));
+        return;
+      }
+
+      if (request.url === "/api/agent/status") {
+        response.statusCode = 200;
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ agent_id: "agent-live-001", status: "running" }));
+        return;
+      }
+
+      response.statusCode = 404;
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ error: "not_found" }));
+    })
+  );
+
+  const probeBaseUrl = await new Promise<{ baseUrl: string; close: () => Promise<void> }>((resolvePromise, rejectPromise) => {
+    probeServer.once("error", rejectPromise);
+    probeServer.listen(0, "127.0.0.1", () => {
+      const address = probeServer.address();
+
+      if (!address || typeof address === "string") {
+        rejectPromise(new Error("probe server did not expose a numeric port"));
+        return;
+      }
+
+      resolvePromise({
+        baseUrl: `http://127.0.0.1:${address.port}`,
+        close: () =>
+          new Promise<void>((resolveClose, rejectClose) => {
+            probeServer.close((error) => {
+              if (error) {
+                rejectClose(error);
+                return;
+              }
+
+              resolveClose();
+            });
+          })
+      });
+    });
+  });
+
+  t.after(async () => {
+    await probeBaseUrl.close();
+  });
+
+  const server = mainModule.createAppServer();
+  const { baseUrl, close } = await startServer(server);
+  t.after(close);
+
+  const createdLangflowTask = await createTask(baseUrl, {
+    task_type: "asset_scan",
+    title: "Live probe langflow",
+    target: {
+      target_type: "url",
+      target_value: probeBaseUrl.baseUrl
+    },
+    parameters: {
+      probe_mode: "live",
+      probe_target_id: "langflow"
+    }
+  });
+
+  const createdAutogptTask = await createTask(baseUrl, {
+    task_type: "asset_scan",
+    title: "Live probe autogpt",
+    target: {
+      target_type: "url",
+      target_value: probeBaseUrl.baseUrl
+    },
+    parameters: {
+      probe_mode: "live",
+      probe_target_id: "autogpt"
+    }
+  });
+
+  assert.equal(createdLangflowTask.status, 201);
+  assert.equal(createdAutogptTask.status, 201);
+
+  const langflowTaskId = ((createdLangflowTask.body.data as { task_id: string }).task_id);
+  const autogptTaskId = ((createdAutogptTask.body.data as { task_id: string }).task_id);
+
+  const langflowResultResponse = await fetch(`${baseUrl}/api/tasks/${langflowTaskId}/result`);
+  const langflowResultBody = (await langflowResultResponse.json()) as {
+    success: boolean;
+    data: {
+      details: {
+        fingerprint?: { framework?: string; agent_name?: string };
+        confidence?: number;
+        matched_features?: string[];
+      };
+    };
+  };
+
+  const autogptResultResponse = await fetch(`${baseUrl}/api/tasks/${autogptTaskId}/result`);
+  const autogptResultBody = (await autogptResultResponse.json()) as {
+    success: boolean;
+    data: {
+      details: {
+        fingerprint?: { framework?: string; agent_name?: string };
+        confidence?: number;
+        matched_features?: string[];
+      };
+    };
+  };
+
+  assert.equal(langflowResultResponse.status, 200);
+  assert.equal(langflowResultBody.success, true);
+  assert.equal(langflowResultBody.data.details.fingerprint?.framework, "langflow");
+  assert.equal(langflowResultBody.data.details.fingerprint?.agent_name, "LangFlow");
+  assert.ok((langflowResultBody.data.details.confidence ?? 0) >= 0.7);
+  assert.ok((langflowResultBody.data.details.matched_features?.length ?? 0) >= 2);
+
+  assert.equal(autogptResultResponse.status, 200);
+  assert.equal(autogptResultBody.success, true);
+  assert.equal(autogptResultBody.data.details.fingerprint?.framework, "autogpt");
+  assert.equal(autogptResultBody.data.details.fingerprint?.agent_name, "AutoGPT");
+  assert.ok((autogptResultBody.data.details.confidence ?? 0) >= 0.7);
+  assert.ok((autogptResultBody.data.details.matched_features?.length ?? 0) >= 2);
+});

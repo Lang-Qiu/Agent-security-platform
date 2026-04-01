@@ -5,6 +5,7 @@ import { parse } from "yaml";
 
 import type { AssetScanResultDetails } from "../../../../../shared/types/result.ts";
 import type { TaskTarget } from "../../../../../shared/types/task.ts";
+import type { ProbeObservation } from "./asset-probe.service.ts";
 
 type MatchDisposition = "direct" | "suspected" | "log_only" | "unknown";
 
@@ -195,6 +196,30 @@ export class AssetFingerprintService {
       open_ports: result.details.open_ports,
       http_endpoints: result.details.http_endpoints,
       auth_detected: result.details.auth_detected,
+      findings: []
+    };
+  }
+
+  createInitialDetailsFromObservation(observation: ProbeObservation, target?: TaskTarget): AssetScanResultDetails {
+    const evaluated = this.evaluateSample({
+      sample_id: `live-${observation.targetId}-${Date.now()}`,
+      target_id: observation.targetId,
+      request_summary: observation.requestSummary,
+      response_status: observation.responseStatus,
+      response_headers: observation.responseHeaders,
+      response_body_excerpt: observation.responseBodyExcerpt,
+      source: observation.source,
+      collected_at: observation.collectedAt
+    });
+
+    return {
+      target,
+      fingerprint: evaluated.details.fingerprint,
+      confidence: evaluated.details.confidence,
+      matched_features: evaluated.details.matched_features,
+      open_ports: evaluated.details.open_ports,
+      http_endpoints: evaluated.details.http_endpoints,
+      auth_detected: evaluated.details.auth_detected,
       findings: []
     };
   }

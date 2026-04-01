@@ -10,7 +10,7 @@ export class TaskCenterController {
     this.service = service;
   }
 
-  createTask(body: unknown, requestId: string) {
+  async createTask(body: unknown, requestId: string) {
     const request = normalizeCreateTaskRequest(body);
 
     if (!request) {
@@ -20,7 +20,7 @@ export class TaskCenterController {
     return createSuccessHttpResponse({
       requestId,
       message: "Task created successfully",
-      data: this.service.createTask(request),
+      data: await this.service.createTask(request),
       statusCode: 201
     });
   }

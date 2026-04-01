@@ -39,7 +39,7 @@ export class AppModule {
           );
           return;
         case "createTask":
-          writeJsonResponse(response, this.taskCenterModule.controller.createTask(await readJsonBody(request), requestId));
+          writeJsonResponse(response, await this.taskCenterModule.controller.createTask(await readJsonBody(request), requestId));
           return;
         case "listTasks":
           writeJsonResponse(response, this.taskCenterModule.controller.listTasks(requestId));

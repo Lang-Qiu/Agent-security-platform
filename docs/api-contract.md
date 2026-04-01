@@ -128,6 +128,10 @@
 
 - 当前离线 TDD 阶段，`asset_scan` 允许通过 `parameters.sample_ref` 指向仓库内 `samples/assets/` 下的样本 JSON。
 - 该参数仅用于规则消费与测试闭环，不代表已经接入真实扫描执行器。
+- 阶段 G 起，`asset_scan` 还支持最小 live probe 参数：
+  - `parameters.probe_mode = "live"`
+  - `parameters.probe_target_id`（如 `langflow`、`autogpt`）
+- live probe 仅允许在 localhost/测试容器/mock server 等受控目标上执行，本阶段不包含公网扫描和分布式调度。
 
 #### target 子对象
 

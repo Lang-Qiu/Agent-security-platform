@@ -284,118 +284,59 @@ Recommended fields:
   - beginner 文档已切换为含“已完成/进行中/待开始”状态的过程日志
   - 下一执行重点仍是扩展 P0 负样本回归覆盖
 
-## 2026-03-31 - REQ-ASSET-EVIDENCE-003 autogpt negative samples verified capture
-- requirement: 将 AutoGPT 负样本从 synthetic/mock 升级为 Docker 本地实采证据
-- scope: 启动本地 Docker mock 服务并采集 `/api/agent/status`、`/health`、`/api/status` 响应，回填 `autogpt.neg.n002/n003/n004` 的 source、headers、body 摘要与时间戳
-- tests:
-  - `npm run test:backend`
-- test result: pass; 样本回填后 backend 测试保持全绿
-- docs updated:
-  - `docs/sprint-current.md`
-  - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
-  - `docs/progress.md`
-- notes:
-  - AutoGPT 三条负样本已统一标记为 `verified-capture`
-  - 当前阶段目标从“样本数量”进一步推进到“证据可信度”
-  - 下一步建议按同样方式补齐其余 P0 的至少 1 条 verified-capture 负样本
-
-## 2026-03-31 - REQ-ASSET-EVIDENCE-003 P0 verified-capture negatives (openclaw/ollama/langflow)
-- requirement: 为其余 P0 目标各补至少 1 条 Docker 本地实采负样本，并接入 matcher 回归
-- scope: 通过 `asp-p0-neg-mock` 采集 `/openclaw/health`、`/api/tags`、`/api/v1/flows`，新增 `openclaw_gateway.neg.n005`、`ollama.neg.n005`、`langflow.neg.n005`，并将回归测试扩展到 n005
-- tests:
-  - `backend/tests/asset-fingerprint.service.spec.ts`
-  - `npm run test:backend`
-- test result: pass; 先在测试中引入 n005 触发 RED（文件缺失），补齐样本后回归 GREEN（14/14）
-- docs updated:
-  - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
-  - `docs/progress.md`
-  - `docs/sprint-current.md`
-- notes:
-  - `REQ-ASSET-EVIDENCE-003` 的“每个 P0 至少 1 条 verified-capture 负样本”已满足
-  - 新样本覆盖了“路径命中但核心字段缺失”场景，避免通过硬调权重掩盖证据不足
-  - openclaw/ollama/langflow 新增回归后，matcher 保持 conservative 阈值语义不变
-
-## 2026-03-31 - REQ-ASSET-EVIDENCE-003 second-round near-miss negatives
-- requirement: 继续扩展 P0 负样本矩阵，加入“近似路由 + 404”抑制场景
-- scope: 新增 `openclaw_gateway.neg.n006`、`ollama.neg.n006`、`langflow.neg.n006`、`autogpt.neg.n005`，并先在 `backend/tests/asset-fingerprint.service.spec.ts` 引入引用触发 RED，再补样本回归 GREEN
+## 2026-03-31 ~ 2026-04-01 - REQ-ASSET-EVIDENCE-003 negative sample generation (consolidated)
+- requirement: 合并记录 P0 负样本批次生成与回归闭环（统一容器、统一脚本、统一回归）
+- scope: 连续完成 n002~n009 批次负样本实采与回归接入，覆盖 openclaw/ollama/langflow/autogpt 四个 P0；mock 采样链路统一为 `scripts/dev/negative-sample-mock.py` + `asp-negative-mock`
 - tests:
   - `backend/tests/asset-fingerprint.service.spec.ts`
   - `npm run test:backend`
   - `npm run test`
-- test result: pass; RED 阶段因 n006 缺失触发失败，补齐样本后 backend 14/14，通过后全仓测试保持全绿
+- test result: pass; 各批次均按 RED（先引入样本引用触发缺失失败）-> GREEN（补齐样本后回归通过）执行，最终全仓测试保持全绿
 - docs updated:
-  - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
-  - `docs/progress.md`
   - `docs/sprint-current.md`
+  - `docs/progress.md`
+  - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
 - notes:
-  - 本轮新增样本聚焦“路径相似但 endpoint 实际不存在”的误报防护
-  - 当前 P0 负样本已覆盖字段缺失、路径近似、401 与 404 等基础抑制场景
-  - 发现 `asp-autogpt-mock` 容器未运行，本轮先使用 `asp-p0-neg-mock` 完成近似路由采样，不阻塞 TDD 闭环
+  - 负样本生成六类场景已覆盖：
+    1. 字段缺失
+    2. 路径近似
+    3. 404/端点不存在
+    4. 代理头污染/中间件注入
+    5. 跨产品字段复用（交叉污染）
+    6. 字段格式伪装（键名变体/语义偏差）
+  - 每类场景均已接入 matcher 回归并保持 `confidence < 0.7` 抑制语义
+  - 负样本证据链已统一到可复现采样流程，便于后续扩展 P1/P2
 
-## 2026-03-31 - REQ-ASSET-EVIDENCE-003 persistent autogpt mock build
-- requirement: 按“非临时”要求固化 AutoGPT 负样本采集链路，并补一条专属容器来源样本
-- scope: 负样本 mock 架构已收敛为单脚本 `scripts/dev/negative-sample-mock.py` + 单容器 `asp-negative-mock`，通过 `bash scripts/dev/mock-containers.sh start` 启动后采集 `/api/agents/status` 生成 `autogpt.neg.n006`
-- tests:
-  - `backend/tests/asset-fingerprint.service.spec.ts`
-  - `npm run test:backend`
-  - `npm run test`
-- test result: pass; 先在测试中引入 `autogpt.neg.n006` 触发 RED（文件缺失），补齐样本后 GREEN，且全仓测试通过
+## 2026-04-01 - REQ-ASSET-PROBE-004 phase G kickoff and docs alignment
+- requirement: `REQ-ASSET-PROBE-004` 真实探针执行器最小闭环（阶段 G）
+- scope: 将当前唯一 requirement 从阶段 F 切换至阶段 G，并同步 sprint/plan/beginner/progress 的目标、边界、验收与阶段状态
+- tests: 无；本次仅涉及 requirement 切换与文档更新，不涉及运行时行为改动
+- test result: 未执行；本次变更为纯文档更新
 - docs updated:
+  - `docs/sprint-current.md`
+  - `docs/plans/agent-asset-fingerprinting-discovery-plan.md`
   - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
   - `docs/progress.md`
-  - `docs/sprint-current.md`
 - notes:
-  - AutoGPT 负样本采样已从临时 `/tmp` 脚本迁移到仓库固定脚本
-  - 新样本来源已绑定统一容器 `asp-negative-mock`，证据链更可追溯
-  - 当前 requirement 下的样本补强流程可复用为后续 P1 目标的采样模板
+  - 阶段 F 已标记完成，阶段 G 已进入执行状态
+  - 阶段 G 执行边界已明确：仅 localhost/测试容器/mock server，不触达公网目标
+  - 第一轮探针范围已明确：TCP + HTTP HEAD/GET；WebSocket 暂不纳入
+  - 下一步必须按 TDD 进入 RED：先补 probe runner/adapter/API 失败测试，再做最小实现
 
-## 2026-03-31 - REQ-ASSET-EVIDENCE-003 proxy-header and middleware-injection negatives
-- requirement: 扩展“代理头污染 / 中间件注入字段”负样本并保持固定容器采样链路
-- scope: 由统一脚本 `scripts/dev/negative-sample-mock.py` 提供 P0 与 autogpt 近似场景端点；新增 `openclaw_gateway.neg.n007`、`ollama.neg.n007`、`langflow.neg.n007`、`autogpt.neg.n007` 并接入 matcher 回归
+## 2026-04-01 - REQ-ASSET-PROBE-004 minimal live probe loop (RED -> GREEN)
+- requirement: `REQ-ASSET-PROBE-004` 阶段 G 第一刀：live probe 最小闭环
+- scope: 在 `asset_scan` 中新增受控 live probe 输入通道，并保持与离线 sample 模式并存；打通 adapter -> task-engine -> task-center -> API 的异步创建链路
 - tests:
-  - `backend/tests/asset-fingerprint.service.spec.ts`
-  - `npm run test:backend`
-  - `npm run test`
-- test result: pass; 先在测试中引入 n007 触发 RED（文件缺失），补样本后 GREEN，且全仓测试保持全绿
+  - `backend/tests/task-engine.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+  - `backend/tests/task-center.service.spec.ts`（异步调用适配）
+- test result: pass; 先 RED（新增 live probe 断言失败），后 GREEN（实现后 `npm run test:backend` 与 `npm run test` 全绿）
 - docs updated:
-  - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
+  - `docs/api-contract.md`
+  - `docs/architecture.md`
   - `docs/progress.md`
-  - `docs/sprint-current.md`
 - notes:
-  - 本轮样本覆盖代理头 `via`/`x-forwarded-*`/`x-upstream-service` 与中间件注入字段场景
-  - `autogpt` 与 `p0` 两类负样本采样均已具备固定脚本 + 固定命令的可重复链路
-  - 当前 P0 负样本矩阵已具备字段缺失、路径近似、401/404、代理头污染四类基础误报抑制覆盖
-
-## 2026-04-01 - REQ-ASSET-EVIDENCE-003 cross-product field reuse negatives
-- requirement: 扩展“跨产品字段复用（交叉污染）”负样本并保持 matcher 抑制稳定
-- scope: 新增 `openclaw_gateway.neg.n008`、`ollama.neg.n008`、`langflow.neg.n008`、`autogpt.neg.n008`；通过 `scripts/dev/negative-sample-mock.py` 的 `cross=1` 端点进行实采，并接入 matcher 回归
-- tests:
-  - `backend/tests/asset-fingerprint.service.spec.ts`
-  - `npm run test:backend`
-  - `npm run test`
-- test result: pass; 先在测试中引入 n008 触发 RED（文件缺失），补齐样本后 GREEN，且全仓测试保持全绿
-- docs updated:
-  - `docs/sprint-current.md`
-  - `docs/progress.md`
-  - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
-- notes:
-  - 本轮样本覆盖“目标路径命中但字段来自其他产品”的交叉污染场景
-  - 对 `ollama/langflow/autogpt` 保持路径命中条件下的字段抑制，避免误升到 suspected/direct
-  - 当前 P0 负样本矩阵已包含字段缺失、路径近似、404、代理头污染、交叉污染五类基础抑制覆盖
-
-## 2026-04-01 - REQ-ASSET-EVIDENCE-003 format-masquerading negatives
-- requirement: 扩展“字段格式伪装（类型相似但关键键名不匹配）”负样本并保持 matcher 稳定抑制
-- scope: 新增 `openclaw_gateway.neg.n009`、`ollama.neg.n009`、`langflow.neg.n009`、`autogpt.neg.n009`；通过 `scripts/dev/negative-sample-mock.py` 的 `spoof=1` 端点进行实采，并接入 matcher 回归
-- tests:
-  - `backend/tests/asset-fingerprint.service.spec.ts`
-  - `npm run test:backend`
-  - `npm run test`
-- test result: pass; 先在测试中引入 n009 触发 RED（文件缺失），补齐样本后 GREEN，且全仓测试保持全绿
-- docs updated:
-  - `docs/sprint-current.md`
-  - `docs/progress.md`
-  - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
-- notes:
-  - 本轮样本覆盖“路径命中 + 响应形态接近 + 关键键名偏差”的格式伪装场景
-  - `openclaw` 的 hello_ko/presence_state、`ollama` 的 model_list/models_count、`langflow` 的 flows_meta/flowId、`autogpt` 的 agentId/agent-id 均未触发强信号
-  - 当前 P0 负样本矩阵已包含字段缺失、路径近似、404、代理头污染、交叉污染、格式伪装六类基础抑制覆盖
+  - 新增 `AssetProbeService`，按 `probes.v1.yaml` 目标探针执行最小 HTTP 采集
+  - `AssetScanTaskAdapter` 现支持 `sample_ref` 与 `probe_mode=live + probe_target_id` 双路径
+  - `TaskCenterController/TaskCenterService/TaskEngineService` 的任务创建链路已异步化
+  - live probe 在当前实现中仅面向 localhost/测试容器/mock server 受控目标

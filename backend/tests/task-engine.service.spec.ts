@@ -36,7 +36,7 @@ type AdapterModule = {
 type TaskEngineServiceModule = {
   TaskEngineService?: new (options: { adapters: unknown[] }) => {
     createDispatchTicket: (task: Task) => unknown;
-    createInitialArtifacts: (task: Task) => unknown;
+    createInitialArtifacts: (task: Task) => Promise<unknown>;
   };
 };
 
@@ -206,15 +206,15 @@ test("task engine service maps tasks into initial result and risk summary shells
   const staticTask = createTask("static_analysis");
   const sandboxTask = createTask("sandbox_run");
 
-  const assetArtifacts = service.createInitialArtifacts(assetTask) as {
+  const assetArtifacts = (await service.createInitialArtifacts(assetTask)) as {
     result: { details: unknown; summary: string; engine_type: string; task_type: string };
     riskSummary: { blocked_count?: number; total_findings: number; summary: string };
   };
-  const staticArtifacts = service.createInitialArtifacts(staticTask) as {
+  const staticArtifacts = (await service.createInitialArtifacts(staticTask)) as {
     result: { details: unknown; summary: string; engine_type: string; task_type: string };
     riskSummary: { blocked_count?: number; total_findings: number; summary: string };
   };
-  const sandboxArtifacts = service.createInitialArtifacts(sandboxTask) as {
+  const sandboxArtifacts = (await service.createInitialArtifacts(sandboxTask)) as {
     result: { details: unknown; summary: string; engine_type: string; task_type: string };
     riskSummary: { blocked_count?: number; total_findings: number; summary: string };
   };
@@ -386,6 +386,115 @@ test("task engine service maps tasks into initial result and risk summary shells
   );
 });
 
+test("asset adapter supports live probe mode for langflow without sample_ref", async () => {
+  const serviceModule = await importIfExists<TaskEngineServiceModule>(engineServicePath);
+  const assetAdapterModule = await importIfExists<AdapterModule>(assetAdapterPath);
+  const skillsAdapterModule = await importIfExists<AdapterModule>(skillsAdapterPath);
+  const sandboxAdapterModule = await importIfExists<AdapterModule>(sandboxAdapterPath);
+
+  assert.notEqual(serviceModule, null, "task-engine service module should exist before live probe mode can be verified");
+  assert.notEqual(assetAdapterModule, null, "asset-scan adapter module should exist before live probe mode can be verified");
+  assert.notEqual(skillsAdapterModule, null, "skills-static adapter module should exist before live probe mode can be verified");
+  assert.notEqual(sandboxAdapterModule, null, "sandbox adapter module should exist before live probe mode can be verified");
+  assert.ok(serviceModule?.TaskEngineService, "task-engine service should expose a concrete service class");
+  assert.ok(assetAdapterModule?.AssetScanTaskAdapter, "asset-scan adapter should expose a concrete adapter class");
+  assert.ok(skillsAdapterModule?.SkillsStaticTaskAdapter, "skills-static adapter should expose a concrete adapter class");
+  assert.ok(sandboxAdapterModule?.SandboxTaskAdapter, "sandbox adapter should expose a concrete adapter class");
+
+  if (
+    !serviceModule?.TaskEngineService ||
+    !assetAdapterModule?.AssetScanTaskAdapter ||
+    !skillsAdapterModule?.SkillsStaticTaskAdapter ||
+    !sandboxAdapterModule?.SandboxTaskAdapter
+  ) {
+    return;
+  }
+
+  const probeServer = await import("node:http").then(({ createServer }) =>
+    createServer((request, response) => {
+      if (request.url === "/api/v1/flows") {
+        response.statusCode = 200;
+        response.setHeader("content-type", "application/json");
+        response.end(JSON.stringify({ flows: [{ flow_id: "flow-live-001" }] }));
+        return;
+      }
+
+      response.statusCode = 404;
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify({ error: "not_found" }));
+    })
+  );
+
+  const startedProbeServer = await new Promise<{ baseUrl: string; close: () => Promise<void> }>((resolvePromise, rejectPromise) => {
+    probeServer.once("error", rejectPromise);
+    probeServer.listen(0, "127.0.0.1", () => {
+      const address = probeServer.address();
+
+      if (!address || typeof address === "string") {
+        rejectPromise(new Error("probe server did not expose a numeric port"));
+        return;
+      }
+
+      resolvePromise({
+        baseUrl: `http://127.0.0.1:${address.port}`,
+        close: () =>
+          new Promise<void>((resolveClose, rejectClose) => {
+            probeServer.close((error) => {
+              if (error) {
+                rejectClose(error);
+                return;
+              }
+
+              resolveClose();
+            });
+          })
+      });
+    });
+  });
+
+  try {
+    const service = new serviceModule.TaskEngineService({
+      adapters: [
+        new assetAdapterModule.AssetScanTaskAdapter(),
+        new skillsAdapterModule.SkillsStaticTaskAdapter(),
+        new sandboxAdapterModule.SandboxTaskAdapter()
+      ]
+    });
+
+    const liveProbeTask = {
+      ...createTask("asset_scan"),
+      target: {
+        target_type: "url",
+        target_value: startedProbeServer.baseUrl
+      },
+      parameters: {
+        probe_mode: "live",
+        probe_target_id: "langflow"
+      }
+    } as Task;
+
+    const artifacts = (await service.createInitialArtifacts(liveProbeTask)) as {
+      result: {
+        details: {
+          fingerprint?: { framework?: string; agent_name?: string };
+          confidence?: number;
+          matched_features?: string[];
+          http_endpoints?: Array<{ path?: string; status_code?: number }>;
+        };
+      };
+    };
+
+    assert.equal(artifacts.result.details.fingerprint?.framework, "langflow");
+    assert.equal(artifacts.result.details.fingerprint?.agent_name, "LangFlow");
+    assert.ok((artifacts.result.details.confidence ?? 0) >= 0.7);
+    assert.equal(artifacts.result.details.http_endpoints?.[0]?.path, "/api/v1/flows");
+    assert.equal(artifacts.result.details.http_endpoints?.[0]?.status_code, 200);
+    assert.ok((artifacts.result.details.matched_features?.length ?? 0) >= 2);
+  } finally {
+    await startedProbeServer.close();
+  }
+});
+
 test("asset-scan adapter materializes offline fingerprint details when a bundled sample reference is provided", async () => {
   const assetAdapterModule = await importIfExists<AdapterModule>(assetAdapterPath);
 
@@ -402,7 +511,7 @@ test("asset-scan adapter materializes offline fingerprint details when a bundled
     sample_ref: "samples/assets/fingerprint-positive/ollama.s001.json"
   };
 
-  const details = assetAdapter.createInitialDetails(task) as {
+  const details = (await assetAdapter.createInitialDetails(task)) as {
     fingerprint?: { framework?: string; agent_name?: string };
     confidence?: number;
     matched_features?: string[];

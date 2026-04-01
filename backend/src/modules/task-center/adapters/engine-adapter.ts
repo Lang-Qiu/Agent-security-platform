@@ -27,5 +27,5 @@ export interface TaskEngineAdapter<TTaskType extends TaskType = TaskType> {
   taskType: TTaskType;
   engineType: EngineType;
   createDispatchPayload(task: Task): EngineDispatchPayloadByTaskType[TTaskType];
-  createInitialDetails(task: Task): ResultDetailsByTaskType[TTaskType];
+  createInitialDetails(task: Task): ResultDetailsByTaskType[TTaskType] | Promise<ResultDetailsByTaskType[TTaskType]>;
 }
