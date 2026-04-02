@@ -1,8 +1,8 @@
-import type { SkillsStaticEngineResult } from "../adapters/skills-static.adapter.ts";
+import type { SkillsStaticMockResult } from "../adapters/skills-static.adapter.ts";
 import type { EngineDispatchTicket } from "../adapters/engine-adapter.ts";
 import type { EngineClient, EngineClientDispatchReceipt } from "./engine-client.ts";
 
-function createMockSkillsStaticEngineResult(ticket: EngineDispatchTicket<"static_analysis">): SkillsStaticEngineResult {
+function createMockSkillsStaticEngineResult(ticket: EngineDispatchTicket<"static_analysis">): SkillsStaticMockResult {
   const language =
     typeof ticket.payload.analysis_parameters?.language === "string" ? ticket.payload.analysis_parameters.language : "typescript";
 

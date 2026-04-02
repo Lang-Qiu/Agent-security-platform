@@ -4,6 +4,7 @@ import { DomainError } from "../../common/errors/domain-error.ts";
 import { mapSkillsStaticEngineResultToDetails } from "./adapters/skills-static.adapter.ts";
 import { EngineAdapterRegistry } from "./adapters/engine-adapter-registry.ts";
 import type { EngineDispatchTicket, TaskEngineAdapter } from "./adapters/engine-adapter.ts";
+import type { SkillsStaticMockResult } from "./adapters/skills-static.adapter.ts";
 import { EngineClientRegistry } from "./clients/engine-client-registry.ts";
 import type { EngineClient, EngineClientDispatchReceipt } from "./clients/engine-client.ts";
 
@@ -142,7 +143,7 @@ export class TaskEngineService {
     };
   }
 
-  createCompletedStaticAnalysisArtifacts(task: Task, mockResult: unknown, updatedAt: string): TaskCompletedArtifacts {
+  createCompletedStaticAnalysisArtifacts(task: Task, mockResult: SkillsStaticMockResult, updatedAt: string): TaskCompletedArtifacts {
     const details = mapSkillsStaticEngineResultToDetails(mockResult, task);
     const ruleHits = details.rule_hits ?? [];
     const riskLevel = getHighestRiskLevel(ruleHits.map((ruleHit) => ruleHit.severity));

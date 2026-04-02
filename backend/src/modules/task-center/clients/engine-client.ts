@@ -1,11 +1,19 @@
+import type { EngineType } from "../../../../../shared/types/task.ts";
+import type { SkillsStaticMockResult } from "../adapters/skills-static.adapter.ts";
 import type { EngineDispatchTicket } from "../adapters/engine-adapter.ts";
 
-export interface EngineClientDispatchReceipt {
+interface BaseEngineClientDispatchReceipt<T extends EngineType> {
   accepted: boolean;
-  engine_type: EngineDispatchTicket["engine_type"];
+  engine_type: T;
   endpoint: string;
-  mock_result?: unknown;
 }
+
+export type EngineClientDispatchReceipt =
+  | BaseEngineClientDispatchReceipt<"asset_scan">
+  | BaseEngineClientDispatchReceipt<"sandbox">
+  | (BaseEngineClientDispatchReceipt<"skills_static"> & {
+      mock_result?: SkillsStaticMockResult;
+    });
 
 export interface EngineClient {
   engineType: EngineDispatchTicket["engine_type"];

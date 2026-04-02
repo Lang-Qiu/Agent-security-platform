@@ -28,6 +28,7 @@ type AdapterModule = {
     createInitialDetails: (task: Task) => unknown;
   };
   mapSkillsStaticEngineResultToDetails?: (engineResult: unknown, task: Task) => unknown;
+  normalizeSkillsStaticMockResult?: (engineResult: unknown) => unknown;
   SandboxTaskAdapter?: new () => {
     taskType: string;
     engineType: string;
@@ -259,6 +260,44 @@ test("skills-static adapter maps engine output into base-result compatible detai
       }
     ]
   });
+});
+
+test("skills-static adapter rejects malformed mock results before closed-loop backfill", async () => {
+  const skillsAdapterModule = await importIfExists<AdapterModule>(skillsAdapterPath);
+
+  assert.notEqual(skillsAdapterModule, null, "skills-static adapter module should exist before mock-result validation can be verified");
+  assert.ok(
+    skillsAdapterModule?.normalizeSkillsStaticMockResult,
+    "skills-static adapter should expose a strict validator for closed-loop mock results"
+  );
+
+  if (!skillsAdapterModule?.normalizeSkillsStaticMockResult) {
+    return;
+  }
+
+  const normalizedResult = skillsAdapterModule.normalizeSkillsStaticMockResult({
+    sample_name: "demo-package",
+    language: "typescript",
+    entry_files: ["src/index.ts"],
+    files_scanned: 1,
+    rule_hits: [
+      {
+        rule_id: "SK001",
+        severity: "high"
+      },
+      {
+        severity: "medium"
+      }
+    ],
+    sensitive_capabilities: ["command_execution"],
+    dependency_summary: {}
+  });
+
+  assert.equal(
+    normalizedResult,
+    null,
+    "closed-loop backfill should reject malformed mock results instead of silently normalizing them"
+  );
 });
 
 test("task engine service maps tasks into initial result and risk summary shells without leaking engine internals", async () => {

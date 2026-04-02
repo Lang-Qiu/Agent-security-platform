@@ -20,6 +20,16 @@ export interface SkillsStaticEngineResult {
   risk_level?: "info" | "low" | "medium" | "high" | "critical";
 }
 
+export interface SkillsStaticMockResult {
+  sample_name: string;
+  language: string;
+  entry_files: string[];
+  files_scanned: number;
+  rule_hits: SkillsStaticRuleHit[];
+  sensitive_capabilities: string[];
+  dependency_summary: Record<string, unknown>;
+}
+
 interface SkillsStaticTraceStepInput {
   step?: string;
   file_path?: string;
@@ -131,6 +141,39 @@ function normalizeRuleHit(value: unknown): SkillsStaticRuleHit | null {
   }
 
   return normalizedRuleHit;
+}
+
+export function normalizeSkillsStaticMockResult(value: unknown): SkillsStaticMockResult | null {
+  if (
+    !isPlainObject(value) ||
+    !isString(value.sample_name) ||
+    !isString(value.language) ||
+    !isStringArray(value.entry_files) ||
+    !isNumber(value.files_scanned) ||
+    !Array.isArray(value.rule_hits) ||
+    !isStringArray(value.sensitive_capabilities) ||
+    !isPlainObject(value.dependency_summary)
+  ) {
+    return null;
+  }
+
+  const normalizedRuleHits = value.rule_hits
+    .map((ruleHit) => normalizeRuleHit(ruleHit))
+    .filter((ruleHit): ruleHit is SkillsStaticRuleHit => ruleHit !== null);
+
+  if (normalizedRuleHits.length !== value.rule_hits.length) {
+    return null;
+  }
+
+  return {
+    sample_name: value.sample_name,
+    language: value.language,
+    entry_files: [...value.entry_files],
+    files_scanned: value.files_scanned,
+    rule_hits: normalizedRuleHits,
+    sensitive_capabilities: [...value.sensitive_capabilities],
+    dependency_summary: { ...value.dependency_summary }
+  };
 }
 
 export function mapSkillsStaticEngineResultToDetails(engineResult: unknown, task: Task): SkillsStaticResultDetails {

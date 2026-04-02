@@ -4,6 +4,7 @@ import { TASK_TYPE_TO_ENGINE_TYPE } from "../../../../shared/constants/task-type
 import { DomainError } from "../../common/errors/domain-error.ts";
 import type { CreateTaskRequest } from "./dto/create-task.request.ts";
 import type { TaskEngineAdapter } from "./adapters/engine-adapter.ts";
+import { normalizeSkillsStaticMockResult } from "./adapters/skills-static.adapter.ts";
 import type { TaskRepository, StoredTaskRecord } from "./repositories/task.repository.ts";
 import { DEFAULT_PENDING_TASK_SUMMARY, TaskEngineService } from "./task-engine.service.ts";
 
@@ -68,9 +69,15 @@ export class TaskCenterService {
     if (this.taskEngineService.hasRegisteredClient(task)) {
       const dispatchReceipt = await this.taskEngineService.dispatchTask(task);
 
-      if (task.task_type === "static_analysis" && dispatchReceipt.mock_result) {
+      if (task.task_type === "static_analysis" && dispatchReceipt.engine_type === "skills_static") {
+        const normalizedMockResult = normalizeSkillsStaticMockResult(dispatchReceipt.mock_result);
+
+        if (!normalizedMockResult) {
+          return task;
+        }
+
         this.repository.save(
-          this.taskEngineService.createCompletedStaticAnalysisArtifacts(task, dispatchReceipt.mock_result, this.now())
+          this.taskEngineService.createCompletedStaticAnalysisArtifacts(task, normalizedMockResult, this.now())
         );
       }
     }
