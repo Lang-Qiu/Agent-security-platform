@@ -65,6 +65,16 @@ export class TaskCenterService {
       riskSummary
     });
 
+    if (this.taskEngineService.hasRegisteredClient(task)) {
+      const dispatchReceipt = await this.taskEngineService.dispatchTask(task);
+
+      if (task.task_type === "static_analysis" && dispatchReceipt.mock_result) {
+        this.repository.save(
+          this.taskEngineService.createCompletedStaticAnalysisArtifacts(task, dispatchReceipt.mock_result, this.now())
+        );
+      }
+    }
+
     return task;
   }
 

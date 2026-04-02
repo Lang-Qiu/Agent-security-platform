@@ -1,4 +1,5 @@
 import type { ResultDetailsByTaskType } from "../../../../../shared/types/result.ts";
+import type { SkillsStaticAnalysisParameters, SkillsStaticTarget } from "../../../../../shared/types/skills-static.ts";
 import type { EngineType, Task, TaskTarget, TaskType } from "../../../../../shared/types/task.ts";
 
 export interface EngineDispatchPayloadByTaskType {
@@ -7,8 +8,8 @@ export interface EngineDispatchPayloadByTaskType {
     scan_parameters?: Record<string, unknown>;
   };
   static_analysis: {
-    target: TaskTarget;
-    analysis_parameters?: Record<string, unknown>;
+    target: SkillsStaticTarget;
+    analysis_parameters?: SkillsStaticAnalysisParameters;
   };
   sandbox_run: {
     target: TaskTarget;

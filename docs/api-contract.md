@@ -1259,6 +1259,62 @@
 - `RiskSummary`
 
 `TaskEngineService.createInitialArtifacts(task)` 会基于 adapter 生成三类任务的初始结果细节，但这些 adapter payload 属于 backend 内部契约，不应直接暴露给 frontend。
+
+## REQ-SKILLS-STATIC DTO Boundary Baseline
+
+当前 `skills-static` 接入仍保持平台骨架阶段的最小边界，不新增新的 public API，也不引入真实扫描执行逻辑。
+
+- 公共入口保持 `POST /api/tasks`
+- `task_type = static_analysis` 固定映射到 `engine_type = skills_static`
+- 请求中的 `parameters` 继续作为现有唯一明确的 engine options 插槽，在 adapter 内部映射为 `analysis_parameters`
+- 结果仍统一收敛到 `BaseResult` 外壳：`status` / `risk_level` / `summary` / `details`
+- `static_analysis` 的规则命中明细继续承载在 `details.rule_hits[]`
+- backend 内部新增 `EngineClientRegistry`，按 `engine_type` 解析已注册的引擎入口
+- backend 内部新增 `SkillsStaticEngineClient`，作为 `skills_static` 的最小 dispatch 入口桥接
+- `TaskEngineAdapter` 继续只负责任务参数映射和初始 `details` 壳子生成，不承担真实引擎入口调用
+- `TaskCenterService.createTask()` 在任务、初始结果和风险摘要写入后，只对“已注册 engine client”的任务触发 dispatch
+
+当前平台到 `skills-static` 的内部接入链路为：
+
+- `POST /api/tasks`
+- `TaskCenterController.createTask`
+- `TaskCenterService.createTask`
+- `TaskEngineService.createDispatchTicket`
+- `EngineClientRegistry.getRequiredClient("skills_static")`
+- `SkillsStaticEngineClient.dispatch(ticket)`
+
+当前 shared 层已经补齐以下 skills-static 兼容类型：
+
+- `SkillsStaticTarget`
+- `SkillsStaticAnalysisParameters`
+- `SkillsStaticRuleHit`
+- `SkillsStaticResultDetails`
+- `SkillsStaticBaseResult`
+
+其中 `SkillsStaticRuleHit` 的最小兼容字段包括：
+
+- `rule_id`
+- `title`
+- `category`
+- `severity`
+- `message`
+- `file_path`
+- `line_start`
+- `line_end`
+- `code_snippet`
+- `evidence`
+- `recommendation`
+- `source_type`
+- `sink_type`
+- `trace`
+- `tags`
+- `metadata`
+
+当前规范化约束保持保守：
+
+- 只收敛 `static_analysis` 这一条结果细节路径
+- 未声明的 rule-hit 私有调试字段不会透传到 shared `BaseResult.details`
+- 不新增 `projectId`、`assetId`、`tenantId`、`risk_score`、上传、压缩包、对象存储、回调、重试等平台强约束字段
 ## REQ-08 Frontend Contract Health States
 
 The frontend integration layer uses four source states when reading the existing tasks API:
@@ -1322,3 +1378,14 @@ Current shared formatter responsibilities:
 - task timestamps -> stable UTC `en-US` display label
 
 This keeps the Tasks page and Task detail page aligned while the admin console grows. Shared platform contracts still live in `shared/`, but repeated view-only formatting logic should stay in one frontend utility instead of drifting across multiple components.
+
+## REQ-SKILLS-STATIC Mock Closed Loop
+
+The current `skills_static` integration now supports a deterministic mock-engine closed loop without expanding the public API surface.
+
+- `POST /api/tasks` remains the only public write entry for `static_analysis`
+- `SkillsStaticEngineClient` returns a backend-private deterministic mock analysis result during dispatch
+- the platform reuses the existing task-center mainline to backfill the same `task_id` record into a finished `Task`, `BaseResult`, and `RiskSummary`
+- `GET /api/tasks/:taskId`, `GET /api/tasks/:taskId/result`, and `GET /api/tasks/:taskId/risk-summary` now expose the closed-loop mock state for `static_analysis`
+- the mock result continues to live inside the existing `static_analysis` contract slots, especially `BaseResult.details.rule_hits`, `sample_name`, `language`, `entry_files`, `files_scanned`, `sensitive_capabilities`, and `dependency_summary`
+- no new public route, engine-specific controller, callback flow, upload flow, or real scan execution contract is introduced by this requirement

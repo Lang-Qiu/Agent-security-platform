@@ -10,6 +10,72 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-04-02 - minimal mock skills-static engine closed loop
+- requirement: implement the smallest mock engine closed loop for `static_analysis` on top of the completed engine-registration and route-wiring baseline
+- scope: keep `POST /api/tasks` as the only public write entry, let `SkillsStaticEngineClient` return a deterministic mock analysis result, and backfill the existing `Task`, `BaseResult`, and `RiskSummary` records through the current task-center mainline
+- tests:
+  - `backend/tests/task-engine.service.spec.ts`
+  - `backend/tests/task-center.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- test result: pass for the requirement-focused verification set:
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "task engine service dispatches static-analysis tickets through the registered skills-static engine client|task engine service materializes a finished static-analysis shell from a deterministic mock result" backend/tests/task-engine.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "task center service dispatches static-analysis tasks after saving their initial artifacts|task center service backfills static-analysis artifacts when the engine client returns a mock result" backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "backend task center creates and lists in-memory tasks through the shared response shell|backend task center keeps static-analysis creation on POST /api/tasks with parameters as the engine options slot" tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `README.md`
+  - `docs/api-contract.md`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+- notes:
+  - `SkillsStaticEngineClient` now returns a deterministic mock result payload for `static_analysis`; it still does not call a real scan engine
+  - the platform backfills the existing record through a second repository save, so `GET /api/tasks/:taskId`, `GET /result`, and `GET /risk-summary` expose the closed-loop state without adding new routes
+  - `POST /api/tasks` remains the unchanged public write entry and still returns the created task shell rather than introducing a new engine-specific response contract
+  - the pre-existing unrelated `asset-scan` `.worktrees` failure was not touched and remains outside this requirement
+
+## 2026-04-02 - skills-static engine registration and platform route wiring baseline
+- requirement: register `skills-static` on the platform mainline and wire `static_analysis` task creation into an internal engine entry without changing the public task-center API
+- scope: add backend `EngineClient` / `EngineClientRegistry`, register `SkillsStaticEngineClient`, keep `POST /api/tasks` as the only public write entry, and dispatch `static_analysis` tickets through the new engine client layer after task creation
+- tests:
+  - `backend/tests/task-engine.service.spec.ts`
+  - `backend/tests/task-center.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- test result: pass for the requirement-focused verification set:
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "engine client registry resolves skills-static engine clients and rejects duplicate engine registration|task engine service dispatches static-analysis tickets through the registered skills-static engine client|task center service dispatches static-analysis tasks after saving their initial artifacts" backend/tests/task-engine.service.spec.ts backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "backend task center creates and lists in-memory tasks through the shared response shell|backend task center keeps static-analysis creation on POST /api/tasks with parameters as the engine options slot|backend task center returns a created task together with its initial result and risk summary" tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `README.md`
+  - `docs/api-contract.md`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+- notes:
+  - `static_analysis` remains on the existing `POST /api/tasks` route and still maps to `engine_type = skills_static`
+  - adapter responsibilities stay limited to payload/details mapping; engine-entry routing now lives in `EngineClientRegistry` plus `SkillsStaticEngineClient`
+  - `TaskCenterService` only dispatches when an engine client is registered, so this stage does not force unrelated engines onto the new path yet
+  - there is a pre-existing unrelated baseline failure in this worktree for `asset-scan` live-probe tests caused by path handling under `.worktrees`; it was not changed in this requirement and was excluded from the focused verification set
+
+## 2026-04-01 - skills-static platform-compatible DTO / interface and minimal adapter mapping skeleton
+- requirement: add `skills-static`-compatible shared DTOs/interfaces and the smallest backend adapter mapping boundary without changing the public task-center API
+- scope: introduce shared `skills-static` result/parameter/target/rule-hit types, narrow `static_analysis.details.rule_hits[]`, add a backend mapper from placeholder engine output into shared details, and keep `POST /api/tasks` as the only public creation entry
+- tests:
+  - `shared/tests/result-contract.spec.ts`
+  - `backend/tests/task-engine.service.spec.ts`
+  - `backend/tests/task-center.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- test result: pass for the requirement-focused verification set:
+  - `npm.cmd run test:shared`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "engine adapters expose stable dispatch placeholders|skills-static adapter maps engine output into base-result compatible details without introducing risk_score|task engine service maps tasks into initial result and risk summary shells without leaking engine internals" backend/tests/task-engine.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "backend task center keeps static-analysis creation on POST /api/tasks with parameters as the engine options slot" tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+- notes:
+  - public API routes remain unchanged; `static_analysis` still enters through `POST /api/tasks`
+  - shared now provides named `skills-static` contract types instead of leaving `static_analysis.rule_hits` as `unknown[]`
+  - backend `skills-static` adapter now owns a minimal engine-result-to-details mapper but still does not execute real scans
+  - while verifying, the workspace initially lacked the locked `yaml` dependency in `node_modules`; it was restored with `corepack pnpm install --frozen-lockfile` before rerunning tests
+
 ## 2026-03-26 - metadata baseline template
 - requirement: add a root-level `metadata.md` template
 - scope: define project positioning, architecture boundaries, directory ownership, TDD baseline, skill usage rules, and change guardrails

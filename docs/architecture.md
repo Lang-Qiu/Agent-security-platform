@@ -253,6 +253,28 @@ engines/<engine-name>/
 - `TaskCenterService` 的任务中心职责不变
 - 新的引擎提交、轮询、回调或结果回填逻辑优先落在 `TaskEngineService` 与 adapter 层，而不是直接写进 controller
 
+## REQ-SKILLS-STATIC DTO Boundary Baseline
+
+当前 `skills-static` 仍处于平台兼容骨架阶段，边界拆分如下：
+
+- shared 负责声明 `skills-static` 与平台之间的稳定 DTO / result 类型
+- backend `SkillsStaticTaskAdapter` 负责两段最小映射：
+  - `Task.parameters` -> `analysis_parameters`
+  - engine placeholder result -> `SkillsStaticResultDetails`
+- public task-center API 保持不变，controller 路由不新增
+- `BaseResult` 继续作为唯一统一结果外壳，`static_analysis` 只在 `details.rule_hits[]` 这一处收敛更强类型
+- `EngineAdapterRegistry` 继续按 `task_type` 注册平台 adapter
+- `EngineClientRegistry` 新增按 `engine_type` 注册平台内部引擎入口的职责
+- `SkillsStaticEngineClient` 是当前唯一落地的 `skills_static` 入口桥接
+- `TaskEngineService` 同时持有 adapter registry 与 engine client registry，并负责把 `EngineDispatchTicket` 转发到已注册 client
+- `TaskCenterService` 仍保持任务中心职责，只在任务创建完成后触发一次已注册 client 转发
+
+当前明确不做：
+
+- 真实 `skills-static` 扫描执行逻辑
+- 上传 / zip / object storage / callback / retry 流程
+- 新的平台级 `risk_score`、`projectId`、`assetId`、`tenantId` 约束
+
 ## REQ-ASSET-FINGERPRINT-002 Offline Matcher Baseline
 
 当前 `asset_scan` adapter 在占位基线之上新增了一条仅用于 TDD 的离线路径：
@@ -289,3 +311,19 @@ engines/<engine-name>/
 
 - 仅允许 localhost/测试容器/mock server 受控目标
 - 不引入公网扫描与分布式调度
+
+## REQ-SKILLS-STATIC Mock Closed Loop
+
+`skills_static` now has one additional backend-internal step beyond dispatch registration:
+
+- `SkillsStaticEngineClient` returns a deterministic mock analysis result after it accepts a `static_analysis` dispatch ticket
+- `TaskCenterService` keeps the existing orchestration boundary and performs a second repository save for the same `task_id`
+- `TaskEngineService` converts that mock payload into the finished platform shells that already exist today: `Task`, `BaseResult`, and `RiskSummary`
+- the read side stays unchanged: the existing task-center query routes expose the backfilled record
+
+This is intentionally still a skeleton-stage integration:
+
+- no new public API
+- no engine-specific controller
+- no real `skills-static` scan execution
+- no retry, callback, upload, object-storage, or timeout-governance workflow

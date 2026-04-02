@@ -8,8 +8,10 @@ import type { Task } from "../../shared/types/task.ts";
 
 const engineServicePath = resolve(import.meta.dirname, "../src/modules/task-center/task-engine.service.ts");
 const registryPath = resolve(import.meta.dirname, "../src/modules/task-center/adapters/engine-adapter-registry.ts");
+const engineClientRegistryPath = resolve(import.meta.dirname, "../src/modules/task-center/clients/engine-client-registry.ts");
 const assetAdapterPath = resolve(import.meta.dirname, "../src/modules/task-center/adapters/asset-scan.adapter.ts");
 const skillsAdapterPath = resolve(import.meta.dirname, "../src/modules/task-center/adapters/skills-static.adapter.ts");
+const skillsClientPath = resolve(import.meta.dirname, "../src/modules/task-center/clients/skills-static.engine-client.ts");
 const sandboxAdapterPath = resolve(import.meta.dirname, "../src/modules/task-center/adapters/sandbox.adapter.ts");
 
 type AdapterModule = {
@@ -25,6 +27,7 @@ type AdapterModule = {
     createDispatchPayload: (task: Task) => unknown;
     createInitialDetails: (task: Task) => unknown;
   };
+  mapSkillsStaticEngineResultToDetails?: (engineResult: unknown, task: Task) => unknown;
   SandboxTaskAdapter?: new () => {
     taskType: string;
     engineType: string;
@@ -34,15 +37,34 @@ type AdapterModule = {
 };
 
 type TaskEngineServiceModule = {
-  TaskEngineService?: new (options: { adapters: unknown[] }) => {
+  TaskEngineService?: new (options: { adapters: unknown[]; engineClients?: unknown[] }) => {
     createDispatchTicket: (task: Task) => unknown;
     createInitialArtifacts: (task: Task) => Promise<unknown>;
+    dispatchTask: (task: Task) => Promise<unknown>;
+    createCompletedStaticAnalysisArtifacts?: (task: Task, mockResult: unknown, updatedAt: string) => unknown;
   };
 };
 
 type EngineAdapterRegistryModule = {
   EngineAdapterRegistry?: new (adapters: unknown[]) => {
     getRequiredAdapter: (taskType: Task["task_type"]) => unknown;
+  };
+};
+
+type EngineClientRegistryModule = {
+  EngineClientRegistry?: new (clients: unknown[]) => {
+    getRequiredClient: (engineType: Task["engine_type"]) => unknown;
+  };
+};
+
+type SkillsStaticEngineClientModule = {
+  SkillsStaticEngineClient?: new (options?: {
+    endpoint?: string;
+    onDispatch?: (ticket: unknown) => void | Promise<void>;
+  }) => {
+    engineType: string;
+    endpoint: string;
+    dispatch: (ticket: unknown) => Promise<unknown>;
   };
 };
 
@@ -177,6 +199,66 @@ test("engine adapters expose stable dispatch placeholders for asset, static-anal
       }
     ]
   );
+});
+
+test("skills-static adapter maps engine output into base-result compatible details without introducing risk_score", async () => {
+  const skillsAdapterModule = await importIfExists<AdapterModule>(skillsAdapterPath);
+
+  assert.notEqual(skillsAdapterModule, null, "skills-static adapter module should exist before engine result mapping can be verified");
+  assert.ok(
+    skillsAdapterModule?.mapSkillsStaticEngineResultToDetails,
+    "skills-static adapter should expose a result-to-details mapper for static analysis"
+  );
+
+  if (!skillsAdapterModule?.mapSkillsStaticEngineResultToDetails) {
+    return;
+  }
+
+  const details = skillsAdapterModule.mapSkillsStaticEngineResultToDetails(
+    {
+      sample_name: "demo-package",
+      language: "typescript",
+      risk_level: "high",
+      risk_score: 98,
+      rule_hits: [
+        {
+          rule_id: "SK001",
+          title: "Dangerous command execution",
+          category: "command_execution",
+          severity: "critical",
+          message: "Detected child_process.exec with untrusted input",
+          file_path: "src/index.ts",
+          line_start: 12,
+          line_end: 14,
+          code_snippet: "exec(userInput)",
+          recommendation: "Replace shell execution with a safe allowlist wrapper",
+          tags: ["command", "unsafe-input"],
+          engine_private_debug: "should be stripped"
+        }
+      ]
+    },
+    createTask("static_analysis")
+  );
+
+  assert.deepEqual(details, {
+    sample_name: "demo-package",
+    language: "typescript",
+    rule_hits: [
+      {
+        rule_id: "SK001",
+        title: "Dangerous command execution",
+        category: "command_execution",
+        severity: "critical",
+        message: "Detected child_process.exec with untrusted input",
+        file_path: "src/index.ts",
+        line_start: 12,
+        line_end: 14,
+        code_snippet: "exec(userInput)",
+        recommendation: "Replace shell execution with a safe allowlist wrapper",
+        tags: ["command", "unsafe-input"]
+      }
+    ]
+  });
 });
 
 test("task engine service maps tasks into initial result and risk summary shells without leaking engine internals", async () => {
@@ -791,6 +873,320 @@ test("engine adapter registry rejects duplicate adapter registration for the sam
       return true;
     }
   );
+});
+
+test("engine client registry resolves skills-static engine clients and rejects duplicate engine registration", async () => {
+  const registryModule = await importIfExists<EngineClientRegistryModule>(engineClientRegistryPath);
+  const skillsClientModule = await importIfExists<SkillsStaticEngineClientModule>(skillsClientPath);
+
+  assert.notEqual(registryModule, null, "engine client registry module should exist before engine client registration can be verified");
+  assert.notEqual(skillsClientModule, null, "skills-static engine client module should exist before engine client registration can be verified");
+  assert.ok(registryModule?.EngineClientRegistry, "engine client registry should expose a concrete registry class");
+  assert.ok(skillsClientModule?.SkillsStaticEngineClient, "skills-static engine client should expose a concrete client class");
+
+  if (!registryModule?.EngineClientRegistry || !skillsClientModule?.SkillsStaticEngineClient) {
+    return;
+  }
+
+  const engineClient = new skillsClientModule.SkillsStaticEngineClient();
+  const registry = new registryModule.EngineClientRegistry([engineClient]);
+
+  assert.equal(registry.getRequiredClient("skills_static"), engineClient);
+
+  assert.throws(
+    () =>
+      new registryModule.EngineClientRegistry([
+        new skillsClientModule.SkillsStaticEngineClient(),
+        new skillsClientModule.SkillsStaticEngineClient()
+      ]),
+    (error: unknown) => {
+      assert.equal(typeof error, "object");
+      assert.notEqual(error, null);
+      assert.equal((error as { name?: string }).name, "DomainError");
+      assert.equal((error as { code?: string }).code, "ENGINE_CLIENT_DUPLICATE_REGISTRATION");
+      return true;
+    }
+  );
+});
+
+test("task engine service dispatches static-analysis tickets through the registered skills-static engine client", async () => {
+  const serviceModule = await importIfExists<TaskEngineServiceModule>(engineServicePath);
+  const skillsAdapterModule = await importIfExists<AdapterModule>(skillsAdapterPath);
+  const skillsClientModule = await importIfExists<SkillsStaticEngineClientModule>(skillsClientPath);
+
+  assert.notEqual(serviceModule, null, "task-engine service module should exist before dispatch routing can be verified");
+  assert.notEqual(skillsAdapterModule, null, "skills-static adapter module should exist before dispatch routing can be verified");
+  assert.notEqual(skillsClientModule, null, "skills-static engine client module should exist before dispatch routing can be verified");
+  assert.ok(serviceModule?.TaskEngineService, "task-engine service should expose a concrete service class");
+  assert.ok(skillsAdapterModule?.SkillsStaticTaskAdapter, "skills-static adapter should expose a concrete adapter class");
+  assert.ok(skillsClientModule?.SkillsStaticEngineClient, "skills-static engine client should expose a concrete client class");
+
+  if (!serviceModule?.TaskEngineService || !skillsAdapterModule?.SkillsStaticTaskAdapter || !skillsClientModule?.SkillsStaticEngineClient) {
+    return;
+  }
+
+  const dispatchedTickets: unknown[] = [];
+  const service = new serviceModule.TaskEngineService({
+    adapters: [new skillsAdapterModule.SkillsStaticTaskAdapter()],
+    engineClients: [
+      new skillsClientModule.SkillsStaticEngineClient({
+        onDispatch: (ticket) => {
+          dispatchedTickets.push(ticket);
+        }
+      })
+    ]
+  });
+
+  const receipt = await service.dispatchTask(createTask("static_analysis")) as {
+    accepted: boolean;
+    engine_type: string;
+    endpoint: string;
+    mock_result?: {
+      sample_name?: string;
+      language?: string;
+      files_scanned?: number;
+      rule_hits?: Array<{ rule_id?: string; severity?: string }>;
+      sensitive_capabilities?: string[];
+    };
+  };
+
+  assert.deepEqual(dispatchedTickets, [
+    {
+      task_id: "task_static_analysis",
+      task_type: "static_analysis",
+      engine_type: "skills_static",
+      payload: {
+        target: {
+          target_type: "skill_package",
+          target_value: "samples/skills/demo-package",
+          display_name: "demo-package"
+        },
+        analysis_parameters: {
+          profile: "static_analysis",
+          depth: "minimal"
+        }
+      }
+    }
+  ]);
+  assert.deepEqual(receipt, {
+    accepted: true,
+    engine_type: "skills_static",
+    endpoint: "internal://skills-static",
+    mock_result: {
+      sample_name: "demo-package",
+      language: "typescript",
+      entry_files: ["src/index.ts", "src/report.ts"],
+      files_scanned: 2,
+      rule_hits: [
+        {
+          rule_id: "SK001",
+          title: "Dangerous command execution",
+          category: "command_execution",
+          severity: "high",
+          message: "Detected child_process.exec with untrusted input",
+          file_path: "src/index.ts",
+          line_start: 12,
+          line_end: 14,
+          code_snippet: "exec(userInput)",
+          recommendation: "Replace shell execution with a safe allowlist wrapper",
+          source_type: "user_input",
+          sink_type: "command_execution",
+          tags: ["command", "unsafe-input"]
+        },
+        {
+          rule_id: "SK002",
+          title: "Network egress without allowlist",
+          category: "network_access",
+          severity: "medium",
+          message: "Detected outbound fetch to an unapproved endpoint",
+          file_path: "src/report.ts",
+          line_start: 8,
+          line_end: 9,
+          code_snippet: "fetch(reportUrl)",
+          recommendation: "Restrict outbound destinations with an allowlist",
+          source_type: "config",
+          sink_type: "network_request",
+          tags: ["network", "egress"]
+        }
+      ],
+      sensitive_capabilities: ["command_execution", "network_access"],
+      dependency_summary: {
+        direct_dependency_count: 2,
+        flagged_dependency_count: 1
+      }
+    }
+  });
+});
+
+test("task engine service materializes a finished static-analysis shell from a deterministic mock result", async () => {
+  const serviceModule = await importIfExists<TaskEngineServiceModule>(engineServicePath);
+  const skillsAdapterModule = await importIfExists<AdapterModule>(skillsAdapterPath);
+
+  assert.notEqual(serviceModule, null, "task-engine service module should exist before static-analysis completion mapping can be verified");
+  assert.notEqual(skillsAdapterModule, null, "skills-static adapter module should exist before static-analysis completion mapping can be verified");
+  assert.ok(serviceModule?.TaskEngineService, "task-engine service should expose a concrete service class");
+  assert.ok(skillsAdapterModule?.SkillsStaticTaskAdapter, "skills-static adapter should expose a concrete adapter class");
+
+  if (!serviceModule?.TaskEngineService || !skillsAdapterModule?.SkillsStaticTaskAdapter) {
+    return;
+  }
+
+  const service = new serviceModule.TaskEngineService({
+    adapters: [new skillsAdapterModule.SkillsStaticTaskAdapter()]
+  });
+
+  const completedArtifacts = service.createCompletedStaticAnalysisArtifacts?.(
+    createTask("static_analysis"),
+    {
+      sample_name: "demo-package",
+      language: "typescript",
+      entry_files: ["src/index.ts", "src/report.ts"],
+      files_scanned: 2,
+      rule_hits: [
+        {
+          rule_id: "SK001",
+          title: "Dangerous command execution",
+          category: "command_execution",
+          severity: "high",
+          message: "Detected child_process.exec with untrusted input",
+          file_path: "src/index.ts",
+          line_start: 12,
+          line_end: 14,
+          code_snippet: "exec(userInput)",
+          recommendation: "Replace shell execution with a safe allowlist wrapper",
+          source_type: "user_input",
+          sink_type: "command_execution",
+          tags: ["command", "unsafe-input"]
+        },
+        {
+          rule_id: "SK002",
+          title: "Network egress without allowlist",
+          category: "network_access",
+          severity: "medium",
+          message: "Detected outbound fetch to an unapproved endpoint",
+          file_path: "src/report.ts",
+          line_start: 8,
+          line_end: 9,
+          code_snippet: "fetch(reportUrl)",
+          recommendation: "Restrict outbound destinations with an allowlist",
+          source_type: "config",
+          sink_type: "network_request",
+          tags: ["network", "egress"]
+        }
+      ],
+      sensitive_capabilities: ["command_execution", "network_access"],
+      dependency_summary: {
+        direct_dependency_count: 2,
+        flagged_dependency_count: 1
+      }
+    },
+    "2026-03-26T02:05:00Z"
+  ) as
+    | {
+        task: {
+          status: string;
+          risk_level?: string;
+          summary?: string;
+          updated_at: string;
+        };
+        result: {
+          status: string;
+          risk_level: string;
+          summary: string;
+          updated_at: string;
+          details: unknown;
+        };
+        riskSummary: {
+          status: string;
+          risk_level: string;
+          summary: string;
+          total_findings: number;
+          info_count: number;
+          low_count: number;
+          medium_count: number;
+          high_count: number;
+          critical_count: number;
+          updated_at: string;
+        };
+      }
+    | undefined;
+
+  assert.deepEqual(completedArtifacts, {
+    task: {
+      ...createTask("static_analysis"),
+      status: "finished",
+      risk_level: "high",
+      summary: "Static analysis finished with 2 rule hits",
+      updated_at: "2026-03-26T02:05:00Z"
+    },
+    result: {
+      task_id: "task_static_analysis",
+      task_type: "static_analysis",
+      engine_type: "skills_static",
+      status: "finished",
+      risk_level: "high",
+      summary: "Static analysis finished with 2 rule hits",
+      details: {
+        sample_name: "demo-package",
+        language: "typescript",
+        entry_files: ["src/index.ts", "src/report.ts"],
+        files_scanned: 2,
+        rule_hits: [
+          {
+            rule_id: "SK001",
+            title: "Dangerous command execution",
+            category: "command_execution",
+            severity: "high",
+            message: "Detected child_process.exec with untrusted input",
+            file_path: "src/index.ts",
+            line_start: 12,
+            line_end: 14,
+            code_snippet: "exec(userInput)",
+            recommendation: "Replace shell execution with a safe allowlist wrapper",
+            source_type: "user_input",
+            sink_type: "command_execution",
+            tags: ["command", "unsafe-input"]
+          },
+          {
+            rule_id: "SK002",
+            title: "Network egress without allowlist",
+            category: "network_access",
+            severity: "medium",
+            message: "Detected outbound fetch to an unapproved endpoint",
+            file_path: "src/report.ts",
+            line_start: 8,
+            line_end: 9,
+            code_snippet: "fetch(reportUrl)",
+            recommendation: "Restrict outbound destinations with an allowlist",
+            source_type: "config",
+            sink_type: "network_request",
+            tags: ["network", "egress"]
+          }
+        ],
+        sensitive_capabilities: ["command_execution", "network_access"],
+        dependency_summary: {
+          direct_dependency_count: 2,
+          flagged_dependency_count: 1
+        }
+      },
+      created_at: "2026-03-26T02:00:00Z",
+      updated_at: "2026-03-26T02:05:00Z"
+    },
+    riskSummary: {
+      task_id: "task_static_analysis",
+      task_type: "static_analysis",
+      status: "finished",
+      risk_level: "high",
+      summary: "Static analysis finished with 2 rule hits",
+      total_findings: 2,
+      info_count: 0,
+      low_count: 0,
+      medium_count: 1,
+      high_count: 1,
+      critical_count: 0,
+      updated_at: "2026-03-26T02:05:00Z"
+    }
+  });
 });
 
 test("task engine service rejects a misconfigured adapter whose engine type does not match the task contract", async () => {

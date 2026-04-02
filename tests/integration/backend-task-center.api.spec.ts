@@ -147,10 +147,171 @@ test("backend task center creates and lists in-memory tasks through the shared r
     })),
     [
       { task_type: "asset_scan", engine_type: "asset_scan", status: "pending" },
-      { task_type: "static_analysis", engine_type: "skills_static", status: "pending" },
+      { task_type: "static_analysis", engine_type: "skills_static", status: "finished" },
       { task_type: "sandbox_run", engine_type: "sandbox", status: "pending" }
     ]
   );
+});
+
+test("backend task center keeps static-analysis creation on POST /api/tasks with parameters as the engine options slot", async (t) => {
+  const mainModule = await importIfExists<MainModule>(mainModulePath);
+
+  assert.notEqual(mainModule, null, "backend main module should exist before static-analysis task creation can be verified");
+
+  if (!mainModule?.createAppServer) {
+    return;
+  }
+
+  const server = mainModule.createAppServer();
+  const { baseUrl, close } = await startServer(server);
+  t.after(close);
+
+  const createdTask = await createTask(baseUrl, {
+    task_type: "static_analysis",
+    title: "Analyze demo skill with explicit parameters",
+    target: {
+      target_type: "skill_package",
+      target_value: "samples/skills/demo-email-skill",
+      display_name: "demo-email-skill"
+    },
+    parameters: {
+      language: "typescript",
+      include_paths: ["src/**/*.ts"],
+      include_dependencies: true
+    }
+  });
+
+  assert.equal(createdTask.status, 201);
+  assert.equal(createdTask.body.success, true);
+
+  const createdTaskData = createdTask.body.data as {
+    task_id: string;
+    task_type: string;
+    engine_type: string;
+    status: string;
+    parameters?: Record<string, unknown>;
+  };
+
+  assert.equal(createdTaskData.task_type, "static_analysis");
+  assert.equal(createdTaskData.engine_type, "skills_static");
+  assert.equal(createdTaskData.status, "pending");
+  assert.deepEqual(createdTaskData.parameters, {
+    language: "typescript",
+    include_paths: ["src/**/*.ts"],
+    include_dependencies: true
+  });
+
+  const taskResponse = await fetch(`${baseUrl}/api/tasks/${createdTaskData.task_id}`);
+  const taskBody = (await taskResponse.json()) as {
+    success: boolean;
+    data: {
+      task_id: string;
+      status: string;
+      risk_level?: string;
+      summary?: string;
+    };
+  };
+  const resultResponse = await fetch(`${baseUrl}/api/tasks/${createdTaskData.task_id}/result`);
+  const resultBody = (await resultResponse.json()) as {
+    success: boolean;
+    data: {
+      task_type: string;
+      engine_type: string;
+      status: string;
+      risk_level: string;
+      summary: string;
+      details: {
+        sample_name?: string;
+        language?: string;
+        entry_files?: string[];
+        files_scanned?: number;
+        rule_hits?: unknown[];
+        sensitive_capabilities?: string[];
+        dependency_summary?: Record<string, unknown>;
+      };
+    };
+  };
+  const riskSummaryResponse = await fetch(`${baseUrl}/api/tasks/${createdTaskData.task_id}/risk-summary`);
+  const riskSummaryBody = (await riskSummaryResponse.json()) as {
+    success: boolean;
+    data: {
+      status: string;
+      risk_level: string;
+      summary: string;
+      total_findings: number;
+      info_count: number;
+      low_count: number;
+      medium_count: number;
+      high_count: number;
+      critical_count: number;
+    };
+  };
+
+  assert.equal(taskResponse.status, 200);
+  assert.equal(taskBody.success, true);
+  assert.equal(taskBody.data.task_id, createdTaskData.task_id);
+  assert.equal(taskBody.data.status, "finished");
+  assert.equal(taskBody.data.risk_level, "high");
+  assert.equal(taskBody.data.summary, "Static analysis finished with 2 rule hits");
+  assert.equal(resultResponse.status, 200);
+  assert.equal(resultBody.success, true);
+  assert.equal(resultBody.data.task_type, "static_analysis");
+  assert.equal(resultBody.data.engine_type, "skills_static");
+  assert.equal(resultBody.data.status, "finished");
+  assert.equal(resultBody.data.risk_level, "high");
+  assert.equal(resultBody.data.summary, "Static analysis finished with 2 rule hits");
+  assert.equal(resultBody.data.details.sample_name, "demo-email-skill");
+  assert.equal(resultBody.data.details.language, "typescript");
+  assert.deepEqual(resultBody.data.details.entry_files, ["src/index.ts", "src/report.ts"]);
+  assert.equal(resultBody.data.details.files_scanned, 2);
+  assert.deepEqual(resultBody.data.details.rule_hits, [
+    {
+      rule_id: "SK001",
+      title: "Dangerous command execution",
+      category: "command_execution",
+      severity: "high",
+      message: "Detected child_process.exec with untrusted input",
+      file_path: "src/index.ts",
+      line_start: 12,
+      line_end: 14,
+      code_snippet: "exec(userInput)",
+      recommendation: "Replace shell execution with a safe allowlist wrapper",
+      source_type: "user_input",
+      sink_type: "command_execution",
+      tags: ["command", "unsafe-input"]
+    },
+    {
+      rule_id: "SK002",
+      title: "Network egress without allowlist",
+      category: "network_access",
+      severity: "medium",
+      message: "Detected outbound fetch to an unapproved endpoint",
+      file_path: "src/report.ts",
+      line_start: 8,
+      line_end: 9,
+      code_snippet: "fetch(reportUrl)",
+      recommendation: "Restrict outbound destinations with an allowlist",
+      source_type: "config",
+      sink_type: "network_request",
+      tags: ["network", "egress"]
+    }
+  ]);
+  assert.deepEqual(resultBody.data.details.sensitive_capabilities, ["command_execution", "network_access"]);
+  assert.deepEqual(resultBody.data.details.dependency_summary, {
+    direct_dependency_count: 2,
+    flagged_dependency_count: 1
+  });
+  assert.equal(riskSummaryResponse.status, 200);
+  assert.equal(riskSummaryBody.success, true);
+  assert.equal(riskSummaryBody.data.status, "finished");
+  assert.equal(riskSummaryBody.data.risk_level, "high");
+  assert.equal(riskSummaryBody.data.summary, "Static analysis finished with 2 rule hits");
+  assert.equal(riskSummaryBody.data.total_findings, 2);
+  assert.equal(riskSummaryBody.data.info_count, 0);
+  assert.equal(riskSummaryBody.data.low_count, 0);
+  assert.equal(riskSummaryBody.data.medium_count, 1);
+  assert.equal(riskSummaryBody.data.high_count, 1);
+  assert.equal(riskSummaryBody.data.critical_count, 0);
 });
 
 test("backend task center returns a created task together with its initial result and risk summary", async (t) => {

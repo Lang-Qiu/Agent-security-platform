@@ -1,6 +1,8 @@
 import type { AssetScanResultDetails, SandboxRunResultDetails, StaticAnalysisResultDetails } from "../types/result.ts";
+import type { SkillsStaticRuleHit, SkillsStaticTraceStep } from "../types/skills-static-rule-hit.ts";
+import { SKILLS_STATIC_SEVERITIES } from "../types/skills-static.ts";
 import type { RiskSummary, Task, TaskResultRef, TaskTarget, TaskType } from "../types/task.ts";
-import { isBoolean, isNumber, isPlainObject, isString, isStringArray } from "./guards.ts";
+import { isBoolean, isNumber, isOneOf, isPlainObject, isString, isStringArray } from "./guards.ts";
 
 function copyPlainObject(value: Record<string, unknown>): Record<string, unknown> {
   return { ...value };
@@ -228,6 +230,111 @@ function normalizeAssetScanDetails(value: unknown): AssetScanResultDetails | nul
   return normalizedDetails;
 }
 
+function normalizeSkillsStaticTraceStep(value: unknown): SkillsStaticTraceStep | null {
+  if (!isPlainObject(value)) {
+    return null;
+  }
+
+  const normalizedTraceStep: SkillsStaticTraceStep = {};
+
+  if (isString(value.step)) {
+    normalizedTraceStep.step = value.step;
+  }
+
+  if (isString(value.file_path)) {
+    normalizedTraceStep.file_path = value.file_path;
+  }
+
+  if (isNumber(value.line_start)) {
+    normalizedTraceStep.line_start = value.line_start;
+  }
+
+  if (isNumber(value.line_end)) {
+    normalizedTraceStep.line_end = value.line_end;
+  }
+
+  if (isPlainObject(value.metadata)) {
+    normalizedTraceStep.metadata = copyPlainObject(value.metadata);
+  }
+
+  return normalizedTraceStep;
+}
+
+function normalizeSkillsStaticRuleHit(value: unknown): SkillsStaticRuleHit | null {
+  if (!isPlainObject(value) || !isString(value.rule_id) || !isOneOf(SKILLS_STATIC_SEVERITIES, value.severity)) {
+    return null;
+  }
+
+  const normalizedRuleHit: SkillsStaticRuleHit = {
+    rule_id: value.rule_id,
+    severity: value.severity
+  };
+
+  if (isString(value.title)) {
+    normalizedRuleHit.title = value.title;
+  }
+
+  if (isString(value.category)) {
+    normalizedRuleHit.category = value.category;
+  }
+
+  if (isString(value.message)) {
+    normalizedRuleHit.message = value.message;
+  }
+
+  if (isString(value.file_path)) {
+    normalizedRuleHit.file_path = value.file_path;
+  }
+
+  if (isNumber(value.line_start)) {
+    normalizedRuleHit.line_start = value.line_start;
+  }
+
+  if (isNumber(value.line_end)) {
+    normalizedRuleHit.line_end = value.line_end;
+  }
+
+  if (isString(value.code_snippet)) {
+    normalizedRuleHit.code_snippet = value.code_snippet;
+  }
+
+  if (isPlainObject(value.evidence)) {
+    normalizedRuleHit.evidence = copyPlainObject(value.evidence);
+  }
+
+  if (isString(value.recommendation)) {
+    normalizedRuleHit.recommendation = value.recommendation;
+  }
+
+  if (isString(value.source_type)) {
+    normalizedRuleHit.source_type = value.source_type;
+  }
+
+  if (isString(value.sink_type)) {
+    normalizedRuleHit.sink_type = value.sink_type;
+  }
+
+  if (Array.isArray(value.trace)) {
+    const normalizedTrace = value.trace
+      .map((traceStep) => normalizeSkillsStaticTraceStep(traceStep))
+      .filter((traceStep): traceStep is SkillsStaticTraceStep => traceStep !== null);
+
+    if (normalizedTrace.length > 0) {
+      normalizedRuleHit.trace = normalizedTrace;
+    }
+  }
+
+  if (isStringArray(value.tags)) {
+    normalizedRuleHit.tags = [...value.tags];
+  }
+
+  if (isPlainObject(value.metadata)) {
+    normalizedRuleHit.metadata = copyPlainObject(value.metadata);
+  }
+
+  return normalizedRuleHit;
+}
+
 function normalizeStaticAnalysisDetails(value: unknown): StaticAnalysisResultDetails | null {
   if (!isPlainObject(value)) {
     return null;
@@ -243,8 +350,8 @@ function normalizeStaticAnalysisDetails(value: unknown): StaticAnalysisResultDet
     normalizedDetails.language = value.language;
   }
 
-  if (Array.isArray(value.entry_files)) {
-    normalizedDetails.entry_files = copyArray(value.entry_files);
+  if (isStringArray(value.entry_files)) {
+    normalizedDetails.entry_files = [...value.entry_files];
   }
 
   if (isNumber(value.files_scanned)) {
@@ -252,11 +359,13 @@ function normalizeStaticAnalysisDetails(value: unknown): StaticAnalysisResultDet
   }
 
   if (Array.isArray(value.rule_hits)) {
-    normalizedDetails.rule_hits = copyArray(value.rule_hits);
+    normalizedDetails.rule_hits = value.rule_hits
+      .map((ruleHit) => normalizeSkillsStaticRuleHit(ruleHit))
+      .filter((ruleHit): ruleHit is SkillsStaticRuleHit => ruleHit !== null);
   }
 
-  if (Array.isArray(value.sensitive_capabilities)) {
-    normalizedDetails.sensitive_capabilities = copyArray(value.sensitive_capabilities);
+  if (isStringArray(value.sensitive_capabilities)) {
+    normalizedDetails.sensitive_capabilities = [...value.sensitive_capabilities];
   }
 
   if (isPlainObject(value.dependency_summary)) {

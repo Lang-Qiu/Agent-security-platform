@@ -44,3 +44,4 @@ test-results/
 
 # Misc
 *.local
+.worktrees/
