@@ -153,6 +153,73 @@ test("backend task center creates and lists in-memory tasks through the shared r
   );
 });
 
+test("backend task center keeps static-analysis creation on POST /api/tasks with parameters as the engine options slot", async (t) => {
+  const mainModule = await importIfExists<MainModule>(mainModulePath);
+
+  assert.notEqual(mainModule, null, "backend main module should exist before static-analysis task creation can be verified");
+
+  if (!mainModule?.createAppServer) {
+    return;
+  }
+
+  const server = mainModule.createAppServer();
+  const { baseUrl, close } = await startServer(server);
+  t.after(close);
+
+  const createdTask = await createTask(baseUrl, {
+    task_type: "static_analysis",
+    title: "Analyze demo skill with explicit parameters",
+    target: {
+      target_type: "skill_package",
+      target_value: "samples/skills/demo-email-skill",
+      display_name: "demo-email-skill"
+    },
+    parameters: {
+      language: "typescript",
+      include_paths: ["src/**/*.ts"],
+      include_dependencies: true
+    }
+  });
+
+  assert.equal(createdTask.status, 201);
+  assert.equal(createdTask.body.success, true);
+
+  const createdTaskData = createdTask.body.data as {
+    task_id: string;
+    task_type: string;
+    engine_type: string;
+    parameters?: Record<string, unknown>;
+  };
+
+  assert.equal(createdTaskData.task_type, "static_analysis");
+  assert.equal(createdTaskData.engine_type, "skills_static");
+  assert.deepEqual(createdTaskData.parameters, {
+    language: "typescript",
+    include_paths: ["src/**/*.ts"],
+    include_dependencies: true
+  });
+
+  const resultResponse = await fetch(`${baseUrl}/api/tasks/${createdTaskData.task_id}/result`);
+  const resultBody = (await resultResponse.json()) as {
+    success: boolean;
+    data: {
+      task_type: string;
+      engine_type: string;
+      details: {
+        sample_name?: string;
+        rule_hits?: unknown[];
+      };
+    };
+  };
+
+  assert.equal(resultResponse.status, 200);
+  assert.equal(resultBody.success, true);
+  assert.equal(resultBody.data.task_type, "static_analysis");
+  assert.equal(resultBody.data.engine_type, "skills_static");
+  assert.equal(resultBody.data.details.sample_name, "demo-email-skill");
+  assert.deepEqual(resultBody.data.details.rule_hits, []);
+});
+
 test("backend task center returns a created task together with its initial result and risk summary", async (t) => {
   const mainModule = await importIfExists<MainModule>(mainModulePath);
 

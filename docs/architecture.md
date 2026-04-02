@@ -253,6 +253,23 @@ engines/<engine-name>/
 - `TaskCenterService` 的任务中心职责不变
 - 新的引擎提交、轮询、回调或结果回填逻辑优先落在 `TaskEngineService` 与 adapter 层，而不是直接写进 controller
 
+## REQ-SKILLS-STATIC DTO Boundary Baseline
+
+当前 `skills-static` 仍处于平台兼容骨架阶段，边界拆分如下：
+
+- shared 负责声明 `skills-static` 与平台之间的稳定 DTO / result 类型
+- backend `SkillsStaticTaskAdapter` 负责两段最小映射：
+  - `Task.parameters` -> `analysis_parameters`
+  - engine placeholder result -> `SkillsStaticResultDetails`
+- public task-center API 保持不变，controller 路由不新增
+- `BaseResult` 继续作为唯一统一结果外壳，`static_analysis` 只在 `details.rule_hits[]` 这一处收敛更强类型
+
+当前明确不做：
+
+- 真实 `skills-static` 扫描执行逻辑
+- 上传 / zip / object storage / callback / retry 流程
+- 新的平台级 `risk_score`、`projectId`、`assetId`、`tenantId` 约束
+
 ## REQ-ASSET-FINGERPRINT-002 Offline Matcher Baseline
 
 当前 `asset_scan` adapter 在占位基线之上新增了一条仅用于 TDD 的离线路径：

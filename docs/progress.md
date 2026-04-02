@@ -10,6 +10,29 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-04-01 - skills-static platform-compatible DTO / interface and minimal adapter mapping skeleton
+- requirement: add `skills-static`-compatible shared DTOs/interfaces and the smallest backend adapter mapping boundary without changing the public task-center API
+- scope: introduce shared `skills-static` result/parameter/target/rule-hit types, narrow `static_analysis.details.rule_hits[]`, add a backend mapper from placeholder engine output into shared details, and keep `POST /api/tasks` as the only public creation entry
+- tests:
+  - `shared/tests/result-contract.spec.ts`
+  - `backend/tests/task-engine.service.spec.ts`
+  - `backend/tests/task-center.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- test result: pass for the requirement-focused verification set:
+  - `npm.cmd run test:shared`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "engine adapters expose stable dispatch placeholders|skills-static adapter maps engine output into base-result compatible details without introducing risk_score|task engine service maps tasks into initial result and risk summary shells without leaking engine internals" backend/tests/task-engine.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "backend task center keeps static-analysis creation on POST /api/tasks with parameters as the engine options slot" tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+- notes:
+  - public API routes remain unchanged; `static_analysis` still enters through `POST /api/tasks`
+  - shared now provides named `skills-static` contract types instead of leaving `static_analysis.rule_hits` as `unknown[]`
+  - backend `skills-static` adapter now owns a minimal engine-result-to-details mapper but still does not execute real scans
+  - while verifying, the workspace initially lacked the locked `yaml` dependency in `node_modules`; it was restored with `corepack pnpm install --frozen-lockfile` before rerunning tests
+
 ## 2026-03-26 - metadata baseline template
 - requirement: add a root-level `metadata.md` template
 - scope: define project positioning, architecture boundaries, directory ownership, TDD baseline, skill usage rules, and change guardrails

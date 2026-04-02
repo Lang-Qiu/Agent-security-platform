@@ -111,34 +111,69 @@ agent-security-platform/
 
 ## 开发启动说明
 
-当前版本为目录与文档骨架，启动说明先保留为占位版，后续补齐实际命令。
+当前仓库已经可以本地启动前后端最小联调链路：
 
-建议初始化步骤：
+- 后端默认监听 `http://127.0.0.1:3000`
+- 前端默认监听 `http://127.0.0.1:5173`
+- 前端开发服务器会将 `/api` 和 `/health` 代理到后端
 
-1. 在仓库根目录初始化 `pnpm workspace`。
-2. 为 `frontend`、`backend`、`shared`、三个 `engines/*` 分别建立 `package.json`。
-3. 补齐基础脚本：
-   - `pnpm dev:frontend`
-   - `pnpm dev:backend`
-   - `pnpm dev:engines`
-   - `pnpm test`
-4. 建立统一代码规范：
-   - TypeScript
-   - ESLint
-   - Prettier
-   - commit message 规范
-5. 优先打通一条最小链路：
-   - 后端创建任务
-   - 引擎执行检测
-   - 后端收集结果
-   - 前端展示结果
+### 环境要求
 
-当前已落地的本地验证命令：
+- Node.js `>=22.17.0`
+- 建议使用仓库当前声明的 `pnpm@10.0.0` 安装依赖
 
-- 共享契约测试：`cmd /c npm run test:shared`
-- 后端任务中枢测试：`cmd /c npm run test:backend`
-- 前端后台骨架测试：`cmd /c npm run test:frontend`
-- 在 `frontend/` 下启动前端开发环境：`cmd /c npm run dev`
+### 安装依赖
+
+在仓库根目录执行：
+
+```powershell
+corepack enable
+pnpm install
+```
+
+### 启动后端
+
+`backend/` 当前还没有单独的 `dev` 脚本，按下面方式直接启动：
+
+```powershell
+Set-Location backend
+$env:PORT = "3000"
+node --experimental-strip-types src/main.ts
+```
+
+启动成功后，可通过以下地址检查健康状态：
+
+- `http://127.0.0.1:3000/health`
+
+### 启动前端
+
+打开第二个终端，在仓库根目录执行：
+
+```powershell
+Set-Location frontend
+npm.cmd run dev -- --host 127.0.0.1 --port 5173
+```
+
+如果不是 Windows PowerShell，可将上面的 `npm.cmd` 替换为 `npm`。
+
+### 访问入口
+
+- 前端控制台：`http://127.0.0.1:5173/`
+- 后端健康检查：`http://127.0.0.1:3000/health`
+
+前端页面访问到的 `/api/*` 和 `/health` 请求会通过 Vite 代理转发到后端，无需额外配置。
+
+### 本地验证命令
+
+在仓库根目录执行：
+
+- 全量测试：`npm run test`
+- 仓库边界测试：`npm run test:repo`
+- 共享契约测试：`npm run test:shared`
+- 后端任务中枢测试：`npm run test:backend`
+- 前端后台骨架测试：`npm run test:frontend`
+
+如果在 Windows PowerShell 中遇到 `npm` 执行策略限制，可改用 `npm.cmd`，或使用 `cmd /c npm run <script>`。
 
 ## 当前交付范围
 

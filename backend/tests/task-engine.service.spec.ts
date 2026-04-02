@@ -25,6 +25,7 @@ type AdapterModule = {
     createDispatchPayload: (task: Task) => unknown;
     createInitialDetails: (task: Task) => unknown;
   };
+  mapSkillsStaticEngineResultToDetails?: (engineResult: unknown, task: Task) => unknown;
   SandboxTaskAdapter?: new () => {
     taskType: string;
     engineType: string;
@@ -177,6 +178,66 @@ test("engine adapters expose stable dispatch placeholders for asset, static-anal
       }
     ]
   );
+});
+
+test("skills-static adapter maps engine output into base-result compatible details without introducing risk_score", async () => {
+  const skillsAdapterModule = await importIfExists<AdapterModule>(skillsAdapterPath);
+
+  assert.notEqual(skillsAdapterModule, null, "skills-static adapter module should exist before engine result mapping can be verified");
+  assert.ok(
+    skillsAdapterModule?.mapSkillsStaticEngineResultToDetails,
+    "skills-static adapter should expose a result-to-details mapper for static analysis"
+  );
+
+  if (!skillsAdapterModule?.mapSkillsStaticEngineResultToDetails) {
+    return;
+  }
+
+  const details = skillsAdapterModule.mapSkillsStaticEngineResultToDetails(
+    {
+      sample_name: "demo-package",
+      language: "typescript",
+      risk_level: "high",
+      risk_score: 98,
+      rule_hits: [
+        {
+          rule_id: "SK001",
+          title: "Dangerous command execution",
+          category: "command_execution",
+          severity: "critical",
+          message: "Detected child_process.exec with untrusted input",
+          file_path: "src/index.ts",
+          line_start: 12,
+          line_end: 14,
+          code_snippet: "exec(userInput)",
+          recommendation: "Replace shell execution with a safe allowlist wrapper",
+          tags: ["command", "unsafe-input"],
+          engine_private_debug: "should be stripped"
+        }
+      ]
+    },
+    createTask("static_analysis")
+  );
+
+  assert.deepEqual(details, {
+    sample_name: "demo-package",
+    language: "typescript",
+    rule_hits: [
+      {
+        rule_id: "SK001",
+        title: "Dangerous command execution",
+        category: "command_execution",
+        severity: "critical",
+        message: "Detected child_process.exec with untrusted input",
+        file_path: "src/index.ts",
+        line_start: 12,
+        line_end: 14,
+        code_snippet: "exec(userInput)",
+        recommendation: "Replace shell execution with a safe allowlist wrapper",
+        tags: ["command", "unsafe-input"]
+      }
+    ]
+  });
 });
 
 test("task engine service maps tasks into initial result and risk summary shells without leaking engine internals", async () => {

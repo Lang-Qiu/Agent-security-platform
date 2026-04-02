@@ -98,7 +98,35 @@ test("result contract normalizes a static analysis result into the shared base s
       rule_hits: [
         {
           rule_id: "SK001",
-          severity: "critical"
+          title: "Dangerous command execution",
+          category: "command_execution",
+          severity: "critical",
+          message: "Detected child_process.exec with untrusted input",
+          file_path: "src/index.ts",
+          line_start: 12,
+          line_end: 14,
+          code_snippet: "exec(userInput)",
+          evidence: {
+            call_expression: "exec(userInput)"
+          },
+          recommendation: "Replace shell execution with a safe allowlist wrapper",
+          source_type: "user_input",
+          sink_type: "command_execution",
+          trace: [
+            {
+              step: "user_input_to_exec",
+              file_path: "src/index.ts",
+              line_start: 10,
+              line_end: 12
+            }
+          ],
+          tags: ["command", "unsafe-input"],
+          metadata: {
+            rule_pack: "default-v1"
+          },
+          engine_private_debug: {
+            hidden: true
+          }
         }
       ],
       engine_private_ast: {
@@ -122,7 +150,32 @@ test("result contract normalizes a static analysis result into the shared base s
       rule_hits: [
         {
           rule_id: "SK001",
-          severity: "critical"
+          title: "Dangerous command execution",
+          category: "command_execution",
+          severity: "critical",
+          message: "Detected child_process.exec with untrusted input",
+          file_path: "src/index.ts",
+          line_start: 12,
+          line_end: 14,
+          code_snippet: "exec(userInput)",
+          evidence: {
+            call_expression: "exec(userInput)"
+          },
+          recommendation: "Replace shell execution with a safe allowlist wrapper",
+          source_type: "user_input",
+          sink_type: "command_execution",
+          trace: [
+            {
+              step: "user_input_to_exec",
+              file_path: "src/index.ts",
+              line_start: 10,
+              line_end: 12
+            }
+          ],
+          tags: ["command", "unsafe-input"],
+          metadata: {
+            rule_pack: "default-v1"
+          }
         }
       ]
     },

@@ -1,4 +1,5 @@
 import type { EngineType, RiskLevel, TaskStatus, TaskTarget, TaskType } from "./task.ts";
+import type { SkillsStaticResultDetails } from "./skills-static-result-details.ts";
 
 export interface AssetScanResultDetails {
   target?: TaskTarget;
@@ -11,15 +12,7 @@ export interface AssetScanResultDetails {
   findings?: unknown[];
 }
 
-export interface StaticAnalysisResultDetails {
-  sample_name?: string;
-  language?: string;
-  entry_files?: unknown[];
-  files_scanned?: number;
-  rule_hits?: unknown[];
-  sensitive_capabilities?: unknown[];
-  dependency_summary?: Record<string, unknown>;
-}
+export type StaticAnalysisResultDetails = SkillsStaticResultDetails;
 
 export interface SandboxRunResultDetails {
   session_id?: string;

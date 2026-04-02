@@ -1259,6 +1259,49 @@
 - `RiskSummary`
 
 `TaskEngineService.createInitialArtifacts(task)` 会基于 adapter 生成三类任务的初始结果细节，但这些 adapter payload 属于 backend 内部契约，不应直接暴露给 frontend。
+
+## REQ-SKILLS-STATIC DTO Boundary Baseline
+
+当前 `skills-static` 接入仍保持平台骨架阶段的最小边界，不新增新的 public API，也不引入真实扫描执行逻辑。
+
+- 公共入口保持 `POST /api/tasks`
+- `task_type = static_analysis` 固定映射到 `engine_type = skills_static`
+- 请求中的 `parameters` 继续作为现有唯一明确的 engine options 插槽，在 adapter 内部映射为 `analysis_parameters`
+- 结果仍统一收敛到 `BaseResult` 外壳：`status` / `risk_level` / `summary` / `details`
+- `static_analysis` 的规则命中明细继续承载在 `details.rule_hits[]`
+
+当前 shared 层已经补齐以下 skills-static 兼容类型：
+
+- `SkillsStaticTarget`
+- `SkillsStaticAnalysisParameters`
+- `SkillsStaticRuleHit`
+- `SkillsStaticResultDetails`
+- `SkillsStaticBaseResult`
+
+其中 `SkillsStaticRuleHit` 的最小兼容字段包括：
+
+- `rule_id`
+- `title`
+- `category`
+- `severity`
+- `message`
+- `file_path`
+- `line_start`
+- `line_end`
+- `code_snippet`
+- `evidence`
+- `recommendation`
+- `source_type`
+- `sink_type`
+- `trace`
+- `tags`
+- `metadata`
+
+当前规范化约束保持保守：
+
+- 只收敛 `static_analysis` 这一条结果细节路径
+- 未声明的 rule-hit 私有调试字段不会透传到 shared `BaseResult.details`
+- 不新增 `projectId`、`assetId`、`tenantId`、`risk_score`、上传、压缩包、对象存储、回调、重试等平台强约束字段
 ## REQ-08 Frontend Contract Health States
 
 The frontend integration layer uses four source states when reading the existing tasks API:

@@ -5,6 +5,7 @@ export * from "./constants/risk-level.ts";
 export * from "./contracts/task.ts";
 export * from "./contracts/result.ts";
 export * from "./contracts/api-response.ts";
+export * from "./types/skills-static.ts";
 export type * from "./types/task.ts";
 export type * from "./types/result.ts";
 export type * from "./types/api-response.ts";
