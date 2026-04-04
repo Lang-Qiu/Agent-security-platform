@@ -10,6 +10,29 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-04-02 - static-analysis contract and integration test solidification
+- requirement: solidify the shared contract and public integration semantics for the finished `static_analysis` mock closed loop without extending engine behavior
+- scope: add a canonical contract fixture, strengthen shared contract tests for normalized static-analysis result and finished risk summary semantics, relax backend/integration assertions away from mock-specific snapshots, and align API contract docs with the current closed-loop read behavior
+- tests:
+  - `shared/tests/task-contract.spec.ts`
+  - `shared/tests/api-response.contract.spec.ts`
+  - `shared/tests/result-contract.spec.ts`
+  - `backend/tests/task-engine.service.spec.ts`
+  - `backend/tests/task-center.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- test result: pass for the requirement-focused verification set:
+  - `node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/task-contract.spec.ts shared/tests/api-response.contract.spec.ts shared/tests/result-contract.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "skills-static adapter rejects malformed mock results before closed-loop backfill|engine client registry resolves skills-static engine clients and rejects duplicate engine registration|task engine service dispatches static-analysis tickets through the registered skills-static engine client|task engine service materializes a finished static-analysis shell from a deterministic mock result" backend/tests/task-engine.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "task center service dispatches static-analysis tasks after saving their initial artifacts|task center service backfills static-analysis artifacts when the engine client returns a mock result|task center service does not backfill static-analysis artifacts when the engine client returns a malformed mock result" backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "backend task center creates and lists in-memory tasks through the shared response shell|backend task center keeps static-analysis creation on POST /api/tasks with parameters as the engine options slot" tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - shared tests now fix the normalized static-analysis result shape and finished risk-summary semantics using a canonical contract fixture instead of engine-client internals
+  - integration assertions now verify response shell stability and cross-endpoint semantic consistency rather than exact mock `rule_hits`, summary wording, or dependency-summary literals
+  - future real detection-library adapters should only need to normalize into the same shared contract for these tests to remain valid
+
 ## 2026-04-02 - minimal mock skills-static engine closed loop
 - requirement: implement the smallest mock engine closed loop for `static_analysis` on top of the completed engine-registration and route-wiring baseline
 - scope: keep `POST /api/tasks` as the only public write entry, let `SkillsStaticEngineClient` return a deterministic mock analysis result, and backfill the existing `Task`, `BaseResult`, and `RiskSummary` records through the current task-center mainline

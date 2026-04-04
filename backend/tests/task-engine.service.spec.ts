@@ -5,6 +5,13 @@ import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
 import type { Task } from "../../shared/types/task.ts";
+import {
+  CANONICAL_STATIC_ANALYSIS_DETAILS,
+  STATIC_ANALYSIS_PENDING_SUMMARY,
+  createCanonicalStaticAnalysisBaseResult,
+  createCanonicalStaticAnalysisFinishedTask,
+  createCanonicalStaticAnalysisRiskSummary
+} from "../../tests/fixtures/static-analysis-contract.fixture.ts";
 
 const engineServicePath = resolve(import.meta.dirname, "../src/modules/task-center/task-engine.service.ts");
 const registryPath = resolve(import.meta.dirname, "../src/modules/task-center/adapters/engine-adapter-registry.ts");
@@ -980,13 +987,7 @@ test("task engine service dispatches static-analysis tickets through the registe
     accepted: boolean;
     engine_type: string;
     endpoint: string;
-    mock_result?: {
-      sample_name?: string;
-      language?: string;
-      files_scanned?: number;
-      rule_hits?: Array<{ rule_id?: string; severity?: string }>;
-      sensitive_capabilities?: string[];
-    };
+    mock_result?: unknown;
   };
 
   assert.deepEqual(dispatchedTickets, [
@@ -1007,54 +1008,14 @@ test("task engine service dispatches static-analysis tickets through the registe
       }
     }
   ]);
-  assert.deepEqual(receipt, {
-    accepted: true,
-    engine_type: "skills_static",
-    endpoint: "internal://skills-static",
-    mock_result: {
-      sample_name: "demo-package",
-      language: "typescript",
-      entry_files: ["src/index.ts", "src/report.ts"],
-      files_scanned: 2,
-      rule_hits: [
-        {
-          rule_id: "SK001",
-          title: "Dangerous command execution",
-          category: "command_execution",
-          severity: "high",
-          message: "Detected child_process.exec with untrusted input",
-          file_path: "src/index.ts",
-          line_start: 12,
-          line_end: 14,
-          code_snippet: "exec(userInput)",
-          recommendation: "Replace shell execution with a safe allowlist wrapper",
-          source_type: "user_input",
-          sink_type: "command_execution",
-          tags: ["command", "unsafe-input"]
-        },
-        {
-          rule_id: "SK002",
-          title: "Network egress without allowlist",
-          category: "network_access",
-          severity: "medium",
-          message: "Detected outbound fetch to an unapproved endpoint",
-          file_path: "src/report.ts",
-          line_start: 8,
-          line_end: 9,
-          code_snippet: "fetch(reportUrl)",
-          recommendation: "Restrict outbound destinations with an allowlist",
-          source_type: "config",
-          sink_type: "network_request",
-          tags: ["network", "egress"]
-        }
-      ],
-      sensitive_capabilities: ["command_execution", "network_access"],
-      dependency_summary: {
-        direct_dependency_count: 2,
-        flagged_dependency_count: 1
-      }
-    }
-  });
+  assert.equal(receipt.accepted, true);
+  assert.equal(receipt.engine_type, "skills_static");
+  assert.equal(receipt.endpoint, "internal://skills-static");
+  assert.notEqual(
+    skillsAdapterModule.normalizeSkillsStaticMockResult?.(receipt.mock_result),
+    null,
+    "dispatch should return a mock result that already satisfies the normalized static-analysis contract"
+  );
 });
 
 test("task engine service materializes a finished static-analysis shell from a deterministic mock result", async () => {
@@ -1073,52 +1034,22 @@ test("task engine service materializes a finished static-analysis shell from a d
   const service = new serviceModule.TaskEngineService({
     adapters: [new skillsAdapterModule.SkillsStaticTaskAdapter()]
   });
+  const expectedTask = createCanonicalStaticAnalysisFinishedTask("2026-03-26T02:05:00Z");
+  const expectedResult = createCanonicalStaticAnalysisBaseResult("2026-03-26T02:05:00Z");
+  const expectedRiskSummary = createCanonicalStaticAnalysisRiskSummary("2026-03-26T02:05:00Z");
 
   const completedArtifacts = service.createCompletedStaticAnalysisArtifacts?.(
-    createTask("static_analysis"),
     {
-      sample_name: "demo-package",
-      language: "typescript",
-      entry_files: ["src/index.ts", "src/report.ts"],
-      files_scanned: 2,
-      rule_hits: [
-        {
-          rule_id: "SK001",
-          title: "Dangerous command execution",
-          category: "command_execution",
-          severity: "high",
-          message: "Detected child_process.exec with untrusted input",
-          file_path: "src/index.ts",
-          line_start: 12,
-          line_end: 14,
-          code_snippet: "exec(userInput)",
-          recommendation: "Replace shell execution with a safe allowlist wrapper",
-          source_type: "user_input",
-          sink_type: "command_execution",
-          tags: ["command", "unsafe-input"]
-        },
-        {
-          rule_id: "SK002",
-          title: "Network egress without allowlist",
-          category: "network_access",
-          severity: "medium",
-          message: "Detected outbound fetch to an unapproved endpoint",
-          file_path: "src/report.ts",
-          line_start: 8,
-          line_end: 9,
-          code_snippet: "fetch(reportUrl)",
-          recommendation: "Restrict outbound destinations with an allowlist",
-          source_type: "config",
-          sink_type: "network_request",
-          tags: ["network", "egress"]
-        }
-      ],
-      sensitive_capabilities: ["command_execution", "network_access"],
-      dependency_summary: {
-        direct_dependency_count: 2,
-        flagged_dependency_count: 1
-      }
+      ...createTask("static_analysis"),
+      task_id: expectedTask.task_id,
+      title: expectedTask.title,
+      target: expectedTask.target,
+      parameters: expectedTask.parameters,
+      requested_by: expectedTask.requested_by,
+      created_at: expectedTask.created_at,
+      updated_at: expectedTask.created_at
     },
+    CANONICAL_STATIC_ANALYSIS_DETAILS,
     "2026-03-26T02:05:00Z"
   ) as
     | {
@@ -1150,82 +1081,34 @@ test("task engine service materializes a finished static-analysis shell from a d
       }
     | undefined;
 
-  assert.deepEqual(completedArtifacts, {
-    task: {
-      ...createTask("static_analysis"),
-      status: "finished",
-      risk_level: "high",
-      summary: "Static analysis finished with 2 rule hits",
-      updated_at: "2026-03-26T02:05:00Z"
-    },
-    result: {
-      task_id: "task_static_analysis",
-      task_type: "static_analysis",
-      engine_type: "skills_static",
-      status: "finished",
-      risk_level: "high",
-      summary: "Static analysis finished with 2 rule hits",
-      details: {
-        sample_name: "demo-package",
-        language: "typescript",
-        entry_files: ["src/index.ts", "src/report.ts"],
-        files_scanned: 2,
-        rule_hits: [
-          {
-            rule_id: "SK001",
-            title: "Dangerous command execution",
-            category: "command_execution",
-            severity: "high",
-            message: "Detected child_process.exec with untrusted input",
-            file_path: "src/index.ts",
-            line_start: 12,
-            line_end: 14,
-            code_snippet: "exec(userInput)",
-            recommendation: "Replace shell execution with a safe allowlist wrapper",
-            source_type: "user_input",
-            sink_type: "command_execution",
-            tags: ["command", "unsafe-input"]
-          },
-          {
-            rule_id: "SK002",
-            title: "Network egress without allowlist",
-            category: "network_access",
-            severity: "medium",
-            message: "Detected outbound fetch to an unapproved endpoint",
-            file_path: "src/report.ts",
-            line_start: 8,
-            line_end: 9,
-            code_snippet: "fetch(reportUrl)",
-            recommendation: "Restrict outbound destinations with an allowlist",
-            source_type: "config",
-            sink_type: "network_request",
-            tags: ["network", "egress"]
-          }
-        ],
-        sensitive_capabilities: ["command_execution", "network_access"],
-        dependency_summary: {
-          direct_dependency_count: 2,
-          flagged_dependency_count: 1
-        }
-      },
-      created_at: "2026-03-26T02:00:00Z",
-      updated_at: "2026-03-26T02:05:00Z"
-    },
-    riskSummary: {
-      task_id: "task_static_analysis",
-      task_type: "static_analysis",
-      status: "finished",
-      risk_level: "high",
-      summary: "Static analysis finished with 2 rule hits",
-      total_findings: 2,
-      info_count: 0,
-      low_count: 0,
-      medium_count: 1,
-      high_count: 1,
-      critical_count: 0,
-      updated_at: "2026-03-26T02:05:00Z"
-    }
-  });
+  assert.notEqual(completedArtifacts, undefined);
+
+  if (!completedArtifacts) {
+    return;
+  }
+
+  assert.deepEqual(completedArtifacts.result.details, CANONICAL_STATIC_ANALYSIS_DETAILS);
+  assert.equal(completedArtifacts.task.task_id, expectedTask.task_id);
+  assert.equal(completedArtifacts.task.task_type, "static_analysis");
+  assert.equal(completedArtifacts.task.engine_type, "skills_static");
+  assert.equal(completedArtifacts.task.status, "finished");
+  assert.equal(completedArtifacts.result.status, "finished");
+  assert.equal(completedArtifacts.riskSummary.status, "finished");
+  assert.equal(completedArtifacts.task.risk_level, expectedRiskSummary.risk_level);
+  assert.equal(completedArtifacts.result.risk_level, expectedRiskSummary.risk_level);
+  assert.equal(completedArtifacts.riskSummary.risk_level, expectedRiskSummary.risk_level);
+  assert.equal(completedArtifacts.riskSummary.total_findings, expectedRiskSummary.total_findings);
+  assert.equal(completedArtifacts.riskSummary.info_count, expectedRiskSummary.info_count);
+  assert.equal(completedArtifacts.riskSummary.low_count, expectedRiskSummary.low_count);
+  assert.equal(completedArtifacts.riskSummary.medium_count, expectedRiskSummary.medium_count);
+  assert.equal(completedArtifacts.riskSummary.high_count, expectedRiskSummary.high_count);
+  assert.equal(completedArtifacts.riskSummary.critical_count, expectedRiskSummary.critical_count);
+  assert.equal(completedArtifacts.task.summary, completedArtifacts.result.summary);
+  assert.equal(completedArtifacts.result.summary, completedArtifacts.riskSummary.summary);
+  assert.notEqual(completedArtifacts.task.summary, STATIC_ANALYSIS_PENDING_SUMMARY);
+  assert.equal(completedArtifacts.task.updated_at, expectedTask.updated_at);
+  assert.equal(completedArtifacts.result.updated_at, expectedResult.updated_at);
+  assert.equal(completedArtifacts.riskSummary.updated_at, expectedRiskSummary.updated_at);
 });
 
 test("task engine service rejects a misconfigured adapter whose engine type does not match the task contract", async () => {

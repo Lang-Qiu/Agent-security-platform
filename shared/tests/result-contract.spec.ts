@@ -4,6 +4,12 @@ import { resolve } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
+import {
+  CANONICAL_STATIC_ANALYSIS_DETAILS,
+  CANONICAL_STATIC_ANALYSIS_CREATED_TASK,
+  createCanonicalStaticAnalysisBaseResult
+} from "../../tests/fixtures/static-analysis-contract.fixture.ts";
+
 const sharedEntrypointPath = resolve(import.meta.dirname, "../index.ts");
 
 type SharedModule = {
@@ -85,102 +91,79 @@ test("result contract normalizes a static analysis result into the shared base s
     return;
   }
 
+  const canonicalResult = createCanonicalStaticAnalysisBaseResult("2026-04-02T01:05:00Z");
   const normalizedResult = sharedModule.normalizeBaseResult?.({
-    task_id: "task_static_001",
-    task_type: "static_analysis",
-    engine_type: "skills_static",
-    status: "finished",
-    risk_level: "high",
-    summary: "Static analysis found dangerous command execution",
+    ...canonicalResult,
     details: {
-      sample_name: "demo-email-skill",
-      language: "typescript",
-      rule_hits: [
-        {
-          rule_id: "SK001",
-          title: "Dangerous command execution",
-          category: "command_execution",
-          severity: "critical",
-          message: "Detected child_process.exec with untrusted input",
-          file_path: "src/index.ts",
-          line_start: 12,
-          line_end: 14,
-          code_snippet: "exec(userInput)",
-          evidence: {
-            call_expression: "exec(userInput)"
-          },
-          recommendation: "Replace shell execution with a safe allowlist wrapper",
-          source_type: "user_input",
-          sink_type: "command_execution",
-          trace: [
-            {
-              step: "user_input_to_exec",
-              file_path: "src/index.ts",
-              line_start: 10,
-              line_end: 12
-            }
-          ],
-          tags: ["command", "unsafe-input"],
-          metadata: {
-            rule_pack: "default-v1"
-          },
-          engine_private_debug: {
-            hidden: true
+      ...CANONICAL_STATIC_ANALYSIS_DETAILS,
+      rule_hits: (CANONICAL_STATIC_ANALYSIS_DETAILS.rule_hits ?? []).map((ruleHit, index) => ({
+        ...ruleHit,
+        evidence: {
+          slot: index
+        },
+        trace: [
+          {
+            step: `trace_${index}`,
+            file_path: ruleHit.file_path,
+            line_start: ruleHit.line_start,
+            line_end: ruleHit.line_end
           }
+        ],
+        metadata: {
+          contract_fixture: true
+        },
+        engine_private_debug: {
+          hidden: true
         }
-      ],
+      })),
       engine_private_ast: {
         hidden: true
       }
     },
-    created_at: "2026-03-26T00:00:00Z",
-    updated_at: "2026-03-26T00:01:00Z"
+    private_result_id: "should-be-stripped"
   });
 
   assert.deepEqual(normalizedResult, {
-    task_id: "task_static_001",
-    task_type: "static_analysis",
-    engine_type: "skills_static",
-    status: "finished",
-    risk_level: "high",
-    summary: "Static analysis found dangerous command execution",
+    ...canonicalResult,
     details: {
-      sample_name: "demo-email-skill",
-      language: "typescript",
+      ...CANONICAL_STATIC_ANALYSIS_DETAILS,
       rule_hits: [
         {
-          rule_id: "SK001",
-          title: "Dangerous command execution",
-          category: "command_execution",
-          severity: "critical",
-          message: "Detected child_process.exec with untrusted input",
-          file_path: "src/index.ts",
-          line_start: 12,
-          line_end: 14,
-          code_snippet: "exec(userInput)",
+          ...CANONICAL_STATIC_ANALYSIS_DETAILS.rule_hits?.[0],
           evidence: {
-            call_expression: "exec(userInput)"
+            slot: 0
           },
-          recommendation: "Replace shell execution with a safe allowlist wrapper",
-          source_type: "user_input",
-          sink_type: "command_execution",
           trace: [
             {
-              step: "user_input_to_exec",
-              file_path: "src/index.ts",
-              line_start: 10,
-              line_end: 12
+              step: "trace_0",
+              file_path: CANONICAL_STATIC_ANALYSIS_DETAILS.rule_hits?.[0]?.file_path,
+              line_start: CANONICAL_STATIC_ANALYSIS_DETAILS.rule_hits?.[0]?.line_start,
+              line_end: CANONICAL_STATIC_ANALYSIS_DETAILS.rule_hits?.[0]?.line_end
             }
           ],
-          tags: ["command", "unsafe-input"],
           metadata: {
-            rule_pack: "default-v1"
+            contract_fixture: true
+          }
+        },
+        {
+          ...CANONICAL_STATIC_ANALYSIS_DETAILS.rule_hits?.[1],
+          evidence: {
+            slot: 1
+          },
+          trace: [
+            {
+              step: "trace_1",
+              file_path: CANONICAL_STATIC_ANALYSIS_DETAILS.rule_hits?.[1]?.file_path,
+              line_start: CANONICAL_STATIC_ANALYSIS_DETAILS.rule_hits?.[1]?.line_start,
+              line_end: CANONICAL_STATIC_ANALYSIS_DETAILS.rule_hits?.[1]?.line_end
+            }
+          ],
+          metadata: {
+            contract_fixture: true
           }
         }
       ]
-    },
-    created_at: "2026-03-26T00:00:00Z",
-    updated_at: "2026-03-26T00:01:00Z"
+    }
   });
 });
 

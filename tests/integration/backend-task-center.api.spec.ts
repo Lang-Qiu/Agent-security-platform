@@ -5,10 +5,20 @@ import { resolve } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
+import { STATIC_ANALYSIS_PENDING_SUMMARY, summarizeStaticAnalysisRuleHits } from "../fixtures/static-analysis-contract.fixture.ts";
+
 const mainModulePath = resolve(import.meta.dirname, "../../backend/src/main.ts");
+const sharedEntrypointPath = resolve(import.meta.dirname, "../../shared/index.ts");
 
 type MainModule = {
   createAppServer?: () => Server;
+};
+
+type SharedModule = {
+  isApiResponse?: (value: unknown) => boolean;
+  normalizeTask?: (value: unknown) => unknown;
+  normalizeBaseResult?: (value: unknown) => unknown;
+  normalizeRiskSummary?: (value: unknown) => unknown;
 };
 
 async function importIfExists<TModule>(filePath: string): Promise<TModule | null> {
@@ -86,10 +96,12 @@ test("backend health check returns the unified response shell", async (t) => {
 
 test("backend task center creates and lists in-memory tasks through the shared response shell", async (t) => {
   const mainModule = await importIfExists<MainModule>(mainModulePath);
+  const sharedModule = await importIfExists<SharedModule>(sharedEntrypointPath);
 
   assert.notEqual(mainModule, null, "backend main module should exist before task creation can be verified");
+  assert.notEqual(sharedModule, null, "shared module should exist before public API shells can be validated");
 
-  if (!mainModule?.createAppServer) {
+  if (!mainModule?.createAppServer || !sharedModule) {
     return;
   }
 
@@ -127,24 +139,35 @@ test("backend task center creates and lists in-memory tasks through the shared r
   assert.equal(createdAssetTask.status, 201);
   assert.equal(createdStaticTask.status, 201);
   assert.equal(createdSandboxTask.status, 201);
-  assert.equal(createdAssetTask.body.success, true);
-  assert.equal(createdAssetTask.body.error_code, null);
+  assert.equal(sharedModule.isApiResponse?.(createdAssetTask.body), true);
+  assert.equal(sharedModule.isApiResponse?.(createdStaticTask.body), true);
+  assert.equal(sharedModule.isApiResponse?.(createdSandboxTask.body), true);
 
   const listResponse = await fetch(`${baseUrl}/api/tasks`);
-  const listBody = (await listResponse.json()) as {
-    success: boolean;
-    data: Array<{ task_type: string; engine_type: string; status: string }>;
-  };
+  const listBody = (await listResponse.json()) as Record<string, unknown>;
 
   assert.equal(listResponse.status, 200);
-  assert.equal(listBody.success, true);
+  assert.equal(sharedModule.isApiResponse?.(listBody), true);
+  assert.ok(Array.isArray(listBody.data));
   assert.equal(listBody.data.length, 3);
   assert.deepEqual(
-    listBody.data.map((task) => ({
-      task_type: task.task_type,
-      engine_type: task.engine_type,
-      status: task.status
-    })),
+    listBody.data.map((task) => {
+      const normalizedTask = sharedModule.normalizeTask?.(task) as
+        | {
+            task_type: string;
+            engine_type: string;
+            status: string;
+          }
+        | null;
+
+      assert.notEqual(normalizedTask, null);
+
+      return {
+        task_type: normalizedTask?.task_type,
+        engine_type: normalizedTask?.engine_type,
+        status: normalizedTask?.status
+      };
+    }),
     [
       { task_type: "asset_scan", engine_type: "asset_scan", status: "pending" },
       { task_type: "static_analysis", engine_type: "skills_static", status: "finished" },
@@ -155,10 +178,12 @@ test("backend task center creates and lists in-memory tasks through the shared r
 
 test("backend task center keeps static-analysis creation on POST /api/tasks with parameters as the engine options slot", async (t) => {
   const mainModule = await importIfExists<MainModule>(mainModulePath);
+  const sharedModule = await importIfExists<SharedModule>(sharedEntrypointPath);
 
   assert.notEqual(mainModule, null, "backend main module should exist before static-analysis task creation can be verified");
+  assert.notEqual(sharedModule, null, "shared module should exist before static-analysis API contracts can be verified");
 
-  if (!mainModule?.createAppServer) {
+  if (!mainModule?.createAppServer || !sharedModule) {
     return;
   }
 
@@ -182,19 +207,29 @@ test("backend task center keeps static-analysis creation on POST /api/tasks with
   });
 
   assert.equal(createdTask.status, 201);
-  assert.equal(createdTask.body.success, true);
+  assert.equal(sharedModule.isApiResponse?.(createdTask.body), true);
 
-  const createdTaskData = createdTask.body.data as {
-    task_id: string;
-    task_type: string;
-    engine_type: string;
-    status: string;
-    parameters?: Record<string, unknown>;
-  };
+  const createdTaskData = sharedModule.normalizeTask?.(createdTask.body.data) as
+    | {
+        task_id: string;
+        task_type: string;
+        engine_type: string;
+        status: string;
+        summary?: string;
+        parameters?: Record<string, unknown>;
+      }
+    | null;
+
+  assert.notEqual(createdTaskData, null);
+
+  if (!createdTaskData) {
+    return;
+  }
 
   assert.equal(createdTaskData.task_type, "static_analysis");
   assert.equal(createdTaskData.engine_type, "skills_static");
   assert.equal(createdTaskData.status, "pending");
+  assert.equal(createdTaskData.summary, STATIC_ANALYSIS_PENDING_SUMMARY);
   assert.deepEqual(createdTaskData.parameters, {
     language: "typescript",
     include_paths: ["src/**/*.ts"],
@@ -202,116 +237,118 @@ test("backend task center keeps static-analysis creation on POST /api/tasks with
   });
 
   const taskResponse = await fetch(`${baseUrl}/api/tasks/${createdTaskData.task_id}`);
-  const taskBody = (await taskResponse.json()) as {
-    success: boolean;
-    data: {
-      task_id: string;
-      status: string;
-      risk_level?: string;
-      summary?: string;
-    };
-  };
+  const taskBody = (await taskResponse.json()) as Record<string, unknown>;
   const resultResponse = await fetch(`${baseUrl}/api/tasks/${createdTaskData.task_id}/result`);
-  const resultBody = (await resultResponse.json()) as {
-    success: boolean;
-    data: {
-      task_type: string;
-      engine_type: string;
-      status: string;
-      risk_level: string;
-      summary: string;
-      details: {
-        sample_name?: string;
-        language?: string;
-        entry_files?: string[];
-        files_scanned?: number;
-        rule_hits?: unknown[];
-        sensitive_capabilities?: string[];
-        dependency_summary?: Record<string, unknown>;
-      };
-    };
-  };
+  const resultBody = (await resultResponse.json()) as Record<string, unknown>;
   const riskSummaryResponse = await fetch(`${baseUrl}/api/tasks/${createdTaskData.task_id}/risk-summary`);
-  const riskSummaryBody = (await riskSummaryResponse.json()) as {
-    success: boolean;
-    data: {
-      status: string;
-      risk_level: string;
-      summary: string;
-      total_findings: number;
-      info_count: number;
-      low_count: number;
-      medium_count: number;
-      high_count: number;
-      critical_count: number;
-    };
-  };
+  const riskSummaryBody = (await riskSummaryResponse.json()) as Record<string, unknown>;
 
   assert.equal(taskResponse.status, 200);
-  assert.equal(taskBody.success, true);
-  assert.equal(taskBody.data.task_id, createdTaskData.task_id);
-  assert.equal(taskBody.data.status, "finished");
-  assert.equal(taskBody.data.risk_level, "high");
-  assert.equal(taskBody.data.summary, "Static analysis finished with 2 rule hits");
   assert.equal(resultResponse.status, 200);
-  assert.equal(resultBody.success, true);
-  assert.equal(resultBody.data.task_type, "static_analysis");
-  assert.equal(resultBody.data.engine_type, "skills_static");
-  assert.equal(resultBody.data.status, "finished");
-  assert.equal(resultBody.data.risk_level, "high");
-  assert.equal(resultBody.data.summary, "Static analysis finished with 2 rule hits");
-  assert.equal(resultBody.data.details.sample_name, "demo-email-skill");
-  assert.equal(resultBody.data.details.language, "typescript");
-  assert.deepEqual(resultBody.data.details.entry_files, ["src/index.ts", "src/report.ts"]);
-  assert.equal(resultBody.data.details.files_scanned, 2);
-  assert.deepEqual(resultBody.data.details.rule_hits, [
-    {
-      rule_id: "SK001",
-      title: "Dangerous command execution",
-      category: "command_execution",
-      severity: "high",
-      message: "Detected child_process.exec with untrusted input",
-      file_path: "src/index.ts",
-      line_start: 12,
-      line_end: 14,
-      code_snippet: "exec(userInput)",
-      recommendation: "Replace shell execution with a safe allowlist wrapper",
-      source_type: "user_input",
-      sink_type: "command_execution",
-      tags: ["command", "unsafe-input"]
-    },
-    {
-      rule_id: "SK002",
-      title: "Network egress without allowlist",
-      category: "network_access",
-      severity: "medium",
-      message: "Detected outbound fetch to an unapproved endpoint",
-      file_path: "src/report.ts",
-      line_start: 8,
-      line_end: 9,
-      code_snippet: "fetch(reportUrl)",
-      recommendation: "Restrict outbound destinations with an allowlist",
-      source_type: "config",
-      sink_type: "network_request",
-      tags: ["network", "egress"]
-    }
-  ]);
-  assert.deepEqual(resultBody.data.details.sensitive_capabilities, ["command_execution", "network_access"]);
-  assert.deepEqual(resultBody.data.details.dependency_summary, {
-    direct_dependency_count: 2,
-    flagged_dependency_count: 1
-  });
   assert.equal(riskSummaryResponse.status, 200);
-  assert.equal(riskSummaryBody.success, true);
-  assert.equal(riskSummaryBody.data.status, "finished");
-  assert.equal(riskSummaryBody.data.risk_level, "high");
-  assert.equal(riskSummaryBody.data.summary, "Static analysis finished with 2 rule hits");
-  assert.equal(riskSummaryBody.data.total_findings, 2);
-  assert.equal(riskSummaryBody.data.info_count, 0);
-  assert.equal(riskSummaryBody.data.low_count, 0);
-  assert.equal(riskSummaryBody.data.medium_count, 1);
-  assert.equal(riskSummaryBody.data.high_count, 1);
-  assert.equal(riskSummaryBody.data.critical_count, 0);
+  assert.equal(sharedModule.isApiResponse?.(taskBody), true);
+  assert.equal(sharedModule.isApiResponse?.(resultBody), true);
+  assert.equal(sharedModule.isApiResponse?.(riskSummaryBody), true);
+
+  const normalizedTask = sharedModule.normalizeTask?.(taskBody.data) as
+    | {
+        task_id: string;
+        task_type: string;
+        engine_type: string;
+        status: string;
+        risk_level?: string;
+        summary?: string;
+        updated_at: string;
+      }
+    | null;
+  const normalizedResult = sharedModule.normalizeBaseResult?.(resultBody.data) as
+    | {
+        task_id: string;
+        task_type: string;
+        engine_type: string;
+        status: string;
+        risk_level: string;
+        summary: string;
+        details: {
+          sample_name?: string;
+          language?: string;
+          entry_files?: string[];
+          files_scanned?: number;
+          rule_hits?: Array<{ rule_id: string; severity: "info" | "low" | "medium" | "high" | "critical" }>;
+          sensitive_capabilities?: string[];
+          dependency_summary?: Record<string, unknown>;
+        };
+        updated_at: string;
+      }
+    | null;
+  const normalizedRiskSummary = sharedModule.normalizeRiskSummary?.(riskSummaryBody.data) as
+    | {
+        task_id: string;
+        task_type: string;
+        status: string;
+        risk_level: string;
+        summary: string;
+        total_findings: number;
+        info_count: number;
+        low_count: number;
+        medium_count: number;
+        high_count: number;
+        critical_count: number;
+        updated_at: string;
+      }
+    | null;
+
+  assert.notEqual(normalizedTask, null);
+  assert.notEqual(normalizedResult, null);
+  assert.notEqual(normalizedRiskSummary, null);
+
+  if (!normalizedTask || !normalizedResult || !normalizedRiskSummary) {
+    return;
+  }
+
+  const ruleHits = normalizedResult.details.rule_hits ?? [];
+  const riskCounts = summarizeStaticAnalysisRuleHits(ruleHits);
+
+  assert.equal(normalizedTask.task_id, createdTaskData.task_id);
+  assert.equal(normalizedTask.task_type, "static_analysis");
+  assert.equal(normalizedTask.engine_type, "skills_static");
+  assert.equal(normalizedTask.status, "finished");
+  assert.equal(normalizedResult.task_id, createdTaskData.task_id);
+  assert.equal(normalizedResult.task_type, "static_analysis");
+  assert.equal(normalizedResult.engine_type, "skills_static");
+  assert.equal(normalizedResult.status, "finished");
+  assert.equal(normalizedRiskSummary.task_id, createdTaskData.task_id);
+  assert.equal(normalizedRiskSummary.task_type, "static_analysis");
+  assert.equal(normalizedRiskSummary.status, "finished");
+
+  assert.ok(typeof normalizedResult.details.sample_name === "string" && normalizedResult.details.sample_name.length > 0);
+  assert.ok(typeof normalizedResult.details.language === "string" && normalizedResult.details.language.length > 0);
+  assert.ok(Array.isArray(normalizedResult.details.entry_files) && normalizedResult.details.entry_files.length > 0);
+  assert.ok(
+    typeof normalizedResult.details.files_scanned === "number" &&
+      normalizedResult.details.files_scanned >= normalizedResult.details.entry_files.length
+  );
+  assert.ok(ruleHits.length > 0);
+  assert.ok(Array.isArray(normalizedResult.details.sensitive_capabilities) && normalizedResult.details.sensitive_capabilities.length > 0);
+  assert.equal(typeof normalizedResult.details.dependency_summary, "object");
+  assert.notEqual(normalizedResult.details.dependency_summary, null);
+
+  assert.equal(normalizedTask.risk_level, riskCounts.risk_level);
+  assert.equal(normalizedResult.risk_level, riskCounts.risk_level);
+  assert.equal(normalizedRiskSummary.risk_level, riskCounts.risk_level);
+  assert.equal(normalizedRiskSummary.total_findings, riskCounts.total_findings);
+  assert.equal(normalizedRiskSummary.info_count, riskCounts.info_count);
+  assert.equal(normalizedRiskSummary.low_count, riskCounts.low_count);
+  assert.equal(normalizedRiskSummary.medium_count, riskCounts.medium_count);
+  assert.equal(normalizedRiskSummary.high_count, riskCounts.high_count);
+  assert.equal(normalizedRiskSummary.critical_count, riskCounts.critical_count);
+
+  assert.equal(normalizedTask.summary, normalizedResult.summary);
+  assert.equal(normalizedResult.summary, normalizedRiskSummary.summary);
+  assert.notEqual(normalizedTask.summary, STATIC_ANALYSIS_PENDING_SUMMARY);
+  assert.notEqual(normalizedTask.summary, createdTaskData.summary);
+  assert.equal(normalizedTask.updated_at, normalizedResult.updated_at);
+  assert.equal(normalizedResult.updated_at, normalizedRiskSummary.updated_at);
 });
 
 test("backend task center returns a created task together with its initial result and risk summary", async (t) => {
