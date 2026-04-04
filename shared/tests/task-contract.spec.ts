@@ -6,10 +6,8 @@ import { pathToFileURL } from "node:url";
 
 import {
   CANONICAL_STATIC_ANALYSIS_CREATED_TASK,
-  CANONICAL_STATIC_ANALYSIS_RULE_HITS,
   createCanonicalStaticAnalysisFinishedTask,
-  createCanonicalStaticAnalysisRiskSummary,
-  summarizeStaticAnalysisRuleHits
+  createCanonicalStaticAnalysisRiskSummary
 } from "../../tests/fixtures/static-analysis-contract.fixture.ts";
 
 const sharedEntrypointPath = resolve(import.meta.dirname, "../index.ts");
@@ -163,7 +161,15 @@ test("task contract normalizes a finished static-analysis task shell and risk su
 
   const canonicalTask = createCanonicalStaticAnalysisFinishedTask("2026-04-02T01:05:00Z");
   const canonicalRiskSummary = createCanonicalStaticAnalysisRiskSummary("2026-04-02T01:05:00Z");
-  const counts = summarizeStaticAnalysisRuleHits(CANONICAL_STATIC_ANALYSIS_RULE_HITS);
+  const expectedRiskSummarySemantics = {
+    risk_level: "high",
+    total_findings: 2,
+    info_count: 0,
+    low_count: 0,
+    medium_count: 1,
+    high_count: 1,
+    critical_count: 0
+  };
 
   const normalizedTask = sharedModule.normalizeTask?.({
     ...canonicalTask,
@@ -176,15 +182,18 @@ test("task contract normalizes a finished static-analysis task shell and risk su
 
   assert.deepEqual(normalizedTask, canonicalTask);
   assert.deepEqual(normalizedRiskSummary, canonicalRiskSummary);
-  assert.deepEqual(counts, {
-    risk_level: canonicalRiskSummary.risk_level,
-    total_findings: canonicalRiskSummary.total_findings,
-    info_count: canonicalRiskSummary.info_count,
-    low_count: canonicalRiskSummary.low_count,
-    medium_count: canonicalRiskSummary.medium_count,
-    high_count: canonicalRiskSummary.high_count,
-    critical_count: canonicalRiskSummary.critical_count
-  });
+  assert.deepEqual(
+    {
+      risk_level: canonicalRiskSummary.risk_level,
+      total_findings: canonicalRiskSummary.total_findings,
+      info_count: canonicalRiskSummary.info_count,
+      low_count: canonicalRiskSummary.low_count,
+      medium_count: canonicalRiskSummary.medium_count,
+      high_count: canonicalRiskSummary.high_count,
+      critical_count: canonicalRiskSummary.critical_count
+    },
+    expectedRiskSummarySemantics
+  );
   assert.equal(canonicalTask.task_type, "static_analysis");
   assert.equal(canonicalTask.engine_type, "skills_static");
   assert.equal(canonicalTask.status, "finished");

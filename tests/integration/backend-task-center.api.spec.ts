@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { STATIC_ANALYSIS_PENDING_SUMMARY, summarizeStaticAnalysisRuleHits } from "../fixtures/static-analysis-contract.fixture.ts";
+import { STATIC_ANALYSIS_PENDING_SUMMARY } from "../fixtures/static-analysis-contract.fixture.ts";
 
 const mainModulePath = resolve(import.meta.dirname, "../../backend/src/main.ts");
 const sharedEntrypointPath = resolve(import.meta.dirname, "../../shared/index.ts");
@@ -307,7 +307,24 @@ test("backend task center keeps static-analysis creation on POST /api/tasks with
   }
 
   const ruleHits = normalizedResult.details.rule_hits ?? [];
-  const riskCounts = summarizeStaticAnalysisRuleHits(ruleHits);
+  const riskCounts = {
+    total_findings: ruleHits.length,
+    info_count: ruleHits.filter((ruleHit) => ruleHit.severity === "info").length,
+    low_count: ruleHits.filter((ruleHit) => ruleHit.severity === "low").length,
+    medium_count: ruleHits.filter((ruleHit) => ruleHit.severity === "medium").length,
+    high_count: ruleHits.filter((ruleHit) => ruleHit.severity === "high").length,
+    critical_count: ruleHits.filter((ruleHit) => ruleHit.severity === "critical").length
+  };
+  const expectedRiskLevel =
+    riskCounts.critical_count > 0
+      ? "critical"
+      : riskCounts.high_count > 0
+        ? "high"
+        : riskCounts.medium_count > 0
+          ? "medium"
+          : riskCounts.low_count > 0
+            ? "low"
+            : "info";
 
   assert.equal(normalizedTask.task_id, createdTaskData.task_id);
   assert.equal(normalizedTask.task_type, "static_analysis");
@@ -333,9 +350,9 @@ test("backend task center keeps static-analysis creation on POST /api/tasks with
   assert.equal(typeof normalizedResult.details.dependency_summary, "object");
   assert.notEqual(normalizedResult.details.dependency_summary, null);
 
-  assert.equal(normalizedTask.risk_level, riskCounts.risk_level);
-  assert.equal(normalizedResult.risk_level, riskCounts.risk_level);
-  assert.equal(normalizedRiskSummary.risk_level, riskCounts.risk_level);
+  assert.equal(normalizedTask.risk_level, expectedRiskLevel);
+  assert.equal(normalizedResult.risk_level, expectedRiskLevel);
+  assert.equal(normalizedRiskSummary.risk_level, expectedRiskLevel);
   assert.equal(normalizedRiskSummary.total_findings, riskCounts.total_findings);
   assert.equal(normalizedRiskSummary.info_count, riskCounts.info_count);
   assert.equal(normalizedRiskSummary.low_count, riskCounts.low_count);
