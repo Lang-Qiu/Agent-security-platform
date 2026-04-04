@@ -1,6 +1,6 @@
 import type { EngineType } from "../../../../../shared/types/task.ts";
-import type { SkillsStaticMockResult } from "../adapters/skills-static.adapter.ts";
 import type { EngineDispatchTicket } from "../adapters/engine-adapter.ts";
+import type { SkillsStaticEngineOutput } from "../skills-static/skills-static-engine-output.ts";
 
 interface BaseEngineClientDispatchReceipt<T extends EngineType> {
   accepted: boolean;
@@ -12,7 +12,7 @@ export type EngineClientDispatchReceipt =
   | BaseEngineClientDispatchReceipt<"asset_scan">
   | BaseEngineClientDispatchReceipt<"sandbox">
   | (BaseEngineClientDispatchReceipt<"skills_static"> & {
-      mock_result?: SkillsStaticMockResult;
+      mock_result?: SkillsStaticEngineOutput;
     });
 
 export interface EngineClient {

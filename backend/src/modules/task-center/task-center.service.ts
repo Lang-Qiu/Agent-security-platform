@@ -4,8 +4,8 @@ import { TASK_TYPE_TO_ENGINE_TYPE } from "../../../../shared/constants/task-type
 import { DomainError } from "../../common/errors/domain-error.ts";
 import type { CreateTaskRequest } from "./dto/create-task.request.ts";
 import type { TaskEngineAdapter } from "./adapters/engine-adapter.ts";
-import { normalizeSkillsStaticMockResult } from "./adapters/skills-static.adapter.ts";
 import type { TaskRepository, StoredTaskRecord } from "./repositories/task.repository.ts";
+import { normalizeSkillsStaticEngineOutput } from "./skills-static/skills-static-result-normalizer.ts";
 import { DEFAULT_PENDING_TASK_SUMMARY, TaskEngineService } from "./task-engine.service.ts";
 
 export class TaskCenterService {
@@ -70,15 +70,19 @@ export class TaskCenterService {
       const dispatchReceipt = await this.taskEngineService.dispatchTask(task);
 
       if (task.task_type === "static_analysis" && dispatchReceipt.engine_type === "skills_static") {
-        const normalizedMockResult = normalizeSkillsStaticMockResult(dispatchReceipt.mock_result);
+        try {
+          const normalizedResultDetails = normalizeSkillsStaticEngineOutput(dispatchReceipt.mock_result ?? {}, task);
 
-        if (!normalizedMockResult) {
-          return task;
+          this.repository.save(
+            this.taskEngineService.createCompletedStaticAnalysisArtifacts(task, normalizedResultDetails, this.now())
+          );
+        } catch (error) {
+          if (error instanceof DomainError && error.code === "SKILLS_STATIC_INVALID_ENGINE_OUTPUT") {
+            return task;
+          }
+
+          throw error;
         }
-
-        this.repository.save(
-          this.taskEngineService.createCompletedStaticAnalysisArtifacts(task, normalizedMockResult, this.now())
-        );
       }
     }
 

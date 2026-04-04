@@ -327,3 +327,13 @@ This is intentionally still a skeleton-stage integration:
 - no engine-specific controller
 - no real `skills-static` scan execution
 - no retry, callback, upload, object-storage, or timeout-governance workflow
+
+## REQ-SKILLS-STATIC Internal Core Objects
+
+The backend now extracts the `skills_static` internal normalization and aggregation logic into dedicated core objects instead of leaving that behavior spread across one adapter file.
+
+- `SkillsStaticEngineOutput` is the loose backend-internal input shell for raw analysis output from any future detection-library adapter
+- `SkillsStaticResultNormalizer` converts that loose output into stable `SkillsStaticResultDetails`, strips `engine_private_*` fields and `risk_score`, and raises a structured internal error for malformed input
+- `RiskSummaryDeriver` is the single backend runtime source of truth for deriving `risk_level` and severity counts from normalized `rule_hits`
+- `SkillsStaticTaskAdapter` now stays focused on dispatch payload creation and initial placeholder details
+- `TaskCenterService` catches malformed internal engine output and preserves the existing pending shell instead of widening the public contract or failing the task-center read shape

@@ -1,6 +1,6 @@
 import type { BaseResult, StaticAnalysisResultDetails } from "../../shared/types/result.ts";
 import type { SkillsStaticRuleHit } from "../../shared/types/skills-static-rule-hit.ts";
-import type { RiskLevel, RiskSummary, Task } from "../../shared/types/task.ts";
+import type { RiskSummary, Task } from "../../shared/types/task.ts";
 
 export const STATIC_ANALYSIS_PENDING_SUMMARY = "Task accepted and waiting for engine dispatch";
 
@@ -72,55 +72,24 @@ export const CANONICAL_STATIC_ANALYSIS_CREATED_TASK: Task = {
   updated_at: "2026-04-02T01:00:00Z"
 };
 
-export function summarizeStaticAnalysisRuleHits(ruleHits: SkillsStaticRuleHit[]): {
-  risk_level: RiskLevel;
-  total_findings: number;
-  info_count: number;
-  low_count: number;
-  medium_count: number;
-  high_count: number;
-  critical_count: number;
-} {
-  const info_count = ruleHits.filter((ruleHit) => ruleHit.severity === "info").length;
-  const low_count = ruleHits.filter((ruleHit) => ruleHit.severity === "low").length;
-  const medium_count = ruleHits.filter((ruleHit) => ruleHit.severity === "medium").length;
-  const high_count = ruleHits.filter((ruleHit) => ruleHit.severity === "high").length;
-  const critical_count = ruleHits.filter((ruleHit) => ruleHit.severity === "critical").length;
-  const total_findings = ruleHits.length;
+export const CANONICAL_STATIC_ANALYSIS_COMPLETED_SUMMARY = "Static analysis completed with 2 findings";
 
-  let risk_level: RiskLevel = "info";
-
-  if (critical_count > 0) {
-    risk_level = "critical";
-  } else if (high_count > 0) {
-    risk_level = "high";
-  } else if (medium_count > 0) {
-    risk_level = "medium";
-  } else if (low_count > 0) {
-    risk_level = "low";
-  }
-
-  return {
-    risk_level,
-    total_findings,
-    info_count,
-    low_count,
-    medium_count,
-    high_count,
-    critical_count
-  };
-}
-
-export function createCanonicalStaticAnalysisSummary(ruleHits: SkillsStaticRuleHit[]): string {
-  return `Static analysis completed with ${ruleHits.length} finding${ruleHits.length === 1 ? "" : "s"}`;
-}
+export const CANONICAL_STATIC_ANALYSIS_DERIVED_RISK_SUMMARY = {
+  risk_level: "high" as const,
+  total_findings: 2,
+  info_count: 0,
+  low_count: 0,
+  medium_count: 1,
+  high_count: 1,
+  critical_count: 0
+};
 
 export function createCanonicalStaticAnalysisFinishedTask(updatedAt: string): Task {
   return {
     ...CANONICAL_STATIC_ANALYSIS_CREATED_TASK,
     status: "finished",
-    risk_level: summarizeStaticAnalysisRuleHits(CANONICAL_STATIC_ANALYSIS_RULE_HITS).risk_level,
-    summary: createCanonicalStaticAnalysisSummary(CANONICAL_STATIC_ANALYSIS_RULE_HITS),
+    risk_level: CANONICAL_STATIC_ANALYSIS_DERIVED_RISK_SUMMARY.risk_level,
+    summary: CANONICAL_STATIC_ANALYSIS_COMPLETED_SUMMARY,
     updated_at: updatedAt
   };
 }
@@ -131,8 +100,8 @@ export function createCanonicalStaticAnalysisBaseResult(updatedAt: string): Base
     task_type: "static_analysis",
     engine_type: "skills_static",
     status: "finished",
-    risk_level: summarizeStaticAnalysisRuleHits(CANONICAL_STATIC_ANALYSIS_RULE_HITS).risk_level,
-    summary: createCanonicalStaticAnalysisSummary(CANONICAL_STATIC_ANALYSIS_RULE_HITS),
+    risk_level: CANONICAL_STATIC_ANALYSIS_DERIVED_RISK_SUMMARY.risk_level,
+    summary: CANONICAL_STATIC_ANALYSIS_COMPLETED_SUMMARY,
     details: CANONICAL_STATIC_ANALYSIS_DETAILS,
     created_at: CANONICAL_STATIC_ANALYSIS_CREATED_TASK.created_at,
     updated_at: updatedAt
@@ -140,20 +109,18 @@ export function createCanonicalStaticAnalysisBaseResult(updatedAt: string): Base
 }
 
 export function createCanonicalStaticAnalysisRiskSummary(updatedAt: string): RiskSummary {
-  const counts = summarizeStaticAnalysisRuleHits(CANONICAL_STATIC_ANALYSIS_RULE_HITS);
-
   return {
     task_id: CANONICAL_STATIC_ANALYSIS_CREATED_TASK.task_id,
     task_type: "static_analysis",
     status: "finished",
-    risk_level: counts.risk_level,
-    summary: createCanonicalStaticAnalysisSummary(CANONICAL_STATIC_ANALYSIS_RULE_HITS),
-    total_findings: counts.total_findings,
-    info_count: counts.info_count,
-    low_count: counts.low_count,
-    medium_count: counts.medium_count,
-    high_count: counts.high_count,
-    critical_count: counts.critical_count,
+    risk_level: CANONICAL_STATIC_ANALYSIS_DERIVED_RISK_SUMMARY.risk_level,
+    summary: CANONICAL_STATIC_ANALYSIS_COMPLETED_SUMMARY,
+    total_findings: CANONICAL_STATIC_ANALYSIS_DERIVED_RISK_SUMMARY.total_findings,
+    info_count: CANONICAL_STATIC_ANALYSIS_DERIVED_RISK_SUMMARY.info_count,
+    low_count: CANONICAL_STATIC_ANALYSIS_DERIVED_RISK_SUMMARY.low_count,
+    medium_count: CANONICAL_STATIC_ANALYSIS_DERIVED_RISK_SUMMARY.medium_count,
+    high_count: CANONICAL_STATIC_ANALYSIS_DERIVED_RISK_SUMMARY.high_count,
+    critical_count: CANONICAL_STATIC_ANALYSIS_DERIVED_RISK_SUMMARY.critical_count,
     updated_at: updatedAt
   };
 }

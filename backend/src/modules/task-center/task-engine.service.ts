@@ -1,12 +1,12 @@
 import type { BaseResult, ResultDetails } from "../../../../shared/types/result.ts";
-import type { RiskLevel, RiskSummary, Task } from "../../../../shared/types/task.ts";
+import type { RiskSummary, Task } from "../../../../shared/types/task.ts";
 import { DomainError } from "../../common/errors/domain-error.ts";
-import { mapSkillsStaticEngineResultToDetails } from "./adapters/skills-static.adapter.ts";
 import { EngineAdapterRegistry } from "./adapters/engine-adapter-registry.ts";
 import type { EngineDispatchTicket, TaskEngineAdapter } from "./adapters/engine-adapter.ts";
-import type { SkillsStaticMockResult } from "./adapters/skills-static.adapter.ts";
+import type { SkillsStaticResultDetails } from "../../../../shared/types/result.ts";
 import { EngineClientRegistry } from "./clients/engine-client-registry.ts";
 import type { EngineClient, EngineClientDispatchReceipt } from "./clients/engine-client.ts";
+import { deriveStaticAnalysisRiskSummary } from "./skills-static/risk-summary-deriver.ts";
 
 export const DEFAULT_PENDING_TASK_SUMMARY = "Task accepted and waiting for engine dispatch";
 
@@ -21,26 +21,8 @@ export interface TaskCompletedArtifacts {
   riskSummary: RiskSummary;
 }
 
-const RISK_LEVEL_PRIORITY: RiskLevel[] = ["info", "low", "medium", "high", "critical"];
-
 function createStaticAnalysisCompletionSummary(totalFindings: number): string {
   return `Static analysis finished with ${totalFindings} rule hit${totalFindings === 1 ? "" : "s"}`;
-}
-
-function getHighestRiskLevel(ruleLevels: Array<RiskLevel | undefined>): RiskLevel {
-  let highestRiskLevel: RiskLevel = "info";
-
-  for (const riskLevel of ruleLevels) {
-    if (!riskLevel) {
-      continue;
-    }
-
-    if (RISK_LEVEL_PRIORITY.indexOf(riskLevel) > RISK_LEVEL_PRIORITY.indexOf(highestRiskLevel)) {
-      highestRiskLevel = riskLevel;
-    }
-  }
-
-  return highestRiskLevel;
 }
 
 export class TaskEngineService {
@@ -143,17 +125,19 @@ export class TaskEngineService {
     };
   }
 
-  createCompletedStaticAnalysisArtifacts(task: Task, mockResult: SkillsStaticMockResult, updatedAt: string): TaskCompletedArtifacts {
-    const details = mapSkillsStaticEngineResultToDetails(mockResult, task);
-    const ruleHits = details.rule_hits ?? [];
-    const riskLevel = getHighestRiskLevel(ruleHits.map((ruleHit) => ruleHit.severity));
-    const summary = createStaticAnalysisCompletionSummary(ruleHits.length);
+  createCompletedStaticAnalysisArtifacts(
+    task: Task,
+    details: SkillsStaticResultDetails,
+    updatedAt: string
+  ): TaskCompletedArtifacts {
+    const derivedSummary = deriveStaticAnalysisRiskSummary(details);
+    const summary = createStaticAnalysisCompletionSummary(derivedSummary.total_findings);
 
     return {
       task: {
         ...task,
         status: "finished",
-        risk_level: riskLevel,
+        risk_level: derivedSummary.risk_level,
         summary,
         updated_at: updatedAt
       },
@@ -162,7 +146,7 @@ export class TaskEngineService {
         task_type: task.task_type,
         engine_type: task.engine_type,
         status: "finished",
-        risk_level: riskLevel,
+        risk_level: derivedSummary.risk_level,
         summary,
         details,
         created_at: task.created_at,
@@ -172,14 +156,14 @@ export class TaskEngineService {
         task_id: task.task_id,
         task_type: task.task_type,
         status: "finished",
-        risk_level: riskLevel,
+        risk_level: derivedSummary.risk_level,
         summary,
-        total_findings: ruleHits.length,
-        info_count: ruleHits.filter((ruleHit) => ruleHit.severity === "info").length,
-        low_count: ruleHits.filter((ruleHit) => ruleHit.severity === "low").length,
-        medium_count: ruleHits.filter((ruleHit) => ruleHit.severity === "medium").length,
-        high_count: ruleHits.filter((ruleHit) => ruleHit.severity === "high").length,
-        critical_count: ruleHits.filter((ruleHit) => ruleHit.severity === "critical").length,
+        total_findings: derivedSummary.total_findings,
+        info_count: derivedSummary.info_count,
+        low_count: derivedSummary.low_count,
+        medium_count: derivedSummary.medium_count,
+        high_count: derivedSummary.high_count,
+        critical_count: derivedSummary.critical_count,
         updated_at: updatedAt
       }
     };

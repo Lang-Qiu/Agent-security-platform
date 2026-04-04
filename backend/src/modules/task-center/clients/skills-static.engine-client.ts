@@ -1,8 +1,8 @@
-import type { SkillsStaticMockResult } from "../adapters/skills-static.adapter.ts";
+import type { SkillsStaticEngineOutput } from "../skills-static/skills-static-engine-output.ts";
 import type { EngineDispatchTicket } from "../adapters/engine-adapter.ts";
 import type { EngineClient, EngineClientDispatchReceipt } from "./engine-client.ts";
 
-function createMockSkillsStaticEngineResult(ticket: EngineDispatchTicket<"static_analysis">): SkillsStaticMockResult {
+function createMockSkillsStaticEngineResult(ticket: EngineDispatchTicket<"static_analysis">): SkillsStaticEngineOutput {
   const language =
     typeof ticket.payload.analysis_parameters?.language === "string" ? ticket.payload.analysis_parameters.language : "typescript";
 
@@ -11,6 +11,8 @@ function createMockSkillsStaticEngineResult(ticket: EngineDispatchTicket<"static
     language,
     entry_files: ["src/index.ts", "src/report.ts"],
     files_scanned: 2,
+    risk_score: 92,
+    engine_private_session_id: "mock-session-001",
     rule_hits: [
       {
         rule_id: "SK001",
@@ -25,7 +27,8 @@ function createMockSkillsStaticEngineResult(ticket: EngineDispatchTicket<"static
         recommendation: "Replace shell execution with a safe allowlist wrapper",
         source_type: "user_input",
         sink_type: "command_execution",
-        tags: ["command", "unsafe-input"]
+        tags: ["command", "unsafe-input"],
+        engine_private_trace_id: "trace-private-001"
       },
       {
         rule_id: "SK002",
@@ -40,7 +43,8 @@ function createMockSkillsStaticEngineResult(ticket: EngineDispatchTicket<"static
         recommendation: "Restrict outbound destinations with an allowlist",
         source_type: "config",
         sink_type: "network_request",
-        tags: ["network", "egress"]
+        tags: ["network", "egress"],
+        risk_score: 55
       }
     ],
     sensitive_capabilities: ["command_execution", "network_access"],

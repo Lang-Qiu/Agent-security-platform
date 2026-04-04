@@ -10,6 +10,34 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-04-04 - skills-static internal core objects
+- requirement: design and minimally implement the backend-internal core objects that normalize `skills_static` engine output and derive risk-summary semantics without changing the public task-center API
+- scope: extract `SkillsStaticEngineOutput`, `SkillsStaticResultNormalizer`, and `RiskSummaryDeriver`, keep `SkillsStaticRuleHit` as the shared normalized contract, wire the new objects into adapter/client/service boundaries, and preserve the existing mock closed-loop plus malformed-input fallback behavior
+- tests:
+  - `backend/tests/skills-static-core.spec.ts`
+  - `backend/tests/task-engine.service.spec.ts`
+  - `backend/tests/task-center.service.spec.ts`
+  - `shared/tests/task-contract.spec.ts`
+  - `shared/tests/result-contract.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+  - `tests/repository/static-analysis-api-contract-docs.spec.ts`
+  - `tests/repository/static-analysis-contract-test-boundary.spec.ts`
+- test result: pass for the requirement-focused verification set:
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-core.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "skills-static|static-analysis shell|malformed" backend/tests/task-engine.service.spec.ts backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/task-contract.spec.ts shared/tests/result-contract.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "static-analysis|shared response shell" tests/integration/backend-task-center.api.spec.ts`
+  - `npm.cmd run test:repo`
+- docs updated:
+  - `shared/types/skills-static-rule-hit.ts`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+- notes:
+  - `SkillsStaticRuleHit` remains the only shared normalized rule-hit contract; this requirement did not create a backend-only duplicate type
+  - mock client output is now treated as loose engine output, then normalized before it reaches platform result shells
+  - malformed `skills_static` engine output now raises a structured internal error and is caught by `TaskCenterService`, which preserves the existing pending shell and avoids a broken finished backfill
+  - this stage stops before any real third-party detection-library adapter, public API change, or broader engine-architecture refactor
+
 ## 2026-04-02 - static-analysis contract and integration test solidification
 - requirement: solidify the shared contract and public integration semantics for the finished `static_analysis` mock closed loop without extending engine behavior
 - scope: add a canonical contract fixture, strengthen shared contract tests for normalized static-analysis result and finished risk summary semantics, relax backend/integration assertions away from mock-specific snapshots, and align API contract docs with the current closed-loop read behavior

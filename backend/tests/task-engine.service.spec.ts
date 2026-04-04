@@ -19,6 +19,10 @@ const engineClientRegistryPath = resolve(import.meta.dirname, "../src/modules/ta
 const assetAdapterPath = resolve(import.meta.dirname, "../src/modules/task-center/adapters/asset-scan.adapter.ts");
 const skillsAdapterPath = resolve(import.meta.dirname, "../src/modules/task-center/adapters/skills-static.adapter.ts");
 const skillsClientPath = resolve(import.meta.dirname, "../src/modules/task-center/clients/skills-static.engine-client.ts");
+const skillsStaticNormalizerPath = resolve(
+  import.meta.dirname,
+  "../src/modules/task-center/skills-static/skills-static-result-normalizer.ts"
+);
 const sandboxAdapterPath = resolve(import.meta.dirname, "../src/modules/task-center/adapters/sandbox.adapter.ts");
 
 type AdapterModule = {
@@ -35,7 +39,6 @@ type AdapterModule = {
     createInitialDetails: (task: Task) => unknown;
   };
   mapSkillsStaticEngineResultToDetails?: (engineResult: unknown, task: Task) => unknown;
-  normalizeSkillsStaticMockResult?: (engineResult: unknown) => unknown;
   SandboxTaskAdapter?: new () => {
     taskType: string;
     engineType: string;
@@ -74,6 +77,10 @@ type SkillsStaticEngineClientModule = {
     endpoint: string;
     dispatch: (ticket: unknown) => Promise<unknown>;
   };
+};
+
+type SkillsStaticNormalizerModule = {
+  normalizeSkillsStaticEngineOutput?: (value: unknown, task: Task) => unknown;
 };
 
 async function importIfExists<TModule>(filePath: string): Promise<TModule | null> {
@@ -228,6 +235,8 @@ test("skills-static adapter maps engine output into base-result compatible detai
       language: "typescript",
       risk_level: "high",
       risk_score: 98,
+      entry_files: ["src/index.ts"],
+      files_scanned: 1,
       rule_hits: [
         {
           rule_id: "SK001",
@@ -243,7 +252,11 @@ test("skills-static adapter maps engine output into base-result compatible detai
           tags: ["command", "unsafe-input"],
           engine_private_debug: "should be stripped"
         }
-      ]
+      ],
+      sensitive_capabilities: ["command_execution"],
+      dependency_summary: {
+        manifest_count: 1
+      }
     },
     createTask("static_analysis")
   );
@@ -251,6 +264,8 @@ test("skills-static adapter maps engine output into base-result compatible detai
   assert.deepEqual(details, {
     sample_name: "demo-package",
     language: "typescript",
+    entry_files: ["src/index.ts"],
+    files_scanned: 1,
     rule_hits: [
       {
         rule_id: "SK001",
@@ -265,46 +280,12 @@ test("skills-static adapter maps engine output into base-result compatible detai
         recommendation: "Replace shell execution with a safe allowlist wrapper",
         tags: ["command", "unsafe-input"]
       }
-    ]
-  });
-});
-
-test("skills-static adapter rejects malformed mock results before closed-loop backfill", async () => {
-  const skillsAdapterModule = await importIfExists<AdapterModule>(skillsAdapterPath);
-
-  assert.notEqual(skillsAdapterModule, null, "skills-static adapter module should exist before mock-result validation can be verified");
-  assert.ok(
-    skillsAdapterModule?.normalizeSkillsStaticMockResult,
-    "skills-static adapter should expose a strict validator for closed-loop mock results"
-  );
-
-  if (!skillsAdapterModule?.normalizeSkillsStaticMockResult) {
-    return;
-  }
-
-  const normalizedResult = skillsAdapterModule.normalizeSkillsStaticMockResult({
-    sample_name: "demo-package",
-    language: "typescript",
-    entry_files: ["src/index.ts"],
-    files_scanned: 1,
-    rule_hits: [
-      {
-        rule_id: "SK001",
-        severity: "high"
-      },
-      {
-        severity: "medium"
-      }
     ],
     sensitive_capabilities: ["command_execution"],
-    dependency_summary: {}
+    dependency_summary: {
+      manifest_count: 1
+    }
   });
-
-  assert.equal(
-    normalizedResult,
-    null,
-    "closed-loop backfill should reject malformed mock results instead of silently normalizing them"
-  );
 });
 
 test("task engine service maps tasks into initial result and risk summary shells without leaking engine internals", async () => {
@@ -959,15 +940,23 @@ test("task engine service dispatches static-analysis tickets through the registe
   const serviceModule = await importIfExists<TaskEngineServiceModule>(engineServicePath);
   const skillsAdapterModule = await importIfExists<AdapterModule>(skillsAdapterPath);
   const skillsClientModule = await importIfExists<SkillsStaticEngineClientModule>(skillsClientPath);
+  const skillsStaticNormalizerModule = await importIfExists<SkillsStaticNormalizerModule>(skillsStaticNormalizerPath);
 
   assert.notEqual(serviceModule, null, "task-engine service module should exist before dispatch routing can be verified");
   assert.notEqual(skillsAdapterModule, null, "skills-static adapter module should exist before dispatch routing can be verified");
   assert.notEqual(skillsClientModule, null, "skills-static engine client module should exist before dispatch routing can be verified");
+  assert.notEqual(skillsStaticNormalizerModule, null, "skills-static normalizer module should exist before dispatch output can be validated");
   assert.ok(serviceModule?.TaskEngineService, "task-engine service should expose a concrete service class");
   assert.ok(skillsAdapterModule?.SkillsStaticTaskAdapter, "skills-static adapter should expose a concrete adapter class");
   assert.ok(skillsClientModule?.SkillsStaticEngineClient, "skills-static engine client should expose a concrete client class");
+  assert.ok(skillsStaticNormalizerModule?.normalizeSkillsStaticEngineOutput, "skills-static normalizer should expose a concrete normalization function");
 
-  if (!serviceModule?.TaskEngineService || !skillsAdapterModule?.SkillsStaticTaskAdapter || !skillsClientModule?.SkillsStaticEngineClient) {
+  if (
+    !serviceModule?.TaskEngineService ||
+    !skillsAdapterModule?.SkillsStaticTaskAdapter ||
+    !skillsClientModule?.SkillsStaticEngineClient ||
+    !skillsStaticNormalizerModule?.normalizeSkillsStaticEngineOutput
+  ) {
     return;
   }
 
@@ -1012,7 +1001,7 @@ test("task engine service dispatches static-analysis tickets through the registe
   assert.equal(receipt.engine_type, "skills_static");
   assert.equal(receipt.endpoint, "internal://skills-static");
   assert.notEqual(
-    skillsAdapterModule.normalizeSkillsStaticMockResult?.(receipt.mock_result),
+    skillsStaticNormalizerModule.normalizeSkillsStaticEngineOutput(receipt.mock_result, createTask("static_analysis")),
     null,
     "dispatch should return a mock result that already satisfies the normalized static-analysis contract"
   );
