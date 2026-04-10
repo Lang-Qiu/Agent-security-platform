@@ -6,7 +6,17 @@
 - backend now keeps `task_type -> adapter` resolution and `engine_type -> engine client` resolution as two separate internal layers
 - `SkillsStaticEngineClient` is the current internal bridge for routing `skills_static` dispatch tickets without introducing a new public route
 - `skills_static` now supports a deterministic mock-analysis closed loop that backfills the existing `Task`, `BaseResult`, and `RiskSummary` records after dispatch
+- `skills_static` also supports one minimal real-tool path through local `semgrep` CLI when `SKILLS_STATIC_ENGINE_PROVIDER=semgrep`
 - operators still read the closed-loop state through the existing `GET /api/tasks/:taskId`, `GET /api/tasks/:taskId/result`, and `GET /api/tasks/:taskId/risk-summary` routes
+
+## Skills Static Real Provider
+
+- Default provider remains `mock`
+- Set `SKILLS_STATIC_ENGINE_PROVIDER=semgrep` to enable the minimal real detection path
+- The real path expects `semgrep` CLI to be available on `PATH`
+- The real path uses `engines/skills-static/rules/semgrep-minimal.yml`
+- Targeted verification command:
+  `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-semgrep.spec.ts`
 
 面向智能体（Agent）安全检测与管理的平台型仓库，用于统一承载资产测绘、Skills 静态安全检测、动态沙箱监控与越权阻断，以及平台化展示、任务编排和结果汇总能力。
 

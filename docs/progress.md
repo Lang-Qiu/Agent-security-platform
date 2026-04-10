@@ -10,6 +10,33 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-04-10 - skills-static minimal real detection capability
+- requirement: add the smallest real `skills_static` detection path without changing the public task-center API or the normalized static-analysis contract
+- scope: introduce a local `semgrep` runner and raw-output mapper, let `SkillsStaticEngineClient` switch between `mock` and `semgrep` through `SKILLS_STATIC_ENGINE_PROVIDER`, add a minimal real scan fixture plus rule file, and keep all existing normalizer / risk-summary derivation boundaries intact
+- tests:
+  - `backend/tests/skills-static-semgrep.spec.ts`
+  - `backend/tests/skills-static-core.spec.ts`
+  - `backend/tests/task-engine.service.spec.ts`
+  - `backend/tests/task-center.service.spec.ts`
+  - `shared/tests/task-contract.spec.ts`
+  - `shared/tests/result-contract.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- test result: pass for the requirement-focused verification set:
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-semgrep.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-core.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "skills-static|static-analysis shell|malformed" backend/tests/task-engine.service.spec.ts backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/task-contract.spec.ts shared/tests/result-contract.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "static-analysis|shared response shell" tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `README.md`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+- notes:
+  - the only real detection provider in this stage is local `semgrep`; default behavior still stays on the deterministic `mock` provider
+  - `SemgrepRunner` and `SemgrepOutputMapper` sit strictly before `SkillsStaticResultNormalizer`, so the normalized static-analysis contract remains the same
+  - the real scan fixture and rule file are intentionally minimal and exist only to prove the provider handoff, raw-output mapping, and contract preservation path
+  - this stage stops before multi-detector orchestration, public API changes, or broader engine-architecture work
+
 ## 2026-04-04 - skills-static internal core objects
 - requirement: design and minimally implement the backend-internal core objects that normalize `skills_static` engine output and derive risk-summary semantics without changing the public task-center API
 - scope: extract `SkillsStaticEngineOutput`, `SkillsStaticResultNormalizer`, and `RiskSummaryDeriver`, keep `SkillsStaticRuleHit` as the shared normalized contract, wire the new objects into adapter/client/service boundaries, and preserve the existing mock closed-loop plus malformed-input fallback behavior

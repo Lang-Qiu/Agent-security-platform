@@ -337,3 +337,22 @@ The backend now extracts the `skills_static` internal normalization and aggregat
 - `RiskSummaryDeriver` is the single backend runtime source of truth for deriving `risk_level` and severity counts from normalized `rule_hits`
 - `SkillsStaticTaskAdapter` now stays focused on dispatch payload creation and initial placeholder details
 - `TaskCenterService` catches malformed internal engine output and preserves the existing pending shell instead of widening the public contract or failing the task-center read shape
+
+## REQ-SKILLS-STATIC Minimal Real Detection
+
+`skills_static` now has one minimal real-tool path in addition to the existing mock provider:
+
+- `SkillsStaticEngineClient` selects its provider from `SKILLS_STATIC_ENGINE_PROVIDER`
+- `mock` remains the default provider and keeps the deterministic closed-loop behavior used by the current integration baseline
+- `semgrep` is the single real provider for this stage and is executed through the local CLI, without any external service dependency
+- `SemgrepRunner` is responsible only for invoking `semgrep scan` and reading JSON output
+- `SemgrepOutputMapper` converts raw `semgrep` JSON into the existing `SkillsStaticEngineOutput` shell; it does not change the downstream normalizer contract
+- `SkillsStaticResultNormalizer` and `RiskSummaryDeriver` stay unchanged and continue to define the normalized platform contract
+- the public API remains unchanged: `POST /api/tasks` is still the only write entry, and the existing task/result/risk-summary reads remain the only public read path
+
+This stage intentionally still does not include:
+
+- multiple detection-library providers
+- public API changes
+- retry / timeout / callback / logging governance
+- report rendering or evidence-display flows

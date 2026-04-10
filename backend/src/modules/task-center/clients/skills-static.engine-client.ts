@@ -1,6 +1,12 @@
+import { resolve } from "node:path";
+
 import type { SkillsStaticEngineOutput } from "../skills-static/skills-static-engine-output.ts";
+import { mapSemgrepOutputToEngineOutput } from "../skills-static/semgrep-output-mapper.ts";
+import { runSemgrepScan } from "../skills-static/semgrep-runner.ts";
 import type { EngineDispatchTicket } from "../adapters/engine-adapter.ts";
 import type { EngineClient, EngineClientDispatchReceipt } from "./engine-client.ts";
+
+const DEFAULT_SEMGREP_RULE_PATH = resolve(import.meta.dirname, "../../../../../engines/skills-static/rules/semgrep-minimal.yml");
 
 function createMockSkillsStaticEngineResult(ticket: EngineDispatchTicket<"static_analysis">): SkillsStaticEngineOutput {
   const language =
@@ -55,6 +61,10 @@ function createMockSkillsStaticEngineResult(ticket: EngineDispatchTicket<"static
   };
 }
 
+function resolveSkillsStaticProvider(): "mock" | "semgrep" {
+  return process.env.SKILLS_STATIC_ENGINE_PROVIDER === "semgrep" ? "semgrep" : "mock";
+}
+
 export class SkillsStaticEngineClient implements EngineClient {
   engineType: "skills_static";
   endpoint: string;
@@ -76,11 +86,25 @@ export class SkillsStaticEngineClient implements EngineClient {
       await this.onDispatch(staticAnalysisTicket);
     }
 
+    const mockResult =
+      resolveSkillsStaticProvider() === "semgrep"
+        ? mapSemgrepOutputToEngineOutput(
+            await runSemgrepScan({
+              targetPath: staticAnalysisTicket.payload.target.target_value,
+              rulePath: DEFAULT_SEMGREP_RULE_PATH
+            }),
+            {
+              target: staticAnalysisTicket.payload.target,
+              parameters: staticAnalysisTicket.payload.analysis_parameters
+            }
+          )
+        : createMockSkillsStaticEngineResult(staticAnalysisTicket);
+
     return {
       accepted: true,
       engine_type: this.engineType,
       endpoint: this.endpoint,
-      mock_result: createMockSkillsStaticEngineResult(staticAnalysisTicket)
+      mock_result: mockResult
     };
   }
 }

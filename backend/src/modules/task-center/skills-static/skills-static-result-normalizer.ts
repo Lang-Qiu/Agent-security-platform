@@ -136,10 +136,6 @@ export function normalizeSkillsStaticEngineOutput(
     throw createInvalidEngineOutputError("Skills-static engine output must be a plain object");
   }
 
-  if (!isString(output.sample_name)) {
-    throw createInvalidEngineOutputError("Skills-static engine output is missing a required sample_name");
-  }
-
   if (!isString(output.language)) {
     throw createInvalidEngineOutputError("Skills-static engine output is missing a required language");
   }
@@ -165,9 +161,11 @@ export function normalizeSkillsStaticEngineOutput(
   }
 
   const normalizedRuleHits = output.rule_hits.map((ruleHit) => normalizeRuleHit(ruleHit));
+  const sampleName =
+    isString(output.sample_name) ? output.sample_name : task.target.display_name ?? task.target.target_value;
 
   return {
-    sample_name: output.sample_name ?? task.target.display_name ?? task.target.target_value,
+    sample_name: sampleName,
     language: output.language,
     entry_files: [...output.entry_files],
     files_scanned: output.files_scanned,

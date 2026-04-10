@@ -130,6 +130,56 @@ test("skills-static result normalizer strips engine-private fields and risk_scor
   });
 });
 
+test("skills-static result normalizer falls back to the task target when sample_name is omitted", async () => {
+  const normalizerModule = await importIfExists<NormalizerModule>(normalizerModulePath);
+
+  assert.ok(normalizerModule?.normalizeSkillsStaticEngineOutput);
+
+  if (!normalizerModule?.normalizeSkillsStaticEngineOutput) {
+    return;
+  }
+
+  const normalizedDetails = normalizerModule.normalizeSkillsStaticEngineOutput(
+    {
+      language: "typescript",
+      entry_files: ["src/index.ts"],
+      files_scanned: 1,
+      rule_hits: [
+        {
+          rule_id: "SA001",
+          severity: "high"
+        }
+      ],
+      sensitive_capabilities: ["command_execution"],
+      dependency_summary: {}
+    },
+    createStaticAnalysisTask()
+  ) as {
+    sample_name?: string;
+    language?: string;
+    entry_files?: string[];
+    files_scanned?: number;
+    rule_hits?: Array<Record<string, unknown>>;
+    sensitive_capabilities?: string[];
+    dependency_summary?: Record<string, unknown>;
+  };
+
+  assert.deepEqual(normalizedDetails, {
+    sample_name: "canonical-skill-package",
+    language: "typescript",
+    entry_files: ["src/index.ts"],
+    files_scanned: 1,
+    rule_hits: [
+      {
+        rule_id: "SA001",
+        severity: "high"
+      }
+    ],
+    sensitive_capabilities: ["command_execution"],
+    dependency_summary: {}
+  });
+});
+
 test("skills-static result normalizer raises SKILLS_STATIC_INVALID_ENGINE_OUTPUT when a rule hit is missing rule_id", async () => {
   const normalizerModule = await importIfExists<NormalizerModule>(normalizerModulePath);
 
