@@ -1,55 +1,37 @@
-// 引擎入口（给 backend 用）
-
-import { loadFingerprints } from "./loader";
-import { scoreFingerprint, classify } from "./core/scorer";
-import { httpProbe } from "./probe/httpProbe";
+import { runAssetScanTask } from "./runtime/run-task.ts";
 
 export async function runAssetScan(target: string) {
-    // 加载规则
-    const { fingerprints, confidence_policy } = loadFingerprints();
+    const now = new Date().toISOString();
+    const task = {
+        task_id: `engine_asset_scan_${Date.now()}`,
+        task_type: "asset_scan",
+        engine_type: "asset_scan",
+        status: "pending",
+        title: "Engine standalone asset scan",
+        target: {
+            target_type: "url",
+            target_value: target
+        },
+        parameters: {
+            probe_mode: "live",
+            probe_target_id: "ollama",
+            probe_port_hint: 11434
+        },
+        created_at: now,
+        updated_at: now
+    } satisfies Parameters<typeof runAssetScanTask>[0];
 
-    const probes = [];
-
-    // 最小探测（示例：Ollama）
-    const httpRes = await httpProbe(target, 11434, "/api/tags");
-    if (httpRes) probes.push(httpRes);
-
-    const results = [];
-
-    for (const fp of fingerprints) {
-        const { score, matched } = scoreFingerprint(fp, probes);
-        const cls = classify(score, confidence_policy);
-
-        if (cls !== "unknown") {
-        results.push({
-            targetId: fp.target_id,
-            score,
-            confidence: cls,
-            matchedSignals: matched,
-        });
-        }
-    }
+    const details = await runAssetScanTask(task);
 
     return {
-    task_id: "mock-task-id",
-    task_type: "asset_scan",
-    engine_type: "asset_scan",
-    status: "finished",
-    risk_level: "low",  // 占位
-    summary: "Asset scan completed",
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    details: {
-        target: {
-        value: target
-        },
-        fingerprint: {
-        detected_products: results
-        },
-        confidence: Math.max(...results.map(r => r.score), 0),
-        matched_features: results.flatMap(r => r.matchedSignals),
-        open_ports: probes.map(p => p.port),
-        http_endpoints: probes.map(p => p.path),
-    }
+        task_id: task.task_id,
+        task_type: task.task_type,
+        engine_type: task.engine_type,
+        status: "finished",
+        risk_level: "low",
+        summary: "Asset scan completed",
+        created_at: now,
+        updated_at: now,
+        details
     };
 }

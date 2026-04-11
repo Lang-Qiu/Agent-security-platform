@@ -1,5 +1,6 @@
-import { readFileSync } from "fs";
-import { resolve } from "path";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { parse } from "yaml";
 
@@ -93,13 +94,14 @@ function normalizeProbeRulesDocument(value: unknown): ProbeRulesDocument {
   return { probes };
 }
 
-export class AssetProbeService {
+export class EngineAssetProbeService {
   workspaceRoot: string;
   probesFilePath: string;
   cachedRulesDocument?: ProbeRulesDocument;
 
   constructor(options?: { workspaceRoot?: string; probesFilePath?: string }) {
-    this.workspaceRoot = options?.workspaceRoot ?? resolve(new URL("../../../../..", import.meta.url).pathname);
+    const currentFileDir = dirname(fileURLToPath(import.meta.url));
+    this.workspaceRoot = options?.workspaceRoot ?? resolve(currentFileDir, "../../../..");
     this.probesFilePath = options?.probesFilePath ?? resolve(this.workspaceRoot, "engines/asset-scan/rules/probes.v1.yaml");
   }
 

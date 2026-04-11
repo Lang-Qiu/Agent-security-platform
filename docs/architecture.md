@@ -132,6 +132,12 @@ flowchart TD
 - 引擎执行检测后回传结构化结果，或由后端主动拉取。
 - 后端负责统一状态管理、结果归档和跨引擎汇总。
 
+当前 `asset-scan` 最小闭环已采用“backend 进程桥接 engine”模式：
+
+- backend `AssetScanTaskAdapter` 只做编排与委托，不执行探针/打分业务逻辑。
+- engine 通过 `engines/asset-scan/src/bridge/scan-task.ts` 接收 task payload（stdin JSON）并返回标准 `details`（stdout JSON）。
+- 探针执行与规则打分逻辑落在 `engines/asset-scan/src/runtime/`，与 backend 平台职责分离。
+
 建议后续通过适配器模式实现引擎接入，如：
 
 - `EngineClient` 接口

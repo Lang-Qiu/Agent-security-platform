@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 
 import { parse } from "yaml";
 
-import type { AssetScanResultDetails } from "../../../../../shared/types/result.ts";
-import type { TaskTarget } from "../../../../../shared/types/task.ts";
+import type { AssetScanResultDetails } from "../../../../shared/types/result.ts";
+import type { TaskTarget } from "../../../../shared/types/task.ts";
 import type { ProbeObservation } from "./asset-probe.service.ts";
 
 type MatchDisposition = "direct" | "suspected" | "log_only" | "unknown";
@@ -183,14 +183,14 @@ function normalizeSample(value: unknown): FingerprintSample {
   };
 }
 
-export class AssetFingerprintService {
+export class EngineAssetFingerprintService {
   workspaceRoot: string;
   rulesFilePath: string;
   cachedRulesDocument?: FingerprintRulesDocument;
 
   constructor(options?: { workspaceRoot?: string; rulesFilePath?: string }) {
     const currentFileDir = dirname(fileURLToPath(import.meta.url));
-    this.workspaceRoot = options?.workspaceRoot ?? resolve(currentFileDir, "../../../../..");
+    this.workspaceRoot = options?.workspaceRoot ?? resolve(currentFileDir, "../../../..");
     this.rulesFilePath = options?.rulesFilePath ?? resolve(this.workspaceRoot, "engines/asset-scan/rules/fingerprints.v1.yaml");
   }
 

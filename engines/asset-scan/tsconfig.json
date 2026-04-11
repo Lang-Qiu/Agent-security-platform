@@ -4,7 +4,6 @@
         "types": ["node"],
         "outDir": "./dist",
         "noEmit": true,
-        "rootDir": "./",
         "allowImportingTsExtensions": true
     },
     "include": ["src/**/*", "tests/**/*"],

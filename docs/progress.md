@@ -10,6 +10,32 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-04-11 - REQ-ASSET-PROBE-004 backend probe/scoring migration to engine
+- requirement: keep backend as orchestrator and migrate asset-scan probe/scoring execution to engine runtime with process bridge invocation
+- scope:
+  - migrated backend source-of-truth logic into `engines/asset-scan/src/runtime/*`
+  - added engine bridge entry `engines/asset-scan/src/bridge/scan-task.ts`
+  - switched backend `AssetScanTaskAdapter` to engine-client delegation only
+  - added process engine client in backend adapter layer
+- tests added:
+  - `backend/tests/asset-scan.engine-client.spec.ts`
+  - `engines/asset-scan/tests/scan-task.bridge.spec.ts`
+- tests updated:
+  - `backend/tests/task-engine.service.spec.ts` (asset result target assertion aligned to bridge JSON behavior)
+- test result: pass
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/asset-scan.engine-client.spec.ts engines/asset-scan/tests/scan-task.bridge.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/task-engine.service.spec.ts tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
+  - `docs/progress.md`
+  - `docs/architecture.md`
+  - `docs/api-contract.md`
+  - `docs/sprint-current.md`
+- notes:
+  - migration keeps `sample_ref` and `live probe` external behavior unchanged while moving execution into engine
+  - conflict resolution policy followed: backend behavior precedence on probe/scoring semantics
+  - backend runtime path now orchestrates and delegates to engine bridge; no local probe/scoring execution in `AssetScanTaskAdapter`
+
 ## 2026-04-01 - skills-static platform-compatible DTO / interface and minimal adapter mapping skeleton
 - requirement: add `skills-static`-compatible shared DTOs/interfaces and the smallest backend adapter mapping boundary without changing the public task-center API
 - scope: introduce shared `skills-static` result/parameter/target/rule-hit types, narrow `static_analysis.details.rule_hits[]`, add a backend mapper from placeholder engine output into shared details, and keep `POST /api/tasks` as the only public creation entry
@@ -385,7 +411,7 @@ Recommended fields:
   - 当前 P0 四个目标均已具备无 `sample_ref` 的 live probe 识别能力
   - `REQ-ASSET-PROBE-004` 当前最小闭环验收项已满足，可在此停下并等待下一条 requirement
 
-## 2026-04-01 Minimum Detectable Prototype
+## 2026-04-11 Minimum Detectable Prototype
 - 配置:
   - Agent-security-platform\engines\asset-scan 目录下：pnpm add js-yaml node-fetch
 - 测试指令:

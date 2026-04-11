@@ -41,6 +41,8 @@
 
 对于引擎与后端的具体调用方式，例如 HTTP 同步调用、异步队列、内部 SDK、回调上报、轮询拉取，本阶段暂不强绑定。这样做可以让 3 人团队先跑通主流程，再根据实际性能和部署要求细化接入模式。
 
+当前 `asset_scan` 已在实现层采用“backend 进程桥接 engine”方式：backend 将 `Task` payload 传给 engine bridge（stdin JSON），engine 返回标准 `details`（stdout JSON）。该实现细节不改变现有平台对外 HTTP API，只影响 backend 与 engine 的内部执行边界。
+
 ## 3. 通用枚举与约定
 
 ### 3.1 命名与格式约定
@@ -128,6 +130,7 @@
 
 - 当前离线 TDD 阶段，`asset_scan` 允许通过 `parameters.sample_ref` 指向仓库内 `samples/assets/` 下的样本 JSON。
 - 该参数仅用于规则消费与测试闭环，不代表已经接入真实扫描执行器。
+- 当前执行边界：`sample_ref` 与 `probe_mode=live` 两条路径均由 `engines/asset-scan` 执行，backend 仅做编排与结果壳聚合。
 - 阶段 G 起，`asset_scan` 还支持最小 live probe 参数：
   - `parameters.probe_mode = "live"`
   - `parameters.probe_target_id`（如 `langflow`、`autogpt`）

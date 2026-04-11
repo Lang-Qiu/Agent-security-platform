@@ -1,20 +1,18 @@
 import type { AssetScanResultDetails } from "../../../../../shared/types/result.ts";
 import type { Task } from "../../../../../shared/types/task.ts";
-import { AssetFingerprintService } from "../asset-fingerprint/asset-fingerprint.service.ts";
-import { AssetProbeService } from "../asset-fingerprint/asset-probe.service.ts";
+import { ProcessAssetScanEngineClient } from "./asset-scan-engine-client.ts";
+import type { AssetScanEngineClient } from "./asset-scan-engine-client.ts";
 import type { TaskEngineAdapter } from "./engine-adapter.ts";
 
 export class AssetScanTaskAdapter implements TaskEngineAdapter<"asset_scan"> {
   taskType: "asset_scan";
   engineType: "asset_scan";
-  fingerprintService: AssetFingerprintService;
-  probeService: AssetProbeService;
+  engineClient: AssetScanEngineClient;
 
-  constructor(options?: { fingerprintService?: AssetFingerprintService; probeService?: AssetProbeService }) {
+  constructor(options?: { engineClient?: AssetScanEngineClient }) {
     this.taskType = "asset_scan";
     this.engineType = "asset_scan";
-    this.fingerprintService = options?.fingerprintService ?? new AssetFingerprintService();
-    this.probeService = options?.probeService ?? new AssetProbeService();
+    this.engineClient = options?.engineClient ?? new ProcessAssetScanEngineClient();
   }
 
   createDispatchPayload(task: Task) {
@@ -25,23 +23,10 @@ export class AssetScanTaskAdapter implements TaskEngineAdapter<"asset_scan"> {
   }
 
   async createInitialDetails(task: Task): Promise<AssetScanResultDetails> {
-    const sampleRef = typeof task.parameters?.sample_ref === "string" ? task.parameters.sample_ref : undefined;
-    const probeMode = typeof task.parameters?.probe_mode === "string" ? task.parameters.probe_mode : undefined;
-    const probeTargetId = typeof task.parameters?.probe_target_id === "string" ? task.parameters.probe_target_id : undefined;
-    const probePortHint = typeof task.parameters?.probe_port_hint === "number" ? task.parameters.probe_port_hint : undefined;
+    const details = await this.engineClient.scan(task);
 
-    if (sampleRef) {
-      return this.fingerprintService.createInitialDetailsFromSampleRef(sampleRef, task.target);
-    }
-
-    if (probeMode === "live" && probeTargetId) {
-      const observation = await this.probeService.collectObservation(probeTargetId, task.target.target_value, {
-        portHint: probePortHint
-      });
-
-      if (observation) {
-        return this.fingerprintService.createInitialDetailsFromObservation(observation, task.target);
-      }
+    if (details) {
+      return details;
     }
 
     return {

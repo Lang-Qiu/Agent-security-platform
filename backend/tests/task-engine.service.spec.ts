@@ -326,8 +326,7 @@ test("task engine service maps tasks into initial result and risk summary shells
           details: {
             target: {
               target_type: "url",
-              target_value: "https://demo-agent.example.com",
-              display_name: undefined
+              target_value: "https://demo-agent.example.com"
             },
             findings: []
           },
