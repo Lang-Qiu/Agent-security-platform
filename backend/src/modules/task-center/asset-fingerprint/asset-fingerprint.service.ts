@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { parse } from "yaml";
 
@@ -121,32 +122,45 @@ function normalizeRulesDocument(value: unknown): FingerprintRulesDocument {
   }
 
   if (Array.isArray(value.fingerprints)) {
-    normalizedDocument.fingerprints = value.fingerprints
+    const normalizedFingerprints: FingerprintRule[] = value.fingerprints
       .filter((fingerprint): fingerprint is Record<string, unknown> => isPlainObject(fingerprint))
-      .map((fingerprint) => ({
-        fingerprint_id: isString(fingerprint.fingerprint_id) ? fingerprint.fingerprint_id : "",
-        target_id: isString(fingerprint.target_id) ? fingerprint.target_id : "",
-        product_name: isString(fingerprint.product_name) ? fingerprint.product_name : "",
-        product_version: isString(fingerprint.product_version) ? fingerprint.product_version : "unknown",
-        signals: Array.isArray(fingerprint.signals)
+      .map((fingerprint): FingerprintRule => {
+        const signals: FingerprintSignalRule[] = Array.isArray(fingerprint.signals)
           ? fingerprint.signals
               .filter((signal): signal is Record<string, unknown> => isPlainObject(signal))
-              .map((signal) => ({
-                signal_id: isString(signal.signal_id) ? signal.signal_id : "",
-                signal_type: signal.signal_type === "port" || signal.signal_type === "path" || signal.signal_type === "body"
-                  ? signal.signal_type
-                  : "body",
-                match_operator:
+              .map((signal): FingerprintSignalRule => {
+                const signalType: FingerprintSignalRule["signal_type"] =
+                  signal.signal_type === "port" || signal.signal_type === "path" || signal.signal_type === "body"
+                    ? signal.signal_type
+                    : "body";
+
+                const matchOperator: FingerprintSignalRule["match_operator"] =
                   signal.match_operator === "equals" || signal.match_operator === "contains" || signal.match_operator === "in"
                     ? signal.match_operator
-                    : "contains",
-                match_value: isString(signal.match_value) ? signal.match_value : "",
-                weight: isNumber(signal.weight) ? signal.weight : 0
-              }))
-              .filter((signal) => signal.signal_id && signal.match_value)
-          : []
-      }))
-      .filter((fingerprint) => fingerprint.target_id && fingerprint.product_name && fingerprint.signals.length > 0);
+                    : "contains";
+
+                return {
+                  signal_id: isString(signal.signal_id) ? signal.signal_id : "",
+                  signal_type: signalType,
+                  match_operator: matchOperator,
+                  match_value: isString(signal.match_value) ? signal.match_value : "",
+                  weight: isNumber(signal.weight) ? signal.weight : 0
+                };
+              })
+              .filter((signal) => signal.signal_id.length > 0 && signal.match_value.length > 0)
+          : [];
+
+        return {
+          fingerprint_id: isString(fingerprint.fingerprint_id) ? fingerprint.fingerprint_id : "",
+          target_id: isString(fingerprint.target_id) ? fingerprint.target_id : "",
+          product_name: isString(fingerprint.product_name) ? fingerprint.product_name : "",
+          product_version: isString(fingerprint.product_version) ? fingerprint.product_version : "unknown",
+          signals
+        };
+      })
+      .filter((fingerprint) => fingerprint.target_id.length > 0 && fingerprint.product_name.length > 0 && fingerprint.signals.length > 0);
+
+    normalizedDocument.fingerprints = normalizedFingerprints;
   }
 
   return normalizedDocument;
@@ -175,7 +189,8 @@ export class AssetFingerprintService {
   cachedRulesDocument?: FingerprintRulesDocument;
 
   constructor(options?: { workspaceRoot?: string; rulesFilePath?: string }) {
-    this.workspaceRoot = options?.workspaceRoot ?? resolve(import.meta.dirname, "../../../../..");
+    const currentFileDir = dirname(fileURLToPath(import.meta.url));
+    this.workspaceRoot = options?.workspaceRoot ?? resolve(currentFileDir, "../../../../..");
     this.rulesFilePath = options?.rulesFilePath ?? resolve(this.workspaceRoot, "engines/asset-scan/rules/fingerprints.v1.yaml");
   }
 
