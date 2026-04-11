@@ -384,3 +384,30 @@ Recommended fields:
   - `openclaw-gateway` 通过最小 WebSocket 探针采集 `hello-ok` 与 `presence`，live probe 结果达到 direct 阈值
   - 当前 P0 四个目标均已具备无 `sample_ref` 的 live probe 识别能力
   - `REQ-ASSET-PROBE-004` 当前最小闭环验收项已满足，可在此停下并等待下一条 requirement
+
+## 2026-04-01 Minimum Detectable Prototype
+- 配置:
+  - Agent-security-platform\engines\asset-scan 目录下：pnpm add js-yaml node-fetch
+- 测试指令:
+  - npx tsx src/runner.ts 运行脚本
+  - 限制: 目前固定 ollama 测试
+  - 流程如下:
+    目标(target)
+        ↓
+    执行探测（probe）
+        ↓
+    得到响应数据（ProbeResult）
+      ↓
+    匹配指纹规则（fingerprints.yaml）
+      ↓
+    计算分数 + 分类
+      ↓
+    输出 AssetScanResult
+- docs updated:
+  - engines\asset-scan\src\core\matcher.ts
+  - engines\asset-scan\src\core\scorer.ts
+  - engines\asset-scan\src\probe\httpProbe.ts
+  - engines\asset-scan\src\probe\tcpProbe.ts
+  - engines\asset-scan\src\engine.ts 引擎入口（给 backend 用）
+  - engines\asset-scan\src\loader.ts
+  - engines\asset-scan\src\runner.ts CLI / 本地测试入口
