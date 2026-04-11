@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import type { Task } from "../../shared/types/task.ts";
 import {
   CANONICAL_STATIC_ANALYSIS_DETAILS,
+  CANONICAL_STATIC_ANALYSIS_STRONG_DETAILS_PROJECTION,
   STATIC_ANALYSIS_PENDING_SUMMARY,
   createCanonicalStaticAnalysisBaseResult,
   createCanonicalStaticAnalysisFinishedTask,
@@ -89,6 +90,32 @@ async function importIfExists<TModule>(filePath: string): Promise<TModule | null
   }
 
   return import(pathToFileURL(filePath).href) as Promise<TModule>;
+}
+
+function projectStandardizedDetails(value: {
+  sample_name?: string;
+  language?: string;
+  rule_hits?: Array<{
+    rule_id?: string;
+    severity?: string;
+    message?: string;
+    file_path?: string;
+    line_start?: number;
+    line_end?: number;
+  }>;
+}) {
+  return {
+    sample_name: value.sample_name,
+    language: value.language,
+    rule_hits: (value.rule_hits ?? []).map((ruleHit) => ({
+      rule_id: ruleHit.rule_id,
+      severity: ruleHit.severity,
+      message: ruleHit.message,
+      file_path: ruleHit.file_path,
+      line_start: ruleHit.line_start,
+      line_end: ruleHit.line_end
+    }))
+  };
 }
 
 function createTask(taskType: Task["task_type"]): Task {
@@ -978,6 +1005,25 @@ test("task engine service dispatches static-analysis tickets through the registe
     endpoint: string;
     mock_result?: unknown;
   };
+  const normalizedMockResult = skillsStaticNormalizerModule.normalizeSkillsStaticEngineOutput(
+    receipt.mock_result,
+    createTask("static_analysis")
+  ) as {
+    sample_name?: string;
+    language?: string;
+    entry_files?: string[];
+    files_scanned?: number;
+    rule_hits?: Array<{
+      rule_id?: string;
+      severity?: string;
+      message?: string;
+      file_path?: string;
+      line_start?: number;
+      line_end?: number;
+    }>;
+    sensitive_capabilities?: string[];
+    dependency_summary?: Record<string, unknown>;
+  };
 
   assert.deepEqual(dispatchedTickets, [
     {
@@ -1000,11 +1046,15 @@ test("task engine service dispatches static-analysis tickets through the registe
   assert.equal(receipt.accepted, true);
   assert.equal(receipt.engine_type, "skills_static");
   assert.equal(receipt.endpoint, "internal://skills-static");
-  assert.notEqual(
-    skillsStaticNormalizerModule.normalizeSkillsStaticEngineOutput(receipt.mock_result, createTask("static_analysis")),
-    null,
-    "dispatch should return a mock result that already satisfies the normalized static-analysis contract"
-  );
+  assert.deepEqual(projectStandardizedDetails(normalizedMockResult), {
+    ...CANONICAL_STATIC_ANALYSIS_STRONG_DETAILS_PROJECTION,
+    sample_name: "demo-package"
+  });
+  assert.ok(Array.isArray(normalizedMockResult.entry_files) && normalizedMockResult.entry_files.length > 0);
+  assert.ok(typeof normalizedMockResult.files_scanned === "number" && normalizedMockResult.files_scanned >= 1);
+  assert.ok(Array.isArray(normalizedMockResult.sensitive_capabilities) && normalizedMockResult.sensitive_capabilities.length > 0);
+  assert.equal(typeof normalizedMockResult.dependency_summary, "object");
+  assert.notEqual(normalizedMockResult.dependency_summary, null);
 });
 
 test("task engine service materializes a finished static-analysis shell from a deterministic mock result", async () => {

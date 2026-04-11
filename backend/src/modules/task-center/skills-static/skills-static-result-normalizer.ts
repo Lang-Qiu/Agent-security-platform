@@ -64,9 +64,32 @@ function normalizeRuleHit(value: unknown): SkillsStaticRuleHit {
     throw createInvalidEngineOutputError("Skills-static engine output contains an invalid rule-hit severity");
   }
 
+  if (!isString(value.message)) {
+    throw createInvalidEngineOutputError("Skills-static engine output is missing a required rule-hit message");
+  }
+
+  if (!isString(value.file_path)) {
+    throw createInvalidEngineOutputError("Skills-static engine output is missing a required rule-hit file_path");
+  }
+
+  const hasLineStart = value.line_start !== undefined;
+  const hasLineEnd = value.line_end !== undefined;
+
+  if (hasLineStart !== hasLineEnd) {
+    throw createInvalidEngineOutputError("Skills-static engine output contains an incomplete rule-hit line region");
+  }
+
+  if (hasLineStart) {
+    if (!isNumber(value.line_start) || !isNumber(value.line_end) || value.line_start > value.line_end) {
+      throw createInvalidEngineOutputError("Skills-static engine output contains an invalid rule-hit line region");
+    }
+  }
+
   const normalizedRuleHit: SkillsStaticRuleHit = {
     rule_id: value.rule_id,
-    severity: value.severity
+    severity: value.severity,
+    message: value.message,
+    file_path: value.file_path
   };
 
   if (isString(value.title)) {
@@ -75,14 +98,6 @@ function normalizeRuleHit(value: unknown): SkillsStaticRuleHit {
 
   if (isString(value.category)) {
     normalizedRuleHit.category = value.category;
-  }
-
-  if (isString(value.message)) {
-    normalizedRuleHit.message = value.message;
-  }
-
-  if (isString(value.file_path)) {
-    normalizedRuleHit.file_path = value.file_path;
   }
 
   if (isNumber(value.line_start)) {

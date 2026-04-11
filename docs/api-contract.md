@@ -1293,3 +1293,12 @@ The current `skills_static` integration now supports a deterministic mock-engine
 
 
 
+## REQ-SKILLS-STATIC Standardized Risk Result
+
+This section is the authoritative contract for the current finished static_analysis read shape.
+
+- mock and semgrep must both converge into the same provider-agnostic standardized result before the finished record is exposed through GET /api/tasks/:taskId, GET /result, and GET /risk-summary.
+- Strong standardized fields currently fixed across providers are: sample_name, language, rule_hits[].rule_id, rule_hits[].severity, rule_hits[].message, rule_hits[].file_path, and paired valid line_start / line_end.
+- RiskSummary is part of the same strong contract: total_findings, severity counts, risk_level, summary, and updated_at must be derived from normalized rule_hits, not from provider-private raw output.
+- entry_files, files_scanned, sensitive_capabilities, dependency_summary, and optional extension fields such as title, recommendation, source_type, sink_type, tags, evidence, trace, and metadata remain on a weaker contract for now: they must stay structurally valid and non-conflicting, but they are not yet required to have mock / semgrep parity.
+- Provider-specific raw fields must stop in mapper / internal metadata layers and must not be promoted directly into shared or public API contracts.

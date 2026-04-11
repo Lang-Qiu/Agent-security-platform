@@ -76,15 +76,23 @@ test("skills-static result normalizer strips engine-private fields and risk_scor
       engine_private_session_id: "private-session",
       rule_hits: [
         {
-          rule_id: "SA001",
+          rule_id: "command_execution.shell_exec",
           severity: "high",
           title: "Shell command reaches an execution sink",
+          message: "Potential command execution sink reached",
+          file_path: "src/commands.ts",
+          line_start: 4,
+          line_end: 4,
           engine_private_trace_id: "private-trace"
         },
         {
-          rule_id: "SA002",
+          rule_id: "network_access.outbound_fetch",
           severity: "medium",
           title: "Outbound network request lacks destination allowlist",
+          message: "Outbound network request lacks destination allowlist",
+          file_path: "src/network.ts",
+          line_start: 2,
+          line_end: 2,
           risk_score: 55
         }
       ],
@@ -112,14 +120,22 @@ test("skills-static result normalizer strips engine-private fields and risk_scor
     files_scanned: 4,
     rule_hits: [
       {
-        rule_id: "SA001",
+        rule_id: "command_execution.shell_exec",
         severity: "high",
-        title: "Shell command reaches an execution sink"
+        title: "Shell command reaches an execution sink",
+        message: "Potential command execution sink reached",
+        file_path: "src/commands.ts",
+        line_start: 4,
+        line_end: 4
       },
       {
-        rule_id: "SA002",
+        rule_id: "network_access.outbound_fetch",
         severity: "medium",
-        title: "Outbound network request lacks destination allowlist"
+        title: "Outbound network request lacks destination allowlist",
+        message: "Outbound network request lacks destination allowlist",
+        file_path: "src/network.ts",
+        line_start: 2,
+        line_end: 2
       }
     ],
     sensitive_capabilities: ["command_execution", "network_access"],
@@ -146,8 +162,12 @@ test("skills-static result normalizer falls back to the task target when sample_
       files_scanned: 1,
       rule_hits: [
         {
-          rule_id: "SA001",
-          severity: "high"
+          rule_id: "command_execution.shell_exec",
+          severity: "high",
+          message: "Potential command execution sink reached",
+          file_path: "src/commands.ts",
+          line_start: 4,
+          line_end: 4
         }
       ],
       sensitive_capabilities: ["command_execution"],
@@ -171,8 +191,12 @@ test("skills-static result normalizer falls back to the task target when sample_
     files_scanned: 1,
     rule_hits: [
       {
-        rule_id: "SA001",
-        severity: "high"
+        rule_id: "command_execution.shell_exec",
+        severity: "high",
+        message: "Potential command execution sink reached",
+        file_path: "src/commands.ts",
+        line_start: 4,
+        line_end: 4
       }
     ],
     sensitive_capabilities: ["command_execution"],
@@ -238,6 +262,87 @@ test("skills-static result normalizer raises SKILLS_STATIC_INVALID_ENGINE_OUTPUT
             {
               rule_id: "SA001",
               severity: "urgent"
+            }
+          ],
+          sensitive_capabilities: ["command_execution"],
+          dependency_summary: {}
+        },
+        createStaticAnalysisTask()
+      ),
+    (error: unknown) => {
+      assert.equal(typeof error, "object");
+      assert.notEqual(error, null);
+      assert.equal((error as { name?: string }).name, "DomainError");
+      assert.equal((error as { code?: string }).code, "SKILLS_STATIC_INVALID_ENGINE_OUTPUT");
+      return true;
+    }
+  );
+});
+
+test("skills-static result normalizer raises SKILLS_STATIC_INVALID_ENGINE_OUTPUT when a rule hit is missing a standardized message", async () => {
+  const normalizerModule = await importIfExists<NormalizerModule>(normalizerModulePath);
+
+  assert.ok(normalizerModule?.normalizeSkillsStaticEngineOutput);
+
+  if (!normalizerModule?.normalizeSkillsStaticEngineOutput) {
+    return;
+  }
+
+  assert.throws(
+    () =>
+      normalizerModule.normalizeSkillsStaticEngineOutput?.(
+        {
+          sample_name: "canonical-skill-package",
+          language: "typescript",
+          entry_files: ["src/commands.ts"],
+          files_scanned: 1,
+          rule_hits: [
+            {
+              rule_id: "command_execution.shell_exec",
+              severity: "high",
+              file_path: "src/commands.ts"
+            }
+          ],
+          sensitive_capabilities: ["command_execution"],
+          dependency_summary: {}
+        },
+        createStaticAnalysisTask()
+      ),
+    (error: unknown) => {
+      assert.equal(typeof error, "object");
+      assert.notEqual(error, null);
+      assert.equal((error as { name?: string }).name, "DomainError");
+      assert.equal((error as { code?: string }).code, "SKILLS_STATIC_INVALID_ENGINE_OUTPUT");
+      return true;
+    }
+  );
+});
+
+test("skills-static result normalizer raises SKILLS_STATIC_INVALID_ENGINE_OUTPUT when a rule hit has an invalid line region", async () => {
+  const normalizerModule = await importIfExists<NormalizerModule>(normalizerModulePath);
+
+  assert.ok(normalizerModule?.normalizeSkillsStaticEngineOutput);
+
+  if (!normalizerModule?.normalizeSkillsStaticEngineOutput) {
+    return;
+  }
+
+  assert.throws(
+    () =>
+      normalizerModule.normalizeSkillsStaticEngineOutput?.(
+        {
+          sample_name: "canonical-skill-package",
+          language: "typescript",
+          entry_files: ["src/commands.ts"],
+          files_scanned: 1,
+          rule_hits: [
+            {
+              rule_id: "command_execution.shell_exec",
+              severity: "high",
+              message: "Potential command execution sink reached",
+              file_path: "src/commands.ts",
+              line_start: 9,
+              line_end: 4
             }
           ],
           sensitive_capabilities: ["command_execution"],

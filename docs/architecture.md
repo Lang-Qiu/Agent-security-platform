@@ -356,3 +356,13 @@ This stage intentionally still does not include:
 - public API changes
 - retry / timeout / callback / logging governance
 - report rendering or evidence-display flows
+
+## REQ-SKILLS-STATIC Standardized Risk Result
+
+The platform now treats `skills_static` provider output as an internal staging format, not as the stable result contract itself.
+
+- `mock` and `semgrep` must both converge into the same provider-agnostic standardized result before the task-center read path exposes the finished record
+- the strong standardized fields are currently: `sample_name`, `language`, `rule_hits[].rule_id`, `rule_hits[].severity`, `rule_hits[].message`, `rule_hits[].file_path`, and paired valid `line_start` / `line_end`
+- `RiskSummary` is part of the same strong contract and must stay derived only from normalized `rule_hits`
+- `entry_files`, `files_scanned`, `sensitive_capabilities`, `dependency_summary`, and optional extension fields stay on a weaker contract for now: they must remain structurally valid and non-conflicting, but they are not yet required to have provider parity
+- future providers should land in `raw output -> mapper -> SkillsStaticEngineOutput -> SkillsStaticResultNormalizer -> RiskSummaryDeriver`, without changing the public API or the platform orchestration path

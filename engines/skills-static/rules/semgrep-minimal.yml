@@ -1,5 +1,5 @@
 rules:
-  - id: skills-static.command-execution
+  - id: command_execution.shell_exec
     languages:
       - typescript
       - javascript
@@ -16,7 +16,7 @@ rules:
       tags:
         - command
         - input-flow
-  - id: skills-static.network-egress
+  - id: network_access.outbound_fetch
     languages:
       - typescript
       - javascript

@@ -167,6 +167,63 @@ test("result contract normalizes a static analysis result into the shared base s
   });
 });
 
+test("result contract rejects a finished static analysis result that is missing standardized finding location or message", async () => {
+  const sharedModule = await loadSharedModule();
+
+  assert.notEqual(sharedModule, null, "shared/index.ts should exist before finished static-analysis finding semantics can be validated");
+
+  if (!sharedModule) {
+    return;
+  }
+
+  const canonicalResult = createCanonicalStaticAnalysisBaseResult("2026-04-02T01:05:00Z");
+  const normalizedResult = sharedModule.normalizeBaseResult?.({
+    ...canonicalResult,
+    details: {
+      ...CANONICAL_STATIC_ANALYSIS_DETAILS,
+      rule_hits: [
+        {
+          ...CANONICAL_STATIC_ANALYSIS_DETAILS.rule_hits?.[0],
+          message: undefined
+        },
+        {
+          ...CANONICAL_STATIC_ANALYSIS_DETAILS.rule_hits?.[1],
+          file_path: undefined
+        }
+      ]
+    }
+  });
+
+  assert.equal(normalizedResult, null);
+});
+
+test("result contract rejects a finished static analysis result with an invalid line region", async () => {
+  const sharedModule = await loadSharedModule();
+
+  assert.notEqual(sharedModule, null, "shared/index.ts should exist before static-analysis line-region semantics can be validated");
+
+  if (!sharedModule) {
+    return;
+  }
+
+  const canonicalResult = createCanonicalStaticAnalysisBaseResult("2026-04-02T01:05:00Z");
+  const normalizedResult = sharedModule.normalizeBaseResult?.({
+    ...canonicalResult,
+    details: {
+      ...CANONICAL_STATIC_ANALYSIS_DETAILS,
+      rule_hits: [
+        {
+          ...CANONICAL_STATIC_ANALYSIS_DETAILS.rule_hits?.[0],
+          line_start: 9,
+          line_end: 4
+        }
+      ]
+    }
+  });
+
+  assert.equal(normalizedResult, null);
+});
+
 test("result contract normalizes a sandbox result into the shared base shell", async () => {
   const sharedModule = await loadSharedModule();
 

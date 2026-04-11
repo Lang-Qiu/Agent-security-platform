@@ -12,6 +12,23 @@ interface SemgrepMetadata {
   tags?: string[];
 }
 
+function normalizeSemgrepRuleId(value: unknown): string {
+  if (!isString(value)) {
+    return "semgrep.unknown_rule";
+  }
+
+  const normalizedSegments = value
+    .split(".")
+    .filter((segment) => segment.length > 0)
+    .map((segment) => segment.replaceAll("-", "_"));
+
+  if (normalizedSegments.length >= 2) {
+    return `${normalizedSegments[normalizedSegments.length - 2]}.${normalizedSegments[normalizedSegments.length - 1]}`;
+  }
+
+  return normalizedSegments[0] ?? "semgrep.unknown_rule";
+}
+
 function normalizeFilePath(value: unknown): string | undefined {
   if (!isString(value)) {
     return undefined;
@@ -62,10 +79,11 @@ export function mapSemgrepOutputToEngineOutput(
       const extra = isPlainObject(result.extra) ? result.extra : {};
       const metadata = normalizeSemgrepMetadata(extra.metadata);
       const filePath = normalizeFilePath(result.path);
+      const ruleId = normalizeSemgrepRuleId(result.check_id);
 
       return {
-        rule_id: isString(result.check_id) ? result.check_id : "semgrep.unknown-rule",
-        title: metadata.title ?? (isString(result.check_id) ? result.check_id : "semgrep.unknown-rule"),
+        rule_id: ruleId,
+        title: metadata.title ?? ruleId,
         category: metadata.category,
         severity: metadata.platform_severity,
         message: isString(extra.message) ? extra.message : undefined,

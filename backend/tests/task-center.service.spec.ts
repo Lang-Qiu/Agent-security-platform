@@ -433,16 +433,24 @@ test("task center service backfills static-analysis artifacts when the engine cl
         mock_result: {
           sample_name: "demo-email-skill",
           language: "typescript",
-          entry_files: ["src/index.ts", "src/report.ts"],
+          entry_files: ["src/commands.ts", "src/network.ts"],
           files_scanned: 2,
           rule_hits: [
             {
-              rule_id: "SK001",
-              severity: "high"
+              rule_id: "command_execution.shell_exec",
+              severity: "high",
+              message: "Potential command execution sink reached",
+              file_path: "src/commands.ts",
+              line_start: 4,
+              line_end: 4
             },
             {
-              rule_id: "SK002",
-              severity: "medium"
+              rule_id: "network_access.outbound_fetch",
+              severity: "medium",
+              message: "Outbound network request lacks destination allowlist",
+              file_path: "src/network.ts",
+              line_start: 2,
+              line_end: 2
             }
           ],
           sensitive_capabilities: ["command_execution", "network_access"],
@@ -482,8 +490,22 @@ test("task center service backfills static-analysis artifacts when the engine cl
           details: {
             sample_name: "demo-email-skill",
             rule_hits: [
-              { rule_id: "SK001", severity: "high" },
-              { rule_id: "SK002", severity: "medium" }
+              {
+                rule_id: "command_execution.shell_exec",
+                severity: "high",
+                message: "Potential command execution sink reached",
+                file_path: "src/commands.ts",
+                line_start: 4,
+                line_end: 4
+              },
+              {
+                rule_id: "network_access.outbound_fetch",
+                severity: "medium",
+                message: "Outbound network request lacks destination allowlist",
+                file_path: "src/network.ts",
+                line_start: 2,
+                line_end: 2
+              }
             ]
           },
           created_at: "2026-03-26T01:00:00Z",

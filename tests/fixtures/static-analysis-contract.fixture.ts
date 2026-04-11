@@ -6,30 +6,30 @@ export const STATIC_ANALYSIS_PENDING_SUMMARY = "Task accepted and waiting for en
 
 export const CANONICAL_STATIC_ANALYSIS_RULE_HITS: SkillsStaticRuleHit[] = [
   {
-    rule_id: "SA001",
+    rule_id: "command_execution.shell_exec",
     title: "Shell command reaches an execution sink",
     category: "command_execution",
     severity: "high",
-    message: "User-controlled input reaches a shell execution sink",
+    message: "Potential command execution sink reached",
     file_path: "src/commands.ts",
-    line_start: 18,
-    line_end: 22,
-    code_snippet: "exec(commandInput)",
+    line_start: 4,
+    line_end: 4,
+    code_snippet: "return exec(commandInput);",
     recommendation: "Replace shell execution with an allowlisted wrapper",
     source_type: "user_input",
     sink_type: "command_execution",
     tags: ["command", "input-flow"]
   },
   {
-    rule_id: "SA002",
+    rule_id: "network_access.outbound_fetch",
     title: "Outbound network request lacks destination allowlist",
     category: "network_access",
     severity: "medium",
-    message: "Static analysis found outbound fetch without destination validation",
+    message: "Outbound network request lacks destination allowlist",
     file_path: "src/network.ts",
-    line_start: 7,
-    line_end: 9,
-    code_snippet: "fetch(targetUrl)",
+    line_start: 2,
+    line_end: 2,
+    code_snippet: "return fetch(targetUrl);",
     recommendation: "Restrict outbound destinations to an allowlist",
     source_type: "config",
     sink_type: "network_request",
@@ -38,16 +38,28 @@ export const CANONICAL_STATIC_ANALYSIS_RULE_HITS: SkillsStaticRuleHit[] = [
 ];
 
 export const CANONICAL_STATIC_ANALYSIS_DETAILS: StaticAnalysisResultDetails = {
-  sample_name: "canonical-skill-package",
+  sample_name: "skills-static-real-scan",
   language: "typescript",
-  entry_files: ["src/index.ts", "src/network.ts"],
-  files_scanned: 4,
+  entry_files: ["src/commands.ts", "src/network.ts"],
+  files_scanned: 2,
   rule_hits: CANONICAL_STATIC_ANALYSIS_RULE_HITS,
   sensitive_capabilities: ["command_execution", "network_access"],
   dependency_summary: {
-    manifest_count: 1,
-    dependency_count: 4
+    manifests_scanned: 0
   }
+};
+
+export const CANONICAL_STATIC_ANALYSIS_STRONG_DETAILS_PROJECTION = {
+  sample_name: CANONICAL_STATIC_ANALYSIS_DETAILS.sample_name,
+  language: CANONICAL_STATIC_ANALYSIS_DETAILS.language,
+  rule_hits: CANONICAL_STATIC_ANALYSIS_RULE_HITS.map((ruleHit) => ({
+    rule_id: ruleHit.rule_id,
+    severity: ruleHit.severity,
+    message: ruleHit.message,
+    file_path: ruleHit.file_path,
+    line_start: ruleHit.line_start,
+    line_end: ruleHit.line_end
+  }))
 };
 
 export const CANONICAL_STATIC_ANALYSIS_CREATED_TASK: Task = {
@@ -55,11 +67,11 @@ export const CANONICAL_STATIC_ANALYSIS_CREATED_TASK: Task = {
   task_type: "static_analysis",
   engine_type: "skills_static",
   status: "pending",
-  title: "Analyze canonical skill package",
+  title: "Analyze canonical skills-static fixture",
   target: {
     target_type: "skill_package",
-    target_value: "samples/skills/canonical-skill-package",
-    display_name: "canonical-skill-package"
+    target_value: "tests/fixtures/skills-static-real-scan",
+    display_name: "skills-static-real-scan"
   },
   parameters: {
     language: "typescript",
@@ -72,7 +84,7 @@ export const CANONICAL_STATIC_ANALYSIS_CREATED_TASK: Task = {
   updated_at: "2026-04-02T01:00:00Z"
 };
 
-export const CANONICAL_STATIC_ANALYSIS_COMPLETED_SUMMARY = "Static analysis completed with 2 findings";
+export const CANONICAL_STATIC_ANALYSIS_COMPLETED_SUMMARY = "Static analysis finished with 2 rule hits";
 
 export const CANONICAL_STATIC_ANALYSIS_DERIVED_RISK_SUMMARY = {
   risk_level: "high" as const,

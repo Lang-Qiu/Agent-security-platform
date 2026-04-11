@@ -7,6 +7,7 @@
 - `SkillsStaticEngineClient` is the current internal bridge for routing `skills_static` dispatch tickets without introducing a new public route
 - `skills_static` now supports a deterministic mock-analysis closed loop that backfills the existing `Task`, `BaseResult`, and `RiskSummary` records after dispatch
 - `skills_static` also supports one minimal real-tool path through local `semgrep` CLI when `SKILLS_STATIC_ENGINE_PROVIDER=semgrep`
+- both providers now converge on the same standardized risk-result core before the finished `static_analysis` record is exposed to the platform read APIs
 - operators still read the closed-loop state through the existing `GET /api/tasks/:taskId`, `GET /api/tasks/:taskId/result`, and `GET /api/tasks/:taskId/risk-summary` routes
 
 ## Skills Static Real Provider
@@ -15,6 +16,8 @@
 - Set `SKILLS_STATIC_ENGINE_PROVIDER=semgrep` to enable the minimal real detection path
 - The real path expects `semgrep` CLI to be available on `PATH`
 - The real path uses `engines/skills-static/rules/semgrep-minimal.yml`
+- Strong standardized fields currently fixed across providers: `sample_name`, `language`, standardized `rule_hits`, and derived `RiskSummary`
+- `entry_files`, `files_scanned`, `sensitive_capabilities`, `dependency_summary`, and optional extension fields currently stay on a weaker contract until platform reads depend on them more strongly
 - Targeted verification command:
   `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-semgrep.spec.ts`
 

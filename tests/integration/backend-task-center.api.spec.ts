@@ -5,7 +5,11 @@ import { resolve } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { STATIC_ANALYSIS_PENDING_SUMMARY } from "../fixtures/static-analysis-contract.fixture.ts";
+import {
+  CANONICAL_STATIC_ANALYSIS_DERIVED_RISK_SUMMARY,
+  CANONICAL_STATIC_ANALYSIS_STRONG_DETAILS_PROJECTION,
+  STATIC_ANALYSIS_PENDING_SUMMARY
+} from "../fixtures/static-analysis-contract.fixture.ts";
 
 const mainModulePath = resolve(import.meta.dirname, "../../backend/src/main.ts");
 const sharedEntrypointPath = resolve(import.meta.dirname, "../../shared/index.ts");
@@ -69,6 +73,32 @@ async function createTask(baseUrl: string, body: Record<string, unknown>) {
   return {
     status: response.status,
     body: (await response.json()) as Record<string, unknown>
+  };
+}
+
+function projectStandardizedDetails(value: {
+  sample_name?: string;
+  language?: string;
+  rule_hits?: Array<{
+    rule_id?: string;
+    severity?: string;
+    message?: string;
+    file_path?: string;
+    line_start?: number;
+    line_end?: number;
+  }>;
+}) {
+  return {
+    sample_name: value.sample_name,
+    language: value.language,
+    rule_hits: (value.rule_hits ?? []).map((ruleHit) => ({
+      rule_id: ruleHit.rule_id,
+      severity: ruleHit.severity,
+      message: ruleHit.message,
+      file_path: ruleHit.file_path,
+      line_start: ruleHit.line_start,
+      line_end: ruleHit.line_end
+    }))
   };
 }
 
@@ -366,6 +396,219 @@ test("backend task center keeps static-analysis creation on POST /api/tasks with
   assert.notEqual(normalizedTask.summary, createdTaskData.summary);
   assert.equal(normalizedTask.updated_at, normalizedResult.updated_at);
   assert.equal(normalizedResult.updated_at, normalizedRiskSummary.updated_at);
+});
+
+test("backend task center keeps mock and semgrep providers aligned on the standardized static-analysis read contract", async (t) => {
+  const mainModule = await importIfExists<MainModule>(mainModulePath);
+  const sharedModule = await importIfExists<SharedModule>(sharedEntrypointPath);
+
+  assert.notEqual(mainModule, null, "backend main module should exist before provider-parity reads can be verified");
+  assert.notEqual(sharedModule, null, "shared module should exist before provider-parity reads can be normalized");
+
+  if (!mainModule?.createAppServer || !sharedModule) {
+    return;
+  }
+
+  const previousProvider = process.env.SKILLS_STATIC_ENGINE_PROVIDER;
+  const server = mainModule.createAppServer();
+  const { baseUrl, close } = await startServer(server);
+  t.after(close);
+
+  try {
+    const targetValue = resolve(import.meta.dirname, "../fixtures/skills-static-real-scan");
+
+    delete process.env.SKILLS_STATIC_ENGINE_PROVIDER;
+    const mockCreatedTask = await createTask(baseUrl, {
+      task_type: "static_analysis",
+      title: "Analyze provider parity fixture with mock",
+      target: {
+        target_type: "skill_package",
+        target_value: targetValue,
+        display_name: "skills-static-real-scan"
+      },
+      parameters: {
+        language: "typescript"
+      }
+    });
+
+    process.env.SKILLS_STATIC_ENGINE_PROVIDER = "semgrep";
+    const semgrepCreatedTask = await createTask(baseUrl, {
+      task_type: "static_analysis",
+      title: "Analyze provider parity fixture with semgrep",
+      target: {
+        target_type: "skill_package",
+        target_value: targetValue,
+        display_name: "skills-static-real-scan"
+      },
+      parameters: {
+        language: "typescript"
+      }
+    });
+
+    assert.equal(mockCreatedTask.status, 201);
+    assert.equal(semgrepCreatedTask.status, 201);
+
+    const mockTaskId = ((mockCreatedTask.body.data as { task_id: string }).task_id);
+    const semgrepTaskId = ((semgrepCreatedTask.body.data as { task_id: string }).task_id);
+
+    const mockResultResponse = await fetch(`${baseUrl}/api/tasks/${mockTaskId}/result`);
+    const mockResultBody = (await mockResultResponse.json()) as Record<string, unknown>;
+    const semgrepResultResponse = await fetch(`${baseUrl}/api/tasks/${semgrepTaskId}/result`);
+    const semgrepResultBody = (await semgrepResultResponse.json()) as Record<string, unknown>;
+    const mockRiskSummaryResponse = await fetch(`${baseUrl}/api/tasks/${mockTaskId}/risk-summary`);
+    const mockRiskSummaryBody = (await mockRiskSummaryResponse.json()) as Record<string, unknown>;
+    const semgrepRiskSummaryResponse = await fetch(`${baseUrl}/api/tasks/${semgrepTaskId}/risk-summary`);
+    const semgrepRiskSummaryBody = (await semgrepRiskSummaryResponse.json()) as Record<string, unknown>;
+
+    assert.equal(mockResultResponse.status, 200);
+    assert.equal(semgrepResultResponse.status, 200);
+    assert.equal(mockRiskSummaryResponse.status, 200);
+    assert.equal(semgrepRiskSummaryResponse.status, 200);
+    assert.equal(sharedModule.isApiResponse?.(mockResultBody), true);
+    assert.equal(sharedModule.isApiResponse?.(semgrepResultBody), true);
+    assert.equal(sharedModule.isApiResponse?.(mockRiskSummaryBody), true);
+    assert.equal(sharedModule.isApiResponse?.(semgrepRiskSummaryBody), true);
+
+    const normalizedMockResult = sharedModule.normalizeBaseResult?.(mockResultBody.data) as
+      | {
+          status: string;
+          summary: string;
+          details: {
+            sample_name?: string;
+            language?: string;
+            entry_files?: string[];
+            files_scanned?: number;
+            rule_hits?: Array<{
+              rule_id?: string;
+              severity?: "info" | "low" | "medium" | "high" | "critical";
+              message?: string;
+              file_path?: string;
+              line_start?: number;
+              line_end?: number;
+            }>;
+            sensitive_capabilities?: string[];
+            dependency_summary?: Record<string, unknown>;
+          };
+        }
+      | null;
+    const normalizedSemgrepResult = sharedModule.normalizeBaseResult?.(semgrepResultBody.data) as
+      | {
+          status: string;
+          summary: string;
+          details: {
+            sample_name?: string;
+            language?: string;
+            entry_files?: string[];
+            files_scanned?: number;
+            rule_hits?: Array<{
+              rule_id?: string;
+              severity?: "info" | "low" | "medium" | "high" | "critical";
+              message?: string;
+              file_path?: string;
+              line_start?: number;
+              line_end?: number;
+            }>;
+            sensitive_capabilities?: string[];
+            dependency_summary?: Record<string, unknown>;
+          };
+        }
+      | null;
+    const normalizedMockRiskSummary = sharedModule.normalizeRiskSummary?.(mockRiskSummaryBody.data) as
+      | {
+          status: string;
+          risk_level: string;
+          summary: string;
+          total_findings: number;
+          info_count: number;
+          low_count: number;
+          medium_count: number;
+          high_count: number;
+          critical_count: number;
+          updated_at: string;
+        }
+      | null;
+    const normalizedSemgrepRiskSummary = sharedModule.normalizeRiskSummary?.(semgrepRiskSummaryBody.data) as
+      | {
+          status: string;
+          risk_level: string;
+          summary: string;
+          total_findings: number;
+          info_count: number;
+          low_count: number;
+          medium_count: number;
+          high_count: number;
+          critical_count: number;
+          updated_at: string;
+        }
+      | null;
+
+    assert.notEqual(normalizedMockResult, null);
+    assert.notEqual(normalizedSemgrepResult, null);
+    assert.notEqual(normalizedMockRiskSummary, null);
+    assert.notEqual(normalizedSemgrepRiskSummary, null);
+
+    if (!normalizedMockResult || !normalizedSemgrepResult || !normalizedMockRiskSummary || !normalizedSemgrepRiskSummary) {
+      return;
+    }
+
+    assert.equal(normalizedMockResult.status, "finished");
+    assert.equal(normalizedSemgrepResult.status, "finished");
+    assert.equal(normalizedMockRiskSummary.status, "finished");
+    assert.equal(normalizedSemgrepRiskSummary.status, "finished");
+    assert.deepEqual(projectStandardizedDetails(normalizedMockResult.details), CANONICAL_STATIC_ANALYSIS_STRONG_DETAILS_PROJECTION);
+    assert.deepEqual(projectStandardizedDetails(normalizedSemgrepResult.details), CANONICAL_STATIC_ANALYSIS_STRONG_DETAILS_PROJECTION);
+    assert.deepEqual(
+      {
+        risk_level: normalizedMockRiskSummary.risk_level,
+        total_findings: normalizedMockRiskSummary.total_findings,
+        info_count: normalizedMockRiskSummary.info_count,
+        low_count: normalizedMockRiskSummary.low_count,
+        medium_count: normalizedMockRiskSummary.medium_count,
+        high_count: normalizedMockRiskSummary.high_count,
+        critical_count: normalizedMockRiskSummary.critical_count
+      },
+      CANONICAL_STATIC_ANALYSIS_DERIVED_RISK_SUMMARY
+    );
+    assert.deepEqual(
+      {
+        risk_level: normalizedSemgrepRiskSummary.risk_level,
+        total_findings: normalizedSemgrepRiskSummary.total_findings,
+        info_count: normalizedSemgrepRiskSummary.info_count,
+        low_count: normalizedSemgrepRiskSummary.low_count,
+        medium_count: normalizedSemgrepRiskSummary.medium_count,
+        high_count: normalizedSemgrepRiskSummary.high_count,
+        critical_count: normalizedSemgrepRiskSummary.critical_count
+      },
+      CANONICAL_STATIC_ANALYSIS_DERIVED_RISK_SUMMARY
+    );
+    assert.equal(normalizedMockResult.summary, normalizedMockRiskSummary.summary);
+    assert.equal(normalizedSemgrepResult.summary, normalizedSemgrepRiskSummary.summary);
+    assert.notEqual(normalizedMockResult.summary, STATIC_ANALYSIS_PENDING_SUMMARY);
+    assert.notEqual(normalizedSemgrepResult.summary, STATIC_ANALYSIS_PENDING_SUMMARY);
+
+    assert.ok(Array.isArray(normalizedMockResult.details.entry_files) && normalizedMockResult.details.entry_files.length > 0);
+    assert.ok(Array.isArray(normalizedSemgrepResult.details.entry_files) && normalizedSemgrepResult.details.entry_files.length > 0);
+    assert.ok(typeof normalizedMockResult.details.files_scanned === "number" && normalizedMockResult.details.files_scanned >= 1);
+    assert.ok(typeof normalizedSemgrepResult.details.files_scanned === "number" && normalizedSemgrepResult.details.files_scanned >= 1);
+    assert.ok(
+      Array.isArray(normalizedMockResult.details.sensitive_capabilities) &&
+        normalizedMockResult.details.sensitive_capabilities.length > 0
+    );
+    assert.ok(
+      Array.isArray(normalizedSemgrepResult.details.sensitive_capabilities) &&
+        normalizedSemgrepResult.details.sensitive_capabilities.length > 0
+    );
+    assert.equal(typeof normalizedMockResult.details.dependency_summary, "object");
+    assert.notEqual(normalizedMockResult.details.dependency_summary, null);
+    assert.equal(typeof normalizedSemgrepResult.details.dependency_summary, "object");
+    assert.notEqual(normalizedSemgrepResult.details.dependency_summary, null);
+  } finally {
+    if (previousProvider === undefined) {
+      delete process.env.SKILLS_STATIC_ENGINE_PROVIDER;
+    } else {
+      process.env.SKILLS_STATIC_ENGINE_PROVIDER = previousProvider;
+    }
+  }
 });
 
 test("backend task center returns a created task together with its initial result and risk summary", async (t) => {

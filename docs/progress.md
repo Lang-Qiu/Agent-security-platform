@@ -10,6 +10,34 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-04-10 - skills-static standardized risk result
+- requirement: standardize the provider-agnostic `skills_static` risk-result semantics without changing the public task-center API or adding another provider
+- scope: strengthen the finished static-analysis contract around `sample_name`, `language`, standardized `rule_hits`, and provider-agnostic `RiskSummary`; align mock output with semgrep at the strong-field layer; and keep `entry_files`, `files_scanned`, `sensitive_capabilities`, `dependency_summary`, and optional extensions on a weaker contract
+- tests:
+  - `shared/tests/result-contract.spec.ts`
+  - `shared/tests/task-contract.spec.ts`
+  - `shared/tests/api-response.contract.spec.ts`
+  - `backend/tests/skills-static-core.spec.ts`
+  - `backend/tests/skills-static-semgrep.spec.ts`
+  - `backend/tests/task-engine.service.spec.ts`
+  - `backend/tests/task-center.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- test result: pass for the requirement-focused verification set:
+  - `node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/task-contract.spec.ts shared/tests/api-response.contract.spec.ts shared/tests/result-contract.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-core.spec.ts backend/tests/skills-static-semgrep.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "skills-static|static-analysis shell|malformed|parity" backend/tests/task-engine.service.spec.ts backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "static-analysis|shared response shell|semgrep" tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `README.md`
+  - `docs/api-contract.md`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+- notes:
+  - `mock` and `semgrep` now align on the strong standardized fields consumed by the platform read path
+  - `RiskSummary` remains provider-agnostic and is validated against the same normalized finding semantics across both providers
+  - `entry_files`, `files_scanned`, `sensitive_capabilities`, `dependency_summary`, and optional extension fields intentionally stay on a weaker contract until the platform read layer depends on them more strongly
+  - this stage stops before any logging / timeout / reporting / multi-provider expansion work
+
 ## 2026-04-10 - skills-static minimal real detection capability
 - requirement: add the smallest real `skills_static` detection path without changing the public task-center API or the normalized static-analysis contract
 - scope: introduce a local `semgrep` runner and raw-output mapper, let `SkillsStaticEngineClient` switch between `mock` and `semgrep` through `SKILLS_STATIC_ENGINE_PROVIDER`, add a minimal real scan fixture plus rule file, and keep all existing normalizer / risk-summary derivation boundaries intact

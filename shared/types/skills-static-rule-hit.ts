@@ -14,6 +14,8 @@ export type SkillsStaticSeverity = "info" | "low" | "medium" | "high" | "critica
  * Required fields:
  * - `rule_id`
  * - `severity`
+ * - `message`
+ * - `file_path`
  *
  * Optional fields:
  * - every other field declared below
@@ -28,10 +30,10 @@ export type SkillsStaticSeverity = "info" | "low" | "medium" | "high" | "critica
 export interface SkillsStaticRuleHit {
   rule_id: string;
   severity: SkillsStaticSeverity;
+  message: string;
+  file_path: string;
   title?: string;
   category?: string;
-  message?: string;
-  file_path?: string;
   line_start?: number;
   line_end?: number;
   code_snippet?: string;

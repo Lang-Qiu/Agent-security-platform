@@ -261,13 +261,21 @@ function normalizeSkillsStaticTraceStep(value: unknown): SkillsStaticTraceStep |
 }
 
 function normalizeSkillsStaticRuleHit(value: unknown): SkillsStaticRuleHit | null {
-  if (!isPlainObject(value) || !isString(value.rule_id) || !isOneOf(SKILLS_STATIC_SEVERITIES, value.severity)) {
+  if (
+    !isPlainObject(value) ||
+    !isString(value.rule_id) ||
+    !isOneOf(SKILLS_STATIC_SEVERITIES, value.severity) ||
+    !isString(value.message) ||
+    !isString(value.file_path)
+  ) {
     return null;
   }
 
   const normalizedRuleHit: SkillsStaticRuleHit = {
     rule_id: value.rule_id,
-    severity: value.severity
+    severity: value.severity,
+    message: value.message,
+    file_path: value.file_path
   };
 
   if (isString(value.title)) {
@@ -276,14 +284,6 @@ function normalizeSkillsStaticRuleHit(value: unknown): SkillsStaticRuleHit | nul
 
   if (isString(value.category)) {
     normalizedRuleHit.category = value.category;
-  }
-
-  if (isString(value.message)) {
-    normalizedRuleHit.message = value.message;
-  }
-
-  if (isString(value.file_path)) {
-    normalizedRuleHit.file_path = value.file_path;
   }
 
   if (isNumber(value.line_start)) {
@@ -359,9 +359,13 @@ function normalizeStaticAnalysisDetails(value: unknown): StaticAnalysisResultDet
   }
 
   if (Array.isArray(value.rule_hits)) {
-    normalizedDetails.rule_hits = value.rule_hits
-      .map((ruleHit) => normalizeSkillsStaticRuleHit(ruleHit))
-      .filter((ruleHit): ruleHit is SkillsStaticRuleHit => ruleHit !== null);
+    const normalizedRuleHits = value.rule_hits.map((ruleHit) => normalizeSkillsStaticRuleHit(ruleHit));
+
+    if (normalizedRuleHits.some((ruleHit) => ruleHit === null)) {
+      return null;
+    }
+
+    normalizedDetails.rule_hits = normalizedRuleHits;
   }
 
   if (isStringArray(value.sensitive_capabilities)) {
