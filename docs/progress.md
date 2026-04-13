@@ -36,6 +36,27 @@ Recommended fields:
   - conflict resolution policy followed: backend behavior precedence on probe/scoring semantics
   - backend runtime path now orchestrates and delegates to engine bridge; no local probe/scoring execution in `AssetScanTaskAdapter`
 
+## 2026-04-13 - REQ-ASSET-PROBE-005 probe test ownership relocation to engine suite
+- requirement: move dynamic probe behavior tests to engine-owned test suite while keeping backend tests focused on orchestration and contract boundaries
+- scope:
+  - added `engines/asset-scan/tests/asset-probe.runtime.spec.ts` with live HTTP/WS probe coverage for langflow, ollama (port hint), and openclaw-gateway
+  - removed duplicated live probe behavior tests from `backend/tests/task-engine.service.spec.ts`
+  - updated root script `test:engine:asset-scan` to include the new probe runtime test file
+- tests added:
+  - `engines/asset-scan/tests/asset-probe.runtime.spec.ts`
+- tests updated:
+  - `backend/tests/task-engine.service.spec.ts`
+  - `package.json`
+- test result: pass
+  - `npm run test:engine:asset-scan`
+  - `npm run test:backend`
+  - `npm run test`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - engine now owns probe behavior verification; backend keeps delegation/orchestration checks and API integration checks
+  - no probe algorithm change was introduced in this requirement; this is a test-layer ownership correction
+
 ## 2026-04-01 - skills-static platform-compatible DTO / interface and minimal adapter mapping skeleton
 - requirement: add `skills-static`-compatible shared DTOs/interfaces and the smallest backend adapter mapping boundary without changing the public task-center API
 - scope: introduce shared `skills-static` result/parameter/target/rule-hit types, narrow `static_analysis.details.rule_hits[]`, add a backend mapper from placeholder engine output into shared details, and keep `POST /api/tasks` as the only public creation entry

@@ -12,7 +12,7 @@
     "test:repo": "node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/root-test-entry.spec.ts tests/repository/frontend-formatting-boundary.spec.ts",
     "test:shared": "node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/task-contract.spec.ts shared/tests/api-response.contract.spec.ts shared/tests/result-contract.spec.ts",
     "test:backend": "node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/task-center.service.spec.ts backend/tests/task-engine.service.spec.ts backend/tests/asset-scan.engine-client.spec.ts tests/integration/backend-task-center.api.spec.ts",
-    "test:engine:asset-scan": "node --experimental-strip-types --experimental-test-isolation=none --test engines/asset-scan/tests/asset-fingerprint.runtime.spec.ts engines/asset-scan/tests/scan-task.bridge.spec.ts",
+    "test:engine:asset-scan": "node --experimental-strip-types --experimental-test-isolation=none --test engines/asset-scan/tests/asset-fingerprint.runtime.spec.ts engines/asset-scan/tests/scan-task.bridge.spec.ts engines/asset-scan/tests/asset-probe.runtime.spec.ts",
     "test:frontend": "npm run test --prefix frontend"
   },
   "dependencies": {

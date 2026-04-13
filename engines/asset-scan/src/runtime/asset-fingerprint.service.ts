@@ -12,18 +12,18 @@ type MatchDisposition = "direct" | "suspected" | "log_only" | "unknown";
 
 interface FingerprintSignalRule {
   signal_id: string;
-  signal_type: "port" | "path" | "body";
-  match_operator: "equals" | "contains" | "in";
-  match_value: string;
-  weight: number;
+  signal_type: "port" | "path" | "body";   // 匹配的数据来源
+  match_operator: "equals" | "contains" | "in";  // 比较方式
+  match_value: string;       // 期望值
+  weight: number;            // 该信号的权重（用于计分）
 }
 
 interface FingerprintRule {
   fingerprint_id: string;
-  target_id: string;
-  product_name: string;
-  product_version: string;
-  signals: FingerprintSignalRule[];
+  target_id: string;          // 框架/产品标识，如 "ollama"
+  product_name: string;       // 产品名称，如 "Ollama"
+  product_version: string;    // 版本号
+  signals: FingerprintSignalRule[];  // 匹配信号数组
 }
 
 interface FingerprintRulesDocument {

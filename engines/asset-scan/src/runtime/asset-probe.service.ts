@@ -5,17 +5,17 @@ import { fileURLToPath } from "node:url";
 import { parse } from "yaml";
 
 interface ProbeRule {
-  target_id?: string;
-  enabled?: boolean;
-  request?: {
-    protocol?: string;
-    method?: string;
-    path?: string;
-    payload?: string;
-    timeout_ms?: number;
+  target_id?: string;        // 目标框架/产品标识（如 "ollama"）
+  enabled?: boolean;         // 是否启用该规则
+  request?: {                // 请求参数
+    protocol?: string;       // "http" 或 "ws"
+    method?: string;         // HTTP 方法，如 "GET"、"HEAD"
+    path?: string;           // 请求路径（如 "/api/tags"）
+    payload?: string;        // WebSocket 握手后发送的首条消息
+    timeout_ms?: number;     // 超时时间（毫秒）
   };
-  fallback?: {
-    action?: string;
+  fallback?: {               // 降级策略
+    action?: string;         // 如 "degrade_to_get"
   };
 }
 
@@ -28,13 +28,13 @@ interface ProbeRulesDocument {
 }
 
 export interface ProbeObservation {
-  targetId: string;
-  requestSummary: string;
-  responseStatus?: number;
+  targetId: string;                     // 规则命中的 target_id
+  requestSummary: string;               // 如 "HEAD http://127.0.0.1:11434/api/tags"
+  responseStatus?: number;              // HTTP 状态码（如 200）
   responseHeaders?: Record<string, unknown>;
-  responseBodyExcerpt?: string;
-  source?: string;
-  collectedAt: string;
+  responseBodyExcerpt?: string;         // 响应体片段（HEAD 请求为空）
+  source?: string;                      // 实际请求的 URL
+  collectedAt: string;                  // ISO 时间戳
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -106,8 +106,11 @@ export class EngineAssetProbeService {
   }
 
   async collectObservation(targetId: string, baseUrl: string, options?: ProbeCollectionOptions): Promise<ProbeObservation | null> {
+    // 给定目标标识符和基础 URL，尝试所有匹配的探测规则，返回第一个成功的观察结果。
     const rules = this.getRulesDocument();
     const candidates = (rules.probes ?? []).filter((probe) => {
+//       仅保留与传入 targetId 匹配、协议为 http 或 ws、且 HTTP 方法为 GET 或 HEAD 的规则。
+//       要求必须有请求路径。
       const method = probe.request?.method?.toUpperCase();
       const protocol = probe.request?.protocol;
 
