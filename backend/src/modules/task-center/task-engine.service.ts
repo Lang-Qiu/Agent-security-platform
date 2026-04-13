@@ -7,6 +7,7 @@ import type { SkillsStaticResultDetails } from "../../../../shared/types/result.
 import { EngineClientRegistry } from "./clients/engine-client-registry.ts";
 import type { EngineClient, EngineClientDispatchReceipt } from "./clients/engine-client.ts";
 import { deriveStaticAnalysisRiskSummary } from "./skills-static/risk-summary-deriver.ts";
+import { type SkillsStaticExecutionPhase } from "./skills-static/skills-static-execution-error.ts";
 
 export const DEFAULT_PENDING_TASK_SUMMARY = "Task accepted and waiting for engine dispatch";
 
@@ -23,6 +24,23 @@ export interface TaskCompletedArtifacts {
 
 function createStaticAnalysisCompletionSummary(totalFindings: number): string {
   return `Static analysis finished with ${totalFindings} rule hit${totalFindings === 1 ? "" : "s"}`;
+}
+
+function createStaticAnalysisFailureSummary(phase: SkillsStaticExecutionPhase): string {
+  switch (phase) {
+    case "provider_selection":
+      return "Static analysis failed during provider selection";
+    case "runner":
+      return "Static analysis failed during engine execution";
+    case "mapper":
+      return "Static analysis failed during result mapping";
+    case "normalizer":
+      return "Static analysis failed during result normalization";
+    case "deriver":
+      return "Static analysis failed during risk summary derivation";
+    default:
+      return "Static analysis failed";
+  }
 }
 
 export class TaskEngineService {
@@ -164,6 +182,49 @@ export class TaskEngineService {
         medium_count: derivedSummary.medium_count,
         high_count: derivedSummary.high_count,
         critical_count: derivedSummary.critical_count,
+        updated_at: updatedAt
+      }
+    };
+  }
+
+  createFailedStaticAnalysisArtifacts(task: Task, updatedAt: string, phase: SkillsStaticExecutionPhase): TaskCompletedArtifacts {
+    const summary = createStaticAnalysisFailureSummary(phase);
+    const details: SkillsStaticResultDetails = {
+      sample_name: task.target.display_name ?? task.target.target_value,
+      rule_hits: []
+    };
+
+    return {
+      task: {
+        ...task,
+        status: "failed",
+        risk_level: "info",
+        summary,
+        updated_at: updatedAt
+      },
+      result: {
+        task_id: task.task_id,
+        task_type: task.task_type,
+        engine_type: task.engine_type,
+        status: "failed",
+        risk_level: "info",
+        summary,
+        details,
+        created_at: task.created_at,
+        updated_at: updatedAt
+      },
+      riskSummary: {
+        task_id: task.task_id,
+        task_type: task.task_type,
+        status: "failed",
+        risk_level: "info",
+        summary,
+        total_findings: 0,
+        info_count: 0,
+        low_count: 0,
+        medium_count: 0,
+        high_count: 0,
+        critical_count: 0,
         updated_at: updatedAt
       }
     };

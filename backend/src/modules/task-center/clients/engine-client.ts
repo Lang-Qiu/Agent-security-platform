@@ -12,6 +12,7 @@ export type EngineClientDispatchReceipt =
   | BaseEngineClientDispatchReceipt<"asset_scan">
   | BaseEngineClientDispatchReceipt<"sandbox">
   | (BaseEngineClientDispatchReceipt<"skills_static"> & {
+      provider?: string;
       mock_result?: SkillsStaticEngineOutput;
     });
 

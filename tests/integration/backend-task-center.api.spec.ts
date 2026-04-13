@@ -611,6 +611,125 @@ test("backend task center keeps mock and semgrep providers aligned on the standa
   }
 });
 
+test("backend task center exposes failed static-analysis shells when provider selection fails", async (t) => {
+  const mainModule = await importIfExists<MainModule>(mainModulePath);
+  const sharedModule = await importIfExists<SharedModule>(sharedEntrypointPath);
+
+  assert.notEqual(mainModule, null, "backend main module should exist before static-analysis failure reads can be verified");
+  assert.notEqual(sharedModule, null, "shared module should exist before static-analysis failure reads can be normalized");
+
+  if (!mainModule?.createAppServer || !sharedModule) {
+    return;
+  }
+
+  const previousProvider = process.env.SKILLS_STATIC_ENGINE_PROVIDER;
+  process.env.SKILLS_STATIC_ENGINE_PROVIDER = "unsupported-provider";
+
+  const server = mainModule.createAppServer();
+  const { baseUrl, close } = await startServer(server);
+  t.after(close);
+
+  try {
+    const createdTask = await createTask(baseUrl, {
+      task_type: "static_analysis",
+      title: "Analyze unsupported provider",
+      target: {
+        target_type: "skill_package",
+        target_value: resolve(import.meta.dirname, "../fixtures/skills-static-real-scan"),
+        display_name: "skills-static-real-scan"
+      },
+      parameters: {
+        language: "typescript"
+      }
+    });
+
+    assert.equal(createdTask.status, 201);
+    assert.equal(sharedModule.isApiResponse?.(createdTask.body), true);
+
+    const createdTaskData = sharedModule.normalizeTask?.(createdTask.body.data) as
+      | {
+          task_id: string;
+          status: string;
+          summary?: string;
+        }
+      | null;
+
+    assert.notEqual(createdTaskData, null);
+
+    if (!createdTaskData) {
+      return;
+    }
+
+    assert.equal(createdTaskData.status, "pending");
+    assert.equal(createdTaskData.summary, STATIC_ANALYSIS_PENDING_SUMMARY);
+
+    const taskResponse = await fetch(`${baseUrl}/api/tasks/${createdTaskData.task_id}`);
+    const taskBody = (await taskResponse.json()) as Record<string, unknown>;
+    const resultResponse = await fetch(`${baseUrl}/api/tasks/${createdTaskData.task_id}/result`);
+    const resultBody = (await resultResponse.json()) as Record<string, unknown>;
+    const riskSummaryResponse = await fetch(`${baseUrl}/api/tasks/${createdTaskData.task_id}/risk-summary`);
+    const riskSummaryBody = (await riskSummaryResponse.json()) as Record<string, unknown>;
+
+    assert.equal(taskResponse.status, 200);
+    assert.equal(resultResponse.status, 200);
+    assert.equal(riskSummaryResponse.status, 200);
+
+    const normalizedTask = sharedModule.normalizeTask?.(taskBody.data) as
+      | {
+          status: string;
+          risk_level?: string;
+          summary?: string;
+        }
+      | null;
+    const normalizedResult = sharedModule.normalizeBaseResult?.(resultBody.data) as
+      | {
+          status: string;
+          risk_level: string;
+          summary: string;
+          details: {
+            sample_name?: string;
+            rule_hits?: unknown[];
+          };
+        }
+      | null;
+    const normalizedRiskSummary = sharedModule.normalizeRiskSummary?.(riskSummaryBody.data) as
+      | {
+          status: string;
+          risk_level: string;
+          summary: string;
+          total_findings: number;
+        }
+      | null;
+
+    assert.notEqual(normalizedTask, null);
+    assert.notEqual(normalizedResult, null);
+    assert.notEqual(normalizedRiskSummary, null);
+
+    if (!normalizedTask || !normalizedResult || !normalizedRiskSummary) {
+      return;
+    }
+
+    assert.equal(normalizedTask.status, "failed");
+    assert.equal(normalizedResult.status, "failed");
+    assert.equal(normalizedRiskSummary.status, "failed");
+    assert.equal(normalizedTask.risk_level, "info");
+    assert.equal(normalizedResult.risk_level, "info");
+    assert.equal(normalizedRiskSummary.risk_level, "info");
+    assert.equal(normalizedTask.summary, "Static analysis failed during provider selection");
+    assert.equal(normalizedResult.summary, normalizedTask.summary);
+    assert.equal(normalizedRiskSummary.summary, normalizedTask.summary);
+    assert.equal(normalizedResult.details.sample_name, "skills-static-real-scan");
+    assert.deepEqual(normalizedResult.details.rule_hits, []);
+    assert.equal(normalizedRiskSummary.total_findings, 0);
+  } finally {
+    if (previousProvider === undefined) {
+      delete process.env.SKILLS_STATIC_ENGINE_PROVIDER;
+    } else {
+      process.env.SKILLS_STATIC_ENGINE_PROVIDER = previousProvider;
+    }
+  }
+});
+
 test("backend task center returns a created task together with its initial result and risk summary", async (t) => {
   const mainModule = await importIfExists<MainModule>(mainModulePath);
 

@@ -16,6 +16,8 @@
 - Set `SKILLS_STATIC_ENGINE_PROVIDER=semgrep` to enable the minimal real detection path
 - The real path expects `semgrep` CLI to be available on `PATH`
 - The real path uses `engines/skills-static/rules/semgrep-minimal.yml`
+- The real path uses `SKILLS_STATIC_SEMGREP_TIMEOUT_MS` for the minimal provider timeout boundary; the default is `15000`
+- Explicit unsupported `SKILLS_STATIC_ENGINE_PROVIDER` values now fail through a stable internal provider-selection error path instead of silently falling back to `mock`
 - Strong standardized fields currently fixed across providers: `sample_name`, `language`, standardized `rule_hits`, and derived `RiskSummary`
 - `entry_files`, `files_scanned`, `sensitive_capabilities`, `dependency_summary`, and optional extension fields currently stay on a weaker contract until platform reads depend on them more strongly
 - Targeted verification command:

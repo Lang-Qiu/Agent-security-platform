@@ -1150,6 +1150,80 @@ test("task engine service materializes a finished static-analysis shell from a d
   assert.equal(completedArtifacts.riskSummary.updated_at, expectedRiskSummary.updated_at);
 });
 
+test("task engine service materializes a failed static-analysis shell when execution governance prevents a finished backfill", async () => {
+  const serviceModule = await importIfExists<TaskEngineServiceModule>(engineServicePath);
+  const skillsAdapterModule = await importIfExists<AdapterModule>(skillsAdapterPath);
+
+  assert.notEqual(serviceModule, null, "task-engine service module should exist before static-analysis failure shells can be verified");
+  assert.notEqual(skillsAdapterModule, null, "skills-static adapter module should exist before static-analysis failure shells can be verified");
+  assert.ok(serviceModule?.TaskEngineService, "task-engine service should expose a concrete service class");
+  assert.ok(skillsAdapterModule?.SkillsStaticTaskAdapter, "skills-static adapter should expose a concrete adapter class");
+
+  if (!serviceModule?.TaskEngineService || !skillsAdapterModule?.SkillsStaticTaskAdapter) {
+    return;
+  }
+
+  const service = new serviceModule.TaskEngineService({
+    adapters: [new skillsAdapterModule.SkillsStaticTaskAdapter()]
+  });
+
+  const failedArtifacts = service.createFailedStaticAnalysisArtifacts?.(
+    {
+      ...createTask("static_analysis"),
+      task_id: "task_static_analysis_failed",
+      title: "Analyze failed static-analysis task",
+      created_at: "2026-03-26T02:00:00Z",
+      updated_at: "2026-03-26T02:00:00Z"
+    },
+    "2026-03-26T02:05:00Z",
+    "runner"
+  ) as
+    | {
+        task: { status: string; risk_level?: string; summary?: string; updated_at: string };
+        result: { status: string; risk_level: string; summary: string; updated_at: string; details: { sample_name?: string; rule_hits?: unknown[] } };
+        riskSummary: {
+          status: string;
+          risk_level: string;
+          summary: string;
+          total_findings: number;
+          info_count: number;
+          low_count: number;
+          medium_count: number;
+          high_count: number;
+          critical_count: number;
+          updated_at: string;
+        };
+      }
+    | undefined;
+
+  assert.notEqual(failedArtifacts, undefined);
+
+  if (!failedArtifacts) {
+    return;
+  }
+
+  assert.equal(failedArtifacts.task.status, "failed");
+  assert.equal(failedArtifacts.result.status, "failed");
+  assert.equal(failedArtifacts.riskSummary.status, "failed");
+  assert.equal(failedArtifacts.task.risk_level, "info");
+  assert.equal(failedArtifacts.result.risk_level, "info");
+  assert.equal(failedArtifacts.riskSummary.risk_level, "info");
+  assert.equal(failedArtifacts.task.summary, "Static analysis failed during engine execution");
+  assert.equal(failedArtifacts.result.summary, failedArtifacts.task.summary);
+  assert.equal(failedArtifacts.riskSummary.summary, failedArtifacts.task.summary);
+  assert.equal(failedArtifacts.result.details.sample_name, "demo-package");
+  assert.deepEqual(failedArtifacts.result.details.rule_hits, []);
+  assert.equal(failedArtifacts.riskSummary.total_findings, 0);
+  assert.equal(failedArtifacts.riskSummary.info_count, 0);
+  assert.equal(failedArtifacts.riskSummary.low_count, 0);
+  assert.equal(failedArtifacts.riskSummary.medium_count, 0);
+  assert.equal(failedArtifacts.riskSummary.high_count, 0);
+  assert.equal(failedArtifacts.riskSummary.critical_count, 0);
+  assert.equal(failedArtifacts.task.updated_at, "2026-03-26T02:05:00Z");
+  assert.equal(failedArtifacts.result.updated_at, "2026-03-26T02:05:00Z");
+  assert.equal(failedArtifacts.riskSummary.updated_at, "2026-03-26T02:05:00Z");
+});
+
 test("task engine service rejects a misconfigured adapter whose engine type does not match the task contract", async () => {
   const serviceModule = await importIfExists<TaskEngineServiceModule>(engineServicePath);
   const assetAdapterModule = await importIfExists<AdapterModule>(assetAdapterPath);

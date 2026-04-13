@@ -10,6 +10,31 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-04-13 - skills-static minimal runtime governance
+- requirement: add the smallest logging / exception / timeout governance layer for the real `skills_static` execution path without changing the public task-center API or the standardized result contract
+- scope: introduce stable internal execution failure semantics, add the minimal runtime log event seam, enforce a semgrep timeout boundary, and make runtime failures backfill failed artifacts instead of leaking raw provider errors or leaving dangling pending shells
+- tests:
+  - `backend/tests/skills-static-runtime-governance.spec.ts`
+  - `backend/tests/skills-static-core.spec.ts`
+  - `backend/tests/skills-static-semgrep.spec.ts`
+  - `backend/tests/task-engine.service.spec.ts`
+  - `backend/tests/task-center.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- test result: pass for the requirement-focused verification set:
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-runtime-governance.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-core.spec.ts backend/tests/skills-static-semgrep.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "skills-static|static-analysis|failed|timeout|provider" backend/tests/task-engine.service.spec.ts backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "static-analysis|shared response shell|failed|provider" tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `README.md`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+- notes:
+  - explicit unsupported provider values no longer silently fall back to `mock`; they now fail through a stable provider-selection error path
+  - the real semgrep path now has a default timeout boundary and maps timeout / startup / ruleset / target / parse failures into stable internal execution reasons
+  - runtime failures now backfill `failed` platform shells instead of leaving a created task stuck on the initial pending placeholder
+  - raw provider stderr/stdout remains internal-only and does not become part of the shared or public response contract
+
 ## 2026-04-10 - skills-static standardized risk result
 - requirement: standardize the provider-agnostic `skills_static` risk-result semantics without changing the public task-center API or adding another provider
 - scope: strengthen the finished static-analysis contract around `sample_name`, `language`, standardized `rule_hits`, and provider-agnostic `RiskSummary`; align mock output with semgrep at the strong-field layer; and keep `entry_files`, `files_scanned`, `sensitive_capabilities`, `dependency_summary`, and optional extensions on a weaker contract
