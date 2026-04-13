@@ -7,6 +7,19 @@ import type { Task } from "../../../shared/types/task.ts";
 import { runAssetScanTask } from "../src/runtime/run-task.ts";
 
 function createLiveProbeTask(baseUrl: string, probeTargetId: string, probePortHint?: number): Task {
+// 组装一个符合 Task 类型的任务对象，用于传给 runAssetScanTask。
+
+// 关键字段：
+
+// target.target_value：Mock 服务器的地址（如 http://127.0.0.1:54321）。
+
+// parameters.probe_mode: "live"：指示引擎使用实时探针模式。
+
+// parameters.probe_target_id：告诉探针服务只匹配规则文件中该 target_id 对应的探测规则。
+
+// parameters.probe_port_hint（可选）：输出结果中 open_ports 字段会使用这个提示端口（而非实际随机端口），便于上层展示。
+
+
   return {
     task_id: `task_probe_${probeTargetId}`,
     task_type: "asset_scan",
@@ -139,6 +152,10 @@ test("asset-scan runtime detects openclaw gateway in live websocket probe mode",
   const websocketServer = createServer();
 
   websocketServer.on("upgrade", (request, socket) => {
+  // 手动完成 WebSocket 握手
+  // 计算 Sec-WebSocket-Accept 响应头
+  // 返回 HTTP 101 Switching Protocols
+  // 然后监听客户端数据，发送 WebSocket 帧
     const websocketKey = request.headers["sec-websocket-key"];
 
     if (typeof websocketKey !== "string") {
