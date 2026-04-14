@@ -1,0 +1,241 @@
+version: "2.0"
+updated_at: "2026-04-14"
+owner: "asset-scan"
+description: "Fingerprint rule table with weighted signals and evidence trace"
+
+confidence_policy:
+  conservative_mode: true
+  direct_output_threshold: 0.80
+  suspected_threshold: 0.70
+  below_threshold_action: "log_only"
+
+fingerprints:
+  - fingerprint_id: "openclaw-gateway-p0"
+    target_id: "openclaw-gateway"
+    product_name: "OpenClaw Gateway"
+    category: "agent_gateway"
+    priority: "P0"
+    inferred_attributes:
+      service: "openclaw"
+      exposure_type: "websocket_gateway"
+    signals:
+      - signal_id: "sig-port-openclaw"
+        signal_type: "open_port"
+        match_operator: "in"
+        match_value: [18789, 18791, 18793]
+        weight: 0.30
+      - signal_id: "sig-ws-hello-ok"
+        signal_type: "ws_message"
+        match_operator: "contains"
+        match_value: 'type":"hello-ok"'
+        weight: 0.45
+      - signal_id: "sig-ws-presence"
+        signal_type: "ws_message"
+        match_operator: "contains"
+        match_value: "presence"
+        weight: 0.20
+      - signal_id: "sig-negative-generic-gateway"
+        signal_type: "http_body"
+        match_operator: "contains"
+        match_value: "welcome to nginx"
+        weight: -0.20
+    metadata:
+      analyst_note: "WS 握手必须和端口信号组合使用"
+      evidence_source:
+        - source_type: "doc"
+          source_ref: "docs/temp/stage_A_330.md"
+        - source_type: "sample"
+          source_ref: "samples/assets/fingerprint-positive/openclaw-gateway.s001.json"
+
+  - fingerprint_id: "ollama-p0"
+    target_id: "ollama"
+    product_name: "Ollama"
+    category: "llm_api" # 新增：对应 FingerprintCategory 枚举
+    priority: "P0"
+    # 新增：为 Step 5/6 提供资产归类推断数据，根据已知信息，提前写死映射
+    inferred_attributes:
+      model_provider: "local" # 对应 ModelProvider 枚举
+      deployment_type: "self_hosted"
+      service: "ollama" # 对应 ServiceType 枚举
+    signals:
+      - signal_id: "sig-port-ollama"
+        signal_type: "open_port" # 修改：对应 FeatureType 枚举 (原为 port)
+        match_operator: "equals" # 对应 MatchOperator 枚举
+        match_value: "11434"
+        weight: 0.25
+      - signal_id: "sig-path-ollama-tags"
+        signal_type: "api_path" # 修改：对应 FeatureType 枚举 (原为 path)
+        match_operator: "equals"
+        match_value: "/api/tags"
+        weight: 0.20
+      - signal_id: "sig-json-ollama-models"
+        signal_type: "http_body" # 修改：对应 FeatureType 枚举 (原为 body)
+        match_operator: "contains"
+        match_value: '"models"'
+        weight: 0.45
+      - signal_id: "sig-negative-generic"
+        signal_type: "http_body"
+        match_operator: "contains"
+        match_value: "welcome to nginx"
+        weight: -0.20
+    metadata:
+      analyst_note: "仅命中端口不应直接输出" # 原 false_positive_notes
+      evidence_source:
+        - source_type: "doc"
+          source_ref: "docs/temp/stage_A_330.md"
+        - source_type: "sample"
+          source_ref: "samples/assets/fingerprint-positive/ollama.s001.json"
+
+  - fingerprint_id: "langflow-p0"
+    target_id: "langflow"
+    product_name: "LangFlow"
+    category: "agent_framework"
+    priority: "P0"
+    inferred_attributes:
+      framework: "langflow"
+      service: "unknown"
+    signals:
+      - signal_id: "sig-port-langflow"
+        signal_type: "open_port"
+        match_operator: "in"
+        match_value: [3000, 8080, 9090]
+        weight: 0.20
+      - signal_id: "sig-path-langflow-flows"
+        signal_type: "api_path"
+        match_operator: "equals"
+        match_value: "/api/v1/flows"
+        weight: 0.30
+      - signal_id: "sig-json-langflow-flows"
+        signal_type: "json_key"
+        match_operator: "has_key"
+        match_value: "flows"
+        weight: 0.30
+      - signal_id: "sig-json-langflow-flow-id"
+        signal_type: "json_key"
+        match_operator: "has_key"
+        match_value: "flow_id"
+        weight: 0.20
+    metadata:
+      analyst_note: "自定义 API 可能复用 /api/v1/flows 路由"
+      evidence_source:
+        - source_type: "doc"
+          source_ref: "docs/temp/stage_A_330.md"
+        - source_type: "sample"
+          source_ref: "samples/assets/fingerprint-positive/langflow.s001.json"
+
+  - fingerprint_id: "autogpt-p0"
+    target_id: "autogpt"
+    product_name: "AutoGPT"
+    category: "agent_application" # 新增：对应 FingerprintCategory
+    priority: "P0"
+    inferred_attributes:
+      framework: "autogpt" # 对应 FrameworkType 枚举
+      exposure_type: "public_api"
+      service: "unknown"
+    signals:
+      - signal_id: "sig-port-autogpt"
+        signal_type: "open_port" # 修改为标准 FeatureType
+        match_operator: "equals"
+        match_value: "8000"
+        weight: 0.20
+      - signal_id: "sig-path-autogpt-status"
+        signal_type: "api_path" # 修改为标准 FeatureType
+        match_operator: "equals"
+        match_value: "/api/agent/status"
+        weight: 0.35
+      - signal_id: "sig-json-autogpt-agent-id"
+        signal_type: "json_key" # 修改：使用更精确的 json_key
+        match_operator: "has_key" # 修改：使用新增的 MatchOperator
+        match_value: "agent_id"
+        weight: 0.45
+    metadata:
+      analyst_note: "仅状态码 200 不能作为强特征" # 原 false_positive_notes
+      evidence_source:
+        - source_type: "doc"
+          source_ref: "docs/temp/stage_A_330.md"
+        - source_type: "sample"
+          source_ref: "samples/assets/fingerprint-positive/autogpt.s001.json"
+
+  - fingerprint_id: "mcp-server-p1"
+    target_id: "mcp-server"
+    product_name: "MCP Server (Generic)"
+    category: "mcp_server"
+    priority: "P1"
+    inferred_attributes:
+      service: "mcp"
+      protocol: "jsonrpc"
+    signals:
+      - signal_id: "sig-jsonrpc-2"
+        signal_type: "http_body"
+        match_operator: "contains"
+        match_value: '"jsonrpc":"2.0"'
+        weight: 0.60
+      - signal_id: "sig-jsonrpc-method"
+        signal_type: "json_key"
+        match_operator: "has_key"
+        match_value: "method"
+        weight: 0.20
+    confidence_override: # 若无该字段，直接用最上方默认的0.8和0.7
+      high_threshold: 0.85
+      medium_threshold: 0.70
+    metadata:
+      analyst_note: "普通 JSON-RPC 服务可能误命中"
+      evidence_source:
+        - source_type: "doc"
+          source_ref: "docs/temp/stage_A_330.md"
+
+  - fingerprint_id: "dify-p1"
+    target_id: "dify"
+    product_name: "Dify"
+    category: "agent_application"
+    priority: "P1"
+    inferred_attributes:
+      framework: "dify"
+      service: "unknown"
+    signals:
+      - signal_id: "sig-port-dify"
+        signal_type: "open_port"
+        match_operator: "equals"
+        match_value: 5000
+        weight: 0.30
+      - signal_id: "sig-path-dify-api"
+        signal_type: "api_path"
+        match_operator: "contains"
+        match_value: "/api"
+        weight: 0.20
+    confidence_override:
+      high_threshold: 0.85
+      medium_threshold: 0.70
+    metadata:
+      analyst_note: "通用 /api 路径特异性较弱"
+      evidence_source:
+        - source_type: "doc"
+          source_ref: "docs/temp/stage_A_330.md"
+
+  - fingerprint_id: "anythingllm-p1"
+    target_id: "anythingllm"
+    product_name: "AnythingLLM"
+    category: "agent_application"
+    priority: "P1"
+    inferred_attributes:
+      framework: "anythingllm"
+      service: "unknown"
+    signals:
+      - signal_id: "sig-port-anythingllm"
+        signal_type: "open_port"
+        match_operator: "equals"
+        match_value: 3001
+        weight: 0.30
+      - signal_id: "sig-path-anythingllm-api"
+        signal_type: "api_path"
+        match_operator: "contains"
+        match_value: "/api"
+        weight: 0.20
+    confidence_override:
+      high_threshold: 0.85
+      medium_threshold: 0.70
+    metadata:
+      analyst_note: "需结合后续样本补强特征"
+      evidence_source:
+        - source_type: "doc"
+          source_ref: "docs/temp/stage_A_330.md"
