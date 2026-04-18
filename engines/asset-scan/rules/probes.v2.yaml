@@ -108,6 +108,9 @@ probes:
       - feature_type: "json_key"
         extract_key: "models"
         extract_value: ""
+      - feature_type: "api_path"
+        extract_key: "equals"
+        extract_value: "/api/tags"
 
   - probe_id: "langflow_flows_api"
     layer: "L2"
@@ -131,6 +134,9 @@ probes:
       - feature_type: "json_key"
         extract_key: "flow_id"
         extract_value: ""
+      - feature_type: "api_path"
+        extract_key: "equals"
+        extract_value: "/api/v1/flows"
 
   - probe_id: "autogpt_status_api"
     layer: "L2"
@@ -151,3 +157,6 @@ probes:
       - feature_type: "json_key"
         extract_key: "agent_id"
         extract_value: ""
+      - feature_type: "api_path"
+        extract_key: "equals"
+        extract_value: "/api/agent/status"

@@ -1,299 +1,98 @@
-import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
 import { parse } from "yaml";
+import { readFileSync } from "node:fs";
 
-interface ProbeRule {
-  target_id?: string;        // 目标框架/产品标识（如 "ollama"）
-  enabled?: boolean;         // 是否启用该规则
-  request?: {                // 请求参数
-    protocol?: string;       // "http" 或 "ws"
-    method?: string;         // HTTP 方法，如 "GET"、"HEAD"
-    path?: string;           // 请求路径（如 "/api/tags"）
-    payload?: string;        // WebSocket 握手后发送的首条消息
-    timeout_ms?: number;     // 超时时间（毫秒）
-  };
-  fallback?: {               // 降级策略
-    action?: string;         // 如 "degrade_to_get"
-  };
-}
+// 引入公共契约
+import type { ScanContext, FeatureData } from "../../../../shared/types/asset-scan.ts";
 
-interface ProbeCollectionOptions {
-  portHint?: number;
-}
+// 引入协议处理相关的策略接口与具体实现
+import type { IProtocolHandler } from "../probes/protocol-handler.interface.ts";
+import { HttpHandler } from "../probes/http.handler.ts";
+import { WsHandler } from "../probes/ws.handler.ts";
+import { TcpHandler } from "../probes/tcp.handler.ts";
 
-interface ProbeRulesDocument {
-  probes?: ProbeRule[];
-}
+export class ProbeService {
+    private probeRules: any;
+    // 使用 Record 存储协议类型与处理策略的映射关系
+    private handlers: Record<string, IProtocolHandler>;
 
-export interface ProbeObservation {
-  targetId: string;                     // 规则命中的 target_id
-  requestSummary: string;               // 如 "HEAD http://127.0.0.1:11434/api/tags"
-  responseStatus?: number;              // HTTP 状态码（如 200）
-  responseHeaders?: Record<string, unknown>;
-  responseBodyExcerpt?: string;         // 响应体片段（HEAD 请求为空）
-  source?: string;                      // 实际请求的 URL
-  collectedAt: string;                  // ISO 时间戳
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isString(value: unknown): value is string {
-  return typeof value === "string";
-}
-
-function isNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
-function createLogicalEndpoint(baseUrl: string, path: string, portHint?: number): string {
-  const logicalUrl = new URL(path, baseUrl);
-
-  if (isNumber(portHint) && portHint > 0) {
-    logicalUrl.port = String(portHint);
-  }
-
-  return logicalUrl.toString();
-}
-
-function normalizeProbeRulesDocument(value: unknown): ProbeRulesDocument {
-  if (!isPlainObject(value) || !Array.isArray(value.probes)) {
-    return { probes: [] };
-  }
-
-  const probes = value.probes
-    .filter((probe): probe is Record<string, unknown> => isPlainObject(probe))
-    .map((probe) => {
-      const normalizedRule: ProbeRule = {
-        target_id: isString(probe.target_id) ? probe.target_id : undefined,
-        enabled: typeof probe.enabled === "boolean" ? probe.enabled : true
-      };
-
-      if (isPlainObject(probe.request)) {
-        normalizedRule.request = {
-          protocol: isString(probe.request.protocol) ? probe.request.protocol : undefined,
-          method: isString(probe.request.method) ? probe.request.method : undefined,
-          path: isString(probe.request.path) ? probe.request.path : undefined,
-          payload: isString(probe.request.payload) ? probe.request.payload : undefined,
-          timeout_ms: isNumber(probe.request.timeout_ms) ? probe.request.timeout_ms : undefined
+    constructor(rulesPath: string) {
+        // 解析 YAML 规则配置
+        const fileContent = readFileSync(rulesPath, "utf8");
+        this.probeRules = parse(fileContent);
+        
+        // 注册具体协议的探测处理器
+        this.handlers = {
+            "http": new HttpHandler(),
+            "ws": new WsHandler(),
+            "tcp": new TcpHandler()
         };
-      }
+    }
 
-      if (isPlainObject(probe.fallback)) {
-        normalizedRule.fallback = {
-          action: isString(probe.fallback.action) ? probe.fallback.action : undefined
-        };
-      }
+    /**
+     * 执行指纹特征采集流水线 (Step 4)
+     * @param context 包含目标 IP、域名和开放端口等前置信息的上下文
+     * @returns 结构化的特征数据 FeatureData
+     */
+    public async execute(context: ScanContext): Promise<FeatureData> {
+        const featureData: FeatureData = { features: [], endpoints: [], probe_hits: [] };
+        
+        // 获取所有启用的探针规则
+        const activeProbes = this.probeRules.probes?.filter((p: any) => p.enabled) || [];
 
-      return normalizedRule;
-    });
-
-  return { probes };
-}
-
-export class EngineAssetProbeService {
-  workspaceRoot: string;
-  probesFilePath: string;
-  cachedRulesDocument?: ProbeRulesDocument;
-
-  constructor(options?: { workspaceRoot?: string; probesFilePath?: string }) {
-    const currentFileDir = dirname(fileURLToPath(import.meta.url));
-    this.workspaceRoot = options?.workspaceRoot ?? resolve(currentFileDir, "../../../..");
-    this.probesFilePath = options?.probesFilePath ?? resolve(this.workspaceRoot, "engines/asset-scan/rules/probes.v1.yaml");
-  }
-
-  async collectObservation(targetId: string, baseUrl: string, options?: ProbeCollectionOptions): Promise<ProbeObservation | null> {
-    // 给定目标标识符和基础 URL，尝试所有匹配的探测规则，返回第一个成功的观察结果。
-    const rules = this.getRulesDocument();
-    const candidates = (rules.probes ?? []).filter((probe) => {
-//       仅保留与传入 targetId 匹配、协议为 http 或 ws、且 HTTP 方法为 GET 或 HEAD 的规则。
-//       要求必须有请求路径。
-      const method = probe.request?.method?.toUpperCase();
-      const protocol = probe.request?.protocol;
-
-      return (
-        probe.enabled !== false &&
-        probe.target_id === targetId &&
-        (protocol === "http" || protocol === "ws") &&
-        (protocol === "ws" || method === "GET" || method === "HEAD") &&
-        isString(probe.request?.path)
-      );
-    });
-
-    for (const probe of candidates) {
-      const path = probe.request?.path as string;
-      const timeoutMs = probe.request?.timeout_ms ?? 1200;
-      const actualEndpoint = new URL(path, baseUrl).toString();
-      const logicalEndpoint = createLogicalEndpoint(baseUrl, path, options?.portHint);
-
-      if (probe.request?.protocol === "ws") {
-        const websocketAttempt = await this.requestWebSocketEndpoint(actualEndpoint, probe.request.payload, timeoutMs);
-
-        if (websocketAttempt) {
-          return {
-            targetId,
-            requestSummary: `WS ${logicalEndpoint}`,
-            responseStatus: websocketAttempt.status,
-            responseHeaders: websocketAttempt.headers,
-            responseBodyExcerpt: websocketAttempt.body,
-            source: logicalEndpoint,
-            collectedAt: new Date().toISOString()
-          };
+        // 记录探针命中状态的追踪器
+        // 作用：避免同一个探针在多个端口执行时产生多条相同的命中记录
+        const probeHitTracker = new Map<string, boolean>();
+        for (const probe of activeProbes) {
+            probeHitTracker.set(probe.probe_id, false);
         }
 
-        continue;
-      }
+        // 遍历所有在 Step 2 发现的开放端口
+        for (const port of context.discoveredPorts) {
+            // 获取 Step 3 识别出的基础协议 (如果未识别，默认为 http)
+            const baseProtocol = context.identifiedProtocols[port] || "http";
 
-      const method = probe.request?.method?.toUpperCase() as "GET" | "HEAD";
+            for (const probe of activeProbes) {
+                // 端口约束检查：如果探针规则限制了特定端口，且当前端口不匹配，则跳过
+                if (probe.request?.ports && Array.isArray(probe.request.ports) && !probe.request.ports.includes(port)) {
+                    continue;
+                }
 
-      const firstAttempt = await this.requestEndpoint(actualEndpoint, method, timeoutMs);
+                // 获取探针期望的协议并匹配对应的处理器
+                const probeProtocol = probe.request?.protocol || "http";
+                const handler = this.handlers[probeProtocol];
+                
+                if (!handler) {
+                    console.warn(`[ProbeService] 未知或未注册的探针协议处理器: ${probeProtocol}`);
+                    continue;
+                }
 
-      if (firstAttempt) {
-        return {
-          targetId,
-          requestSummary: `${method} ${logicalEndpoint}`,
-          responseStatus: firstAttempt.status,
-          responseHeaders: firstAttempt.headers,
-          responseBodyExcerpt: firstAttempt.body,
-          source: logicalEndpoint,
-          collectedAt: new Date().toISOString()
-        };
-      }
+                // 将发包与解析动作委托给具体的 Handler 执行
+                // Handler 内部会决定如何利用 IP、域名和 baseProtocol 构建真实的物理请求
+                const result = await handler.execute(context.ip, context.domain, port, baseProtocol, probe);
 
-      if (method === "HEAD" && probe.fallback?.action === "degrade_to_get") {
-        const fallbackAttempt = await this.requestEndpoint(actualEndpoint, "GET", timeoutMs);
-
-        if (fallbackAttempt) {
-          return {
-            targetId,
-            requestSummary: `GET ${logicalEndpoint}`,
-            responseStatus: fallbackAttempt.status,
-            responseHeaders: fallbackAttempt.headers,
-            responseBodyExcerpt: fallbackAttempt.body,
-            source: logicalEndpoint,
-            collectedAt: new Date().toISOString()
-          };
+                // 汇总特征和端点信息
+                if (result.matched) {
+                    featureData.features.push(...result.features);
+                    
+                    if (result.endpoints && result.endpoints.length > 0) {
+                        featureData.endpoints.push(...result.endpoints);
+                    }
+                    
+                    // 将该探针标记为命中
+                    probeHitTracker.set(probe.probe_id, true);
+                }
+            }
         }
-      }
+
+        // 格式化组装所有的探针执行情况，输出给后续流水线
+        for (const [probeId, matched] of probeHitTracker.entries()) {
+            featureData.probe_hits.push({ 
+                probe_id: probeId, 
+                matched: matched, 
+                score: matched ? 1.0 : 0.0 
+            });
+        }
+
+        return featureData;
     }
-
-    return null;
-  }
-
-  async requestEndpoint(
-    endpoint: string,
-    method: "GET" | "HEAD",
-    timeoutMs: number
-  ): Promise<{ status: number; headers: Record<string, string>; body: string } | null> {
-    const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 1200;
-    const abortController = new AbortController();
-    const timer = setTimeout(() => abortController.abort(), timeout);
-
-    try {
-      const response = await fetch(endpoint, {
-        method,
-        signal: abortController.signal
-      });
-
-      if (response.status < 200 || response.status >= 300) {
-        return null;
-      }
-
-      const body = method === "HEAD" ? "" : await response.text();
-      const headers = Object.fromEntries(response.headers.entries());
-
-      return {
-        status: response.status,
-        headers,
-        body
-      };
-    } catch {
-      return null;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
-  async requestWebSocketEndpoint(
-    endpoint: string,
-    payload: string | undefined,
-    timeoutMs: number
-  ): Promise<{ status: number; headers: Record<string, string>; body: string } | null> {
-    const websocketConstructor = (globalThis as unknown as {
-      WebSocket?: new (url: string) => {
-        addEventListener: (type: string, listener: (event: { data?: unknown }) => void, options?: { once?: boolean }) => void;
-        send: (data: string) => void;
-        close: () => void;
-      };
-    }).WebSocket;
-
-    if (!websocketConstructor) {
-      return null;
-    }
-
-    const timeout = Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 1500;
-
-    return new Promise((resolvePromise) => {
-      const websocket = new websocketConstructor(endpoint);
-      const timer = setTimeout(() => {
-        websocket.close();
-        resolvePromise(null);
-      }, timeout);
-
-      const finalize = (result: { status: number; headers: Record<string, string>; body: string } | null) => {
-        clearTimeout(timer);
-        resolvePromise(result);
-      };
-
-      websocket.addEventListener(
-        "open",
-        () => {
-          if (payload) {
-            websocket.send(payload);
-          }
-        },
-        { once: true }
-      );
-
-      websocket.addEventListener(
-        "message",
-        (event) => {
-          websocket.close();
-          finalize({
-            status: 101,
-            headers: {
-              upgrade: "websocket"
-            },
-            body: typeof event.data === "string" ? event.data : String(event.data ?? "")
-          });
-        },
-        { once: true }
-      );
-
-      websocket.addEventListener(
-        "error",
-        () => {
-          websocket.close();
-          finalize(null);
-        },
-        { once: true }
-      );
-    });
-  }
-
-  getRulesDocument(): ProbeRulesDocument {
-    if (this.cachedRulesDocument) {
-      return this.cachedRulesDocument;
-    }
-
-    const raw = readFileSync(this.probesFilePath, "utf8");
-    const parsed = parse(raw) as unknown;
-
-    this.cachedRulesDocument = normalizeProbeRulesDocument(parsed);
-
-    return this.cachedRulesDocument;
-  }
 }

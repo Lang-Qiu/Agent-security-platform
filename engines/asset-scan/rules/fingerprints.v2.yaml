@@ -69,9 +69,9 @@ fingerprints:
         match_value: "/api/tags"
         weight: 0.20
       - signal_id: "sig-json-ollama-models"
-        signal_type: "http_body" # 修改：对应 FeatureType 枚举 (原为 body)
-        match_operator: "contains"
-        match_value: '"models"'
+        signal_type: "json_key"
+        match_operator: "has_key"
+        match_value: "models"
         weight: 0.45
       - signal_id: "sig-negative-generic"
         signal_type: "http_body"
