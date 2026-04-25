@@ -1,5 +1,6 @@
 import { readFileSync } from "fs";
 import { resolve } from "path";
+import { fileURLToPath } from "url";
 
 import { parse } from "yaml";
 
@@ -99,7 +100,7 @@ export class AssetProbeService {
   cachedRulesDocument?: ProbeRulesDocument;
 
   constructor(options?: { workspaceRoot?: string; probesFilePath?: string }) {
-    this.workspaceRoot = options?.workspaceRoot ?? resolve(new URL("../../../../..", import.meta.url).pathname);
+    this.workspaceRoot = options?.workspaceRoot ?? resolve(fileURLToPath(new URL("../../../../..", import.meta.url)));
     this.probesFilePath = options?.probesFilePath ?? resolve(this.workspaceRoot, "engines/asset-scan/rules/probes.v1.yaml");
   }
 

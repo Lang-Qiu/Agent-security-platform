@@ -84,7 +84,24 @@ const RESULT_FIXTURES: Record<string, BaseResult | Record<string, unknown>> = {
       sample_name: "mail-routing",
       language: "TypeScript",
       files_scanned: 14,
-      rule_hits: [{ id: "RULE-001" }, { id: "RULE-002" }]
+      rule_hits: [
+        {
+          rule_id: "RULE-001",
+          severity: "medium",
+          message: "Untrusted input reaches template rendering",
+          file_path: "src/render.ts",
+          line_start: 21,
+          line_end: 21
+        },
+        {
+          rule_id: "RULE-002",
+          severity: "low",
+          message: "Potential command argument injection",
+          file_path: "src/exec.ts",
+          line_start: 44,
+          line_end: 45
+        }
+      ]
     },
     created_at: "2026-03-26T08:45:00Z",
     updated_at: "2026-03-26T08:57:00Z"
