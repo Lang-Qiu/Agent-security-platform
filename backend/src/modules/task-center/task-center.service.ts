@@ -5,6 +5,15 @@ import { DomainError } from "../../common/errors/domain-error.ts";
 import type { CreateTaskRequest } from "./dto/create-task.request.ts";
 import type { TaskEngineAdapter } from "./adapters/engine-adapter.ts";
 import type { TaskRepository, StoredTaskRecord } from "./repositories/task.repository.ts";
+import { normalizeSkillsStaticEngineOutput } from "./skills-static/skills-static-result-normalizer.ts";
+import {
+  SkillsStaticExecutionError,
+  type SkillsStaticExecutionPhase
+} from "./skills-static/skills-static-execution-error.ts";
+import {
+  defaultSkillsStaticRuntimeLogSink,
+  type SkillsStaticRuntimeLogSink
+} from "./skills-static/skills-static-runtime-log.ts";
 import { DEFAULT_PENDING_TASK_SUMMARY, TaskEngineService } from "./task-engine.service.ts";
 
 export class TaskCenterService {
@@ -12,6 +21,7 @@ export class TaskCenterService {
   taskEngineService: TaskEngineService;
   now: () => string;
   nextTaskId: () => string;
+  logSkillsStaticEvent: SkillsStaticRuntimeLogSink;
 
   constructor(options: {
     repository: TaskRepository;
@@ -19,6 +29,7 @@ export class TaskCenterService {
     taskEngineService?: TaskEngineService;
     now?: () => string;
     nextTaskId?: () => string;
+    logSkillsStaticEvent?: SkillsStaticRuntimeLogSink;
   }) {
     this.repository = options.repository;
     this.taskEngineService =
@@ -30,6 +41,7 @@ export class TaskCenterService {
     this.nextTaskId =
       options.nextTaskId ??
       (() => `task_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`);
+    this.logSkillsStaticEvent = options.logSkillsStaticEvent ?? defaultSkillsStaticRuntimeLogSink;
   }
 
   async createTask(input: CreateTaskRequest): Promise<Task> {
@@ -65,6 +77,49 @@ export class TaskCenterService {
       riskSummary
     });
 
+    if (this.taskEngineService.hasRegisteredClient(task)) {
+      try {
+        const dispatchReceipt = await this.taskEngineService.dispatchTask(task);
+
+        if (task.task_type === "static_analysis" && dispatchReceipt.engine_type === "skills_static") {
+          try {
+            const normalizedResultDetails = normalizeSkillsStaticEngineOutput(dispatchReceipt.mock_result ?? {}, task);
+
+            try {
+              this.repository.save(
+                this.taskEngineService.createCompletedStaticAnalysisArtifacts(task, normalizedResultDetails, this.now())
+              );
+            } catch (error) {
+              await this.handleSkillsStaticFailure(task, dispatchReceipt.provider ?? "mock", "deriver", "derivation_failed", error);
+              return task;
+            }
+          } catch (error) {
+            if (error instanceof DomainError && error.code === "SKILLS_STATIC_INVALID_ENGINE_OUTPUT") {
+              await this.handleSkillsStaticFailure(
+                task,
+                dispatchReceipt.provider ?? "mock",
+                "normalizer",
+                "normalization_failed",
+                error
+              );
+              return task;
+            }
+
+            throw error;
+          }
+        }
+      } catch (error) {
+        if (error instanceof SkillsStaticExecutionError && task.task_type === "static_analysis") {
+          this.repository.save(
+            this.taskEngineService.createFailedStaticAnalysisArtifacts(task, this.now(), error.phase)
+          );
+          return task;
+        }
+
+        throw error;
+      }
+    }
+
     return task;
   }
 
@@ -92,5 +147,26 @@ export class TaskCenterService {
     }
 
     return record;
+  }
+
+  async handleSkillsStaticFailure(
+    task: Task,
+    provider: string,
+    phase: SkillsStaticExecutionPhase,
+    reason: "normalization_failed" | "derivation_failed",
+    error: unknown
+  ): Promise<void> {
+    await this.logSkillsStaticEvent({
+      event: "scan_failed",
+      task_id: task.task_id,
+      engine_type: "skills_static",
+      provider,
+      target_ref: task.target.display_name ?? task.target.target_value,
+      phase,
+      reason,
+      error_summary: error instanceof Error ? error.message : String(error)
+    });
+
+    this.repository.save(this.taskEngineService.createFailedStaticAnalysisArtifacts(task, this.now(), phase));
   }
 }

@@ -1,5 +1,28 @@
 # agent-security-platform
 
+## Backend Internal Engine Wiring
+
+- `static_analysis` still enters through `POST /api/tasks`
+- backend now keeps `task_type -> adapter` resolution and `engine_type -> engine client` resolution as two separate internal layers
+- `SkillsStaticEngineClient` is the current internal bridge for routing `skills_static` dispatch tickets without introducing a new public route
+- `skills_static` now supports a deterministic mock-analysis closed loop that backfills the existing `Task`, `BaseResult`, and `RiskSummary` records after dispatch
+- `skills_static` also supports one minimal real-tool path through local `semgrep` CLI when `SKILLS_STATIC_ENGINE_PROVIDER=semgrep`
+- both providers now converge on the same standardized risk-result core before the finished `static_analysis` record is exposed to the platform read APIs
+- operators still read the closed-loop state through the existing `GET /api/tasks/:taskId`, `GET /api/tasks/:taskId/result`, and `GET /api/tasks/:taskId/risk-summary` routes
+
+## Skills Static Real Provider
+
+- Default provider remains `mock`
+- Set `SKILLS_STATIC_ENGINE_PROVIDER=semgrep` to enable the minimal real detection path
+- The real path expects `semgrep` CLI to be available on `PATH`
+- The real path uses `engines/skills-static/rules/semgrep-minimal.yml`
+- The real path uses `SKILLS_STATIC_SEMGREP_TIMEOUT_MS` for the minimal provider timeout boundary; the default is `15000`
+- Explicit unsupported `SKILLS_STATIC_ENGINE_PROVIDER` values now fail through a stable internal provider-selection error path instead of silently falling back to `mock`
+- Strong standardized fields currently fixed across providers: `sample_name`, `language`, standardized `rule_hits`, and derived `RiskSummary`
+- `entry_files`, `files_scanned`, `sensitive_capabilities`, `dependency_summary`, and optional extension fields currently stay on a weaker contract until platform reads depend on them more strongly
+- Targeted verification command:
+  `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-semgrep.spec.ts`
+
 面向智能体（Agent）安全检测与管理的平台型仓库，用于统一承载资产测绘、Skills 静态安全检测、动态沙箱监控与越权阻断，以及平台化展示、任务编排和结果汇总能力。
 
 当前仓库阶段目标是先完成第一版 monorepo 工程骨架与初始化文档，确保团队可以在统一目录约束下并行推进前端、后端与三个检测引擎。

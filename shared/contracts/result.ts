@@ -1,8 +1,33 @@
 import { TASK_TYPE_TO_ENGINE_TYPE } from "../constants/task-type.ts";
-import type { BaseResult, ResultDetails } from "../types/result.ts";
+import type { BaseResult, ResultDetails, StaticAnalysisResultDetails } from "../types/result.ts";
 import { isPlainObject, isString } from "../utils/guards.ts";
 import { normalizeResultDetails } from "../utils/normalizers.ts";
 import { isRiskLevel, isTaskStatus, isTaskType } from "./task.ts";
+
+function satisfiesFinishedStaticAnalysisContract(details: StaticAnalysisResultDetails): boolean {
+  if (!isString(details.sample_name) || !isString(details.language) || !Array.isArray(details.rule_hits)) {
+    return false;
+  }
+
+  return details.rule_hits.every((ruleHit) => {
+    if (!isString(ruleHit.message) || !isString(ruleHit.file_path)) {
+      return false;
+    }
+
+    const hasLineStart = typeof ruleHit.line_start === "number";
+    const hasLineEnd = typeof ruleHit.line_end === "number";
+
+    if (hasLineStart !== hasLineEnd) {
+      return false;
+    }
+
+    if (hasLineStart && hasLineEnd && ruleHit.line_start > ruleHit.line_end) {
+      return false;
+    }
+
+    return true;
+  });
+}
 
 export function normalizeBaseResult(value: unknown): BaseResult<ResultDetails> | null {
   if (
@@ -30,6 +55,14 @@ export function normalizeBaseResult(value: unknown): BaseResult<ResultDetails> |
   const normalizedDetails = normalizeResultDetails(value.task_type, value.details);
 
   if (!normalizedDetails) {
+    return null;
+  }
+
+  if (
+    value.task_type === "static_analysis" &&
+    value.status === "finished" &&
+    !satisfiesFinishedStaticAnalysisContract(normalizedDetails as StaticAnalysisResultDetails)
+  ) {
     return null;
   }
 

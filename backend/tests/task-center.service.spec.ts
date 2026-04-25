@@ -12,6 +12,14 @@ type ServiceModule = {
     adapters: unknown[];
     now?: () => string;
     nextTaskId?: () => string;
+    logSkillsStaticEvent?: (event: unknown) => void | Promise<void>;
+    taskEngineService?: {
+      createInitialArtifacts: (task: unknown) => Promise<unknown>;
+      hasRegisteredClient: (task: unknown) => boolean;
+      dispatchTask: (task: unknown) => Promise<unknown>;
+      createCompletedStaticAnalysisArtifacts?: (task: unknown, mockResult: unknown, updatedAt: string) => unknown;
+      createFailedStaticAnalysisArtifacts?: (task: unknown, updatedAt: string, phase: string) => unknown;
+    };
   }) => {
     createTask: (input: unknown) => Promise<unknown>;
     getTaskById: (taskId: string) => unknown;
@@ -35,6 +43,31 @@ type ErrorModule = {
   DomainError?: new (message: string, code: string, statusCode: number) => Error & {
     code: string;
     statusCode: number;
+  };
+  SkillsStaticExecutionError?: new (options: {
+    provider: string;
+    phase: string;
+    reason: string;
+    detail?: string;
+  }) => Error & {
+    code: string;
+    phase: string;
+    reason: string;
+    provider: string;
+  };
+};
+
+type SkillsStaticExecutionErrorModule = {
+  SkillsStaticExecutionError?: new (options: {
+    provider: string;
+    phase: string;
+    reason: string;
+    detail?: string;
+  }) => Error & {
+    code: string;
+    phase: string;
+    reason: string;
+    provider: string;
   };
 };
 
@@ -235,4 +268,955 @@ test("task center service raises a domain not-found error for an unknown task id
       return true;
     }
   );
+});
+
+test("task center service dispatches static-analysis tasks after saving their initial artifacts", async () => {
+  const serviceModule = await importIfExists<ServiceModule>(modulePath);
+
+  assert.notEqual(serviceModule, null, "task-center service module should exist before dispatch ordering can be verified");
+  assert.ok(serviceModule?.TaskCenterService, "task-center service should expose a concrete service class");
+
+  if (!serviceModule?.TaskCenterService) {
+    return;
+  }
+
+  const events: string[] = [];
+  const repository = {
+    save(record: {
+      task: { task_id: string };
+      result: unknown;
+      riskSummary: unknown;
+    }) {
+      events.push(`save:${record.task.task_id}`);
+      return record;
+    },
+    list() {
+      return [];
+    },
+    findById() {
+      return null;
+    }
+  };
+
+  const taskEngineService = {
+    async createInitialArtifacts(task: {
+      task_id: string;
+      task_type: string;
+      engine_type: string;
+    }) {
+      events.push(`createInitialArtifacts:${task.task_id}`);
+      return {
+        result: {
+          task_id: task.task_id,
+          task_type: task.task_type,
+          engine_type: task.engine_type,
+          status: "pending",
+          risk_level: "info",
+          summary: "Task accepted and waiting for engine dispatch",
+          details: {
+            sample_name: "demo-email-skill",
+            rule_hits: []
+          },
+          created_at: "2026-03-26T01:00:00Z",
+          updated_at: "2026-03-26T01:00:00Z"
+        },
+        riskSummary: {
+          task_id: task.task_id,
+          task_type: task.task_type,
+          status: "pending",
+          risk_level: "info",
+          summary: "Task accepted and waiting for engine dispatch",
+          total_findings: 0,
+          info_count: 0,
+          low_count: 0,
+          medium_count: 0,
+          high_count: 0,
+          critical_count: 0,
+          updated_at: "2026-03-26T01:00:00Z"
+        }
+      };
+    },
+    hasRegisteredClient() {
+      return true;
+    },
+    async dispatchTask(task: { task_id: string; task_type: string; engine_type: string }) {
+      events.push(`dispatchTask:${task.task_id}:${task.task_type}:${task.engine_type}`);
+      return {
+        accepted: true
+      };
+    }
+  };
+
+  const service = new serviceModule.TaskCenterService({
+    repository,
+    adapters: [],
+    taskEngineService,
+    now: () => "2026-03-26T01:00:00Z",
+    nextTaskId: () => "task_static_dispatch_001"
+  });
+
+  const createdTask = await service.createTask({
+    task_type: "static_analysis",
+    title: "Analyze demo skill",
+    target: {
+      target_type: "skill_package",
+      target_value: "samples/skills/demo-email-skill",
+      display_name: "demo-email-skill"
+    },
+    parameters: {
+      language: "typescript"
+    }
+  }) as {
+    task_id: string;
+    task_type: string;
+    engine_type: string;
+  };
+
+  assert.equal(createdTask.task_id, "task_static_dispatch_001");
+  assert.deepEqual(events, [
+    "createInitialArtifacts:task_static_dispatch_001",
+    "save:task_static_dispatch_001",
+    "dispatchTask:task_static_dispatch_001:static_analysis:skills_static"
+  ]);
+});
+
+test("task center service backfills static-analysis artifacts when the engine client returns a mock result", async () => {
+  const serviceModule = await importIfExists<ServiceModule>(modulePath);
+
+  assert.notEqual(serviceModule, null, "task-center service module should exist before static-analysis backfill behavior can be verified");
+  assert.ok(serviceModule?.TaskCenterService, "task-center service should expose a concrete service class");
+
+  if (!serviceModule?.TaskCenterService) {
+    return;
+  }
+
+  const events: string[] = [];
+  const savedStatuses: string[] = [];
+  const repository = {
+    save(record: {
+      task: { task_id: string; status: string };
+      result: { status: string };
+      riskSummary: { status: string };
+    }) {
+      events.push(`save:${record.task.task_id}:${record.task.status}`);
+      savedStatuses.push(`${record.task.status}/${record.result.status}/${record.riskSummary.status}`);
+      return record;
+    },
+    list() {
+      return [];
+    },
+    findById() {
+      return null;
+    }
+  };
+
+  const taskEngineService = {
+    async createInitialArtifacts(task: {
+      task_id: string;
+      task_type: string;
+      engine_type: string;
+    }) {
+      events.push(`createInitialArtifacts:${task.task_id}`);
+      return {
+        result: {
+          task_id: task.task_id,
+          task_type: task.task_type,
+          engine_type: task.engine_type,
+          status: "pending",
+          risk_level: "info",
+          summary: "Task accepted and waiting for engine dispatch",
+          details: {
+            sample_name: "demo-email-skill",
+            rule_hits: []
+          },
+          created_at: "2026-03-26T01:00:00Z",
+          updated_at: "2026-03-26T01:00:00Z"
+        },
+        riskSummary: {
+          task_id: task.task_id,
+          task_type: task.task_type,
+          status: "pending",
+          risk_level: "info",
+          summary: "Task accepted and waiting for engine dispatch",
+          total_findings: 0,
+          info_count: 0,
+          low_count: 0,
+          medium_count: 0,
+          high_count: 0,
+          critical_count: 0,
+          updated_at: "2026-03-26T01:00:00Z"
+        }
+      };
+    },
+    hasRegisteredClient() {
+      return true;
+    },
+    async dispatchTask(task: { task_id: string; task_type: string; engine_type: string }) {
+      events.push(`dispatchTask:${task.task_id}:${task.task_type}:${task.engine_type}`);
+      return {
+        accepted: true,
+        engine_type: "skills_static",
+        endpoint: "internal://skills-static",
+        mock_result: {
+          sample_name: "demo-email-skill",
+          language: "typescript",
+          entry_files: ["src/commands.ts", "src/network.ts"],
+          files_scanned: 2,
+          rule_hits: [
+            {
+              rule_id: "command_execution.shell_exec",
+              severity: "high",
+              message: "Potential command execution sink reached",
+              file_path: "src/commands.ts",
+              line_start: 4,
+              line_end: 4
+            },
+            {
+              rule_id: "network_access.outbound_fetch",
+              severity: "medium",
+              message: "Outbound network request lacks destination allowlist",
+              file_path: "src/network.ts",
+              line_start: 2,
+              line_end: 2
+            }
+          ],
+          sensitive_capabilities: ["command_execution", "network_access"],
+          dependency_summary: {
+            direct_dependency_count: 2,
+            flagged_dependency_count: 1
+          }
+        }
+      };
+    },
+    createCompletedStaticAnalysisArtifacts(task: { task_id: string }, _mockResult: unknown, updatedAt: string) {
+      events.push(`createCompletedStaticAnalysisArtifacts:${task.task_id}:${updatedAt}`);
+      return {
+        task: {
+          task_id: task.task_id,
+          task_type: "static_analysis",
+          engine_type: "skills_static",
+          status: "finished",
+          title: "Analyze demo skill",
+          target: {
+            target_type: "skill_package",
+            target_value: "samples/skills/demo-email-skill",
+            display_name: "demo-email-skill"
+          },
+          risk_level: "high",
+          summary: "Static analysis finished with 2 rule hits",
+          created_at: "2026-03-26T01:00:00Z",
+          updated_at: updatedAt
+        },
+        result: {
+          task_id: task.task_id,
+          task_type: "static_analysis",
+          engine_type: "skills_static",
+          status: "finished",
+          risk_level: "high",
+          summary: "Static analysis finished with 2 rule hits",
+          details: {
+            sample_name: "demo-email-skill",
+            rule_hits: [
+              {
+                rule_id: "command_execution.shell_exec",
+                severity: "high",
+                message: "Potential command execution sink reached",
+                file_path: "src/commands.ts",
+                line_start: 4,
+                line_end: 4
+              },
+              {
+                rule_id: "network_access.outbound_fetch",
+                severity: "medium",
+                message: "Outbound network request lacks destination allowlist",
+                file_path: "src/network.ts",
+                line_start: 2,
+                line_end: 2
+              }
+            ]
+          },
+          created_at: "2026-03-26T01:00:00Z",
+          updated_at: updatedAt
+        },
+        riskSummary: {
+          task_id: task.task_id,
+          task_type: "static_analysis",
+          status: "finished",
+          risk_level: "high",
+          summary: "Static analysis finished with 2 rule hits",
+          total_findings: 2,
+          info_count: 0,
+          low_count: 0,
+          medium_count: 1,
+          high_count: 1,
+          critical_count: 0,
+          updated_at: updatedAt
+        }
+      };
+    },
+    createFailedStaticAnalysisArtifacts() {
+      throw new Error("failed artifacts should not be used on the success path");
+    }
+  };
+
+  const service = new serviceModule.TaskCenterService({
+    repository,
+    adapters: [],
+    taskEngineService,
+    now: (() => {
+      const timestamps = ["2026-03-26T01:00:00Z", "2026-03-26T01:05:00Z"];
+      let index = 0;
+      return () => timestamps[index++] ?? "2026-03-26T01:05:00Z";
+    })(),
+    nextTaskId: () => "task_static_backfill_001"
+  });
+
+  const createdTask = await service.createTask({
+    task_type: "static_analysis",
+    title: "Analyze demo skill",
+    target: {
+      target_type: "skill_package",
+      target_value: "samples/skills/demo-email-skill",
+      display_name: "demo-email-skill"
+    }
+  }) as {
+    task_id: string;
+    status: string;
+  };
+
+  assert.equal(createdTask.task_id, "task_static_backfill_001");
+  assert.equal(createdTask.status, "pending");
+  assert.deepEqual(events, [
+    "createInitialArtifacts:task_static_backfill_001",
+    "save:task_static_backfill_001:pending",
+    "dispatchTask:task_static_backfill_001:static_analysis:skills_static",
+    "createCompletedStaticAnalysisArtifacts:task_static_backfill_001:2026-03-26T01:05:00Z",
+    "save:task_static_backfill_001:finished"
+  ]);
+  assert.deepEqual(savedStatuses, ["pending/pending/pending", "finished/finished/finished"]);
+});
+
+test("task center service backfills failed static-analysis artifacts when dispatch raises a stable execution error", async () => {
+  const serviceModule = await importIfExists<ServiceModule>(modulePath);
+  const executionErrorModule = await importIfExists<SkillsStaticExecutionErrorModule>(
+    resolve(import.meta.dirname, "../src/modules/task-center/skills-static/skills-static-execution-error.ts")
+  );
+
+  assert.notEqual(serviceModule, null, "task-center service module should exist before dispatch failure backfill can be verified");
+  assert.notEqual(executionErrorModule, null, "skills-static execution error module should exist before dispatch failure backfill can be verified");
+  assert.ok(serviceModule?.TaskCenterService);
+  assert.ok(executionErrorModule?.SkillsStaticExecutionError);
+
+  if (!serviceModule?.TaskCenterService || !executionErrorModule?.SkillsStaticExecutionError) {
+    return;
+  }
+
+  const events: string[] = [];
+  const savedStatuses: string[] = [];
+  const repository = {
+    save(record: {
+      task: { task_id: string; status: string };
+      result: { status: string };
+      riskSummary: { status: string };
+    }) {
+      events.push(`save:${record.task.task_id}:${record.task.status}`);
+      savedStatuses.push(`${record.task.status}/${record.result.status}/${record.riskSummary.status}`);
+      return record;
+    },
+    list() {
+      return [];
+    },
+    findById() {
+      return null;
+    }
+  };
+
+  const taskEngineService = {
+    async createInitialArtifacts(task: {
+      task_id: string;
+      task_type: string;
+      engine_type: string;
+    }) {
+      events.push(`createInitialArtifacts:${task.task_id}`);
+      return {
+        result: {
+          task_id: task.task_id,
+          task_type: task.task_type,
+          engine_type: task.engine_type,
+          status: "pending",
+          risk_level: "info",
+          summary: "Task accepted and waiting for engine dispatch",
+          details: {
+            sample_name: "demo-email-skill",
+            rule_hits: []
+          },
+          created_at: "2026-03-26T01:00:00Z",
+          updated_at: "2026-03-26T01:00:00Z"
+        },
+        riskSummary: {
+          task_id: task.task_id,
+          task_type: task.task_type,
+          status: "pending",
+          risk_level: "info",
+          summary: "Task accepted and waiting for engine dispatch",
+          total_findings: 0,
+          info_count: 0,
+          low_count: 0,
+          medium_count: 0,
+          high_count: 0,
+          critical_count: 0,
+          updated_at: "2026-03-26T01:00:00Z"
+        }
+      };
+    },
+    hasRegisteredClient() {
+      return true;
+    },
+    async dispatchTask(task: { task_id: string; task_type: string; engine_type: string }) {
+      events.push(`dispatchTask:${task.task_id}:${task.task_type}:${task.engine_type}`);
+      throw new executionErrorModule.SkillsStaticExecutionError({
+        provider: "semgrep",
+        phase: "runner",
+        reason: "timeout"
+      });
+    },
+    createFailedStaticAnalysisArtifacts(task: { task_id: string }, updatedAt: string, phase: string) {
+      events.push(`createFailedStaticAnalysisArtifacts:${task.task_id}:${phase}:${updatedAt}`);
+      return {
+        task: {
+          task_id: task.task_id,
+          task_type: "static_analysis",
+          engine_type: "skills_static",
+          status: "failed",
+          title: "Analyze demo skill",
+          target: {
+            target_type: "skill_package",
+            target_value: "samples/skills/demo-email-skill",
+            display_name: "demo-email-skill"
+          },
+          risk_level: "info",
+          summary: "Static analysis failed during engine execution",
+          created_at: "2026-03-26T01:00:00Z",
+          updated_at: updatedAt
+        },
+        result: {
+          task_id: task.task_id,
+          task_type: "static_analysis",
+          engine_type: "skills_static",
+          status: "failed",
+          risk_level: "info",
+          summary: "Static analysis failed during engine execution",
+          details: {
+            sample_name: "demo-email-skill",
+            rule_hits: []
+          },
+          created_at: "2026-03-26T01:00:00Z",
+          updated_at: updatedAt
+        },
+        riskSummary: {
+          task_id: task.task_id,
+          task_type: "static_analysis",
+          status: "failed",
+          risk_level: "info",
+          summary: "Static analysis failed during engine execution",
+          total_findings: 0,
+          info_count: 0,
+          low_count: 0,
+          medium_count: 0,
+          high_count: 0,
+          critical_count: 0,
+          updated_at: updatedAt
+        }
+      };
+    }
+  };
+
+  const service = new serviceModule.TaskCenterService({
+    repository,
+    adapters: [],
+    taskEngineService,
+    now: (() => {
+      const timestamps = ["2026-03-26T01:00:00Z", "2026-03-26T01:05:00Z"];
+      let index = 0;
+      return () => timestamps[index++] ?? "2026-03-26T01:05:00Z";
+    })(),
+    nextTaskId: () => "task_static_dispatch_failure_001"
+  });
+
+  const createdTask = await service.createTask({
+    task_type: "static_analysis",
+    title: "Analyze demo skill",
+    target: {
+      target_type: "skill_package",
+      target_value: "samples/skills/demo-email-skill",
+      display_name: "demo-email-skill"
+    }
+  }) as {
+    task_id: string;
+    status: string;
+  };
+
+  assert.equal(createdTask.task_id, "task_static_dispatch_failure_001");
+  assert.equal(createdTask.status, "pending");
+  assert.deepEqual(events, [
+    "createInitialArtifacts:task_static_dispatch_failure_001",
+    "save:task_static_dispatch_failure_001:pending",
+    "dispatchTask:task_static_dispatch_failure_001:static_analysis:skills_static",
+    "createFailedStaticAnalysisArtifacts:task_static_dispatch_failure_001:runner:2026-03-26T01:05:00Z",
+    "save:task_static_dispatch_failure_001:failed"
+  ]);
+  assert.deepEqual(savedStatuses, ["pending/pending/pending", "failed/failed/failed"]);
+});
+
+test("task center service backfills failed static-analysis artifacts when the engine client returns a malformed mock result", async () => {
+  const serviceModule = await importIfExists<ServiceModule>(modulePath);
+
+  assert.notEqual(serviceModule, null, "task-center service module should exist before malformed static-analysis payload handling can be verified");
+  assert.ok(serviceModule?.TaskCenterService, "task-center service should expose a concrete service class");
+
+  if (!serviceModule?.TaskCenterService) {
+    return;
+  }
+
+  const events: string[] = [];
+  const savedStatuses: string[] = [];
+  const loggedEvents: Array<Record<string, unknown>> = [];
+  const repository = {
+    save(record: {
+      task: { task_id: string; status: string };
+      result: { status: string };
+      riskSummary: { status: string };
+    }) {
+      events.push(`save:${record.task.task_id}:${record.task.status}`);
+      savedStatuses.push(`${record.task.status}/${record.result.status}/${record.riskSummary.status}`);
+      return record;
+    },
+    list() {
+      return [];
+    },
+    findById() {
+      return null;
+    }
+  };
+
+  const taskEngineService = {
+    async createInitialArtifacts(task: {
+      task_id: string;
+      task_type: string;
+      engine_type: string;
+    }) {
+      events.push(`createInitialArtifacts:${task.task_id}`);
+      return {
+        result: {
+          task_id: task.task_id,
+          task_type: task.task_type,
+          engine_type: task.engine_type,
+          status: "pending",
+          risk_level: "info",
+          summary: "Task accepted and waiting for engine dispatch",
+          details: {
+            sample_name: "demo-email-skill",
+            rule_hits: []
+          },
+          created_at: "2026-03-26T01:00:00Z",
+          updated_at: "2026-03-26T01:00:00Z"
+        },
+        riskSummary: {
+          task_id: task.task_id,
+          task_type: task.task_type,
+          status: "pending",
+          risk_level: "info",
+          summary: "Task accepted and waiting for engine dispatch",
+          total_findings: 0,
+          info_count: 0,
+          low_count: 0,
+          medium_count: 0,
+          high_count: 0,
+          critical_count: 0,
+          updated_at: "2026-03-26T01:00:00Z"
+        }
+      };
+    },
+    hasRegisteredClient() {
+      return true;
+    },
+    async dispatchTask(task: { task_id: string; task_type: string; engine_type: string }) {
+      events.push(`dispatchTask:${task.task_id}:${task.task_type}:${task.engine_type}`);
+      return {
+        accepted: true,
+        engine_type: "skills_static",
+        provider: "mock",
+        endpoint: "internal://skills-static",
+        mock_result: {
+          sample_name: "demo-email-skill",
+          language: "typescript",
+          entry_files: ["src/index.ts"],
+          files_scanned: 1,
+          rule_hits: [
+            {
+              severity: "high"
+            }
+          ],
+          sensitive_capabilities: ["command_execution"],
+          dependency_summary: {}
+        }
+      };
+    },
+    createCompletedStaticAnalysisArtifacts(task: { task_id: string }, _mockResult: unknown, updatedAt: string) {
+      events.push(`createCompletedStaticAnalysisArtifacts:${task.task_id}:${updatedAt}`);
+      return {
+        task: {
+          task_id: task.task_id,
+          task_type: "static_analysis",
+          engine_type: "skills_static",
+          status: "finished",
+          title: "Analyze demo skill",
+          target: {
+            target_type: "skill_package",
+            target_value: "samples/skills/demo-email-skill",
+            display_name: "demo-email-skill"
+          },
+          risk_level: "high",
+          summary: "Static analysis finished with 1 rule hit",
+          created_at: "2026-03-26T01:00:00Z",
+          updated_at: updatedAt
+        },
+        result: {
+          task_id: task.task_id,
+          task_type: "static_analysis",
+          engine_type: "skills_static",
+          status: "finished",
+          risk_level: "high",
+          summary: "Static analysis finished with 1 rule hit",
+          details: {
+            sample_name: "demo-email-skill",
+            rule_hits: [{ rule_id: "SK001", severity: "high" }]
+          },
+          created_at: "2026-03-26T01:00:00Z",
+          updated_at: updatedAt
+        },
+        riskSummary: {
+          task_id: task.task_id,
+          task_type: "static_analysis",
+          status: "finished",
+          risk_level: "high",
+          summary: "Static analysis finished with 1 rule hit",
+          total_findings: 1,
+          info_count: 0,
+          low_count: 0,
+          medium_count: 0,
+          high_count: 1,
+          critical_count: 0,
+          updated_at: updatedAt
+        }
+      };
+    },
+    createFailedStaticAnalysisArtifacts(task: { task_id: string }, updatedAt: string, phase: string) {
+      events.push(`createFailedStaticAnalysisArtifacts:${task.task_id}:${phase}:${updatedAt}`);
+      return {
+        task: {
+          task_id: task.task_id,
+          task_type: "static_analysis",
+          engine_type: "skills_static",
+          status: "failed",
+          title: "Analyze demo skill",
+          target: {
+            target_type: "skill_package",
+            target_value: "samples/skills/demo-email-skill",
+            display_name: "demo-email-skill"
+          },
+          risk_level: "info",
+          summary: "Static analysis failed during result normalization",
+          created_at: "2026-03-26T01:00:00Z",
+          updated_at: updatedAt
+        },
+        result: {
+          task_id: task.task_id,
+          task_type: "static_analysis",
+          engine_type: "skills_static",
+          status: "failed",
+          risk_level: "info",
+          summary: "Static analysis failed during result normalization",
+          details: {
+            sample_name: "demo-email-skill",
+            rule_hits: []
+          },
+          created_at: "2026-03-26T01:00:00Z",
+          updated_at: updatedAt
+        },
+        riskSummary: {
+          task_id: task.task_id,
+          task_type: "static_analysis",
+          status: "failed",
+          risk_level: "info",
+          summary: "Static analysis failed during result normalization",
+          total_findings: 0,
+          info_count: 0,
+          low_count: 0,
+          medium_count: 0,
+          high_count: 0,
+          critical_count: 0,
+          updated_at: updatedAt
+        }
+      };
+    }
+  };
+
+  const service = new serviceModule.TaskCenterService({
+    repository,
+    adapters: [],
+    taskEngineService,
+    logSkillsStaticEvent: (event) => {
+      loggedEvents.push(event as Record<string, unknown>);
+    },
+    now: (() => {
+      const timestamps = ["2026-03-26T01:00:00Z", "2026-03-26T01:05:00Z"];
+      let index = 0;
+      return () => timestamps[index++] ?? "2026-03-26T01:05:00Z";
+    })(),
+    nextTaskId: () => "task_static_invalid_mock_001"
+  });
+
+  const createdTask = await service.createTask({
+    task_type: "static_analysis",
+    title: "Analyze demo skill",
+    target: {
+      target_type: "skill_package",
+      target_value: "samples/skills/demo-email-skill",
+      display_name: "demo-email-skill"
+    }
+  }) as {
+    task_id: string;
+    status: string;
+  };
+
+  assert.equal(createdTask.task_id, "task_static_invalid_mock_001");
+  assert.equal(createdTask.status, "pending");
+  assert.deepEqual(events, [
+    "createInitialArtifacts:task_static_invalid_mock_001",
+    "save:task_static_invalid_mock_001:pending",
+    "dispatchTask:task_static_invalid_mock_001:static_analysis:skills_static",
+    "createFailedStaticAnalysisArtifacts:task_static_invalid_mock_001:normalizer:2026-03-26T01:05:00Z",
+    "save:task_static_invalid_mock_001:failed"
+  ]);
+  assert.deepEqual(savedStatuses, ["pending/pending/pending", "failed/failed/failed"]);
+  assert.deepEqual(loggedEvents, [
+    {
+      event: "scan_failed",
+      task_id: "task_static_invalid_mock_001",
+      engine_type: "skills_static",
+      provider: "mock",
+      target_ref: "demo-email-skill",
+      phase: "normalizer",
+      reason: "normalization_failed",
+      error_summary: "Skills-static engine output is missing a required rule_id"
+    }
+  ]);
+});
+
+test("task center service backfills failed static-analysis artifacts when result derivation throws", async () => {
+  const serviceModule = await importIfExists<ServiceModule>(modulePath);
+
+  assert.notEqual(serviceModule, null, "task-center service module should exist before derivation failure backfill can be verified");
+  assert.ok(serviceModule?.TaskCenterService);
+
+  if (!serviceModule?.TaskCenterService) {
+    return;
+  }
+
+  const events: string[] = [];
+  const savedStatuses: string[] = [];
+  const loggedEvents: Array<Record<string, unknown>> = [];
+  const repository = {
+    save(record: {
+      task: { task_id: string; status: string };
+      result: { status: string };
+      riskSummary: { status: string };
+    }) {
+      events.push(`save:${record.task.task_id}:${record.task.status}`);
+      savedStatuses.push(`${record.task.status}/${record.result.status}/${record.riskSummary.status}`);
+      return record;
+    },
+    list() {
+      return [];
+    },
+    findById() {
+      return null;
+    }
+  };
+
+  const taskEngineService = {
+    async createInitialArtifacts(task: {
+      task_id: string;
+      task_type: string;
+      engine_type: string;
+    }) {
+      events.push(`createInitialArtifacts:${task.task_id}`);
+      return {
+        result: {
+          task_id: task.task_id,
+          task_type: task.task_type,
+          engine_type: task.engine_type,
+          status: "pending",
+          risk_level: "info",
+          summary: "Task accepted and waiting for engine dispatch",
+          details: {
+            sample_name: "demo-email-skill",
+            rule_hits: []
+          },
+          created_at: "2026-03-26T01:00:00Z",
+          updated_at: "2026-03-26T01:00:00Z"
+        },
+        riskSummary: {
+          task_id: task.task_id,
+          task_type: task.task_type,
+          status: "pending",
+          risk_level: "info",
+          summary: "Task accepted and waiting for engine dispatch",
+          total_findings: 0,
+          info_count: 0,
+          low_count: 0,
+          medium_count: 0,
+          high_count: 0,
+          critical_count: 0,
+          updated_at: "2026-03-26T01:00:00Z"
+        }
+      };
+    },
+    hasRegisteredClient() {
+      return true;
+    },
+    async dispatchTask(task: { task_id: string; task_type: string; engine_type: string }) {
+      events.push(`dispatchTask:${task.task_id}:${task.task_type}:${task.engine_type}`);
+      return {
+        accepted: true,
+        engine_type: "skills_static",
+        provider: "mock",
+        endpoint: "internal://skills-static",
+        mock_result: {
+          sample_name: "demo-email-skill",
+          language: "typescript",
+          entry_files: ["src/commands.ts", "src/network.ts"],
+          files_scanned: 2,
+          rule_hits: [
+            {
+              rule_id: "command_execution.shell_exec",
+              severity: "high",
+              message: "Potential command execution sink reached",
+              file_path: "src/commands.ts",
+              line_start: 4,
+              line_end: 4
+            }
+          ],
+          sensitive_capabilities: ["command_execution"],
+          dependency_summary: {}
+        }
+      };
+    },
+    createCompletedStaticAnalysisArtifacts(task: { task_id: string }, _mockResult: unknown, updatedAt: string) {
+      events.push(`createCompletedStaticAnalysisArtifacts:${task.task_id}:${updatedAt}`);
+      throw new Error("deriver exploded");
+    },
+    createFailedStaticAnalysisArtifacts(task: { task_id: string }, updatedAt: string, phase: string) {
+      events.push(`createFailedStaticAnalysisArtifacts:${task.task_id}:${phase}:${updatedAt}`);
+      return {
+        task: {
+          task_id: task.task_id,
+          task_type: "static_analysis",
+          engine_type: "skills_static",
+          status: "failed",
+          title: "Analyze demo skill",
+          target: {
+            target_type: "skill_package",
+            target_value: "samples/skills/demo-email-skill",
+            display_name: "demo-email-skill"
+          },
+          risk_level: "info",
+          summary: "Static analysis failed during risk summary derivation",
+          created_at: "2026-03-26T01:00:00Z",
+          updated_at: updatedAt
+        },
+        result: {
+          task_id: task.task_id,
+          task_type: "static_analysis",
+          engine_type: "skills_static",
+          status: "failed",
+          risk_level: "info",
+          summary: "Static analysis failed during risk summary derivation",
+          details: {
+            sample_name: "demo-email-skill",
+            rule_hits: []
+          },
+          created_at: "2026-03-26T01:00:00Z",
+          updated_at: updatedAt
+        },
+        riskSummary: {
+          task_id: task.task_id,
+          task_type: "static_analysis",
+          status: "failed",
+          risk_level: "info",
+          summary: "Static analysis failed during risk summary derivation",
+          total_findings: 0,
+          info_count: 0,
+          low_count: 0,
+          medium_count: 0,
+          high_count: 0,
+          critical_count: 0,
+          updated_at: updatedAt
+        }
+      };
+    }
+  };
+
+  const service = new serviceModule.TaskCenterService({
+    repository,
+    adapters: [],
+    taskEngineService,
+    logSkillsStaticEvent: (event) => {
+      loggedEvents.push(event as Record<string, unknown>);
+    },
+    now: (() => {
+      const timestamps = ["2026-03-26T01:00:00Z", "2026-03-26T01:05:00Z"];
+      let index = 0;
+      return () => timestamps[index++] ?? "2026-03-26T01:05:00Z";
+    })(),
+    nextTaskId: () => "task_static_deriver_failure_001"
+  });
+
+  const createdTask = await service.createTask({
+    task_type: "static_analysis",
+    title: "Analyze demo skill",
+    target: {
+      target_type: "skill_package",
+      target_value: "samples/skills/demo-email-skill",
+      display_name: "demo-email-skill"
+    }
+  }) as {
+    task_id: string;
+    status: string;
+  };
+
+  assert.equal(createdTask.task_id, "task_static_deriver_failure_001");
+  assert.equal(createdTask.status, "pending");
+  assert.deepEqual(events, [
+    "createInitialArtifacts:task_static_deriver_failure_001",
+    "save:task_static_deriver_failure_001:pending",
+    "dispatchTask:task_static_deriver_failure_001:static_analysis:skills_static",
+    "createCompletedStaticAnalysisArtifacts:task_static_deriver_failure_001:2026-03-26T01:05:00Z",
+    "createFailedStaticAnalysisArtifacts:task_static_deriver_failure_001:deriver:2026-03-26T01:05:00Z",
+    "save:task_static_deriver_failure_001:failed"
+  ]);
+  assert.deepEqual(savedStatuses, ["pending/pending/pending", "failed/failed/failed"]);
+  assert.deepEqual(loggedEvents, [
+    {
+      event: "scan_failed",
+      task_id: "task_static_deriver_failure_001",
+      engine_type: "skills_static",
+      provider: "mock",
+      target_ref: "demo-email-skill",
+      phase: "deriver",
+      reason: "derivation_failed",
+      error_summary: "deriver exploded"
+    }
+  ]);
 });

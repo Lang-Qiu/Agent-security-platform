@@ -1,0 +1,35 @@
+rules:
+  - id: command_execution.shell_exec
+    languages:
+      - typescript
+      - javascript
+    severity: WARNING
+    message: Potential command execution sink reached
+    pattern: exec($CMD)
+    metadata:
+      title: Shell command reaches an execution sink
+      category: command_execution
+      platform_severity: high
+      recommendation: Replace shell execution with an allowlisted wrapper
+      source_type: user_input
+      sink_type: command_execution
+      tags:
+        - command
+        - input-flow
+  - id: network_access.outbound_fetch
+    languages:
+      - typescript
+      - javascript
+    severity: WARNING
+    message: Outbound network request lacks destination allowlist
+    pattern: fetch($URL)
+    metadata:
+      title: Outbound network request lacks destination allowlist
+      category: network_access
+      platform_severity: medium
+      recommendation: Restrict outbound destinations to an allowlist
+      source_type: config
+      sink_type: network_request
+      tags:
+        - network
+        - egress

@@ -10,6 +10,180 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-04-13 - skills-static minimal runtime governance
+- requirement: add the smallest logging / exception / timeout governance layer for the real `skills_static` execution path without changing the public task-center API or the standardized result contract
+- scope: introduce stable internal execution failure semantics, add the minimal runtime log event seam, enforce a semgrep timeout boundary, and make runtime failures backfill failed artifacts instead of leaking raw provider errors or leaving dangling pending shells
+- tests:
+  - `backend/tests/skills-static-runtime-governance.spec.ts`
+  - `backend/tests/skills-static-core.spec.ts`
+  - `backend/tests/skills-static-semgrep.spec.ts`
+  - `backend/tests/task-engine.service.spec.ts`
+  - `backend/tests/task-center.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- test result: pass for the requirement-focused verification set:
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-runtime-governance.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-core.spec.ts backend/tests/skills-static-semgrep.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "skills-static|static-analysis|failed|timeout|provider" backend/tests/task-engine.service.spec.ts backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "static-analysis|shared response shell|failed|provider" tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `README.md`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+- notes:
+  - explicit unsupported provider values no longer silently fall back to `mock`; they now fail through a stable provider-selection error path
+  - the real semgrep path now has a default timeout boundary and maps timeout / startup / ruleset / target / parse failures into stable internal execution reasons
+  - runtime failures now backfill `failed` platform shells instead of leaving a created task stuck on the initial pending placeholder
+  - raw provider stderr/stdout remains internal-only and does not become part of the shared or public response contract
+
+## 2026-04-10 - skills-static standardized risk result
+- requirement: standardize the provider-agnostic `skills_static` risk-result semantics without changing the public task-center API or adding another provider
+- scope: strengthen the finished static-analysis contract around `sample_name`, `language`, standardized `rule_hits`, and provider-agnostic `RiskSummary`; align mock output with semgrep at the strong-field layer; and keep `entry_files`, `files_scanned`, `sensitive_capabilities`, `dependency_summary`, and optional extensions on a weaker contract
+- tests:
+  - `shared/tests/result-contract.spec.ts`
+  - `shared/tests/task-contract.spec.ts`
+  - `shared/tests/api-response.contract.spec.ts`
+  - `backend/tests/skills-static-core.spec.ts`
+  - `backend/tests/skills-static-semgrep.spec.ts`
+  - `backend/tests/task-engine.service.spec.ts`
+  - `backend/tests/task-center.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- test result: pass for the requirement-focused verification set:
+  - `node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/task-contract.spec.ts shared/tests/api-response.contract.spec.ts shared/tests/result-contract.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-core.spec.ts backend/tests/skills-static-semgrep.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "skills-static|static-analysis shell|malformed|parity" backend/tests/task-engine.service.spec.ts backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "static-analysis|shared response shell|semgrep" tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `README.md`
+  - `docs/api-contract.md`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+- notes:
+  - `mock` and `semgrep` now align on the strong standardized fields consumed by the platform read path
+  - `RiskSummary` remains provider-agnostic and is validated against the same normalized finding semantics across both providers
+  - `entry_files`, `files_scanned`, `sensitive_capabilities`, `dependency_summary`, and optional extension fields intentionally stay on a weaker contract until the platform read layer depends on them more strongly
+  - this stage stops before any logging / timeout / reporting / multi-provider expansion work
+
+## 2026-04-10 - skills-static minimal real detection capability
+- requirement: add the smallest real `skills_static` detection path without changing the public task-center API or the normalized static-analysis contract
+- scope: introduce a local `semgrep` runner and raw-output mapper, let `SkillsStaticEngineClient` switch between `mock` and `semgrep` through `SKILLS_STATIC_ENGINE_PROVIDER`, add a minimal real scan fixture plus rule file, and keep all existing normalizer / risk-summary derivation boundaries intact
+- tests:
+  - `backend/tests/skills-static-semgrep.spec.ts`
+  - `backend/tests/skills-static-core.spec.ts`
+  - `backend/tests/task-engine.service.spec.ts`
+  - `backend/tests/task-center.service.spec.ts`
+  - `shared/tests/task-contract.spec.ts`
+  - `shared/tests/result-contract.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- test result: pass for the requirement-focused verification set:
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-semgrep.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-core.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "skills-static|static-analysis shell|malformed" backend/tests/task-engine.service.spec.ts backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/task-contract.spec.ts shared/tests/result-contract.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "static-analysis|shared response shell" tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `README.md`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+- notes:
+  - the only real detection provider in this stage is local `semgrep`; default behavior still stays on the deterministic `mock` provider
+  - `SemgrepRunner` and `SemgrepOutputMapper` sit strictly before `SkillsStaticResultNormalizer`, so the normalized static-analysis contract remains the same
+  - the real scan fixture and rule file are intentionally minimal and exist only to prove the provider handoff, raw-output mapping, and contract preservation path
+  - this stage stops before multi-detector orchestration, public API changes, or broader engine-architecture work
+
+## 2026-04-04 - skills-static internal core objects
+- requirement: design and minimally implement the backend-internal core objects that normalize `skills_static` engine output and derive risk-summary semantics without changing the public task-center API
+- scope: extract `SkillsStaticEngineOutput`, `SkillsStaticResultNormalizer`, and `RiskSummaryDeriver`, keep `SkillsStaticRuleHit` as the shared normalized contract, wire the new objects into adapter/client/service boundaries, and preserve the existing mock closed-loop plus malformed-input fallback behavior
+- tests:
+  - `backend/tests/skills-static-core.spec.ts`
+  - `backend/tests/task-engine.service.spec.ts`
+  - `backend/tests/task-center.service.spec.ts`
+  - `shared/tests/task-contract.spec.ts`
+  - `shared/tests/result-contract.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+  - `tests/repository/static-analysis-api-contract-docs.spec.ts`
+  - `tests/repository/static-analysis-contract-test-boundary.spec.ts`
+- test result: pass for the requirement-focused verification set:
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-core.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "skills-static|static-analysis shell|malformed" backend/tests/task-engine.service.spec.ts backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/task-contract.spec.ts shared/tests/result-contract.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "static-analysis|shared response shell" tests/integration/backend-task-center.api.spec.ts`
+  - `npm.cmd run test:repo`
+- docs updated:
+  - `shared/types/skills-static-rule-hit.ts`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+- notes:
+  - `SkillsStaticRuleHit` remains the only shared normalized rule-hit contract; this requirement did not create a backend-only duplicate type
+  - mock client output is now treated as loose engine output, then normalized before it reaches platform result shells
+  - malformed `skills_static` engine output now raises a structured internal error and is caught by `TaskCenterService`, which preserves the existing pending shell and avoids a broken finished backfill
+  - this stage stops before any real third-party detection-library adapter, public API change, or broader engine-architecture refactor
+
+## 2026-04-02 - static-analysis contract and integration test solidification
+- requirement: solidify the shared contract and public integration semantics for the finished `static_analysis` mock closed loop without extending engine behavior
+- scope: add a canonical contract fixture, strengthen shared contract tests for normalized static-analysis result and finished risk summary semantics, relax backend/integration assertions away from mock-specific snapshots, and align API contract docs with the current closed-loop read behavior
+- tests:
+  - `shared/tests/task-contract.spec.ts`
+  - `shared/tests/api-response.contract.spec.ts`
+  - `shared/tests/result-contract.spec.ts`
+  - `backend/tests/task-engine.service.spec.ts`
+  - `backend/tests/task-center.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- test result: pass for the requirement-focused verification set:
+  - `node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/task-contract.spec.ts shared/tests/api-response.contract.spec.ts shared/tests/result-contract.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "skills-static adapter rejects malformed mock results before closed-loop backfill|engine client registry resolves skills-static engine clients and rejects duplicate engine registration|task engine service dispatches static-analysis tickets through the registered skills-static engine client|task engine service materializes a finished static-analysis shell from a deterministic mock result" backend/tests/task-engine.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "task center service dispatches static-analysis tasks after saving their initial artifacts|task center service backfills static-analysis artifacts when the engine client returns a mock result|task center service does not backfill static-analysis artifacts when the engine client returns a malformed mock result" backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "backend task center creates and lists in-memory tasks through the shared response shell|backend task center keeps static-analysis creation on POST /api/tasks with parameters as the engine options slot" tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - shared tests now fix the normalized static-analysis result shape and finished risk-summary semantics using a canonical contract fixture instead of engine-client internals
+  - integration assertions now verify response shell stability and cross-endpoint semantic consistency rather than exact mock `rule_hits`, summary wording, or dependency-summary literals
+  - future real detection-library adapters should only need to normalize into the same shared contract for these tests to remain valid
+
+## 2026-04-02 - minimal mock skills-static engine closed loop
+- requirement: implement the smallest mock engine closed loop for `static_analysis` on top of the completed engine-registration and route-wiring baseline
+- scope: keep `POST /api/tasks` as the only public write entry, let `SkillsStaticEngineClient` return a deterministic mock analysis result, and backfill the existing `Task`, `BaseResult`, and `RiskSummary` records through the current task-center mainline
+- tests:
+  - `backend/tests/task-engine.service.spec.ts`
+  - `backend/tests/task-center.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- test result: pass for the requirement-focused verification set:
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "task engine service dispatches static-analysis tickets through the registered skills-static engine client|task engine service materializes a finished static-analysis shell from a deterministic mock result" backend/tests/task-engine.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "task center service dispatches static-analysis tasks after saving their initial artifacts|task center service backfills static-analysis artifacts when the engine client returns a mock result" backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "backend task center creates and lists in-memory tasks through the shared response shell|backend task center keeps static-analysis creation on POST /api/tasks with parameters as the engine options slot" tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `README.md`
+  - `docs/api-contract.md`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+- notes:
+  - `SkillsStaticEngineClient` now returns a deterministic mock result payload for `static_analysis`; it still does not call a real scan engine
+  - the platform backfills the existing record through a second repository save, so `GET /api/tasks/:taskId`, `GET /result`, and `GET /risk-summary` expose the closed-loop state without adding new routes
+  - `POST /api/tasks` remains the unchanged public write entry and still returns the created task shell rather than introducing a new engine-specific response contract
+  - the pre-existing unrelated `asset-scan` `.worktrees` failure was not touched and remains outside this requirement
+
+## 2026-04-02 - skills-static engine registration and platform route wiring baseline
+- requirement: register `skills-static` on the platform mainline and wire `static_analysis` task creation into an internal engine entry without changing the public task-center API
+- scope: add backend `EngineClient` / `EngineClientRegistry`, register `SkillsStaticEngineClient`, keep `POST /api/tasks` as the only public write entry, and dispatch `static_analysis` tickets through the new engine client layer after task creation
+- tests:
+  - `backend/tests/task-engine.service.spec.ts`
+  - `backend/tests/task-center.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- test result: pass for the requirement-focused verification set:
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "engine client registry resolves skills-static engine clients and rejects duplicate engine registration|task engine service dispatches static-analysis tickets through the registered skills-static engine client|task center service dispatches static-analysis tasks after saving their initial artifacts" backend/tests/task-engine.service.spec.ts backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "backend task center creates and lists in-memory tasks through the shared response shell|backend task center keeps static-analysis creation on POST /api/tasks with parameters as the engine options slot|backend task center returns a created task together with its initial result and risk summary" tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `README.md`
+  - `docs/api-contract.md`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+- notes:
+  - `static_analysis` remains on the existing `POST /api/tasks` route and still maps to `engine_type = skills_static`
+  - adapter responsibilities stay limited to payload/details mapping; engine-entry routing now lives in `EngineClientRegistry` plus `SkillsStaticEngineClient`
+  - `TaskCenterService` only dispatches when an engine client is registered, so this stage does not force unrelated engines onto the new path yet
+  - there is a pre-existing unrelated baseline failure in this worktree for `asset-scan` live-probe tests caused by path handling under `.worktrees`; it was not changed in this requirement and was excluded from the focused verification set
+
 ## 2026-04-01 - skills-static platform-compatible DTO / interface and minimal adapter mapping skeleton
 - requirement: add `skills-static`-compatible shared DTOs/interfaces and the smallest backend adapter mapping boundary without changing the public task-center API
 - scope: introduce shared `skills-static` result/parameter/target/rule-hit types, narrow `static_analysis.details.rule_hits[]`, add a backend mapper from placeholder engine output into shared details, and keep `POST /api/tasks` as the only public creation entry

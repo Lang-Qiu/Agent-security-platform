@@ -8,13 +8,32 @@ export interface SkillsStaticTraceStep {
 
 export type SkillsStaticSeverity = "info" | "low" | "medium" | "high" | "critical";
 
+/**
+ * Normalized public/static-analysis rule-hit contract.
+ *
+ * Required fields:
+ * - `rule_id`
+ * - `severity`
+ * - `message`
+ * - `file_path`
+ *
+ * Optional fields:
+ * - every other field declared below
+ *
+ * Forbidden fields:
+ * - any `engine_private_*` field
+ * - `risk_score`
+ *
+ * Forbidden fields are rejected or stripped by backend normalizers before a
+ * rule hit reaches this shared contract.
+ */
 export interface SkillsStaticRuleHit {
   rule_id: string;
   severity: SkillsStaticSeverity;
+  message: string;
+  file_path: string;
   title?: string;
   category?: string;
-  message?: string;
-  file_path?: string;
   line_start?: number;
   line_end?: number;
   code_snippet?: string;

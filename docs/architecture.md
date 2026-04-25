@@ -263,6 +263,11 @@ engines/<engine-name>/
   - engine placeholder result -> `SkillsStaticResultDetails`
 - public task-center API 保持不变，controller 路由不新增
 - `BaseResult` 继续作为唯一统一结果外壳，`static_analysis` 只在 `details.rule_hits[]` 这一处收敛更强类型
+- `EngineAdapterRegistry` 继续按 `task_type` 注册平台 adapter
+- `EngineClientRegistry` 新增按 `engine_type` 注册平台内部引擎入口的职责
+- `SkillsStaticEngineClient` 是当前唯一落地的 `skills_static` 入口桥接
+- `TaskEngineService` 同时持有 adapter registry 与 engine client registry，并负责把 `EngineDispatchTicket` 转发到已注册 client
+- `TaskCenterService` 仍保持任务中心职责，只在任务创建完成后触发一次已注册 client 转发
 
 当前明确不做：
 
@@ -306,3 +311,68 @@ engines/<engine-name>/
 
 - 仅允许 localhost/测试容器/mock server 受控目标
 - 不引入公网扫描与分布式调度
+
+## REQ-SKILLS-STATIC Mock Closed Loop
+
+`skills_static` now has one additional backend-internal step beyond dispatch registration:
+
+- `SkillsStaticEngineClient` returns a deterministic mock analysis result after it accepts a `static_analysis` dispatch ticket
+- `TaskCenterService` keeps the existing orchestration boundary and performs a second repository save for the same `task_id`
+- `TaskEngineService` converts that mock payload into the finished platform shells that already exist today: `Task`, `BaseResult`, and `RiskSummary`
+- the read side stays unchanged: the existing task-center query routes expose the backfilled record
+
+This is intentionally still a skeleton-stage integration:
+
+- no new public API
+- no engine-specific controller
+- no real `skills-static` scan execution
+- no retry, callback, upload, object-storage, or timeout-governance workflow
+
+## REQ-SKILLS-STATIC Internal Core Objects
+
+The backend now extracts the `skills_static` internal normalization and aggregation logic into dedicated core objects instead of leaving that behavior spread across one adapter file.
+
+- `SkillsStaticEngineOutput` is the loose backend-internal input shell for raw analysis output from any future detection-library adapter
+- `SkillsStaticResultNormalizer` converts that loose output into stable `SkillsStaticResultDetails`, strips `engine_private_*` fields and `risk_score`, and raises a structured internal error for malformed input
+- `RiskSummaryDeriver` is the single backend runtime source of truth for deriving `risk_level` and severity counts from normalized `rule_hits`
+- `SkillsStaticTaskAdapter` now stays focused on dispatch payload creation and initial placeholder details
+- `TaskCenterService` catches malformed internal engine output and preserves the existing pending shell instead of widening the public contract or failing the task-center read shape
+
+## REQ-SKILLS-STATIC Minimal Real Detection
+
+`skills_static` now has one minimal real-tool path in addition to the existing mock provider:
+
+- `SkillsStaticEngineClient` selects its provider from `SKILLS_STATIC_ENGINE_PROVIDER`
+- `mock` remains the default provider and keeps the deterministic closed-loop behavior used by the current integration baseline
+- `semgrep` is the single real provider for this stage and is executed through the local CLI, without any external service dependency
+- `SemgrepRunner` is responsible only for invoking `semgrep scan` and reading JSON output
+- `SemgrepOutputMapper` converts raw `semgrep` JSON into the existing `SkillsStaticEngineOutput` shell; it does not change the downstream normalizer contract
+- `SkillsStaticResultNormalizer` and `RiskSummaryDeriver` stay unchanged and continue to define the normalized platform contract
+- the public API remains unchanged: `POST /api/tasks` is still the only write entry, and the existing task/result/risk-summary reads remain the only public read path
+
+This stage intentionally still does not include:
+
+- multiple detection-library providers
+- public API changes
+- retry / timeout / callback / logging governance
+- report rendering or evidence-display flows
+
+## REQ-SKILLS-STATIC Standardized Risk Result
+
+The platform now treats `skills_static` provider output as an internal staging format, not as the stable result contract itself.
+
+- `mock` and `semgrep` must both converge into the same provider-agnostic standardized result before the task-center read path exposes the finished record
+- the strong standardized fields are currently: `sample_name`, `language`, `rule_hits[].rule_id`, `rule_hits[].severity`, `rule_hits[].message`, `rule_hits[].file_path`, and paired valid `line_start` / `line_end`
+- `RiskSummary` is part of the same strong contract and must stay derived only from normalized `rule_hits`
+- `entry_files`, `files_scanned`, `sensitive_capabilities`, `dependency_summary`, and optional extension fields stay on a weaker contract for now: they must remain structurally valid and non-conflicting, but they are not yet required to have provider parity
+- future providers should land in `raw output -> mapper -> SkillsStaticEngineOutput -> SkillsStaticResultNormalizer -> RiskSummaryDeriver`, without changing the public API or the platform orchestration path
+
+## REQ-SKILLS-STATIC Minimal Runtime Governance
+
+The real `skills_static` path now has one minimal runtime-governance layer on top of the existing provider and normalization flow.
+
+- `SkillsStaticExecutionError` is the internal-only failure envelope for real-path failures; it carries a stable `phase + reason + provider` tuple instead of exposing arbitrary provider exceptions
+- `SkillsStaticEngineClient` records the minimum diagnostic event set: `provider_selected`, `scan_started`, `scan_succeeded`, and `scan_failed`
+- `SemgrepRunner` now owns the minimal timeout boundary for the real provider path and maps missing target/ruleset, binary startup failure, non-zero exit, invalid JSON, and timeout into stable runner failures
+- `TaskCenterService` keeps the public write entry unchanged, but runtime failures no longer bubble out as raw provider exceptions after the initial save; instead the task-center path backfills stable failed `Task / BaseResult / RiskSummary` shells
+- timeout and provider/runtime diagnostics remain backend-internal; raw stderr/stdout and arbitrary exception strings are intentionally not promoted into shared or public API contracts

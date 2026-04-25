@@ -5,10 +5,24 @@ import { resolve } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
+import {
+  CANONICAL_STATIC_ANALYSIS_DERIVED_RISK_SUMMARY,
+  CANONICAL_STATIC_ANALYSIS_STRONG_DETAILS_PROJECTION,
+  STATIC_ANALYSIS_PENDING_SUMMARY
+} from "../fixtures/static-analysis-contract.fixture.ts";
+
 const mainModulePath = resolve(import.meta.dirname, "../../backend/src/main.ts");
+const sharedEntrypointPath = resolve(import.meta.dirname, "../../shared/index.ts");
 
 type MainModule = {
   createAppServer?: () => Server;
+};
+
+type SharedModule = {
+  isApiResponse?: (value: unknown) => boolean;
+  normalizeTask?: (value: unknown) => unknown;
+  normalizeBaseResult?: (value: unknown) => unknown;
+  normalizeRiskSummary?: (value: unknown) => unknown;
 };
 
 async function importIfExists<TModule>(filePath: string): Promise<TModule | null> {
@@ -62,6 +76,32 @@ async function createTask(baseUrl: string, body: Record<string, unknown>) {
   };
 }
 
+function projectStandardizedDetails(value: {
+  sample_name?: string;
+  language?: string;
+  rule_hits?: Array<{
+    rule_id?: string;
+    severity?: string;
+    message?: string;
+    file_path?: string;
+    line_start?: number;
+    line_end?: number;
+  }>;
+}) {
+  return {
+    sample_name: value.sample_name,
+    language: value.language,
+    rule_hits: (value.rule_hits ?? []).map((ruleHit) => ({
+      rule_id: ruleHit.rule_id,
+      severity: ruleHit.severity,
+      message: ruleHit.message,
+      file_path: ruleHit.file_path,
+      line_start: ruleHit.line_start,
+      line_end: ruleHit.line_end
+    }))
+  };
+}
+
 test("backend health check returns the unified response shell", async (t) => {
   const mainModule = await importIfExists<MainModule>(mainModulePath);
 
@@ -86,10 +126,12 @@ test("backend health check returns the unified response shell", async (t) => {
 
 test("backend task center creates and lists in-memory tasks through the shared response shell", async (t) => {
   const mainModule = await importIfExists<MainModule>(mainModulePath);
+  const sharedModule = await importIfExists<SharedModule>(sharedEntrypointPath);
 
   assert.notEqual(mainModule, null, "backend main module should exist before task creation can be verified");
+  assert.notEqual(sharedModule, null, "shared module should exist before public API shells can be validated");
 
-  if (!mainModule?.createAppServer) {
+  if (!mainModule?.createAppServer || !sharedModule) {
     return;
   }
 
@@ -127,27 +169,38 @@ test("backend task center creates and lists in-memory tasks through the shared r
   assert.equal(createdAssetTask.status, 201);
   assert.equal(createdStaticTask.status, 201);
   assert.equal(createdSandboxTask.status, 201);
-  assert.equal(createdAssetTask.body.success, true);
-  assert.equal(createdAssetTask.body.error_code, null);
+  assert.equal(sharedModule.isApiResponse?.(createdAssetTask.body), true);
+  assert.equal(sharedModule.isApiResponse?.(createdStaticTask.body), true);
+  assert.equal(sharedModule.isApiResponse?.(createdSandboxTask.body), true);
 
   const listResponse = await fetch(`${baseUrl}/api/tasks`);
-  const listBody = (await listResponse.json()) as {
-    success: boolean;
-    data: Array<{ task_type: string; engine_type: string; status: string }>;
-  };
+  const listBody = (await listResponse.json()) as Record<string, unknown>;
 
   assert.equal(listResponse.status, 200);
-  assert.equal(listBody.success, true);
+  assert.equal(sharedModule.isApiResponse?.(listBody), true);
+  assert.ok(Array.isArray(listBody.data));
   assert.equal(listBody.data.length, 3);
   assert.deepEqual(
-    listBody.data.map((task) => ({
-      task_type: task.task_type,
-      engine_type: task.engine_type,
-      status: task.status
-    })),
+    listBody.data.map((task) => {
+      const normalizedTask = sharedModule.normalizeTask?.(task) as
+        | {
+            task_type: string;
+            engine_type: string;
+            status: string;
+          }
+        | null;
+
+      assert.notEqual(normalizedTask, null);
+
+      return {
+        task_type: normalizedTask?.task_type,
+        engine_type: normalizedTask?.engine_type,
+        status: normalizedTask?.status
+      };
+    }),
     [
       { task_type: "asset_scan", engine_type: "asset_scan", status: "pending" },
-      { task_type: "static_analysis", engine_type: "skills_static", status: "pending" },
+      { task_type: "static_analysis", engine_type: "skills_static", status: "finished" },
       { task_type: "sandbox_run", engine_type: "sandbox", status: "pending" }
     ]
   );
@@ -155,10 +208,12 @@ test("backend task center creates and lists in-memory tasks through the shared r
 
 test("backend task center keeps static-analysis creation on POST /api/tasks with parameters as the engine options slot", async (t) => {
   const mainModule = await importIfExists<MainModule>(mainModulePath);
+  const sharedModule = await importIfExists<SharedModule>(sharedEntrypointPath);
 
   assert.notEqual(mainModule, null, "backend main module should exist before static-analysis task creation can be verified");
+  assert.notEqual(sharedModule, null, "shared module should exist before static-analysis API contracts can be verified");
 
-  if (!mainModule?.createAppServer) {
+  if (!mainModule?.createAppServer || !sharedModule) {
     return;
   }
 
@@ -182,42 +237,497 @@ test("backend task center keeps static-analysis creation on POST /api/tasks with
   });
 
   assert.equal(createdTask.status, 201);
-  assert.equal(createdTask.body.success, true);
+  assert.equal(sharedModule.isApiResponse?.(createdTask.body), true);
 
-  const createdTaskData = createdTask.body.data as {
-    task_id: string;
-    task_type: string;
-    engine_type: string;
-    parameters?: Record<string, unknown>;
-  };
+  const createdTaskData = sharedModule.normalizeTask?.(createdTask.body.data) as
+    | {
+        task_id: string;
+        task_type: string;
+        engine_type: string;
+        status: string;
+        summary?: string;
+        parameters?: Record<string, unknown>;
+      }
+    | null;
+
+  assert.notEqual(createdTaskData, null);
+
+  if (!createdTaskData) {
+    return;
+  }
 
   assert.equal(createdTaskData.task_type, "static_analysis");
   assert.equal(createdTaskData.engine_type, "skills_static");
+  assert.equal(createdTaskData.status, "pending");
+  assert.equal(createdTaskData.summary, STATIC_ANALYSIS_PENDING_SUMMARY);
   assert.deepEqual(createdTaskData.parameters, {
     language: "typescript",
     include_paths: ["src/**/*.ts"],
     include_dependencies: true
   });
 
+  const taskResponse = await fetch(`${baseUrl}/api/tasks/${createdTaskData.task_id}`);
+  const taskBody = (await taskResponse.json()) as Record<string, unknown>;
   const resultResponse = await fetch(`${baseUrl}/api/tasks/${createdTaskData.task_id}/result`);
-  const resultBody = (await resultResponse.json()) as {
-    success: boolean;
-    data: {
-      task_type: string;
-      engine_type: string;
-      details: {
-        sample_name?: string;
-        rule_hits?: unknown[];
-      };
-    };
-  };
+  const resultBody = (await resultResponse.json()) as Record<string, unknown>;
+  const riskSummaryResponse = await fetch(`${baseUrl}/api/tasks/${createdTaskData.task_id}/risk-summary`);
+  const riskSummaryBody = (await riskSummaryResponse.json()) as Record<string, unknown>;
 
+  assert.equal(taskResponse.status, 200);
   assert.equal(resultResponse.status, 200);
-  assert.equal(resultBody.success, true);
-  assert.equal(resultBody.data.task_type, "static_analysis");
-  assert.equal(resultBody.data.engine_type, "skills_static");
-  assert.equal(resultBody.data.details.sample_name, "demo-email-skill");
-  assert.deepEqual(resultBody.data.details.rule_hits, []);
+  assert.equal(riskSummaryResponse.status, 200);
+  assert.equal(sharedModule.isApiResponse?.(taskBody), true);
+  assert.equal(sharedModule.isApiResponse?.(resultBody), true);
+  assert.equal(sharedModule.isApiResponse?.(riskSummaryBody), true);
+
+  const normalizedTask = sharedModule.normalizeTask?.(taskBody.data) as
+    | {
+        task_id: string;
+        task_type: string;
+        engine_type: string;
+        status: string;
+        risk_level?: string;
+        summary?: string;
+        updated_at: string;
+      }
+    | null;
+  const normalizedResult = sharedModule.normalizeBaseResult?.(resultBody.data) as
+    | {
+        task_id: string;
+        task_type: string;
+        engine_type: string;
+        status: string;
+        risk_level: string;
+        summary: string;
+        details: {
+          sample_name?: string;
+          language?: string;
+          entry_files?: string[];
+          files_scanned?: number;
+          rule_hits?: Array<{ rule_id: string; severity: "info" | "low" | "medium" | "high" | "critical" }>;
+          sensitive_capabilities?: string[];
+          dependency_summary?: Record<string, unknown>;
+        };
+        updated_at: string;
+      }
+    | null;
+  const normalizedRiskSummary = sharedModule.normalizeRiskSummary?.(riskSummaryBody.data) as
+    | {
+        task_id: string;
+        task_type: string;
+        status: string;
+        risk_level: string;
+        summary: string;
+        total_findings: number;
+        info_count: number;
+        low_count: number;
+        medium_count: number;
+        high_count: number;
+        critical_count: number;
+        updated_at: string;
+      }
+    | null;
+
+  assert.notEqual(normalizedTask, null);
+  assert.notEqual(normalizedResult, null);
+  assert.notEqual(normalizedRiskSummary, null);
+
+  if (!normalizedTask || !normalizedResult || !normalizedRiskSummary) {
+    return;
+  }
+
+  const ruleHits = normalizedResult.details.rule_hits ?? [];
+  const riskCounts = {
+    total_findings: ruleHits.length,
+    info_count: ruleHits.filter((ruleHit) => ruleHit.severity === "info").length,
+    low_count: ruleHits.filter((ruleHit) => ruleHit.severity === "low").length,
+    medium_count: ruleHits.filter((ruleHit) => ruleHit.severity === "medium").length,
+    high_count: ruleHits.filter((ruleHit) => ruleHit.severity === "high").length,
+    critical_count: ruleHits.filter((ruleHit) => ruleHit.severity === "critical").length
+  };
+  const expectedRiskLevel =
+    riskCounts.critical_count > 0
+      ? "critical"
+      : riskCounts.high_count > 0
+        ? "high"
+        : riskCounts.medium_count > 0
+          ? "medium"
+          : riskCounts.low_count > 0
+            ? "low"
+            : "info";
+
+  assert.equal(normalizedTask.task_id, createdTaskData.task_id);
+  assert.equal(normalizedTask.task_type, "static_analysis");
+  assert.equal(normalizedTask.engine_type, "skills_static");
+  assert.equal(normalizedTask.status, "finished");
+  assert.equal(normalizedResult.task_id, createdTaskData.task_id);
+  assert.equal(normalizedResult.task_type, "static_analysis");
+  assert.equal(normalizedResult.engine_type, "skills_static");
+  assert.equal(normalizedResult.status, "finished");
+  assert.equal(normalizedRiskSummary.task_id, createdTaskData.task_id);
+  assert.equal(normalizedRiskSummary.task_type, "static_analysis");
+  assert.equal(normalizedRiskSummary.status, "finished");
+
+  assert.ok(typeof normalizedResult.details.sample_name === "string" && normalizedResult.details.sample_name.length > 0);
+  assert.ok(typeof normalizedResult.details.language === "string" && normalizedResult.details.language.length > 0);
+  assert.ok(Array.isArray(normalizedResult.details.entry_files) && normalizedResult.details.entry_files.length > 0);
+  assert.ok(
+    typeof normalizedResult.details.files_scanned === "number" &&
+      normalizedResult.details.files_scanned >= normalizedResult.details.entry_files.length
+  );
+  assert.ok(ruleHits.length > 0);
+  assert.ok(Array.isArray(normalizedResult.details.sensitive_capabilities) && normalizedResult.details.sensitive_capabilities.length > 0);
+  assert.equal(typeof normalizedResult.details.dependency_summary, "object");
+  assert.notEqual(normalizedResult.details.dependency_summary, null);
+
+  assert.equal(normalizedTask.risk_level, expectedRiskLevel);
+  assert.equal(normalizedResult.risk_level, expectedRiskLevel);
+  assert.equal(normalizedRiskSummary.risk_level, expectedRiskLevel);
+  assert.equal(normalizedRiskSummary.total_findings, riskCounts.total_findings);
+  assert.equal(normalizedRiskSummary.info_count, riskCounts.info_count);
+  assert.equal(normalizedRiskSummary.low_count, riskCounts.low_count);
+  assert.equal(normalizedRiskSummary.medium_count, riskCounts.medium_count);
+  assert.equal(normalizedRiskSummary.high_count, riskCounts.high_count);
+  assert.equal(normalizedRiskSummary.critical_count, riskCounts.critical_count);
+
+  assert.equal(normalizedTask.summary, normalizedResult.summary);
+  assert.equal(normalizedResult.summary, normalizedRiskSummary.summary);
+  assert.notEqual(normalizedTask.summary, STATIC_ANALYSIS_PENDING_SUMMARY);
+  assert.notEqual(normalizedTask.summary, createdTaskData.summary);
+  assert.equal(normalizedTask.updated_at, normalizedResult.updated_at);
+  assert.equal(normalizedResult.updated_at, normalizedRiskSummary.updated_at);
+});
+
+test("backend task center keeps mock and semgrep providers aligned on the standardized static-analysis read contract", async (t) => {
+  const mainModule = await importIfExists<MainModule>(mainModulePath);
+  const sharedModule = await importIfExists<SharedModule>(sharedEntrypointPath);
+
+  assert.notEqual(mainModule, null, "backend main module should exist before provider-parity reads can be verified");
+  assert.notEqual(sharedModule, null, "shared module should exist before provider-parity reads can be normalized");
+
+  if (!mainModule?.createAppServer || !sharedModule) {
+    return;
+  }
+
+  const previousProvider = process.env.SKILLS_STATIC_ENGINE_PROVIDER;
+  const server = mainModule.createAppServer();
+  const { baseUrl, close } = await startServer(server);
+  t.after(close);
+
+  try {
+    const targetValue = resolve(import.meta.dirname, "../fixtures/skills-static-real-scan");
+
+    delete process.env.SKILLS_STATIC_ENGINE_PROVIDER;
+    const mockCreatedTask = await createTask(baseUrl, {
+      task_type: "static_analysis",
+      title: "Analyze provider parity fixture with mock",
+      target: {
+        target_type: "skill_package",
+        target_value: targetValue,
+        display_name: "skills-static-real-scan"
+      },
+      parameters: {
+        language: "typescript"
+      }
+    });
+
+    process.env.SKILLS_STATIC_ENGINE_PROVIDER = "semgrep";
+    const semgrepCreatedTask = await createTask(baseUrl, {
+      task_type: "static_analysis",
+      title: "Analyze provider parity fixture with semgrep",
+      target: {
+        target_type: "skill_package",
+        target_value: targetValue,
+        display_name: "skills-static-real-scan"
+      },
+      parameters: {
+        language: "typescript"
+      }
+    });
+
+    assert.equal(mockCreatedTask.status, 201);
+    assert.equal(semgrepCreatedTask.status, 201);
+
+    const mockTaskId = ((mockCreatedTask.body.data as { task_id: string }).task_id);
+    const semgrepTaskId = ((semgrepCreatedTask.body.data as { task_id: string }).task_id);
+
+    const mockResultResponse = await fetch(`${baseUrl}/api/tasks/${mockTaskId}/result`);
+    const mockResultBody = (await mockResultResponse.json()) as Record<string, unknown>;
+    const semgrepResultResponse = await fetch(`${baseUrl}/api/tasks/${semgrepTaskId}/result`);
+    const semgrepResultBody = (await semgrepResultResponse.json()) as Record<string, unknown>;
+    const mockRiskSummaryResponse = await fetch(`${baseUrl}/api/tasks/${mockTaskId}/risk-summary`);
+    const mockRiskSummaryBody = (await mockRiskSummaryResponse.json()) as Record<string, unknown>;
+    const semgrepRiskSummaryResponse = await fetch(`${baseUrl}/api/tasks/${semgrepTaskId}/risk-summary`);
+    const semgrepRiskSummaryBody = (await semgrepRiskSummaryResponse.json()) as Record<string, unknown>;
+
+    assert.equal(mockResultResponse.status, 200);
+    assert.equal(semgrepResultResponse.status, 200);
+    assert.equal(mockRiskSummaryResponse.status, 200);
+    assert.equal(semgrepRiskSummaryResponse.status, 200);
+    assert.equal(sharedModule.isApiResponse?.(mockResultBody), true);
+    assert.equal(sharedModule.isApiResponse?.(semgrepResultBody), true);
+    assert.equal(sharedModule.isApiResponse?.(mockRiskSummaryBody), true);
+    assert.equal(sharedModule.isApiResponse?.(semgrepRiskSummaryBody), true);
+
+    const normalizedMockResult = sharedModule.normalizeBaseResult?.(mockResultBody.data) as
+      | {
+          status: string;
+          summary: string;
+          details: {
+            sample_name?: string;
+            language?: string;
+            entry_files?: string[];
+            files_scanned?: number;
+            rule_hits?: Array<{
+              rule_id?: string;
+              severity?: "info" | "low" | "medium" | "high" | "critical";
+              message?: string;
+              file_path?: string;
+              line_start?: number;
+              line_end?: number;
+            }>;
+            sensitive_capabilities?: string[];
+            dependency_summary?: Record<string, unknown>;
+          };
+        }
+      | null;
+    const normalizedSemgrepResult = sharedModule.normalizeBaseResult?.(semgrepResultBody.data) as
+      | {
+          status: string;
+          summary: string;
+          details: {
+            sample_name?: string;
+            language?: string;
+            entry_files?: string[];
+            files_scanned?: number;
+            rule_hits?: Array<{
+              rule_id?: string;
+              severity?: "info" | "low" | "medium" | "high" | "critical";
+              message?: string;
+              file_path?: string;
+              line_start?: number;
+              line_end?: number;
+            }>;
+            sensitive_capabilities?: string[];
+            dependency_summary?: Record<string, unknown>;
+          };
+        }
+      | null;
+    const normalizedMockRiskSummary = sharedModule.normalizeRiskSummary?.(mockRiskSummaryBody.data) as
+      | {
+          status: string;
+          risk_level: string;
+          summary: string;
+          total_findings: number;
+          info_count: number;
+          low_count: number;
+          medium_count: number;
+          high_count: number;
+          critical_count: number;
+          updated_at: string;
+        }
+      | null;
+    const normalizedSemgrepRiskSummary = sharedModule.normalizeRiskSummary?.(semgrepRiskSummaryBody.data) as
+      | {
+          status: string;
+          risk_level: string;
+          summary: string;
+          total_findings: number;
+          info_count: number;
+          low_count: number;
+          medium_count: number;
+          high_count: number;
+          critical_count: number;
+          updated_at: string;
+        }
+      | null;
+
+    assert.notEqual(normalizedMockResult, null);
+    assert.notEqual(normalizedSemgrepResult, null);
+    assert.notEqual(normalizedMockRiskSummary, null);
+    assert.notEqual(normalizedSemgrepRiskSummary, null);
+
+    if (!normalizedMockResult || !normalizedSemgrepResult || !normalizedMockRiskSummary || !normalizedSemgrepRiskSummary) {
+      return;
+    }
+
+    assert.equal(normalizedMockResult.status, "finished");
+    assert.equal(normalizedSemgrepResult.status, "finished");
+    assert.equal(normalizedMockRiskSummary.status, "finished");
+    assert.equal(normalizedSemgrepRiskSummary.status, "finished");
+    assert.deepEqual(projectStandardizedDetails(normalizedMockResult.details), CANONICAL_STATIC_ANALYSIS_STRONG_DETAILS_PROJECTION);
+    assert.deepEqual(projectStandardizedDetails(normalizedSemgrepResult.details), CANONICAL_STATIC_ANALYSIS_STRONG_DETAILS_PROJECTION);
+    assert.deepEqual(
+      {
+        risk_level: normalizedMockRiskSummary.risk_level,
+        total_findings: normalizedMockRiskSummary.total_findings,
+        info_count: normalizedMockRiskSummary.info_count,
+        low_count: normalizedMockRiskSummary.low_count,
+        medium_count: normalizedMockRiskSummary.medium_count,
+        high_count: normalizedMockRiskSummary.high_count,
+        critical_count: normalizedMockRiskSummary.critical_count
+      },
+      CANONICAL_STATIC_ANALYSIS_DERIVED_RISK_SUMMARY
+    );
+    assert.deepEqual(
+      {
+        risk_level: normalizedSemgrepRiskSummary.risk_level,
+        total_findings: normalizedSemgrepRiskSummary.total_findings,
+        info_count: normalizedSemgrepRiskSummary.info_count,
+        low_count: normalizedSemgrepRiskSummary.low_count,
+        medium_count: normalizedSemgrepRiskSummary.medium_count,
+        high_count: normalizedSemgrepRiskSummary.high_count,
+        critical_count: normalizedSemgrepRiskSummary.critical_count
+      },
+      CANONICAL_STATIC_ANALYSIS_DERIVED_RISK_SUMMARY
+    );
+    assert.equal(normalizedMockResult.summary, normalizedMockRiskSummary.summary);
+    assert.equal(normalizedSemgrepResult.summary, normalizedSemgrepRiskSummary.summary);
+    assert.notEqual(normalizedMockResult.summary, STATIC_ANALYSIS_PENDING_SUMMARY);
+    assert.notEqual(normalizedSemgrepResult.summary, STATIC_ANALYSIS_PENDING_SUMMARY);
+
+    assert.ok(Array.isArray(normalizedMockResult.details.entry_files) && normalizedMockResult.details.entry_files.length > 0);
+    assert.ok(Array.isArray(normalizedSemgrepResult.details.entry_files) && normalizedSemgrepResult.details.entry_files.length > 0);
+    assert.ok(typeof normalizedMockResult.details.files_scanned === "number" && normalizedMockResult.details.files_scanned >= 1);
+    assert.ok(typeof normalizedSemgrepResult.details.files_scanned === "number" && normalizedSemgrepResult.details.files_scanned >= 1);
+    assert.ok(
+      Array.isArray(normalizedMockResult.details.sensitive_capabilities) &&
+        normalizedMockResult.details.sensitive_capabilities.length > 0
+    );
+    assert.ok(
+      Array.isArray(normalizedSemgrepResult.details.sensitive_capabilities) &&
+        normalizedSemgrepResult.details.sensitive_capabilities.length > 0
+    );
+    assert.equal(typeof normalizedMockResult.details.dependency_summary, "object");
+    assert.notEqual(normalizedMockResult.details.dependency_summary, null);
+    assert.equal(typeof normalizedSemgrepResult.details.dependency_summary, "object");
+    assert.notEqual(normalizedSemgrepResult.details.dependency_summary, null);
+  } finally {
+    if (previousProvider === undefined) {
+      delete process.env.SKILLS_STATIC_ENGINE_PROVIDER;
+    } else {
+      process.env.SKILLS_STATIC_ENGINE_PROVIDER = previousProvider;
+    }
+  }
+});
+
+test("backend task center exposes failed static-analysis shells when provider selection fails", async (t) => {
+  const mainModule = await importIfExists<MainModule>(mainModulePath);
+  const sharedModule = await importIfExists<SharedModule>(sharedEntrypointPath);
+
+  assert.notEqual(mainModule, null, "backend main module should exist before static-analysis failure reads can be verified");
+  assert.notEqual(sharedModule, null, "shared module should exist before static-analysis failure reads can be normalized");
+
+  if (!mainModule?.createAppServer || !sharedModule) {
+    return;
+  }
+
+  const previousProvider = process.env.SKILLS_STATIC_ENGINE_PROVIDER;
+  process.env.SKILLS_STATIC_ENGINE_PROVIDER = "unsupported-provider";
+
+  const server = mainModule.createAppServer();
+  const { baseUrl, close } = await startServer(server);
+  t.after(close);
+
+  try {
+    const createdTask = await createTask(baseUrl, {
+      task_type: "static_analysis",
+      title: "Analyze unsupported provider",
+      target: {
+        target_type: "skill_package",
+        target_value: resolve(import.meta.dirname, "../fixtures/skills-static-real-scan"),
+        display_name: "skills-static-real-scan"
+      },
+      parameters: {
+        language: "typescript"
+      }
+    });
+
+    assert.equal(createdTask.status, 201);
+    assert.equal(sharedModule.isApiResponse?.(createdTask.body), true);
+
+    const createdTaskData = sharedModule.normalizeTask?.(createdTask.body.data) as
+      | {
+          task_id: string;
+          status: string;
+          summary?: string;
+        }
+      | null;
+
+    assert.notEqual(createdTaskData, null);
+
+    if (!createdTaskData) {
+      return;
+    }
+
+    assert.equal(createdTaskData.status, "pending");
+    assert.equal(createdTaskData.summary, STATIC_ANALYSIS_PENDING_SUMMARY);
+
+    const taskResponse = await fetch(`${baseUrl}/api/tasks/${createdTaskData.task_id}`);
+    const taskBody = (await taskResponse.json()) as Record<string, unknown>;
+    const resultResponse = await fetch(`${baseUrl}/api/tasks/${createdTaskData.task_id}/result`);
+    const resultBody = (await resultResponse.json()) as Record<string, unknown>;
+    const riskSummaryResponse = await fetch(`${baseUrl}/api/tasks/${createdTaskData.task_id}/risk-summary`);
+    const riskSummaryBody = (await riskSummaryResponse.json()) as Record<string, unknown>;
+
+    assert.equal(taskResponse.status, 200);
+    assert.equal(resultResponse.status, 200);
+    assert.equal(riskSummaryResponse.status, 200);
+
+    const normalizedTask = sharedModule.normalizeTask?.(taskBody.data) as
+      | {
+          status: string;
+          risk_level?: string;
+          summary?: string;
+        }
+      | null;
+    const normalizedResult = sharedModule.normalizeBaseResult?.(resultBody.data) as
+      | {
+          status: string;
+          risk_level: string;
+          summary: string;
+          details: {
+            sample_name?: string;
+            rule_hits?: unknown[];
+          };
+        }
+      | null;
+    const normalizedRiskSummary = sharedModule.normalizeRiskSummary?.(riskSummaryBody.data) as
+      | {
+          status: string;
+          risk_level: string;
+          summary: string;
+          total_findings: number;
+        }
+      | null;
+
+    assert.notEqual(normalizedTask, null);
+    assert.notEqual(normalizedResult, null);
+    assert.notEqual(normalizedRiskSummary, null);
+
+    if (!normalizedTask || !normalizedResult || !normalizedRiskSummary) {
+      return;
+    }
+
+    assert.equal(normalizedTask.status, "failed");
+    assert.equal(normalizedResult.status, "failed");
+    assert.equal(normalizedRiskSummary.status, "failed");
+    assert.equal(normalizedTask.risk_level, "info");
+    assert.equal(normalizedResult.risk_level, "info");
+    assert.equal(normalizedRiskSummary.risk_level, "info");
+    assert.equal(normalizedTask.summary, "Static analysis failed during provider selection");
+    assert.equal(normalizedResult.summary, normalizedTask.summary);
+    assert.equal(normalizedRiskSummary.summary, normalizedTask.summary);
+    assert.equal(normalizedResult.details.sample_name, "skills-static-real-scan");
+    assert.deepEqual(normalizedResult.details.rule_hits, []);
+    assert.equal(normalizedRiskSummary.total_findings, 0);
+  } finally {
+    if (previousProvider === undefined) {
+      delete process.env.SKILLS_STATIC_ENGINE_PROVIDER;
+    } else {
+      process.env.SKILLS_STATIC_ENGINE_PROVIDER = previousProvider;
+    }
+  }
 });
 
 test("backend task center returns a created task together with its initial result and risk summary", async (t) => {
