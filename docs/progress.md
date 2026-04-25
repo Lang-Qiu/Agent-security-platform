@@ -10,179 +10,52 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
-## 2026-04-13 - skills-static minimal runtime governance
-- requirement: add the smallest logging / exception / timeout governance layer for the real `skills_static` execution path without changing the public task-center API or the standardized result contract
-- scope: introduce stable internal execution failure semantics, add the minimal runtime log event seam, enforce a semgrep timeout boundary, and make runtime failures backfill failed artifacts instead of leaking raw provider errors or leaving dangling pending shells
-- tests:
-  - `backend/tests/skills-static-runtime-governance.spec.ts`
-  - `backend/tests/skills-static-core.spec.ts`
-  - `backend/tests/skills-static-semgrep.spec.ts`
-  - `backend/tests/task-engine.service.spec.ts`
-  - `backend/tests/task-center.service.spec.ts`
-  - `tests/integration/backend-task-center.api.spec.ts`
-- test result: pass for the requirement-focused verification set:
-  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-runtime-governance.spec.ts`
-  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-core.spec.ts backend/tests/skills-static-semgrep.spec.ts`
-  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "skills-static|static-analysis|failed|timeout|provider" backend/tests/task-engine.service.spec.ts backend/tests/task-center.service.spec.ts`
-  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "static-analysis|shared response shell|failed|provider" tests/integration/backend-task-center.api.spec.ts`
+## 2026-04-11 - REQ-ASSET-PROBE-004 backend probe/scoring migration to engine
+- requirement: keep backend as orchestrator and migrate asset-scan probe/scoring execution to engine runtime with process bridge invocation
+- scope:
+  - migrated backend source-of-truth logic into `engines/asset-scan/src/runtime/*`
+  - added engine bridge entry `engines/asset-scan/src/bridge/scan-task.ts`
+  - switched backend `AssetScanTaskAdapter` to engine-client delegation only
+  - added process engine client in backend adapter layer
+- tests added:
+  - `backend/tests/asset-scan.engine-client.spec.ts`
+  - `engines/asset-scan/tests/scan-task.bridge.spec.ts`
+- tests updated:
+  - `backend/tests/task-engine.service.spec.ts` (asset result target assertion aligned to bridge JSON behavior)
+- test result: pass
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/asset-scan.engine-client.spec.ts engines/asset-scan/tests/scan-task.bridge.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/task-engine.service.spec.ts tests/integration/backend-task-center.api.spec.ts`
 - docs updated:
-  - `README.md`
-  - `docs/architecture.md`
+  - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
   - `docs/progress.md`
-- notes:
-  - explicit unsupported provider values no longer silently fall back to `mock`; they now fail through a stable provider-selection error path
-  - the real semgrep path now has a default timeout boundary and maps timeout / startup / ruleset / target / parse failures into stable internal execution reasons
-  - runtime failures now backfill `failed` platform shells instead of leaving a created task stuck on the initial pending placeholder
-  - raw provider stderr/stdout remains internal-only and does not become part of the shared or public response contract
-
-## 2026-04-10 - skills-static standardized risk result
-- requirement: standardize the provider-agnostic `skills_static` risk-result semantics without changing the public task-center API or adding another provider
-- scope: strengthen the finished static-analysis contract around `sample_name`, `language`, standardized `rule_hits`, and provider-agnostic `RiskSummary`; align mock output with semgrep at the strong-field layer; and keep `entry_files`, `files_scanned`, `sensitive_capabilities`, `dependency_summary`, and optional extensions on a weaker contract
-- tests:
-  - `shared/tests/result-contract.spec.ts`
-  - `shared/tests/task-contract.spec.ts`
-  - `shared/tests/api-response.contract.spec.ts`
-  - `backend/tests/skills-static-core.spec.ts`
-  - `backend/tests/skills-static-semgrep.spec.ts`
-  - `backend/tests/task-engine.service.spec.ts`
-  - `backend/tests/task-center.service.spec.ts`
-  - `tests/integration/backend-task-center.api.spec.ts`
-- test result: pass for the requirement-focused verification set:
-  - `node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/task-contract.spec.ts shared/tests/api-response.contract.spec.ts shared/tests/result-contract.spec.ts`
-  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-core.spec.ts backend/tests/skills-static-semgrep.spec.ts`
-  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "skills-static|static-analysis shell|malformed|parity" backend/tests/task-engine.service.spec.ts backend/tests/task-center.service.spec.ts`
-  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "static-analysis|shared response shell|semgrep" tests/integration/backend-task-center.api.spec.ts`
-- docs updated:
-  - `README.md`
+  - `docs/architecture.md`
   - `docs/api-contract.md`
-  - `docs/architecture.md`
-  - `docs/progress.md`
+  - `docs/sprint-current.md`
 - notes:
-  - `mock` and `semgrep` now align on the strong standardized fields consumed by the platform read path
-  - `RiskSummary` remains provider-agnostic and is validated against the same normalized finding semantics across both providers
-  - `entry_files`, `files_scanned`, `sensitive_capabilities`, `dependency_summary`, and optional extension fields intentionally stay on a weaker contract until the platform read layer depends on them more strongly
-  - this stage stops before any logging / timeout / reporting / multi-provider expansion work
+  - migration keeps `sample_ref` and `live probe` external behavior unchanged while moving execution into engine
+  - conflict resolution policy followed: backend behavior precedence on probe/scoring semantics
+  - backend runtime path now orchestrates and delegates to engine bridge; no local probe/scoring execution in `AssetScanTaskAdapter`
 
-## 2026-04-10 - skills-static minimal real detection capability
-- requirement: add the smallest real `skills_static` detection path without changing the public task-center API or the normalized static-analysis contract
-- scope: introduce a local `semgrep` runner and raw-output mapper, let `SkillsStaticEngineClient` switch between `mock` and `semgrep` through `SKILLS_STATIC_ENGINE_PROVIDER`, add a minimal real scan fixture plus rule file, and keep all existing normalizer / risk-summary derivation boundaries intact
-- tests:
-  - `backend/tests/skills-static-semgrep.spec.ts`
-  - `backend/tests/skills-static-core.spec.ts`
+## 2026-04-13 - REQ-ASSET-PROBE-005 probe test ownership relocation to engine suite
+- requirement: move dynamic probe behavior tests to engine-owned test suite while keeping backend tests focused on orchestration and contract boundaries
+- scope:
+  - added `engines/asset-scan/tests/asset-probe.runtime.spec.ts` with live HTTP/WS probe coverage for langflow, ollama (port hint), and openclaw-gateway
+  - removed duplicated live probe behavior tests from `backend/tests/task-engine.service.spec.ts`
+  - updated root script `test:engine:asset-scan` to include the new probe runtime test file
+- tests added:
+  - `engines/asset-scan/tests/asset-probe.runtime.spec.ts`
+- tests updated:
   - `backend/tests/task-engine.service.spec.ts`
-  - `backend/tests/task-center.service.spec.ts`
-  - `shared/tests/task-contract.spec.ts`
-  - `shared/tests/result-contract.spec.ts`
-  - `tests/integration/backend-task-center.api.spec.ts`
-- test result: pass for the requirement-focused verification set:
-  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-semgrep.spec.ts`
-  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-core.spec.ts`
-  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "skills-static|static-analysis shell|malformed" backend/tests/task-engine.service.spec.ts backend/tests/task-center.service.spec.ts`
-  - `node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/task-contract.spec.ts shared/tests/result-contract.spec.ts`
-  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "static-analysis|shared response shell" tests/integration/backend-task-center.api.spec.ts`
+  - `package.json`
+- test result: pass
+  - `npm run test:engine:asset-scan`
+  - `npm run test:backend`
+  - `npm run test`
 - docs updated:
-  - `README.md`
-  - `docs/architecture.md`
   - `docs/progress.md`
 - notes:
-  - the only real detection provider in this stage is local `semgrep`; default behavior still stays on the deterministic `mock` provider
-  - `SemgrepRunner` and `SemgrepOutputMapper` sit strictly before `SkillsStaticResultNormalizer`, so the normalized static-analysis contract remains the same
-  - the real scan fixture and rule file are intentionally minimal and exist only to prove the provider handoff, raw-output mapping, and contract preservation path
-  - this stage stops before multi-detector orchestration, public API changes, or broader engine-architecture work
-
-## 2026-04-04 - skills-static internal core objects
-- requirement: design and minimally implement the backend-internal core objects that normalize `skills_static` engine output and derive risk-summary semantics without changing the public task-center API
-- scope: extract `SkillsStaticEngineOutput`, `SkillsStaticResultNormalizer`, and `RiskSummaryDeriver`, keep `SkillsStaticRuleHit` as the shared normalized contract, wire the new objects into adapter/client/service boundaries, and preserve the existing mock closed-loop plus malformed-input fallback behavior
-- tests:
-  - `backend/tests/skills-static-core.spec.ts`
-  - `backend/tests/task-engine.service.spec.ts`
-  - `backend/tests/task-center.service.spec.ts`
-  - `shared/tests/task-contract.spec.ts`
-  - `shared/tests/result-contract.spec.ts`
-  - `tests/integration/backend-task-center.api.spec.ts`
-  - `tests/repository/static-analysis-api-contract-docs.spec.ts`
-  - `tests/repository/static-analysis-contract-test-boundary.spec.ts`
-- test result: pass for the requirement-focused verification set:
-  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-core.spec.ts`
-  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "skills-static|static-analysis shell|malformed" backend/tests/task-engine.service.spec.ts backend/tests/task-center.service.spec.ts`
-  - `node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/task-contract.spec.ts shared/tests/result-contract.spec.ts`
-  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "static-analysis|shared response shell" tests/integration/backend-task-center.api.spec.ts`
-  - `npm.cmd run test:repo`
-- docs updated:
-  - `shared/types/skills-static-rule-hit.ts`
-  - `docs/architecture.md`
-  - `docs/progress.md`
-- notes:
-  - `SkillsStaticRuleHit` remains the only shared normalized rule-hit contract; this requirement did not create a backend-only duplicate type
-  - mock client output is now treated as loose engine output, then normalized before it reaches platform result shells
-  - malformed `skills_static` engine output now raises a structured internal error and is caught by `TaskCenterService`, which preserves the existing pending shell and avoids a broken finished backfill
-  - this stage stops before any real third-party detection-library adapter, public API change, or broader engine-architecture refactor
-
-## 2026-04-02 - static-analysis contract and integration test solidification
-- requirement: solidify the shared contract and public integration semantics for the finished `static_analysis` mock closed loop without extending engine behavior
-- scope: add a canonical contract fixture, strengthen shared contract tests for normalized static-analysis result and finished risk summary semantics, relax backend/integration assertions away from mock-specific snapshots, and align API contract docs with the current closed-loop read behavior
-- tests:
-  - `shared/tests/task-contract.spec.ts`
-  - `shared/tests/api-response.contract.spec.ts`
-  - `shared/tests/result-contract.spec.ts`
-  - `backend/tests/task-engine.service.spec.ts`
-  - `backend/tests/task-center.service.spec.ts`
-  - `tests/integration/backend-task-center.api.spec.ts`
-- test result: pass for the requirement-focused verification set:
-  - `node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/task-contract.spec.ts shared/tests/api-response.contract.spec.ts shared/tests/result-contract.spec.ts`
-  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "skills-static adapter rejects malformed mock results before closed-loop backfill|engine client registry resolves skills-static engine clients and rejects duplicate engine registration|task engine service dispatches static-analysis tickets through the registered skills-static engine client|task engine service materializes a finished static-analysis shell from a deterministic mock result" backend/tests/task-engine.service.spec.ts`
-  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "task center service dispatches static-analysis tasks after saving their initial artifacts|task center service backfills static-analysis artifacts when the engine client returns a mock result|task center service does not backfill static-analysis artifacts when the engine client returns a malformed mock result" backend/tests/task-center.service.spec.ts`
-  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "backend task center creates and lists in-memory tasks through the shared response shell|backend task center keeps static-analysis creation on POST /api/tasks with parameters as the engine options slot" tests/integration/backend-task-center.api.spec.ts`
-- docs updated:
-  - `docs/api-contract.md`
-  - `docs/progress.md`
-- notes:
-  - shared tests now fix the normalized static-analysis result shape and finished risk-summary semantics using a canonical contract fixture instead of engine-client internals
-  - integration assertions now verify response shell stability and cross-endpoint semantic consistency rather than exact mock `rule_hits`, summary wording, or dependency-summary literals
-  - future real detection-library adapters should only need to normalize into the same shared contract for these tests to remain valid
-
-## 2026-04-02 - minimal mock skills-static engine closed loop
-- requirement: implement the smallest mock engine closed loop for `static_analysis` on top of the completed engine-registration and route-wiring baseline
-- scope: keep `POST /api/tasks` as the only public write entry, let `SkillsStaticEngineClient` return a deterministic mock analysis result, and backfill the existing `Task`, `BaseResult`, and `RiskSummary` records through the current task-center mainline
-- tests:
-  - `backend/tests/task-engine.service.spec.ts`
-  - `backend/tests/task-center.service.spec.ts`
-  - `tests/integration/backend-task-center.api.spec.ts`
-- test result: pass for the requirement-focused verification set:
-  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "task engine service dispatches static-analysis tickets through the registered skills-static engine client|task engine service materializes a finished static-analysis shell from a deterministic mock result" backend/tests/task-engine.service.spec.ts`
-  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "task center service dispatches static-analysis tasks after saving their initial artifacts|task center service backfills static-analysis artifacts when the engine client returns a mock result" backend/tests/task-center.service.spec.ts`
-  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "backend task center creates and lists in-memory tasks through the shared response shell|backend task center keeps static-analysis creation on POST /api/tasks with parameters as the engine options slot" tests/integration/backend-task-center.api.spec.ts`
-- docs updated:
-  - `README.md`
-  - `docs/api-contract.md`
-  - `docs/architecture.md`
-  - `docs/progress.md`
-- notes:
-  - `SkillsStaticEngineClient` now returns a deterministic mock result payload for `static_analysis`; it still does not call a real scan engine
-  - the platform backfills the existing record through a second repository save, so `GET /api/tasks/:taskId`, `GET /result`, and `GET /risk-summary` expose the closed-loop state without adding new routes
-  - `POST /api/tasks` remains the unchanged public write entry and still returns the created task shell rather than introducing a new engine-specific response contract
-  - the pre-existing unrelated `asset-scan` `.worktrees` failure was not touched and remains outside this requirement
-
-## 2026-04-02 - skills-static engine registration and platform route wiring baseline
-- requirement: register `skills-static` on the platform mainline and wire `static_analysis` task creation into an internal engine entry without changing the public task-center API
-- scope: add backend `EngineClient` / `EngineClientRegistry`, register `SkillsStaticEngineClient`, keep `POST /api/tasks` as the only public write entry, and dispatch `static_analysis` tickets through the new engine client layer after task creation
-- tests:
-  - `backend/tests/task-engine.service.spec.ts`
-  - `backend/tests/task-center.service.spec.ts`
-  - `tests/integration/backend-task-center.api.spec.ts`
-- test result: pass for the requirement-focused verification set:
-  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "engine client registry resolves skills-static engine clients and rejects duplicate engine registration|task engine service dispatches static-analysis tickets through the registered skills-static engine client|task center service dispatches static-analysis tasks after saving their initial artifacts" backend/tests/task-engine.service.spec.ts backend/tests/task-center.service.spec.ts`
-  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern "backend task center creates and lists in-memory tasks through the shared response shell|backend task center keeps static-analysis creation on POST /api/tasks with parameters as the engine options slot|backend task center returns a created task together with its initial result and risk summary" tests/integration/backend-task-center.api.spec.ts`
-- docs updated:
-  - `README.md`
-  - `docs/api-contract.md`
-  - `docs/architecture.md`
-  - `docs/progress.md`
-- notes:
-  - `static_analysis` remains on the existing `POST /api/tasks` route and still maps to `engine_type = skills_static`
-  - adapter responsibilities stay limited to payload/details mapping; engine-entry routing now lives in `EngineClientRegistry` plus `SkillsStaticEngineClient`
-  - `TaskCenterService` only dispatches when an engine client is registered, so this stage does not force unrelated engines onto the new path yet
-  - there is a pre-existing unrelated baseline failure in this worktree for `asset-scan` live-probe tests caused by path handling under `.worktrees`; it was not changed in this requirement and was excluded from the focused verification set
+  - engine now owns probe behavior verification; backend keeps delegation/orchestration checks and API integration checks
+  - no probe algorithm change was introduced in this requirement; this is a test-layer ownership correction
 
 ## 2026-04-01 - skills-static platform-compatible DTO / interface and minimal adapter mapping skeleton
 - requirement: add `skills-static`-compatible shared DTOs/interfaces and the smallest backend adapter mapping boundary without changing the public task-center API
@@ -558,3 +431,131 @@ Recommended fields:
   - `openclaw-gateway` 通过最小 WebSocket 探针采集 `hello-ok` 与 `presence`，live probe 结果达到 direct 阈值
   - 当前 P0 四个目标均已具备无 `sample_ref` 的 live probe 识别能力
   - `REQ-ASSET-PROBE-004` 当前最小闭环验收项已满足，可在此停下并等待下一条 requirement
+
+## 2026-04-11 Minimum Detectable Prototype
+- 配置:
+  - Agent-security-platform\engines\asset-scan 目录下：pnpm add js-yaml node-fetch
+- 测试指令:
+  - npx tsx src/runner.ts 运行脚本
+  - 限制: 目前固定 ollama 测试
+  - 流程如下:
+    目标(target)
+        ↓
+    执行探测（probe）
+        ↓
+    得到响应数据（ProbeResult）
+      ↓
+    匹配指纹规则（fingerprints.yaml）
+      ↓
+    计算分数 + 分类
+      ↓
+    输出 AssetScanResult
+- docs updated:
+  - engines\asset-scan\src\core\matcher.ts
+  - engines\asset-scan\src\core\scorer.ts
+  - engines\asset-scan\src\probe\httpProbe.ts
+  - engines\asset-scan\src\probe\tcpProbe.ts
+  - engines\asset-scan\src\engine.ts 引擎入口（给 backend 用）
+  - engines\asset-scan\src\loader.ts
+  - engines\asset-scan\src\runner.ts CLI / 本地测试入口
+
+## 2026-04-17 六阶段探测原型
+- 重新整理完整的资产探测流程，分为六步：
+  - Step 1：资产发现
+    - 目标：从“整个互联网”缩小到“可能运行Agent 的IP 或域名”。
+    - Return：一个IP 列表。
+    - 与下层关系：为Step 2 提供了目标列表。
+  - Step 2：端口扫描
+    - 目标：从“所有IP”缩小到“有端口开放（可能提供网络服务）的IP”。
+    - Return：每个IP 上开放的端口列表。
+    - 与上下层关系：
+      - 上游依赖：Step 1 提供的IP 列表。
+      - 下游支撑：告诉Step 3 “这里有一个开放端口，请你去看看它是什么协议”。如果某个IP
+    没有开放任何相关端口（如80/443/50051），它就会被过滤掉。
+  - Step 3：协议识别
+    - 目标：从“开放端口”缩小到“具体是什么应用层协议（HTTP，TLS，gRPC）”。
+    - Return：每个端口对应的协议类型。
+    - 与上下层关系：
+      - 上游依赖：Step 2 确认的开放端口。
+      - 下游支撑：告诉Step 4 “该用什么工具和方法去采集指纹”。
+  - Step 4：指纹采集
+    - 目标：从“协议类型”到“具体的特征数据”。
+    - Return：原始特征数据（Header 字段，响应文本，API 路径列表，SSL 证书序列号等）。
+    - 与上下层关系：
+      - 上游依赖：Step 3 确定的协议。不同协议，采集的具体数据项不同。
+      - 下游支撑：为Step 5 提供“原材料”。这一步不负责判断Agent 类型，只是做“尽可能多地收集信息”。
+  - Step 5：指纹匹配
+    - 目标：从“原始特征数据”到“已知的指纹模式”。
+    - Return：匹配到的指纹标识。e.g. Header；API 路径......
+    - 与上下层关系：
+      - 上游依赖：Step 4 采集到的特征数据。
+      - 下游支撑：告诉Step 6 “这个资产可以打上什么技术标签”。这一步是从数据到信息的转换。
+  - Step 6：资产归类
+    - 目标：从“技术指纹”到“业务语义”。
+    - Return：最终的业务标签（如Agent 类型：客服机器人，框架：LangChain，模型服务：OpenAI）。
+    - 与上下层关系：
+      - 上游依赖：Step 5 匹配到的指纹集合。
+      - 最终输出：详细信息和置信度
+  - 详见群里 PDF
+
+## 2026-04-17 六阶段探测原型的实际实现
+  - 目前 engine 对 Step 4 ~ Step 6 的初步实现已完成，并接入 backen，同时为防止后续结构功能相关改变预留了在 engine 实现前三步的空间（ScanContext 类的定义）。
+  - 目前前三步在 engines\asset-scan\src\runtime\pipeline.ts 中进行mock降维处理，即：当前的输入是一个具体的 URL（比如 http://localhost:11434），系统直接通过解析这个 URL 来“伪造”了前三步的结果。
+  - 根据当前设计重构了 probes.yaml 和 fingerprints.yaml 文件，**注意二者间 feature_type 的匹配**
+  - Question：我理解前三步的结果通过 backen 获得，不过要在 engine 中实现也可以方便地扩展。
+  - docs updated:
+    - engines\asset-scan\src\probes\feature-extractor.util.ts
+    - engines\asset-scan\src\probes\http.handler.ts
+    - engines\asset-scan\src\probes\protocol-handler.interface.ts
+    - engines\asset-scan\src\probes\tcp.handler.ts
+    - engines\asset-scan\src\probes\ws.handler.ts
+    - engines\asset-scan\src\runtime\asset-fingerprint.service.ts
+    - engines\asset-scan\src\runtime\asset-probe.service.ts
+    - engines\asset-scan\src\runtime\classification.service.ts
+    - engines\asset-scan\src\runtime\pipeline.ts
+    - engines\asset-scan\src\runtime\run-task.ts
+    - engines\asset-scan\src\cli.ts
+    - engines\asset-scan\src\bridge\scan-task.ts
+    - engines\asset-scan\rules\fingerprints.v2.yaml
+    - engines\asset-scan\rules\probes.v2.yaml
+    - backend\tests\asset-scan-flow.spec.ts
+    - docs\progress.md
+    - engines\asset-scan\tsconfig.json
+    - shared\types\asset-scan.ts
+  - 可扩展之处：
+  
+| 扩展点 | 主要操作文件 | 次要操作文件 | 说明 |
+| :---: | :---: | :---: | :---: |
+| **新增产品指纹规则** | `engines/asset-scan/rules/fingerprints.v2.yaml` | `engines\asset-scan\src\probes\feature-extractor.util.ts` | 在 `fingerprints` 列表下新增条目，定义 `fingerprint_id`、`category`、`signals` 组合及 `inferred_attributes`。`asset-fingerprint.service.ts` 中的 `evaluate` 方法会遍历并评估该规则。 |
+| **新增指纹匹配操作符** | `engines/asset-scan/src/asset-fingerprint.service.ts` | `engines/asset-scan/rules/fingerprints.v2.yaml` | 在 `isSignalMatch` 方法的 `switch` 语句中新增 `case` 分支，实现如 `not_contains`、`starts_with` 等逻辑。YAML 文件中的 `match_operator` 字段需同步使用新操作符名称。 |
+| **支持指纹规则的复杂逻辑关系** | `engines/asset-scan/src/asset-fingerprint.service.ts` | `engines/asset-scan/rules/fingerprints.v2.yaml` | 重构 `evaluate` 方法中的评分逻辑，使其能解析 YAML 中定义的 `condition`（如 `AND`、`OR`）或 `match_requirement`（如 `all`、`any`）字段，计算组合条件的匹配结果。 |
+| **新增探测协议** | `engines/asset-scan/src/probes/` (新建 `[protocol].handler.ts`) | `engines/asset-scan/src/asset-probe.service.ts`<br>`engines/asset-scan/rules/probes.v2.yaml` | 创建新的类文件并实现相应的 `IProtocolHandler` 接口。在 `asset-probe.service.ts` 的 `handlers` 对象中注册该协议。YAML 文件中的 `request.protocol` 字段可使用新协议名称。 |
+| **新增 HTTP/WS 探针** | `engines/asset-scan/rules/probes.v2.yaml` | `engines/asset-scan/src/asset-probe.service.ts`<br>`engines/asset-scan/src/probes/http.handler.ts` (或 `ws.handler.ts`) | 在 `probes` 列表下新增条目，定义新的 `request`（路径、方法）和 `feature_extractors`。`asset-probe.service.ts` 会遍历并执行所有启用的探针。 |
+| **新增特征提取类型** | `engines/asset-scan/src/probes/feature-extractor.util.ts` | `engines/asset-scan/rules/probes.v2.yaml` | 在 `extractFeaturesFromPayload` 函数中增加 `else if` 分支，处理新的 `feature_type`（如 `http_header`、`crypto_hash`）。YAML 文件中的 `feature_extractors` 可定义新的提取规则。 |
+| **支持探针间的状态依赖** | `engines/asset-scan/src/asset-probe.service.ts` | `engines/asset-scan/src/probes/` (具体 `Handler` 文件)<br>`engines/asset-scan/rules/probes.v2.yaml` | 改造 `execute` 方法的循环逻辑，增加上下文对象（`context`）在各探针间传递状态（如 Token、Session ID）。`Handler` 的 `execute` 方法签名需扩展以接收并返回上下文。YAML 可能需要定义 `depends_on` 字段。 |
+| **增强探针去重与调度** | `engines/asset-scan/src/asset-probe.service.ts` | `engines/asset-scan/rules/probes.v2.yaml` | 在 `execute` 方法中的端口和探针循环内部，增加基于 `protocol`、`port`、`path` 等唯一键的去重判断逻辑，避免对同一资源发送冗余请求。 |
+| **增加探针请求重试机制** | `engines/asset-scan/src/probes/http.handler.ts` (或 `ws.handler.ts`) | `engines/asset-scan/rules/probes.v2.yaml` | 在 `Handler` 的 `execute` 方法内的 `catch` 块中，捕获特定网络错误（如 `ECONNRESET`），并实现带退避策略的循环重试逻辑。YAML 文件可增加 `retry` 配置段。 |
+
+  - 当前测试指令（已接入backen）：
+    - 主目录下的测试命令：node --experimental-strip-types backend\tests\asset-scan-flow.spec.ts 注：此为单独测试模块，下面的命令是真正接入backen后模拟前端输入的命令。
+    - Agent-security-platform\backend 目录下输入：node --experimental-strip-types src/main.ts
+    - 另起终端（以 ollama 探测为例）输入创建任务指令：
+```bash
+$body = @{
+    task_type = "asset_scan"
+    title = "直接测试后端拉起引擎"
+    target = @{
+        target_type = "url"
+        target_value = "http://localhost:11434"
+    }
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/tasks" -Method Post -Body $body -ContentType "application/json"
+```
+在输入获取结果指令（注意 task id 要对应）
+```bash
+Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/tasks/task_1776345291388_adbdb8/result" | ConvertTo-Json -Depth 10
+```
+或者浏览器输入 http://127.0.0.1:3000/api/tasks/task_1776345291388_adbdb8/result
+
+可以在 Agent-security-platform路径下运行 node --experimental-strip-types engines\asset-scan\src\cli.ts 测试中间过程的输出（目前写死 ollama）

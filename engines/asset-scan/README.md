@@ -40,3 +40,19 @@ engines/asset-scan/
 - 先支持最小输入目标，如 URL、仓库地址或样本目录。
 - 优先实现基础指纹模型和样例结果输出。
 - 在 `samples/assets` 中准备基础样本，供联调与测试使用。
+
+## 最小探测原型配置
+- Agent-security-platform\engines\asset-scan 目录下：pnpm add js-yaml node-fetch
+- npx tsx src/runner.ts 运行脚本（目前固定 ollama 测试）
+- 流程如下：
+目标(target)
+    ↓
+执行探测（probe）
+    ↓
+得到响应数据（ProbeResult）
+   ↓
+匹配指纹规则（fingerprints.yaml）
+   ↓
+计算分数 + 分类
+   ↓
+输出 AssetScanResult

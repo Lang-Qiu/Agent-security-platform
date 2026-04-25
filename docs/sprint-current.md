@@ -44,13 +44,15 @@ REQ-ASSET-PROBE-004
 - 本轮默认优先目标为 `ollama` 与 `langflow`，其余目标在最小闭环稳定后再扩展
 - 样本模式与真实探针模式并存，任何新实现不能破坏现有离线回归语义
 
-## Latest Execution Checkpoint (2026-04-01)
+## Latest Execution Checkpoint (2026-04-11)
 - 已完成：`REQ-ASSET-EVIDENCE-003` 核心验收项达成，负样本六类场景已覆盖并固化到回归
 - 已完成：`scripts/dev/negative-sample-mock.py` + `scripts/dev/mock-containers.sh` 的统一采样链路稳定可复用
 - 已完成：最近 `npm run test:backend` 与 `npm run test` 持续全绿
 - 已完成：阶段 G 第一刀 RED -> GREEN，`asset_scan` 已支持 `probe_mode=live + probe_target_id` 的最小真实探针闭环
 - 已完成：`ollama` 已支持带 `probe_port_hint` 的 live probe 识别
 - 已完成：`openclaw-gateway` 已支持最小 WebSocket live probe 识别
+- 已完成：backend 中 `asset-scan` 的 probe/scoring 执行逻辑已迁移到 `engines/asset-scan`，并通过进程桥接调用
+- 已完成：新增迁移专项测试（adapter engine-client delegation + engine bridge contract）并通过
 - 当前状态：P0 四个目标（`langflow`、`autogpt`、`ollama`、`openclaw-gateway`）均可在无 `sample_ref` 前提下通过本地 live probe 路径产出识别结果；本轮最小闭环验收项已完成
 
 ## Related Plan

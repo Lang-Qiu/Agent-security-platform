@@ -1,0 +1,162 @@
+version: "1.0"
+updated_at: "2026-04-14"
+owner: "asset-scan"
+description: "Probe catalog for asset exposure and fingerprint signal collection"
+
+policy:
+  timezone: "Asia/Shanghai"
+  allowed_window: "Mon-Fri 09:00-18:00"
+  max_http_rps_per_target: 10
+  max_tcp_concurrency_per_target: 100
+  max_ws_connect_per_minute_per_target: 3
+
+priority_ports:
+  critical: [18789, 18791, 18793]
+  high: [11434, 3000, 8080, 9090]
+  medium: [8000, 5000, 3001]
+  low: [80, 443, 8081]
+
+probes:
+  - probe_id: "tcp_connect_priority_ports"
+    layer: "L1"
+    probe_type: "port_exposure"
+    category: "port"
+    enabled: true
+    request:
+      protocol: "tcp"
+      method: "connect"
+      ports:
+        [
+          18789,
+          18791,
+          18793,
+          11434,
+          3000,
+          8080,
+          9090,
+          8000,
+          5000,
+          3001,
+          80,
+          443,
+        ]
+      timeout_ms: 800
+      retry: 1
+    feature_extractors:
+      - feature_type: "open_port"
+        extract_key: "in"
+        extract_value: "open"
+
+  - probe_id: "http_root_head"
+    layer: "L1"
+    probe_type: "web_root"
+    category: "http"
+    enabled: true
+    request:
+      protocol: "http"
+      method: "HEAD"
+      path: "/"
+      timeout_ms: 1200
+      retry: 1
+    feature_extractors:
+      - feature_type: "http_status"
+        extract_key: "equals"
+        extract_value: ""
+      - feature_type: "http_header"
+        extract_key: "contains"
+        extract_value: ""
+
+  - probe_id: "openclaw_gateway_ws_connect"
+    layer: "L3"
+    probe_type: "stream_tunnel" # 对应 ProbeType 枚举
+    target_id: "openclaw-gateway"
+    enabled: true
+    request:
+      protocol: "ws"
+      method: "connect_and_send"
+      ports: [18789, 18791, 18793]
+      path: "/"
+      payload: '{"type":"connect"}'
+      timeout_ms: 1500
+      retry: 1
+    # 修改点：将 expected_signals 改为特征提取器，映射到 Step 4 FeatureData
+    feature_extractors:
+      - feature_type: "ws_message" # 对应新增的 FeatureType
+        # extract_key: 具体的: 定位键(在键值对结构中)（比如 Header 的名称、JSON 的字段名）或者 匹配方式(在纯文本结构中)（比如包含contains、正则regex）
+        extract_key: "contains"
+        extract_value: 'type":"hello-ok"' # 期望匹配的值
+      - feature_type: "ws_message"
+        extract_key: "contains"
+        extract_value: "presence"
+
+  - probe_id: "ollama_api_tags"
+    layer: "L2"
+    probe_type: "api_endpoint"
+    target_id: "ollama"
+    enabled: true
+    request:
+      protocol: "http"
+      method: "GET"
+      ports: [11434]
+      path: "/api/tags"
+      timeout_ms: 1200
+      retry: 1
+    feature_extractors:
+      - feature_type: "http_status"
+        extract_key: "equals"
+        extract_value: "200"
+      - feature_type: "json_key"
+        extract_key: "models"
+        extract_value: ""
+      - feature_type: "api_path"
+        extract_key: "equals"
+        extract_value: "/api/tags"
+
+  - probe_id: "langflow_flows_api"
+    layer: "L2"
+    probe_type: "web_root" # 对应 ProbeType 枚举
+    target_id: "langflow"
+    enabled: true
+    request:
+      protocol: "http"
+      method: "GET"
+      ports: [3000, 8080, 9090]
+      path: "/api/v1/flows"
+      timeout_ms: 1200
+      retry: 1
+    feature_extractors:
+      - feature_type: "http_status"
+        extract_key: "equals"
+        extract_value: "200"
+      - feature_type: "json_key" # 对应新增的 FeatureType
+        extract_key: "flows"
+        extract_value: "" # 留白表示具体内容不重要
+      - feature_type: "json_key"
+        extract_key: "flow_id"
+        extract_value: ""
+      - feature_type: "api_path"
+        extract_key: "equals"
+        extract_value: "/api/v1/flows"
+
+  - probe_id: "autogpt_status_api"
+    layer: "L2"
+    probe_type: "api_endpoint"
+    target_id: "autogpt"
+    enabled: true
+    request:
+      protocol: "http"
+      method: "GET"
+      ports: [8000]
+      path: "/api/agent/status"
+      timeout_ms: 1200
+      retry: 1
+    feature_extractors:
+      - feature_type: "http_status"
+        extract_key: "equals"
+        extract_value: "200"
+      - feature_type: "json_key"
+        extract_key: "agent_id"
+        extract_value: ""
+      - feature_type: "api_path"
+        extract_key: "equals"
+        extract_value: "/api/agent/status"
