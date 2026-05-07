@@ -10,6 +10,23 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-04-30 - REQ-ASSET-INTEL-006 六步流程最小实现收敛版
+- requirement: 基于现有 FOFA CSV 数据实现资产测绘六步流程最小可测试模型，并输出符合 `资产测绘_指纹整理` 的最小结构
+- scope:
+  - 保留 `scripts/dev/intel/fofa-six-step-minimal.ts`，实现 Step1~Step6 的最小闭环
+  - 复用 `scripts/dev/intel/oss-port-collector.ts` 做 Naabu 验活
+  - 删除与当前最小 requirement 无关的新增 FOFA 辅助脚本与简单测试
+- tests added:
+  - `tests/repository/fofa-six-step-minimal.spec.ts`
+- test result: pass
+  - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-six-step-minimal.spec.ts`
+  - `npm run test:repo`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - 实际 CSV 跑批受网络可达性影响，可能出现 `step2_live_targets=0`
+  - 该版本定位为最小模型，便于后续接入真实探针编排与风险规则扩展
+
 ## 2026-04-11 - REQ-ASSET-PROBE-004 backend probe/scoring migration to engine
 - requirement: keep backend as orchestrator and migrate asset-scan probe/scoring execution to engine runtime with process bridge invocation
 - scope:
@@ -331,7 +348,7 @@ Recommended fields:
 - test result: 未执行；本次更新不涉及运行时行为变更
 - docs updated:
   - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
-  - `docs/plans/agent-asset-fingerprinting-discovery-plan.md`
+  - `docs/development-plan.md`
   - `docs/sprint-current.md`
   - `docs/progress.md`
 - notes:
@@ -384,7 +401,7 @@ Recommended fields:
 - test result: 未执行；本次变更为纯文档更新
 - docs updated:
   - `docs/sprint-current.md`
-  - `docs/plans/agent-asset-fingerprinting-discovery-plan.md`
+  - `docs/development-plan.md`
   - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
   - `docs/progress.md`
 - notes:
@@ -559,3 +576,71 @@ Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/tasks/task_1776345291388_adbdb
 或者浏览器输入 http://127.0.0.1:3000/api/tasks/task_1776345291388_adbdb8/result
 
 可以在 Agent-security-platform路径下运行 node --experimental-strip-types engines\asset-scan\src\cli.ts 测试中间过程的输出（目前写死 ollama）
+
+## 2026-04-28 - REQ-ASSET-INTEL-006 FOFA 外部情报接入与评估闭环（第一阶段）
+- requirement: 引入 FOFA dev 侧外部情报能力，打通采集 -> 标准化 -> 批次化 -> 评估最小闭环，并保持 asset-scan 主链路解耦
+- scope:
+  - 新增 `scripts/dev/intel/fofa-collector.ts`，支持 query 构造、分页、重试、请求间隔与预算阈值控制
+  - 新增 `scripts/dev/intel/fofa-normalizer.ts`，支持 fields 映射、缺失字段容错与去重
+  - 新增 `scripts/dev/intel/fofa-batch-writer.ts`，支持按 `batch_id` 输出可复现样本
+  - 新增 `scripts/dev/intel/fofa-evaluator.ts`，输出 TP/FP/FN 与 recall/precision/F1
+  - 新增 FOFA fixture、单测与集成测试，纳入 root `test:repo` 脚本入口
+- tests added:
+  - `tests/repository/fofa-collector.spec.ts`
+  - `tests/repository/fofa-normalizer.spec.ts`
+  - `tests/repository/fofa-evaluator.spec.ts`
+  - `tests/integration/fofa-intel-pipeline.spec.ts`
+- test result:
+  - RED: fail（模块不存在，`ERR_MODULE_NOT_FOUND`，符合先测后实现）
+  - GREEN: pass
+    - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-collector.spec.ts tests/repository/fofa-normalizer.spec.ts tests/repository/fofa-evaluator.spec.ts tests/integration/fofa-intel-pipeline.spec.ts`
+  - regression:
+    - `npm run test:repo` pass
+    - `npm run test:backend` 存在 1 个历史环境依赖项失败（semgrep 二进制缺失，非本需求引入）
+    - `npm run test:engine:asset-scan` 当前脚本引用缺失测试文件（仓库既有问题）
+- docs updated:
+  - `docs/sprint-current.md`
+  - `docs/architecture.md`
+  - `docs/api-contract.md`
+  - `docs/development-plan.md`
+  - `docs/progress.md`
+  - `README.md`
+- notes:
+  - FOFA 失败路径不影响既有 sample_ref/live probe 主流程
+  - 本 requirement 完成后已停止扩展相邻需求
+
+## 2026-04-28 - REQ-ASSET-INTEL-006 follow-up stabilization and documentation
+- requirement: 完成后续动作并补充 FOFA 详细文档
+- scope:
+  - 修复 `test:engine:asset-scan` 失效引用，新增稳定 engine 测试 `engines/asset-scan/tests/run-task.contract.spec.ts`
+  - 增强 semgrep runner 的执行回退逻辑（优先 `semgrep`，缺失时回退 `python -m semgrep`）
+  - 调整 backend semgrep provider parity 集成测试，在本地 semgrep runtime 缺失场景下走稳定失败断言而非误报
+  - 新增 FOFA 详细文档 `docs/fofa-intel-phase1.md`
+- tests:
+  - `npm run test:engine:asset-scan` pass
+  - `npm run test:backend` pass
+  - `npm run test:repo` pass
+- docs updated:
+  - `docs/fofa-intel-phase1.md`
+  - `README.md`
+  - `docs/progress.md`
+
+## 2026-04-29 - OSS Port Collector interface and simple port-read test
+- requirement: 参考现有 probe 风格接口，增加不依赖 FOFA 的开源端口采集抽象，并提供最小端口读取测试
+- scope:
+  - 新增 `scripts/dev/intel/oss-port-collector.ts`
+  - 提供 `NmapPortCollector`、`NaabuPortCollector`、`collectOpenPortsWithFallback`
+  - 新增 `tests/repository/oss-port-collector.spec.ts`，覆盖端口解析与降级链行为
+- tests added:
+  - `tests/repository/oss-port-collector.spec.ts`
+- test result:
+  - RED: fail（`ERR_MODULE_NOT_FOUND`，模块不存在）
+  - GREEN: pass
+    - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/oss-port-collector.spec.ts`
+- docs updated:
+  - `README.md`
+  - `docs/architecture.md`
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - 新增能力为 dev 侧采集层，不修改现有 backend/engine 主链路
