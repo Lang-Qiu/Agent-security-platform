@@ -75,6 +75,6 @@ REQ-ASSET-SCAN-PORT-007
 - 当前状态：扫描策略文档与实现边界需要在本 requirement 内统一收口
 
 ## Related Plan
-- docs/plans/agent-asset-fingerprinting-discovery-plan.md
-- docs/plans/asset-scan-port-scan-v1.md
+- docs/plans/plan-overview.md
+- docs/temp/asset-scan-port-scan-v1.md
 

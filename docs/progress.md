@@ -10,6 +10,27 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 工作流脚本 RED->GREEN（naabu+nmap + 样本分层导出）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 新增统一工作流脚本 `fofa-portscan-workflow`，落地 naabu-first 与 nmap-on-hit-only 执行边界
+  - 新增样本导出脚本 `fofa-sample-export`，落地候选/已验证/原始证据三层分离
+  - 新增 repository 级测试，覆盖执行分层、失败审计与样本分层写盘
+- tests added:
+  - `tests/repository/fofa-portscan-workflow.spec.ts`
+  - `tests/repository/fofa-sample-export.spec.ts`
+- test result: pass（先 RED 后 GREEN）
+  - RED: `ERR_MODULE_NOT_FOUND`（目标脚本未实现）
+  - GREEN:
+    - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-portscan-workflow.spec.ts tests/repository/fofa-sample-export.spec.ts`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+- notes:
+  - 当前实现为 requirement 最小闭环，不扩展到分布式调度、数据库迁移与前端改造
+  - 下一步执行应继续按当前 requirement 计划推进批次复跑与证据复核
+
 ## 2026-04-30 - REQ-ASSET-INTEL-006 六步流程最小实现收敛版
 - requirement: 基于现有 FOFA CSV 数据实现资产测绘六步流程最小可测试模型，并输出符合 `资产测绘_指纹整理` 的最小结构
 - scope:
@@ -26,6 +47,82 @@ Recommended fields:
 - notes:
   - 实际 CSV 跑批受网络可达性影响，可能出现 `step2_live_targets=0`
   - 该版本定位为最小模型，便于后续接入真实探针编排与风险规则扩展
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 文档修改阶段收口（计划对齐）
+- requirement: 先完善对应文档，清理矛盾与不需要项
+- scope:
+  - 在主计划文档中新增 naabu+nmap 工作流脚本的完整实施计划（Design/Test/Implement/Document/Stop）
+  - 补充统一 JSON 样本输出规范与拟修改文件清单
+  - 清理 `sprint-current` 中失效的 Related Plan 路径引用
+  - 更新 FOFA 总览页的下一步执行清单，切换到“文档完善 -> RED 测试 -> 实现”阶段
+- tests added: none（纯文档变更）
+- test result: not run（无业务代码改动）
+- docs updated:
+  - `docs/temp/asset-scan-port-scan-v1.md`
+  - `docs/sprint-current.md`
+  - `docs/plans/plan-overview.md`
+  - `docs/progress.md`
+- notes:
+  - 已删除失效计划路径与职责冲突描述，后续可直接进入脚本 RED 用例编写
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 Day 1 扫描执行启动（运行记录）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 按第一阶段扫描计划启动 Day 1 批次执行
+  - 实际完成 Q1（ollama）与 Q2（langflow）两个批次
+  - 保存批次结果到 `docs/temp/` 并完成 batch-report 汇总
+- tests added: none（运行执行记录）
+- test result: execution pass（Day 1 已执行部分）
+  - Q1：20 fetched / 20 created
+  - Q2：20 fetched / 20 created
+  - batch-report：40 total / 40 finished / 0 findings
+- docs updated:
+  - `docs/plans/plan-overview.md`
+  - `docs/progress.md`
+- notes:
+  - 计划基线为 `size=200`，但实际执行中 `size=200` 出现过 `fetch failed`
+  - 当前先以 `size=20` 建立稳定基线，后续再逐步提升到 100 或 200
+
+## 2026-05-08 - FOFA 扫描总览文档去无关重构（文档）
+- requirement: 仅保留当前 FOFA 扫描全计划总览，删除无关信息
+- scope:
+  - 将 `docs/plans/plan-overview.md` 重构为 FOFA 扫描专项总览
+  - 删除泛项目阶段、前端/架构等非当前扫描执行信息
+  - 对齐当前扫描设计文档路径为 `docs/temp/asset-scan-port-scan-v1.md`
+- tests added: none（纯文档变更）
+- test result: not run（无业务代码改动）
+- docs updated:
+  - `docs/plans/plan-overview.md`
+  - `docs/progress.md`
+- notes:
+  - 本页后续仅维护 FOFA 批次执行、验收、阻塞与回退规则
+
+## 2026-05-08 - 计划总览文档重构（文档）
+- requirement: 为当前仓库重构一份简洁的计划总览与当前 focus 文档
+- scope:
+  - 新增单页总览文档，统一收口“全局计划、当前 requirement、当前 focus、阶段成果、下一步、风险”
+  - 作为计划入口，减少在多个文档之间来回切换的成本
+- tests added: none（纯文档变更）
+- test result: not run（无业务代码改动）
+- docs updated:
+  - `docs/plan-overview.md`
+  - `docs/progress.md`
+- notes:
+  - 本次重构不改变现有 requirement 与执行策略，仅优化项目管理可读性
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 第一阶段扫描设计蓝图（文档）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 基于项目总计划与当前 requirement 约束，新增第一阶段扫描执行蓝图
+  - 固化 Go/No-Go 准备完成定义、首批 query 包、S 档参数基线、2 天执行节奏与验收指标
+  - 保持当前阶段不引入分布式扫描与数据库迁移的边界
+- tests added: none（纯文档设计变更）
+- test result: not run（无业务代码改动）
+- docs updated:
+  - `docs/plans/asset-scan-port-scan-v1.md`
+  - `docs/progress.md`
+- notes:
+  - 第一阶段采用“小批量、强留痕、可复跑”策略，为后续受控扩容提供参数与 query 基线
 
 ## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 资产扫描公网治理参数最小落地
 - requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）

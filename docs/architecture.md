@@ -382,3 +382,19 @@ The real `skills_static` path now has one minimal runtime-governance layer on to
 - `SemgrepRunner` now owns the minimal timeout boundary for the real provider path and maps missing target/ruleset, binary startup failure, non-zero exit, invalid JSON, and timeout into stable runner failures
 - `TaskCenterService` keeps the public write entry unchanged, but runtime failures no longer bubble out as raw provider exceptions after the initial save; instead the task-center path backfills stable failed `Task / BaseResult / RiskSummary` shells
 - timeout and provider/runtime diagnostics remain backend-internal; raw stderr/stdout and arbitrary exception strings are intentionally not promoted into shared or public API contracts
+
+## REQ-ASSET-SCAN-PORT-007 FOFA Workflow Script Layer
+
+Repository-side FOFA workflow scripts are treated as a dev execution/support layer, not a backend platform API layer.
+
+- `scripts/dev/intel/fofa-portscan-workflow.ts` coordinates the minimal `naabu -> nmap -> sample output` flow.
+- `scripts/dev/intel/fofa-sample-export.ts` persists separated JSON sample artifacts.
+
+Boundary rules for this layer:
+
+- Scripts do not introduce new public HTTP endpoints.
+- Scripts do not bypass backend task-center contracts.
+- Script outputs are artifacts for evidence accumulation and replay, not frontend-facing API payloads.
+- Tool responsibilities remain explicit: naabu for open ports, nmap for hit-port service evidence.
+
+This preserves the platform architecture baseline: backend remains the only frontend entry, engines remain independent execution units, and repository scripts remain auxiliary orchestration tooling.

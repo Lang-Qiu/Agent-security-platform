@@ -1418,3 +1418,42 @@ Current shared formatter responsibilities:
 - task timestamps -> stable UTC `en-US` display label
 
 This keeps the Tasks page and Task detail page aligned while the admin console grows. Shared platform contracts still live in `shared/`, but repeated view-only formatting logic should stay in one frontend utility instead of drifting across multiple components.
+
+## REQ-ASSET-SCAN-PORT-007 Repository Workflow Script Contract
+
+For requirement REQ-ASSET-SCAN-PORT-007, repository-side FOFA workflow scripts define a minimal execution/output contract that does not change public backend API routes.
+
+Script entrypoints:
+
+- `scripts/dev/intel/fofa-portscan-workflow.ts`
+- `scripts/dev/intel/fofa-sample-export.ts`
+
+`runFofaPortscanWorkflow` input (minimal):
+
+- `targets[]` with `source_query/source_ip/source_port/protocol/target_value/probe_target_id/task_id/requested_by`
+- `outputDir`
+- command `runner`
+
+`runFofaPortscanWorkflow` output summary:
+
+- `total_targets`
+- `naabu_success_targets`
+- `nmap_attempted_targets`
+- `verified_count`
+- `candidate_count`
+- `failed_count`
+
+Sample output layering (separated files):
+
+- `exposure-candidates.json`:
+  - candidate-layer only, with source/task/audit fields
+- `verified-fingerprints.json`:
+  - verified fingerprint samples only
+- `raw-evidence.json`:
+  - raw tool outputs and tool exit codes for audit/replay
+
+Boundary notes:
+
+- `naabu` is limited to open-port detection.
+- `nmap` is limited to service evidence on naabu-hit ports.
+- Candidate and verified samples must stay separated; candidate records are not auto-promoted to verified without evidence.
