@@ -45,6 +45,21 @@ test("result contract normalizes an asset scan result into the shared base shell
         target_type: "url",
         target_value: "https://demo-agent.example.com"
       },
+      execution_context: {
+        max_targets: 12,
+        max_ports_per_target: 48,
+        max_runtime_seconds: 300,
+        target_http_rps_cap: 5,
+        max_tcp_concurrency_per_target: 8,
+        audit: {
+          query: "port=\"11434\" && protocol=\"http\"",
+          source: "fofa",
+          requested_by: "sec-ops",
+          requested_at: "2026-05-08T10:00:00.000Z",
+          interruption_reason: "timeout",
+          private_trace: "should-be-stripped"
+        }
+      },
       findings: [
         {
           title: "Management endpoint exposed",
@@ -69,6 +84,20 @@ test("result contract normalizes an asset scan result into the shared base shell
       target: {
         target_type: "url",
         target_value: "https://demo-agent.example.com"
+      },
+      execution_context: {
+        max_targets: 12,
+        max_ports_per_target: 48,
+        max_runtime_seconds: 300,
+        target_http_rps_cap: 5,
+        max_tcp_concurrency_per_target: 8,
+        audit: {
+          query: "port=\"11434\" && protocol=\"http\"",
+          source: "fofa",
+          requested_by: "sec-ops",
+          requested_at: "2026-05-08T10:00:00.000Z",
+          interruption_reason: "timeout"
+        }
       },
       findings: [
         {

@@ -1,3 +1,4 @@
+import type { AssetScanExecutionContext } from "./result.ts";
 import type { TaskStatus, RiskLevel, TaskTarget } from "./task.ts";
 
 // --- 枚举类 ---
@@ -131,4 +132,7 @@ export interface AssetScanResult {
     
     // PDF P12: findings 区块
     findings: Finding[];
+
+    // 平台执行治理快照与中断语义
+    execution_context?: AssetScanExecutionContext;
 }

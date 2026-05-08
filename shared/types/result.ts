@@ -1,6 +1,25 @@
 import type { EngineType, RiskLevel, TaskStatus, TaskTarget, TaskType } from "./task.ts";
 import type { SkillsStaticResultDetails } from "./skills-static-result-details.ts";
 
+export type AssetScanInterruptionReason = "none" | "budget" | "timeout" | "manual_stop";
+
+export interface AssetScanExecutionAudit {
+  query?: string;
+  source?: string;
+  requested_by?: string;
+  requested_at?: string;
+  interruption_reason?: AssetScanInterruptionReason;
+}
+
+export interface AssetScanExecutionContext {
+  max_targets?: number;
+  max_ports_per_target?: number;
+  max_runtime_seconds?: number;
+  target_http_rps_cap?: number;
+  max_tcp_concurrency_per_target?: number;
+  audit?: AssetScanExecutionAudit;
+}
+
 export interface AssetScanResultDetails {
   target?: TaskTarget;
   fingerprint?: Record<string, unknown>;
@@ -10,6 +29,7 @@ export interface AssetScanResultDetails {
   http_endpoints?: unknown[];
   auth_detected?: boolean;
   findings?: unknown[];
+  execution_context?: AssetScanExecutionContext;
 }
 
 export type StaticAnalysisResultDetails = SkillsStaticResultDetails;

@@ -8,13 +8,41 @@ import type { AssetScanResult } from "../../../../shared/types/asset-scan.ts";
 // 引入重构好的流水线
 import { AssetScanPipeline } from "./pipeline.ts";
 
-export async function runAssetScanTask(task: Task): Promise<AssetScanResult> {
+function deriveRuntimeStatus(
+    executionContext: AssetScanResult["execution_context"] | undefined
+): AssetScanResult["status"] {
+    const interruptionReason = executionContext?.audit?.interruption_reason;
+    return interruptionReason && interruptionReason !== "none" ? "partial_success" : "finished";
+}
+
+function deriveInterruptionReasonFromError(error: unknown): "none" | "budget" | "timeout" {
+    const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+
+    if (message.includes("timeout")) {
+        return "timeout";
+    }
+
+    if (message.includes("budget")) {
+        return "budget";
+    }
+
+    return "none";
+}
+
+export async function runAssetScanTask(
+    task: Task,
+    options?: {
+        pipelineFactory?: (workspaceRoot: string) => Pick<AssetScanPipeline, "run">;
+    }
+): Promise<AssetScanResult> {
     // 1. 解析工作区根目录，确保 Pipeline 能准确找到 rules/ 目录下的 yaml 文件
     const currentDir = dirname(fileURLToPath(import.meta.url));
     const workspaceRoot = resolve(currentDir, "../../../..");
 
     // 2. 实例化扫描流水线
-    const pipeline = new AssetScanPipeline(workspaceRoot);
+    const pipeline = options?.pipelineFactory
+        ? options.pipelineFactory(workspaceRoot)
+        : new AssetScanPipeline(workspaceRoot);
 
     // 3. 从标准 Task 契约中提取探测目标
     if (!task.target || !task.target.target_value) {
@@ -25,6 +53,7 @@ export async function runAssetScanTask(task: Task): Promise<AssetScanResult> {
     try {
         // 4. 执行底层测绘流水线 (Step 4 ~ Step 6)(Step 1 ~ Step 3 )
         const pipelineResult = await pipeline.run(targetUrl);
+        const runtimeStatus = deriveRuntimeStatus(pipelineResult.execution_context);
 
         // 5. 补全平台级任务元数据，满足 AssetScanResult 接口的完整性要求
         const finalResult: AssetScanResult = {
@@ -32,7 +61,7 @@ export async function runAssetScanTask(task: Task): Promise<AssetScanResult> {
             task_id: task.task_id,
             task_type: task.task_type || "asset_scan",
             engine_type: task.engine_type || "asset_scan",
-            status: "finished",
+            status: runtimeStatus,
             
             // 继承流水线返回的核心业务数据
             target: pipelineResult.target!,
@@ -41,24 +70,33 @@ export async function runAssetScanTask(task: Task): Promise<AssetScanResult> {
             application: pipelineResult.application!,
             fingerprints: pipelineResult.fingerprints || {},
             inferred_attributes: pipelineResult.inferred_attributes || {},
-            findings: pipelineResult.findings || []
+            findings: pipelineResult.findings || [],
+            execution_context: pipelineResult.execution_context
         };
 
         return finalResult;
 
     } catch (error) {
         console.error(`[Engine Error] Pipeline execution failed for task ${task.task_id}:`, error);
+        const interruptionReason = deriveInterruptionReasonFromError(error);
         
         // 发生严重异常时，返回降级的结果
         return {
             result_id: `res_err_${Date.now()}`,
             task_id: task.task_id,
+            task_type: task.task_type || "asset_scan",
+            engine_type: task.engine_type || "asset_scan",
             status: "failed",
             target: { target_type: "url", target_value: targetUrl },
             application: { http_endpoints: [], auth: { auth_detected: false, auth_type: "none" } },
             fingerprints: {},
             inferred_attributes: {},
-            findings: []
+            findings: [],
+            execution_context: {
+                audit: {
+                    interruption_reason: interruptionReason
+                }
+            }
         };
     }
 }

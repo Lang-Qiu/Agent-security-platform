@@ -1,4 +1,4 @@
-import type { BaseResult, ResultDetails } from "../../../../shared/types/result.ts";
+import type { AssetScanResultDetails, BaseResult, ResultDetails } from "../../../../shared/types/result.ts";
 import type { RiskSummary, Task } from "../../../../shared/types/task.ts";
 import { DomainError } from "../../common/errors/domain-error.ts";
 import { EngineAdapterRegistry } from "./adapters/engine-adapter-registry.ts";
@@ -24,6 +24,70 @@ export interface TaskCompletedArtifacts {
 
 function createStaticAnalysisCompletionSummary(totalFindings: number): string {
   return `Static analysis finished with ${totalFindings} rule hit${totalFindings === 1 ? "" : "s"}`;
+}
+
+function createAssetScanCompletionSummary(totalFindings: number): string {
+  return `Asset scan finished with ${totalFindings} finding${totalFindings === 1 ? "" : "s"}`;
+}
+
+function createAssetScanPartialSuccessSummary(totalFindings: number): string {
+  return `Asset scan partially completed with ${totalFindings} finding${totalFindings === 1 ? "" : "s"}`;
+}
+
+function createAssetScanFailureSummary(): string {
+  return "Asset scan failed during initial execution";
+}
+
+function deriveAssetScanCompletionStatus(details: AssetScanResultDetails): "finished" | "partial_success" {
+  const interruptionReason = details.execution_context?.audit?.interruption_reason;
+  return interruptionReason && interruptionReason !== "none" ? "partial_success" : "finished";
+}
+
+function deriveAssetScanRiskSummary(details: AssetScanResultDetails): Omit<RiskSummary, "task_id" | "task_type" | "status" | "summary" | "updated_at"> {
+  const findings = Array.isArray(details.findings) ? details.findings : [];
+  const countByLevel = {
+    info: 0,
+    low: 0,
+    medium: 0,
+    high: 0,
+    critical: 0
+  };
+
+  for (const finding of findings) {
+    const level =
+      typeof finding === "object" &&
+      finding !== null &&
+      "risk_level" in finding &&
+      typeof (finding as { risk_level?: unknown }).risk_level === "string"
+        ? (finding as { risk_level: keyof typeof countByLevel }).risk_level
+        : null;
+
+    if (level && level in countByLevel) {
+      countByLevel[level] += 1;
+    }
+  }
+
+  const total_findings = findings.length;
+  const risk_level =
+    countByLevel.critical > 0
+      ? "critical"
+      : countByLevel.high > 0
+        ? "high"
+        : countByLevel.medium > 0
+          ? "medium"
+          : countByLevel.low > 0
+            ? "low"
+            : "info";
+
+  return {
+    risk_level,
+    total_findings,
+    info_count: countByLevel.info,
+    low_count: countByLevel.low,
+    medium_count: countByLevel.medium,
+    high_count: countByLevel.high,
+    critical_count: countByLevel.critical
+  };
 }
 
 function createStaticAnalysisFailureSummary(phase: SkillsStaticExecutionPhase): string {
@@ -182,6 +246,117 @@ export class TaskEngineService {
         medium_count: derivedSummary.medium_count,
         high_count: derivedSummary.high_count,
         critical_count: derivedSummary.critical_count,
+        updated_at: updatedAt
+      }
+    };
+  }
+
+  createCompletedAssetScanArtifacts(task: Task, details: AssetScanResultDetails, updatedAt: string): TaskCompletedArtifacts {
+    const derivedSummary = deriveAssetScanRiskSummary(details);
+    const status = deriveAssetScanCompletionStatus(details);
+    const summary =
+      status === "partial_success"
+        ? createAssetScanPartialSuccessSummary(derivedSummary.total_findings)
+        : createAssetScanCompletionSummary(derivedSummary.total_findings);
+
+    return {
+      task: {
+        ...task,
+        status,
+        risk_level: derivedSummary.risk_level,
+        summary,
+        updated_at: updatedAt,
+        finished_at: updatedAt
+      },
+      result: {
+        task_id: task.task_id,
+        task_type: task.task_type,
+        engine_type: task.engine_type,
+        status,
+        risk_level: derivedSummary.risk_level,
+        summary,
+        details,
+        created_at: task.created_at,
+        updated_at: updatedAt,
+        finished_at: updatedAt
+      },
+      riskSummary: {
+        task_id: task.task_id,
+        task_type: task.task_type,
+        status,
+        risk_level: derivedSummary.risk_level,
+        summary,
+        total_findings: derivedSummary.total_findings,
+        info_count: derivedSummary.info_count,
+        low_count: derivedSummary.low_count,
+        medium_count: derivedSummary.medium_count,
+        high_count: derivedSummary.high_count,
+        critical_count: derivedSummary.critical_count,
+        updated_at: updatedAt
+      }
+    };
+  }
+
+  createFailedAssetScanArtifacts(
+    task: Task,
+    updatedAt: string,
+    interruptionReason: "none" | "budget" | "timeout" | "manual_stop"
+  ): TaskCompletedArtifacts {
+    const summary = createAssetScanFailureSummary();
+    const details: AssetScanResultDetails = {
+      target: task.target,
+      findings: [],
+      execution_context: {
+        max_targets: task.parameters?.max_targets as number | undefined,
+        max_ports_per_target: task.parameters?.max_ports_per_target as number | undefined,
+        max_runtime_seconds: task.parameters?.max_runtime_seconds as number | undefined,
+        target_http_rps_cap: task.parameters?.target_http_rps_cap as number | undefined,
+        max_tcp_concurrency_per_target: task.parameters?.max_tcp_concurrency_per_target as number | undefined,
+        audit: {
+          query: task.parameters?.query as string | undefined,
+          source: task.parameters?.source as string | undefined,
+          requested_by: task.requested_by,
+          requested_at: task.parameters?.audit && typeof task.parameters.audit === "object"
+            ? (task.parameters.audit as { requested_at?: string }).requested_at
+            : undefined,
+          interruption_reason: interruptionReason
+        }
+      }
+    };
+
+    return {
+      task: {
+        ...task,
+        status: "failed",
+        risk_level: "info",
+        summary,
+        updated_at: updatedAt,
+        finished_at: updatedAt
+      },
+      result: {
+        task_id: task.task_id,
+        task_type: task.task_type,
+        engine_type: task.engine_type,
+        status: "failed",
+        risk_level: "info",
+        summary,
+        details,
+        created_at: task.created_at,
+        updated_at: updatedAt,
+        finished_at: updatedAt
+      },
+      riskSummary: {
+        task_id: task.task_id,
+        task_type: task.task_type,
+        status: "failed",
+        risk_level: "info",
+        summary,
+        total_findings: 0,
+        info_count: 0,
+        low_count: 0,
+        medium_count: 0,
+        high_count: 0,
+        critical_count: 0,
         updated_at: updatedAt
       }
     };

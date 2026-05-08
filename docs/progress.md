@@ -27,6 +27,135 @@ Recommended fields:
   - 实际 CSV 跑批受网络可达性影响，可能出现 `step2_live_targets=0`
   - 该版本定位为最小模型，便于后续接入真实探针编排与风险规则扩展
 
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 资产扫描公网治理参数最小落地
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 在 `asset_scan` 任务创建路径加入治理参数规范化：预算、限速、审计字段
+  - 保持 `static_analysis` 与 `sandbox_run` 的参数行为不变
+  - API 集成层补充 `POST /api/tasks` 后可回读规范化参数的契约校验
+- tests added:
+  - `backend/tests/task-center.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- test result: pass（本 requirement 聚焦验证集）
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern="backend task center normalizes asset-scan governance and audit fields through POST /api/tasks" tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - 预算字段在创建阶段执行最小值与上限归一化，避免无效输入直接进入执行链路
+  - 审计字段自动补齐 `requested_at`，并映射 `requested_by/query/source`
+  - 全量 integration 套件中仍存在 semgrep 环境依赖项（`semgrep` 二进制缺失）导致的非本变更失败
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 执行上下文与中断原因结果落盘
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 在 `asset_scan` 任务参数中归一化 `audit.interruption_reason`
+  - 在 `asset_scan` 结果 `details.execution_context` 中持久化预算、限速与审计快照
+  - 共享契约层补充 `execution_context` 与 `interruption_reason` 的标准化保留规则
+- tests added:
+  - `backend/tests/task-center.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- tests updated:
+  - `shared/tests/result-contract.spec.ts`
+- test result: pass（本 requirement 聚焦验证集）
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern="backend task center persists asset-scan execution context and interruption reason in result details" tests/integration/backend-task-center.api.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/result-contract.spec.ts`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - `interruption_reason` 枚举：`none` / `budget` / `timeout` / `manual_stop`
+  - 当输入缺失或非法时，默认落盘为 `none`
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 asset_scan 失败回填与 bridge 执行上下文打通
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 在 `TaskCenterService` 中为 `asset_scan` 增加初始执行失败回填，避免直接抛错中断任务记录
+  - 在 `TaskEngineService` 中新增 `createFailedAssetScanArtifacts`，统一 `failed` 结果壳与风险汇总
+  - 在 `engines/asset-scan` bridge 中导出并启用 `buildExecutionContextFromTask`，使引擎输出链路原生携带 `execution_context`
+- tests added:
+  - `tests/repository/asset-scan-bridge.execution-context.spec.ts`
+  - `backend/tests/task-center.service.spec.ts`（新增 asset_scan 初始失败回填场景）
+- tests updated:
+  - `package.json`（`test:repo` 纳入 bridge execution_context 测试）
+- test result: pass（本 requirement 聚焦验证集）
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern='backend task center persists asset-scan execution context and interruption reason in result details|backend task center normalizes asset-scan governance and audit fields through POST /api/tasks' tests/integration/backend-task-center.api.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/result-contract.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/asset-scan-bridge.execution-context.spec.ts`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - `asset_scan` 初始执行失败将回填 `failed` 任务壳，且保留 `execution_context.audit.interruption_reason`
+  - bridge 侧默认将非法中断原因归一化为 `none`
+  - 当参数中的中断原因为默认 `none` 时，平台会优先基于错误语义推断（如 `timeout`、`budget`）
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 asset_scan partial_success 状态回填
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 为 `asset_scan` completed 工件增加 `finished` / `partial_success` 状态派生
+  - 当 `details.execution_context.audit.interruption_reason` 为非 `none` 时，将 `task/result/risk-summary` 统一回填为 `partial_success`
+  - 保持 `failed` 回填与纯完成态 `finished` 语义不变
+- tests added:
+  - `backend/tests/task-center.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- test result: pass（本 requirement 聚焦验证集）
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern='backend task center persists asset-scan execution context and interruption reason in result details|backend task center normalizes asset-scan governance and audit fields through POST /api/tasks|partial_success asset-scan result' tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - 当前 `partial_success` 的判定依赖 `execution_context.audit.interruption_reason`
+  - 这一步先收口平台回填语义，尚未继续下沉到 L1/L2/L3 执行层的中断事件源
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 执行层 interruption_reason 下沉到 runtime/bridge
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 在 `engines/asset-scan` runtime 中根据 `execution_context.audit.interruption_reason` 派生 `finished` / `partial_success`
+  - 在 bridge 中合并 task 参数与 runtime `execution_context` 时，保留 runtime 产生的非 `none` 中断原因
+  - 在 task-center 中避免参数默认 `none` 覆盖引擎返回的 `timeout`/`budget` 语义
+- tests added:
+  - `tests/repository/asset-scan-runtime.interruption-reason.spec.ts`
+  - `tests/repository/asset-scan-bridge.execution-context.spec.ts`（新增 runtime 保留场景）
+  - `backend/tests/task-center.service.spec.ts`（新增引擎侧中断原因保留场景）
+- tests updated:
+  - `package.json`（`test:repo` 纳入 runtime interruption-reason 测试）
+- test result: pass（本 requirement 聚焦验证集）
+  - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/asset-scan-runtime.interruption-reason.spec.ts tests/repository/asset-scan-bridge.execution-context.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern='preserves engine-derived interruption reason|partial_success asset-scan result|persists asset-scan execution context and interruption reason' backend/tests/task-center.service.spec.ts tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - 当前已打通 runtime -> bridge -> task-center 的 interruption_reason 传递链路
+  - 这一步仍是最小语义下沉，尚未在真实 naabu/nmap/L3 probe 中细分不同步骤的预算耗尽或局部超时事件
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 runtime 异常错误处理与脚本测试执行
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 在 `runAssetScanTask` 的异常分支中将错误语义映射到 `execution_context.audit.interruption_reason`
+  - 支持最小映射：`timeout`、`budget`，其余错误回退 `none`
+  - 继续保持 runtime -> bridge -> task-center 的 interruption_reason 合并与回填一致性
+  - 按照当前阶段要求执行 dev 脚本入口验证与测试回归
+- tests added:
+  - `tests/repository/asset-scan-runtime.interruption-reason.spec.ts`（新增 runtime 抛错映射场景）
+- test result: pass（本 requirement 聚焦验证集）
+  - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/asset-scan-runtime.interruption-reason.spec.ts tests/repository/asset-scan-bridge.execution-context.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern='marks asset-scan as partial_success|preserves engine-derived interruption reason|partial_success asset-scan result|persists asset-scan execution context and interruption reason|runtime records timeout interruption reason when pipeline throws timeout error' backend/tests/task-center.service.spec.ts tests/integration/backend-task-center.api.spec.ts tests/repository/asset-scan-runtime.interruption-reason.spec.ts`
+  - `npm run test:repo`
+- scripts run:
+  - `npm run run:fofa:api:task-scan -- --help`
+  - `npm run run:fofa:task-batch-report -- --help`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - runtime 抛错测试会打印预期的 `[Engine Error]` 日志，这是当前测试夹具用于触发异常分支的正常现象
+
 ## 2026-04-11 - REQ-ASSET-PROBE-004 backend probe/scoring migration to engine
 - requirement: keep backend as orchestrator and migrate asset-scan probe/scoring execution to engine runtime with process bridge invocation
 - scope:
@@ -644,3 +773,55 @@ Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/tasks/task_1776345291388_adbdb
   - `docs/progress.md`
 - notes:
   - 新增能力为 dev 侧采集层，不修改现有 backend/engine 主链路
+
+## 2026-05-08 - FOFA API direct task-scan dev script for ollama
+- requirement: 提供一个直接调用 FOFA 官方 API 的 dev 侧测试脚本，将 Ollama 11434 候选目标转换为现有 `asset_scan` 任务请求并提交到 `POST /api/tasks`
+- scope:
+  - 新增 `scripts/dev/intel/fofa-api-task-scan.ts`
+  - 支持 FOFA 官方 `GET /api/v1/search/all` 请求拼装、字段映射、以及向 backend `POST /api/tasks` 批量提交
+  - 默认围绕 `ollama`/`11434` 构造 live probe 任务参数
+  - 新增 `tests/repository/fofa-api-task-scan.spec.ts`，覆盖 FOFA URL 构造、任务 payload 映射、以及批量 API 提交流
+- tests added:
+  - `tests/repository/fofa-api-task-scan.spec.ts`
+- test result:
+  - RED: fail（脚本不存在，`ERR_MODULE_NOT_FOUND`）
+  - GREEN: pass
+    - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-api-task-scan.spec.ts`
+- docs updated:
+  - `README.md`
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - 该能力为 dev 侧 FOFA 接入脚本，复用现有 `asset_scan` API，不新增平台公开扫描路由
+
+## 2026-05-08 - FOFA env auto-load, batch report, and asset-scan result backfill
+- requirement: 继续完善 FOFA dev 侧工作流，支持本地 env 自动加载、批量结果汇总，并使 FOFA 创建的 `asset_scan` 任务立即回填 finished 结果
+- scope:
+  - `scripts/dev/intel/fofa-api-task-scan.ts` 支持从 `.env.local`、`.env`、`~/.config/agent-security-platform/fofa.env` 自动加载 FOFA 凭据
+  - 新增 `scripts/dev/intel/fofa-task-batch-report.ts`，批量拉取 `result` 与 `risk-summary` 并输出汇总
+  - `backend` 在 `asset_scan` 的初始引擎详情已生成时，直接回填 finished 任务/result/risk-summary，而不是停留在 pending
+- tests added:
+  - `tests/repository/fofa-task-batch-report.spec.ts`
+  - `backend/tests/task-center.service.spec.ts` 新增 asset-scan 回填场景
+- test result:
+  - RED: fail（缺少 env resolver、缺少 batch report 脚本、asset_scan 仍停留 pending）
+  - GREEN: pass
+    - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/task-center.service.spec.ts backend/tests/asset-scan-flow.spec.ts tests/repository/fofa-api-task-scan.spec.ts`
+    - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-task-batch-report.spec.ts`
+- docs updated:
+  - `README.md`
+  - `docs/progress.md`
+- notes:
+  - 该阶段未新增平台公开路由，仍复用 `POST /api/tasks` 和现有结果查询接口
+
+## 2026-05-08 - Port-scan requirement updated for authorized public-network execution
+- requirement: 在现有端口扫描策略基础上，明确“可扫描公网”边界与治理约束
+- scope:
+  - 更新 `docs/sprint-current.md`，加入公网扫描目标、预算控制、速率控制、审计留痕要求
+  - 更新 `docs/plans/asset-scan-port-scan-v1.md`，补充公网执行 guardrails
+- docs updated:
+  - `docs/sprint-current.md`
+  - `docs/plans/asset-scan-port-scan-v1.md`
+  - `docs/progress.md`
+- notes:
+  - 当前仅完成 requirement 和设计文档收口；实现与测试将按 RED -> GREEN 继续推进

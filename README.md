@@ -3,12 +3,60 @@
 ## Backend Internal Engine Wiring
 
 - `static_analysis` still enters through `POST /api/tasks`
+- `asset_scan` can now be fed by a dev-side FOFA API collector script that converts FOFA search results into the existing `POST /api/tasks` contract without adding a new public route
 - backend now keeps `task_type -> adapter` resolution and `engine_type -> engine client` resolution as two separate internal layers
 - `SkillsStaticEngineClient` is the current internal bridge for routing `skills_static` dispatch tickets without introducing a new public route
 - `skills_static` now supports a deterministic mock-analysis closed loop that backfills the existing `Task`, `BaseResult`, and `RiskSummary` records after dispatch
 - `skills_static` also supports one minimal real-tool path through local `semgrep` CLI when `SKILLS_STATIC_ENGINE_PROVIDER=semgrep`
 - both providers now converge on the same standardized risk-result core before the finished `static_analysis` record is exposed to the platform read APIs
 - operators still read the closed-loop state through the existing `GET /api/tasks/:taskId`, `GET /api/tasks/:taskId/result`, and `GET /api/tasks/:taskId/risk-summary` routes
+
+## FOFA API Dev Script
+
+- `FOFA_EMAIL=your_email FOFA_KEY=your_key npm run run:fofa:api:task-scan -- --backend http://127.0.0.1:3000 --query='port="11434" && protocol="http"'`
+- The script calls FOFA official `GET /api/v1/search/all`, maps each result row into the current `asset_scan` task contract, and submits it to `POST /api/tasks`
+- Default mapping is targeted at `ollama` and sets `parameters.probe_mode=live`, `parameters.probe_target_id=ollama`, and `parameters.probe_port_hint=<fofa_port>`
+- Credentials are read from `FOFA_EMAIL` and `FOFA_KEY` unless `--email` and `--key` are passed explicitly
+- If `FOFA_EMAIL` or `FOFA_KEY` is not already present in the shell, the script will also try local env files in this order: `.env.local`, `.env`, `~/.config/agent-security-platform/fofa.env`
+- On Linux / macOS, prefer the `--query='...'` form. If `&&` is left unquoted, the shell will treat it as a command separator instead of a FOFA query string.
+
+Linux / macOS persistent env example:
+
+```bash
+mkdir -p ~/.config/agent-security-platform
+cat > ~/.config/agent-security-platform/fofa.env <<'EOF'
+export FOFA_EMAIL='your_email'
+export FOFA_KEY='your_new_key'
+EOF
+chmod 600 ~/.config/agent-security-platform/fofa.env
+source ~/.config/agent-security-platform/fofa.env
+```
+
+Then run:
+
+```bash
+cd /home/chartte/work/Agent-security-platform
+npm run run:fofa:api:task-scan -- \
+  --backend http://127.0.0.1:3000 \
+  --query='port="11434" && protocol="http"'
+```
+
+Fetch a created task result:
+
+```bash
+curl http://127.0.0.1:3000/api/tasks/<task_id>/result
+curl http://127.0.0.1:3000/api/tasks/<task_id>/risk-summary
+```
+
+Batch report for multiple created tasks:
+
+```bash
+npm run run:fofa:task-batch-report -- \
+  --backend http://127.0.0.1:3000 \
+  --taskIds task_a,task_b,task_c
+```
+
+Current note: FOFA-created `asset_scan` tasks are now backfilled to finished results using the existing asset-scan bridge during task creation, so the result and risk-summary APIs can be queried immediately after creation.
 
 ## Skills Static Real Provider
 
@@ -154,9 +202,25 @@ corepack enable
 pnpm install
 ```
 
+Linux / macOS 可直接执行：
+
+```bash
+corepack enable
+pnpm install
+```
+
 ### 启动后端
 
 `backend/` 当前还没有单独的 `dev` 脚本，按下面方式直接启动：
+
+Linux / macOS:
+
+```bash
+cd backend
+PORT=3000 node --experimental-strip-types src/main.ts
+```
+
+Windows PowerShell:
 
 ```powershell
 Set-Location backend
@@ -172,12 +236,23 @@ node --experimental-strip-types src/main.ts
 
 打开第二个终端，在仓库根目录执行：
 
+Linux / macOS:
+
+```bash
+cd frontend
+npm run dev -- --host 127.0.0.1 --port 5173
+```
+
+Windows PowerShell:
+
 ```powershell
 Set-Location frontend
 npm.cmd run dev -- --host 127.0.0.1 --port 5173
 ```
 
 如果不是 Windows PowerShell，可将上面的 `npm.cmd` 替换为 `npm`。
+
+如果你当前就在 Linux 环境，推荐直接使用上面的 bash 命令，不需要 `npm.cmd`。
 
 ### 访问入口
 

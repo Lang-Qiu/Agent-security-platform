@@ -149,9 +149,6 @@ test("fofa six-step minimal pipeline produces normalized fingerprint and risk ou
 });
 
 // 增加异常场景的测试用例
-import { test } from "node:test";
-import assert from "node:assert/strict";
-
 test("Naabu fails gracefully", async () => {
   const module = (await import(pathToFileURL(modulePath).href)) as SixStepModule;
   const runner: CommandRunner = {
