@@ -249,7 +249,7 @@ describe("task detail page", () => {
     expect(screen.getAllByText("task_asset_001").length).toBeGreaterThan(0);
     expect(screen.getByText("Scan public agent surface")).toBeInTheDocument();
     expect(screen.getByText("Running")).toBeInTheDocument();
-    expect(screen.getByText("High")).toBeInTheDocument();
+    expect(screen.getAllByText("High").length).toBeGreaterThan(0);
     expect(screen.getByRole("heading", { level: 2, name: /task overview/i })).toBeInTheDocument();
     expect(screen.getByText(/fingerprinting and exposed surface checks are in progress/i)).toBeInTheDocument();
   });
@@ -342,5 +342,205 @@ describe("task detail page", () => {
 
     expect(await screen.findByText(/integration error/i)).toBeInTheDocument();
     expect(screen.getAllByText("task_asset_001").length).toBeGreaterThan(0);
+  });
+
+  test("renders entry_files as a list when the field is present in details", async () => {
+    mockTaskDetailFetch({
+      results: {
+        ...RESULT_FIXTURES,
+        task_static_001: {
+          ...RESULT_FIXTURES.task_static_001,
+          details: {
+            ...(RESULT_FIXTURES.task_static_001 as { details: Record<string, unknown> }).details,
+            entry_files: ["src/index.ts", "src/types.ts"]
+          }
+        }
+      }
+    });
+
+    await renderAppAtRoute("/tasks/task_static_001");
+
+    expect(await screen.findByText("src/index.ts")).toBeInTheDocument();
+    expect(screen.getByText("src/types.ts")).toBeInTheDocument();
+  });
+
+  test("renders rule_hits severity badges and message for each hit in static_analysis tasks", async () => {
+    await renderAppAtRoute("/tasks/task_static_001");
+
+    expect(await screen.findByRole("heading", { level: 2, name: /static analysis result section/i })).toBeInTheDocument();
+    expect(screen.getByText("medium")).toBeInTheDocument();
+    expect(screen.getByText("low")).toBeInTheDocument();
+    expect(screen.getByText("Untrusted input reaches template rendering")).toBeInTheDocument();
+    expect(screen.getByText("Potential command argument injection")).toBeInTheDocument();
+    expect(screen.getByText("src/render.ts")).toBeInTheDocument();
+    expect(screen.getByText("src/exec.ts")).toBeInTheDocument();
+  });
+
+  test("renders rule_hit title and category when both fields are present", async () => {
+    mockTaskDetailFetch({
+      results: {
+        ...RESULT_FIXTURES,
+        task_static_001: {
+          ...RESULT_FIXTURES.task_static_001,
+          details: {
+            ...(RESULT_FIXTURES.task_static_001 as { details: Record<string, unknown> }).details,
+            rule_hits: [
+              {
+                rule_id: "RULE-001",
+                severity: "medium",
+                message: "Untrusted input reaches template rendering",
+                file_path: "src/render.ts",
+                title: "Shell command execution risk",
+                category: "injection"
+              }
+            ]
+          }
+        }
+      }
+    });
+
+    await renderAppAtRoute("/tasks/task_static_001");
+
+    expect(await screen.findByText("Shell command execution risk")).toBeInTheDocument();
+    expect(screen.getByText("injection")).toBeInTheDocument();
+  });
+
+  test("renders rule_hit code_snippet in a code block when present", async () => {
+    mockTaskDetailFetch({
+      results: {
+        ...RESULT_FIXTURES,
+        task_static_001: {
+          ...RESULT_FIXTURES.task_static_001,
+          details: {
+            ...(RESULT_FIXTURES.task_static_001 as { details: Record<string, unknown> }).details,
+            rule_hits: [
+              {
+                rule_id: "RULE-001",
+                severity: "medium",
+                message: "Untrusted input reaches template rendering",
+                file_path: "src/render.ts",
+                code_snippet: "exec(userInput)"
+              }
+            ]
+          }
+        }
+      }
+    });
+
+    await renderAppAtRoute("/tasks/task_static_001");
+
+    expect(await screen.findByText("exec(userInput)")).toBeInTheDocument();
+  });
+
+  test("renders rule_hit tags as chip labels when present", async () => {
+    mockTaskDetailFetch({
+      results: {
+        ...RESULT_FIXTURES,
+        task_static_001: {
+          ...RESULT_FIXTURES.task_static_001,
+          details: {
+            ...(RESULT_FIXTURES.task_static_001 as { details: Record<string, unknown> }).details,
+            rule_hits: [
+              {
+                rule_id: "RULE-001",
+                severity: "medium",
+                message: "Untrusted input reaches template rendering",
+                file_path: "src/render.ts",
+                tags: ["command", "input-flow"]
+              }
+            ]
+          }
+        }
+      }
+    });
+
+    await renderAppAtRoute("/tasks/task_static_001");
+
+    expect(await screen.findByText("command")).toBeInTheDocument();
+    expect(screen.getByText("input-flow")).toBeInTheDocument();
+  });
+
+  test("renders rule_hit recommendation when the field is present in details", async () => {
+    mockTaskDetailFetch({
+      results: {
+        ...RESULT_FIXTURES,
+        task_static_001: {
+          ...RESULT_FIXTURES.task_static_001,
+          details: {
+            ...(RESULT_FIXTURES.task_static_001 as { details: Record<string, unknown> }).details,
+            rule_hits: [
+              {
+                rule_id: "RULE-001",
+                severity: "medium",
+                message: "Untrusted input reaches template rendering",
+                file_path: "src/render.ts",
+                line_start: 21,
+                line_end: 21,
+                recommendation: "Use an allowlisted template renderer"
+              }
+            ]
+          }
+        }
+      }
+    });
+
+    await renderAppAtRoute("/tasks/task_static_001");
+
+    expect(await screen.findByText("Use an allowlisted template renderer")).toBeInTheDocument();
+  });
+
+  test("renders risk_level with a colored RiskTag in the risk summary section", async () => {
+    await renderAppAtRoute("/tasks/task_static_001");
+
+    expect(await screen.findByRole("heading", { level: 2, name: /risk summary/i })).toBeInTheDocument();
+    expect(screen.getAllByText("Medium").length).toBeGreaterThan(0);
+  });
+
+  test("renders low_count and info_count in the risk summary section", async () => {
+    await renderAppAtRoute("/tasks/task_static_001");
+
+    expect(await screen.findByRole("heading", { level: 2, name: /risk summary/i })).toBeInTheDocument();
+    expect(screen.getByText(/0 low/i)).toBeInTheDocument();
+    expect(screen.getByText(/0 info/i)).toBeInTheDocument();
+  });
+
+  test("renders dependency_summary key-value pairs when the field is present", async () => {
+    mockTaskDetailFetch({
+      results: {
+        ...RESULT_FIXTURES,
+        task_static_001: {
+          ...RESULT_FIXTURES.task_static_001,
+          details: {
+            ...(RESULT_FIXTURES.task_static_001 as { details: Record<string, unknown> }).details,
+            dependency_summary: { manifests_scanned: 0, total_packages: 5 }
+          }
+        }
+      }
+    });
+
+    await renderAppAtRoute("/tasks/task_static_001");
+
+    expect(await screen.findByText("manifests_scanned")).toBeInTheDocument();
+    expect(screen.getByText("total_packages")).toBeInTheDocument();
+  });
+
+  test("renders sensitive_capabilities as tags when the field is non-empty", async () => {
+    mockTaskDetailFetch({
+      results: {
+        ...RESULT_FIXTURES,
+        task_static_001: {
+          ...RESULT_FIXTURES.task_static_001,
+          details: {
+            ...(RESULT_FIXTURES.task_static_001 as { details: Record<string, unknown> }).details,
+            sensitive_capabilities: ["command_execution", "network_access"]
+          }
+        }
+      }
+    });
+
+    await renderAppAtRoute("/tasks/task_static_001");
+
+    expect(await screen.findByText("command_execution")).toBeInTheDocument();
+    expect(screen.getByText("network_access")).toBeInTheDocument();
   });
 });

@@ -143,6 +143,14 @@ function normalizeRuleHit(value: unknown): SkillsStaticRuleHit {
   return normalizedRuleHit;
 }
 
+const SEVERITY_ORDER: Record<string, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+  info: 4
+};
+
 export function normalizeSkillsStaticEngineOutput(
   output: SkillsStaticEngineOutput,
   task: Task
@@ -175,7 +183,9 @@ export function normalizeSkillsStaticEngineOutput(
     throw createInvalidEngineOutputError("Skills-static engine output is missing a required dependency_summary object");
   }
 
-  const normalizedRuleHits = output.rule_hits.map((ruleHit) => normalizeRuleHit(ruleHit));
+  const normalizedRuleHits = output.rule_hits
+    .map((ruleHit) => normalizeRuleHit(ruleHit))
+    .sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 5) - (SEVERITY_ORDER[b.severity] ?? 5));
   const sampleName =
     isString(output.sample_name) ? output.sample_name : task.target.display_name ?? task.target.target_value;
 

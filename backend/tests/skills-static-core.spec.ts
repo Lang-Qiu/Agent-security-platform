@@ -435,3 +435,113 @@ test("risk summary deriver falls back to info when there are no rule hits", asyn
     critical_count: 0
   });
 });
+
+test("skills-static result normalizer preserves code_snippet, recommendation, category, and tags through normalizeRuleHit", async () => {
+  const normalizerModule = await importIfExists<NormalizerModule>(normalizerModulePath);
+
+  assert.ok(normalizerModule?.normalizeSkillsStaticEngineOutput);
+
+  if (!normalizerModule?.normalizeSkillsStaticEngineOutput) {
+    return;
+  }
+
+  const normalizedDetails = normalizerModule.normalizeSkillsStaticEngineOutput(
+    {
+      sample_name: "display-fields-skill",
+      language: "typescript",
+      entry_files: ["src/commands.ts"],
+      files_scanned: 1,
+      rule_hits: [
+        {
+          rule_id: "command_execution.shell_exec",
+          severity: "high",
+          message: "Potential command execution sink reached",
+          file_path: "src/commands.ts",
+          line_start: 4,
+          line_end: 4,
+          title: "Shell command reaches an execution sink",
+          category: "command_execution",
+          code_snippet: "return exec(commandInput);",
+          recommendation: "Replace shell execution with an allowlisted wrapper",
+          tags: ["command", "input-flow"]
+        }
+      ],
+      sensitive_capabilities: ["command_execution"],
+      dependency_summary: {}
+    },
+    createStaticAnalysisTask()
+  ) as {
+    rule_hits?: Array<Record<string, unknown>>;
+  };
+
+  const ruleHit = normalizedDetails.rule_hits?.[0];
+
+  assert.ok(ruleHit, "rule_hits should contain at least one entry");
+  assert.equal(ruleHit.title, "Shell command reaches an execution sink");
+  assert.equal(ruleHit.category, "command_execution");
+  assert.equal(ruleHit.code_snippet, "return exec(commandInput);");
+  assert.equal(ruleHit.recommendation, "Replace shell execution with an allowlisted wrapper");
+  assert.deepEqual(ruleHit.tags, ["command", "input-flow"]);
+});
+
+test("skills-static result normalizer sorts rule_hits by severity descending when engine output is unordered", async () => {
+  const normalizerModule = await importIfExists<NormalizerModule>(normalizerModulePath);
+
+  assert.ok(normalizerModule?.normalizeSkillsStaticEngineOutput);
+
+  if (!normalizerModule?.normalizeSkillsStaticEngineOutput) {
+    return;
+  }
+
+  const normalizedDetails = normalizerModule.normalizeSkillsStaticEngineOutput(
+    {
+      sample_name: "sort-test-skill",
+      language: "typescript",
+      entry_files: ["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts"],
+      files_scanned: 4,
+      rule_hits: [
+        {
+          rule_id: "rule_info",
+          severity: "info",
+          message: "Info finding",
+          file_path: "src/a.ts",
+          line_start: 1,
+          line_end: 1
+        },
+        {
+          rule_id: "rule_critical",
+          severity: "critical",
+          message: "Critical finding",
+          file_path: "src/b.ts",
+          line_start: 2,
+          line_end: 2
+        },
+        {
+          rule_id: "rule_medium",
+          severity: "medium",
+          message: "Medium finding",
+          file_path: "src/c.ts",
+          line_start: 3,
+          line_end: 3
+        },
+        {
+          rule_id: "rule_high",
+          severity: "high",
+          message: "High finding",
+          file_path: "src/d.ts",
+          line_start: 4,
+          line_end: 4
+        }
+      ],
+      sensitive_capabilities: [],
+      dependency_summary: {}
+    },
+    createStaticAnalysisTask()
+  ) as {
+    rule_hits?: Array<{ rule_id: string; severity: string }>;
+  };
+
+  const severities = (normalizedDetails.rule_hits ?? []).map((ruleHit) => ruleHit.severity);
+
+  assert.deepEqual(severities, ["critical", "high", "medium", "info"]);
+});

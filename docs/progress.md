@@ -559,3 +559,71 @@ Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/tasks/task_1776345291388_adbdb
 或者浏览器输入 http://127.0.0.1:3000/api/tasks/task_1776345291388_adbdb8/result
 
 可以在 Agent-security-platform路径下运行 node --experimental-strip-types engines\asset-scan\src\cli.ts 测试中间过程的输出（目前写死 ollama）
+
+## 2026-04-26 - StaticAnalysisResultSection 规则命中明细渲染
+
+- requirement: 用后端已就绪的 rule_hits 数据替换 StaticAnalysisResultSection 中的 placeholder，渲染规则命中明细列表和敏感能力标签
+- scope:
+  - `frontend/src/pages/task-detail.page.spec.tsx`：新增 3 个失败测试（severity/message、recommendation、sensitive_capabilities）
+  - `frontend/src/components/task-detail/StaticAnalysisResultSection.tsx`：替换 placeholder 文本，实现 rule_hits 列表（severity Tag、rule_id、message、file_path、line range、recommendation）和 sensitive_capabilities 标签区
+- tests added:
+  - `"renders rule_hits severity badges and message for each hit in static_analysis tasks"`
+  - `"renders rule_hit recommendation when the field is present in details"`
+  - `"renders sensitive_capabilities as tags when the field is non-empty"`
+- test result: pass
+  - `npm run test:frontend -- src/pages/task-detail.page.spec.tsx`（11/11）
+  - `npm run test`（backend 30/30，frontend 29/29）
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - file_path 与行号拆分为独立 Text 节点，确保 getByText 精确断言可命中
+  - severity 颜色映射：critical=red、high=orange、medium=gold、low=blue、info=default
+  - sensitive_capabilities 以 volcano Tag 渲染，仅在非空时显示
+  - sample_name 加入 Statistic 行，原有 language/files_scanned/count 保留
+
+## 2026-04-26 - 第9步：skills-static 引擎客户端调度集成与 contract 收口
+
+- requirement: 将 `SkillsStaticEngineClient.dispatch()` 接入任务创建链路，使 mock 路径下 `GET /api/tasks/:id/result` 返回含真实 rule_hits 的结果；同时补齐展示字段与排序的 contract 测试
+- scope:
+  - `backend/tests/skills-static-core.spec.ts`：新增展示字段保留测试（Phase A）和严重性降序排列测试（Phase B）
+  - `backend/src/modules/task-center/skills-static/skills-static-result-normalizer.ts`：实现 rule_hits 按 severity 降序排列（`critical > high > medium > low > info`）
+  - `backend/src/modules/task-center/task-engine.service.ts`：已含 `hasRegisteredClient`、`dispatchTask`、`createCompletedStaticAnalysisArtifacts`、`createFailedStaticAnalysisArtifacts`
+  - `backend/src/modules/task-center/task-center.module.ts`：已注册 `SkillsStaticEngineClient`
+  - `tests/integration/backend-task-center.api.spec.ts`：已含 mock/semgrep 对比测试和失败路径测试
+- tests added:
+  - `skills-static-core.spec.ts` Phase A：`code_snippet`、`recommendation`、`category`、`tags` 四个展示字段保留测试
+  - `skills-static-core.spec.ts` Phase B：rule_hits 按 severity 降序排列的 contract 测试
+- test result: pass
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/skills-static-core.spec.ts`（10/10）
+  - `node --experimental-strip-types --experimental-test-isolation=none --test tests/integration/backend-task-center.api.spec.ts`（11/11）
+  - `npm run test`（backend 30/30，frontend 26/26）
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - mock 路径下 `POST /api/tasks`（static_analysis）现在同步完成 dispatch → normalizer → deriver → store 写回，`GET /api/tasks/:id/result` 返回含两条 rule_hits 的 finished 结果
+  - semgrep 路径通过 `SKILLS_STATIC_ENGINE_PROVIDER=semgrep` 激活，规则文件为 `engines/skills-static/rules/semgrep-minimal.yml`
+  - 排序实现位于 `normalizeSkillsStaticEngineOutput`，`SEVERITY_ORDER` 常量保证稳定排序语义
+  - 引擎私有字段（`engine_private_*`、`risk_score`）在 normalizer 中被剥离，不进入 `SkillsStaticRuleHit`
+
+## 2026-04-26 - Task 详情页 static_analysis 结果区全字段渲染（Phase 1-4）
+
+- requirement: 补全 Task 详情页 static_analysis 结果区所有未渲染字段，使前端展示与后端 mock 数据完整对齐
+- scope:
+  - `frontend/src/components/task-detail/TaskRiskSummarySection.tsx`（Phase 1）：补加 RiskTag 彩色徽章、`low_count`、`info_count` MetricChip
+  - `frontend/src/components/task-detail/StaticAnalysisResultSection.tsx`（Phase 2/3/4）：补加 `entry_files` 列表、`RuleHitItem` 的 title/category/code_snippet/tags、`dependency_summary` 键值对（Ant Design Descriptions）
+  - `frontend/src/pages/task-detail.page.spec.tsx`：每阶段先写失败测试再做实现（TDD）
+- tests added:
+  - Phase 1：`"renders risk_level with a colored RiskTag in the risk summary section"` / `"renders low_count and info_count in the risk summary section"`
+  - Phase 2：`"renders entry_files as a list when the field is present"`
+  - Phase 3：`"renders rule_hit title and category when both fields are present"` / `"renders rule_hit code_snippet in a code block when present"` / `"renders rule_hit tags as chip labels when present"`
+  - Phase 4：`"renders dependency_summary key-value pairs when the field is present"`
+- test result: pass
+  - `npm run test:frontend -- src/pages/task-detail.page.spec.tsx`（18/18）
+  - `npm run test`（repo 2/2，shared 11/11，backend 30/30，frontend 36/36）
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - Phase 1 引入 RiskTag 后与 TaskOverviewSection 存在重复节点，将 `getByText("High"/"Medium")` 改为 `getAllByText(...).length > 0` 解决
+  - entry_files 区域在 Statistic 行下方、Rule Hits 列表上方渲染，仅非空时显示
+  - code_snippet 以原生 `<pre>` 块展示（背景 #f5f5f5，字号 12px）
+  - dependency_summary 以 Ant Design Descriptions（column=1，size="small"，bordered）展示键值对
