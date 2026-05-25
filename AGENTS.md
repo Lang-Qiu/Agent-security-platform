@@ -177,6 +177,26 @@
 - 后端实现应保持 Node.js + TypeScript + NestJS 风格分层，不要写成一次性脚本式项目
 - 三个引擎接入必须以统一契约和平台编排为前提，不要让平台层直接耦合某个引擎内部实现
 
+## 仓库快速入口
+- 开始任何业务型变更前，先读取 `metadata.md`、`docs/sprint-current.md`、`docs/api-contract.md`、`docs/architecture.md`
+- 依赖与运行基线以仓库根 `package.json` 为准：Node.js `>=22.17.0`、`pnpm@10.0.0`
+- 若本地 `node` 版本不符，先执行 `nvm use`，再运行 backend/dev/test 命令
+- 常用验证命令：
+	- 全仓：`npm run test`
+	- 仓库级：`npm run test:repo`
+	- 后端：`npm run test:backend`
+	- 前端：`npm run test:frontend`
+- 本地联调入口：
+	- backend：`cd backend && PORT=3000 node --experimental-strip-types src/main.ts`
+	- frontend：`cd frontend && npm run dev -- --host 127.0.0.1 --port 5173`
+- FOFA 查询字符串在 Linux / macOS 下必须整体加引号，避免 `&&` 被 shell 解释为命令分隔符
+
+## 目录级补充指令
+- `backend/`：优先遵守 `.github/instructions/backend.instructions.md`
+- `frontend/`：优先遵守 `.github/instructions/frontend.instructions.md`
+- `shared/`：优先遵守 `.github/instructions/shared.instructions.md`
+- `docs/`：优先遵守 `.github/instructions/docs.instructions.md`
+
 ## 本文件的用途
 本文件用于约束 Codex 在本仓库中的默认行为。
 如用户消息与本文件冲突，优先遵守用户的明确指令，但不得绕过安全边界与明确禁止项。

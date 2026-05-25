@@ -56,7 +56,7 @@ test("asset-scan bridge builds execution context from normalized task parameters
       target_http_rps_cap: 4,
       max_tcp_concurrency_per_target: 6,
       audit: {
-        query: 'port="11434" && protocol="http"',
+        query: 'app="Ollama" && is_domain=false',
         source: "fofa",
         requested_by: "sec-ops",
         requested_at: "2026-05-08T11:30:00.000Z",
@@ -72,7 +72,7 @@ test("asset-scan bridge builds execution context from normalized task parameters
     target_http_rps_cap: 4,
     max_tcp_concurrency_per_target: 6,
     audit: {
-      query: 'port="11434" && protocol="http"',
+      query: 'app="Ollama" && is_domain=false',
       source: "fofa",
       requested_by: "sec-ops",
       requested_at: "2026-05-08T11:30:00.000Z",

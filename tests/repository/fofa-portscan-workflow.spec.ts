@@ -171,3 +171,76 @@ test("REQ-ASSET-SCAN-PORT-007 workflow emits candidate, verified and raw evidenc
   assert.equal(result.summary.verified_count, 0, "nmap timeout must not produce verified sample");
   assert.equal(result.summary.failed_count, 1, "tool timeout should be auditable as failure");
 });
+
+test("REQ-ASSET-SCAN-PORT-007 workflow falls back when naabu runner init fails due ipinfo lookup", async () => {
+  const module = (await import(pathToFileURL(modulePath).href)) as PortscanWorkflowModule;
+  assert.equal(typeof module.runFofaPortscanWorkflow, "function", "runFofaPortscanWorkflow should be exported");
+
+  if (!module.runFofaPortscanWorkflow) {
+    return;
+  }
+
+  const calls: Array<{ command: string; args: string[] }> = [];
+
+  const runner: CommandRunner = {
+    async run(command, args) {
+      calls.push({ command, args });
+
+      if (command.includes("naabu")) {
+        return {
+          stdout: "",
+          stderr: '[FTL] Could not create runner: Get "https://ipinfo.io/AS12222": read: connection reset by peer',
+          exitCode: 1
+        };
+      }
+
+      if (command.includes("nmap")) {
+        if (args.includes("--open")) {
+          return {
+            stdout: "11434/tcp open  unknown",
+            stderr: "",
+            exitCode: 0
+          };
+        }
+
+        return {
+          stdout: [
+            "PORT      STATE SERVICE",
+            "11434/tcp open  unknown",
+            "| http-title: Ollama is running",
+            "| http-enum:",
+            "|   /api/tags: lists local models"
+          ].join("\n"),
+          stderr: "",
+          exitCode: 0
+        };
+      }
+
+      return { stdout: "", stderr: `unsupported command: ${command}`, exitCode: 1 };
+    }
+  };
+
+  const tmpDir = await mkdtemp(resolve(os.tmpdir(), "fofa-portscan-workflow-"));
+
+  const result = await module.runFofaPortscanWorkflow({
+    targets: [
+      {
+        source_query: 'app="Ollama"',
+        source_ip: "198.51.100.30",
+        source_port: 11434,
+        protocol: "http",
+        target_value: "http://198.51.100.30:11434",
+        probe_target_id: "ollama_api_tags",
+        task_id: "task_ipinfo_fallback",
+        requested_by: "fofa-dev-script"
+      }
+    ],
+    outputDir: tmpDir,
+    runner
+  });
+
+  const nmapCalls = calls.filter((call) => call.command.includes("nmap"));
+  assert.equal(nmapCalls.length, 2, "nmap should run for fallback open-check and full evidence collection");
+  assert.equal(result.summary.nmap_attempted_targets, 1);
+  assert.equal(result.summary.verified_count, 1);
+});

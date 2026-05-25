@@ -10,6 +10,575 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-05-22 - REQ-ASSET-SCAN-PORT-007 样本治理阶段计划文档更新
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 将主计划从“继续扩样”明确切换为“先治理后扩容”
+  - 补充失败分桶分析、query A/B 收敛、strong_negative 补采、固定评测集与升级门禁
+  - 同步修正“正在进行”状态为 `size=50` 受控扩样
+- tests added: none（纯文档更新）
+- test result: not run（无业务代码变更）
+- docs updated:
+  - `docs/plans/fofa-scan-plan.md`
+  - `docs/progress.md`
+- notes:
+  - round5 到 round9 的核心瓶颈是运输失败占比偏高，当前先执行治理计划，不直接升到 `size=100`
+
+## 2026-05-22 - REQ-ASSET-SCAN-PORT-007 naabu+nmap 接入试运行计划先行更新
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 按“先计划后执行”补充 naabu+nmap 接入主线脚本的完整执行方案
+  - 明确 Design/Test/Implement/Document/Stop 顺序与 size=50 试运行口径
+  - 明确阻塞处理：工具缺失时保留审计证据，不回滚现有主线
+- tests added: none（纯文档更新）
+- test result: not run（无业务代码变更）
+- docs updated:
+  - `docs/plans/fofa-scan-plan.md`
+  - `docs/progress.md`
+- notes:
+  - 已完成计划先行，下一步进入 TDD 接入实现与 size=50 实测
+
+## 2026-05-22 - REQ-ASSET-SCAN-PORT-007 naabu+nmap 接入主线脚本并完成 size=50 试跑
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 新增主线编排脚本，支持将 task-scan 结果直接接入 naabu+nmap 工作流
+  - 通过 TDD 完成接入实现（RED -> GREEN）
+  - 执行一次 `size=50` 真实试跑并记录产物
+- tests added:
+  - `tests/repository/fofa-mainline-portscan.spec.ts`
+    - 混合日志输出中的 JSON 解析
+    - workflow target 构建与 `target_value` 回退解析
+- test result: pass（先 RED 后 GREEN）
+  - RED：`ERR_MODULE_NOT_FOUND`（目标接入脚本不存在）
+  - GREEN：`node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-mainline-portscan.spec.ts`
+- implementation:
+  - 新增：`scripts/dev/intel/fofa-mainline-portscan.ts`
+    - 读取 task-scan 文件
+    - 构建 `runFofaPortscanWorkflow` 目标
+    - 提供 shell runner（naabu/nmap 超时控制与退出码落盘）
+  - 更新：`package.json`
+    - 新增运行命令：`run:fofa:mainline:portscan`
+    - `test:repo` 纳入 `fofa-mainline-portscan.spec.ts`
+- execution result (size=50):
+  - 候选输入：`docs/temp/fofa-ollama-naabu-nmap-round1.json`
+  - 工作流摘要：`docs/temp/fofa-ollama-naabu-nmap-round1-workflow-summary.json`
+  - summary:
+    - `total_targets=50`
+    - `naabu_success_targets=0`
+    - `nmap_attempted_targets=0`
+    - `verified_count=0`
+    - `candidate_count=50`
+- artifacts:
+  - `docs/temp/fofa-ollama-naabu-nmap-round1-workflow/exposure-candidates.json`
+  - `docs/temp/fofa-ollama-naabu-nmap-round1-workflow/raw-evidence.json`
+  - `docs/temp/fofa-ollama-naabu-nmap-round1-workflow/verified-fingerprints.json`
+  - `docs/temp/fofa-ollama-naabu-nmap-round1-workflow/workflow-summary.json`
+- notes:
+  - 当前阻塞来自 naabu 运行环境外部依赖（`Could not create runner: Get https://ipinfo.io/... connection reset by peer`），导致 naabu 全量退出码 `1`，未进入 nmap 阶段
+  - 现有主线未回滚；下一步需先解决 naabu 外联依赖/参数策略，再开展 query 收敛对比
+
+## 2026-05-22 - REQ-ASSET-SCAN-PORT-007 naabu ipinfo 外联失败回退修复（TDD）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 修复 naabu 在 `ipinfo` 外联失败时导致工作流无法前进的问题
+  - 在不破坏 naabu-first 边界下增加降级回退：
+    - 当识别到 `Could not create runner` + `ipinfo.io` 失败时，先用 `nmap --open` 做端口开放检查
+    - 命中开放后再执行完整 nmap 证据采集
+- tests updated:
+  - `tests/repository/fofa-portscan-workflow.spec.ts`
+    - 新增用例：`workflow falls back when naabu runner init fails due ipinfo lookup`
+- test result: pass（先 RED 后 GREEN）
+  - RED：新增回退用例失败（nmap 调用次数为 0）
+  - GREEN：`node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-portscan-workflow.spec.ts`
+- implementation:
+  - 更新：`scripts/dev/intel/fofa-portscan-workflow.ts`
+    - 新增 `isNaabuRunnerInitFailure`
+    - 新增 `detectOpenPortFromNmapOpenCheck`
+    - 新增 naabu 失败后的 nmap open-check 回退路径及计数逻辑
+- notes:
+  - 代码级回退已生效并通过测试；`size=50` 全量实跑仍需完整跑完后输出最终对比指标
+
+## 2026-05-22 - REQ-ASSET-SCAN-PORT-007 修复后 size=50 round2 实跑结果落盘
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 在 naabu 回退修复后，完成 `size=50` round2 实跑并读取 workflow summary
+- execution result:
+  - 输入：`docs/temp/fofa-ollama-naabu-nmap-round2.json`
+  - summary:
+    - `total_targets=50`
+    - `naabu_success_targets=0`
+    - `nmap_attempted_targets=46`
+    - `verified_count=0`
+    - `candidate_count=50`
+    - `failed_count=43`
+- artifacts:
+  - `docs/temp/fofa-ollama-naabu-nmap-round2-workflow-summary.json`
+  - `docs/temp/fofa-ollama-naabu-nmap-round2-workflow/workflow-summary.json`
+  - `docs/temp/fofa-ollama-naabu-nmap-round2-workflow/raw-evidence.json`
+- notes:
+  - 回退修复已将流程从“naabu 全量阻断”推进到“可进入 nmap 阶段”（`nmap_attempted_targets=46`）
+  - 当前主要瓶颈转为 nmap 阶段失败占比高（`failed_count=43`），下一步应进入 query 收敛与 nmap 超时/并发策略治理
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama round4 稳定批次执行
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 继续沿 Ollama 主线执行 size=50 稳定批次
+  - 记录本轮 task-scan 与 batch-report 结果作为后续复核输入
+- execution result:
+  - query: `app="Ollama" && is_domain=false && country="CN"`
+  - task-scan: `fetched=50`、`created=50`
+  - batch-report: `finished=50`、`failed=0`
+  - byRiskLevel: `info=34`、`high=16`
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round4.json`
+  - `docs/temp/fofa-ollama-smallsize-round4-batch-report.json`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - 本轮继续证明 Ollama 主模板可稳定产出高风险候选，下一步优先围绕 high 风险任务做 `/api/tags` 复核与样本分层
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama round4 high 风险复核与样本扩充
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 仅针对 round4 的 `high` 风险任务执行 `/api/tags` 复核
+  - 将满足强正条件的目标继续写入 Ollama 正样本库
+- execution result:
+  - 复核目标：`16`（来自 round4 的全部 high 风险任务）
+  - 强正样本：`16`
+  - 强负样本：`0`
+  - 运输失败：`0`
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round4-high-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round4-high-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round4-high-verified.json`
+  - `docs/temp/fofa-ollama-smallsize-round4-high-negative-review.json`
+- implementation:
+  - `scripts/dev/intel/fofa-fingerprint-library-sync.ts` 同步结果：`verifiedWritten=16`、`negativeWritten=0`
+  - 正样本新增范围：`samples/assets/fingerprint-positive/ollama.s027.json` 到 `samples/assets/fingerprint-positive/ollama.s042.json`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - round4 的 high 风险任务在本轮复核中全部回证为 Ollama 强正样本，主模板对高风险候选的真阳性质量稳定
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama round5 受控扩样执行（high 全量 + info 抽样）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 按计划文档新增策略执行 round5（`size=50`）
+  - 对 `high` 风险任务做全量 `/api/tags` 复核
+  - 对 `info` 风险任务做 10 条抽样复核，用于监控噪声与运输失败占比
+- execution result:
+  - query: `app="Ollama" && is_domain=false && country="CN"`
+  - task-scan: `fetched=50`、`created=50`
+  - batch-report: `finished=50`、`failed=0`
+  - byRiskLevel: `high=16`、`info=34`
+  - review 总量: `26`（high 16 + info 抽样 10）
+  - review 分层: `strong_positive=18`、`strong_negative=0`、`transport_failure=8`
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round5.json`
+  - `docs/temp/fofa-ollama-smallsize-round5-batch-report.json`
+  - `docs/temp/fofa-ollama-smallsize-round5-high-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round5-info-sample-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round5-high-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round5-info-sample-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round5-verified.json`
+  - `docs/temp/fofa-ollama-smallsize-round5-negative-review.json`
+- implementation:
+  - `scripts/dev/intel/fofa-fingerprint-library-sync.ts` 同步结果：`verifiedWritten=18`、`negativeWritten=0`
+  - 正样本新增范围：`samples/assets/fingerprint-positive/ollama.s043.json` 到 `samples/assets/fingerprint-positive/ollama.s060.json`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - high 组强正率 100%（16/16）；info 抽样运输失败占比 80%（8/10），当前不满足放大到 `size=100` 的门槛，应继续保持 `size=50` 并收紧查询或抽样策略
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama round6 受控扩样复验（high 全量 + info 抽样）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 延续 round5 策略执行 round6（`size=50`）
+  - 保持 high 全量复核 + info 抽样 10 条复核
+  - 继续以三分类准入规则执行样本同步
+- execution result:
+  - query: `app="Ollama" && is_domain=false && country="CN"`
+  - task-scan: `fetched=50`、`created=50`
+  - batch-report: `finished=50`、`failed=0`
+  - byRiskLevel: `high=16`、`info=34`
+  - review 总量: `26`（high 16 + info 抽样 10）
+  - review 分层: `strong_positive=18`、`strong_negative=0`、`transport_failure=8`
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round6.json`
+  - `docs/temp/fofa-ollama-smallsize-round6-batch-report.json`
+  - `docs/temp/fofa-ollama-smallsize-round6-high-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round6-info-sample-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round6-high-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round6-info-sample-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round6-verified.json`
+  - `docs/temp/fofa-ollama-smallsize-round6-negative-review.json`
+- implementation:
+  - `scripts/dev/intel/fofa-fingerprint-library-sync.ts` 同步结果：`verifiedWritten=18`、`negativeWritten=0`
+  - 正样本新增范围：`samples/assets/fingerprint-positive/ollama.s061.json` 到 `samples/assets/fingerprint-positive/ollama.s078.json`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - 连续两轮结果一致：high 组强正率稳定为 100%，但 info 抽样运输失败占比仍为 80%，当前仍不满足升到 `size=100` 的门槛
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama round7 受控扩样延续（high 全量 + info 抽样）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 继续按 round5/round6 的受控策略执行 round7（`size=50`）
+  - 保持 high 全量复核 + info 抽样 10 条
+  - 仅同步 strong_positive/strong_negative，运输失败不入库
+- execution result:
+  - query: `app="Ollama" && is_domain=false && country="CN"`
+  - task-scan: `fetched=50`、`created=50`
+  - batch-report: `finished=50`、`failed=0`
+  - byRiskLevel: `high=16`、`info=34`
+  - review 总量: `26`（high 16 + info 抽样 10）
+  - review 分层: `strong_positive=17`、`strong_negative=0`、`transport_failure=9`
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round7.json`
+  - `docs/temp/fofa-ollama-smallsize-round7-batch-report.json`
+  - `docs/temp/fofa-ollama-smallsize-round7-high-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round7-info-sample-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round7-high-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round7-info-sample-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round7-verified.json`
+  - `docs/temp/fofa-ollama-smallsize-round7-negative-review.json`
+- implementation:
+  - `scripts/dev/intel/fofa-fingerprint-library-sync.ts` 同步结果：`verifiedWritten=17`、`negativeWritten=0`
+  - 正样本新增范围：`samples/assets/fingerprint-positive/ollama.s079.json` 到 `samples/assets/fingerprint-positive/ollama.s095.json`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - 与 round6 相比，strong_positive 由 18 降至 17，运输失败由 8 升至 9，当前质量门槛仍不足以放大到 `size=100`
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama round8 受控扩样延续（high 全量 + info 抽样）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 按既定策略继续执行 round8（`size=50`）
+  - high 全量复核 + info 抽样 10 条复核
+  - 按三分类准入规则同步样本
+- execution result:
+  - query: `app="Ollama" && is_domain=false && country="CN"`
+  - task-scan: `fetched=50`、`created=50`
+  - batch-report: `finished=50`、`failed=0`
+  - byRiskLevel: `high=16`、`info=34`
+  - review 总量: `26`（high 16 + info 抽样 10）
+  - review 分层: `strong_positive=17`、`strong_negative=0`、`transport_failure=9`
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round8.json`
+  - `docs/temp/fofa-ollama-smallsize-round8-batch-report.json`
+  - `docs/temp/fofa-ollama-smallsize-round8-high-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round8-info-sample-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round8-high-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round8-info-sample-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round8-verified.json`
+  - `docs/temp/fofa-ollama-smallsize-round8-negative-review.json`
+- implementation:
+  - `scripts/dev/intel/fofa-fingerprint-library-sync.ts` 同步结果：`verifiedWritten=17`、`negativeWritten=0`
+  - 正样本新增范围：`samples/assets/fingerprint-positive/ollama.s096.json` 到 `samples/assets/fingerprint-positive/ollama.s112.json`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - round7 与 round8 均为 `17/26` strong_positive、`9/26` transport_failure，当前仍不满足升到 `size=100` 的门槛
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama round9 受控扩样延续（high 全量 + info 抽样）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 延续受控扩样策略执行 round9（`size=50`）
+  - high 全量复核 + info 抽样 10 条复核
+  - 按三分类准入执行样本同步
+- execution result:
+  - query: `app="Ollama" && is_domain=false && country="CN"`
+  - task-scan: `fetched=50`、`created=50`
+  - batch-report: `finished=50`、`failed=0`
+  - byRiskLevel: `high=16`、`info=34`
+  - review 总量: `26`（high 16 + info 抽样 10）
+  - review 分层: `strong_positive=16`、`strong_negative=0`、`transport_failure=10`
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round9.json`
+  - `docs/temp/fofa-ollama-smallsize-round9-batch-report.json`
+  - `docs/temp/fofa-ollama-smallsize-round9-high-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round9-info-sample-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round9-high-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round9-info-sample-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round9-verified.json`
+  - `docs/temp/fofa-ollama-smallsize-round9-negative-review.json`
+- implementation:
+  - `scripts/dev/intel/fofa-fingerprint-library-sync.ts` 同步结果：`verifiedWritten=16`、`negativeWritten=0`
+  - 正样本新增范围：`samples/assets/fingerprint-positive/ollama.s113.json` 到 `samples/assets/fingerprint-positive/ollama.s128.json`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - 相比 round7/round8，round9 强正数继续下降、运输失败继续上升，扩样质量未改善，仍不满足升到 `size=100` 的门槛
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 三目标旁线验证收口，恢复 Ollama 主线
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 将 Langflow / AutoGPT / OpenClaw 的 query 验证明确标记为旁线实验
+  - 恢复 Ollama 为当前唯一主线，避免后续继续分叉推进
+  - 保持现有 Ollama 样本库与小批次验证节奏
+- tests added: none（纯文档更新）
+- test result: not run（无业务代码变更）
+- docs updated:
+  - `docs/plans/fofa-scan-plan.md`
+  - `docs/progress.md`
+- notes:
+  - 本轮旁线复核显示三目标均未产出 strong_positive，后续优先回到 Ollama 专项收紧 query 与复核门槛
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 非 Ollama Query 设计文档化
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 将工作重点从 Ollama 扩展到 Langflow/AutoGPT/OpenClaw 的 query 设计
+  - 固化 T1/T2/T3 分层模板和切换门槛
+  - 明确每轮输出文件命名规范，保证可复盘
+- tests added: none（纯文档更新）
+- test result: not run（无业务代码变更）
+- docs updated:
+  - `docs/plans/fofa-scan-plan.md`
+  - `docs/temp/asset-scan-port-scan-v1.md`
+  - `docs/progress.md`
+- notes:
+  - 当前输出为首版查询草案，后续将通过小批次 round1 实测再收敛
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama size=50 扩容与强正样本入库
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 将主模板从 size=20 提升到 size=50 做扩容验证
+  - 对 batch-report 中的 info 风险任务继续做 `/api/tags` 复核
+  - 将满足强正条件的样本写入长期样本库
+- execution result:
+  - 扩容批次：`fetched=50`、`created=50`、`finished=50`、`failed=0`
+  - 风险分布：`info=34`、`high=16`
+  - info 复核：`34` 个目标中 `12` 条强正、`0` 条强负、`22` 条运输失败
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round3.json`
+  - `docs/temp/fofa-ollama-smallsize-round3-batch-report.json`
+  - `docs/temp/fofa-ollama-smallsize-round3-info-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round3-verified.json`
+- implementation:
+  - `scripts/dev/intel/fofa-fingerprint-library-sync.ts` 已将 12 条强正样本同步到 `samples/assets/fingerprint-positive/`
+- docs updated:
+  - `docs/plans/fofa-scan-plan.md`
+  - `docs/progress.md`
+- notes:
+  - size=50 仍然稳定，可继续使用该区间做 Ollama 强正样本扩容；强负样本仍未形成，需要后续专门补采
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama round2 强正样本复核并入库
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 对 round2 中非 11434 的命中目标做 `/api/tags` 复核
+  - 将满足三分类强正条件的样本写入长期样本库
+- execution result:
+  - 复核目标：`12`
+  - 强正样本：`5`
+  - 强负样本：`0`
+  - 运输失败：`7`
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round2-negative-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round2-verified.json`
+- implementation:
+  - `scripts/dev/intel/fofa-fingerprint-library-sync.ts` 已将 5 条强正样本同步到 `samples/assets/fingerprint-positive/`
+- docs updated:
+  - `docs/plans/fofa-scan-plan.md`
+  - `docs/progress.md`
+- notes:
+  - round2 进一步证明小批量主模板可稳定产出可用强正样本，但强负样本仍需后续专门补采
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama round1 强正样本复核并入库
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 对 round1 主模板结果中 11434 目标做 `/api/tags` 复核
+  - 将满足三分类强正条件的样本写入长期样本库
+- execution result:
+  - 复核目标：`8`
+  - 强正样本：`8`
+  - 强负样本：`0`
+  - 运输失败：`0`
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round1-verified.json`
+- implementation:
+  - `scripts/dev/intel/fofa-fingerprint-library-sync.ts` 已将 8 条强正样本同步到 `samples/assets/fingerprint-positive/`
+- docs updated:
+  - `docs/plans/fofa-scan-plan.md`
+  - `docs/progress.md`
+- notes:
+  - round1 说明主模板可稳定拿到 Ollama 强正样本，但强负样本还需通过后续轮次继续采集
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama 主模板小批次执行 round1（size=20）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 按计划执行 Ollama 主模板小批次任务创建与批量结果汇总
+  - 记录 round1 运行结果作为后续强样本复核输入
+- execution result:
+  - query：`app="Ollama" && is_domain=false && country="CN"`
+  - task-scan：`fetched=20`、`created=20`
+  - batch-report：`finished=20`、`failed=0`
+  - byRiskLevel：`info=12`、`high=8`
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round1.json`
+  - `docs/temp/fofa-ollama-smallsize-round1-batch-report.json`
+- docs updated:
+  - `docs/plans/fofa-scan-plan.md`
+  - `docs/progress.md`
+- notes:
+  - 本轮仅执行主模板与结果汇总，下一步进入强样本复核与入库
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 强样本准入规则执行（仅 Ollama）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 在样本入库同步脚本中落实三分类准入：强正样本、强负样本、运输失败样本
+  - 明确运输失败样本（timeout/refused/tls）不得进入正负样本库
+  - 强正样本必须满足非空 `response_body_excerpt`
+- tests updated:
+  - `tests/repository/fofa-fingerprint-library-sync.spec.ts`
+    - 新增用例：仅写入强样本并排除运输失败
+    - 调整旧用例夹具以满足新准入规则
+- test result: pass（先 RED 后 GREEN）
+  - RED: 新增用例失败，实测出现弱样本被写入（`3 !== 1`）
+  - GREEN:
+    - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-fingerprint-library-sync.spec.ts`
+- implementation:
+  - 更新 `scripts/dev/intel/fofa-fingerprint-library-sync.ts`
+    - 增加 `isStrongPositive`、`isStrongNegative`、`isTransportFailure` 过滤
+    - 正负样本写入前先按准入规则筛选
+    - 正样本 `response_body_excerpt` 从输入透传并截断到 512
+    - 负样本优先使用 `exclusion_reason`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - 本次仅执行规则准入，不扩展到其他 probeTargetId
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama 样本库入库同步（naabu+nmap 复核产物）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 新增 Ollama 样本库同步脚本，将 verified/negative_or_pending 结果写入标准样本库目录
+  - 仅处理 Ollama，保持现有最小闭环，不扩展到其他 probeTargetId
+- tests added:
+  - `tests/repository/fofa-fingerprint-library-sync.spec.ts`
+- test result: pass（先 RED 后 GREEN）
+  - RED: 目标脚本不存在（`ERR_MODULE_NOT_FOUND`）
+  - GREEN:
+    - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-fingerprint-library-sync.spec.ts`
+- implementation:
+  - 新增 `scripts/dev/intel/fofa-fingerprint-library-sync.ts`
+  - 执行同步：verified 写入 16 条，negative 写入 4 条
+  - 产出目录：
+    - `samples/assets/fingerprint-positive/`（新增 `ollama.s002.json` 到 `ollama.s017.json`）
+    - `samples/assets/fingerprint-negative/`（新增 `ollama.neg.n010.json` 到 `ollama.neg.n013.json`）
+- docs updated:
+  - `docs/plans/plan-overview.md`
+  - `docs/progress.md`
+- notes:
+  - 之前未开始“入库”是因为此前阶段聚焦查询稳定性与候选转化验证，工作流仅导出到 `docs/temp/`，尚未实现样本库同步脚本
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama 样本分层落盘（仅 Ollama）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 仅处理 Ollama app 查询复核结果，拆分 verified 与 negative_or_pending 样本
+  - 产出可直接用于后续规则/样本维护的分层文件
+- execution result:
+  - source report：`docs/temp/fofa-day2-q5-ollama-verify-report.json`
+  - total checked：20
+  - verified：16
+  - negative_or_pending：4
+  - conversion_rate：80.0%
+- artifacts:
+  - `docs/temp/fofa-ollama-verified-candidates.json`
+  - `docs/temp/fofa-ollama-negative-or-pending.json`
+  - `docs/temp/fofa-ollama-processing-summary.json`
+- docs updated:
+  - `docs/plans/plan-overview.md`
+  - `docs/progress.md`
+- notes:
+  - 当前阶段仅聚焦 Ollama；未推进其他 probeTargetId
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama 下一轮查询模板固化（仅 Ollama）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 基于 verified 与 negative_or_pending 样本统计，生成下一轮 Ollama 查询模板
+  - 明确主模板/稳定模板/回溯模板的使用方式
+- analysis basis:
+  - verified 端口分布：11434 为主（10/16），其余为少量离散端口
+  - verified 协议分布：http 13、https 3
+  - negative_or_pending：4 条，均为连接失败类（timeout 或 refused）
+- artifacts:
+  - `docs/temp/fofa-ollama-next-query-templates.md`
+  - `docs/temp/fofa-ollama-verified-candidates.json`
+  - `docs/temp/fofa-ollama-negative-or-pending.json`
+- docs updated:
+  - `docs/plans/plan-overview.md`
+  - `docs/progress.md`
+- notes:
+  - 当前样本量下不引入硬编码端口黑名单，先采用协议分批模板验证稳定性
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama round2 试跑与回退决策（仅 Ollama）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 按新模板执行 Ollama round2 小批次
+  - 记录 protocol 分拆模板与主模板重试结果
+- execution result:
+  - protocol 分拆模板：
+    - `app="Ollama" && is_domain=false && country="CN" && protocol="http"` -> fetched 0
+    - `app="Ollama" && is_domain=false && country="CN" && protocol="https"` -> fetched 0
+  - 主模板重试 3 次：均为 `fetch failed`
+- diagnostics:
+  - FOFA 主站连通性正常（`https://en.fofa.info` 可访问）
+  - Node 直连 FOFA API 主机可达（状态 200）
+- artifacts:
+  - `docs/temp/fofa-ollama-round2-http.json`
+  - `docs/temp/fofa-ollama-round2-https.json`
+  - `docs/temp/fofa-ollama-round2-http-verify.json`
+  - `docs/temp/fofa-ollama-round2-https-verify.json`
+  - `docs/temp/fofa-ollama-round2-comparison.json`
+  - `docs/temp/fofa-ollama-round2-baseline.retry1.json`
+  - `docs/temp/fofa-ollama-round2-baseline.retry2.json`
+  - `docs/temp/fofa-ollama-round2-baseline.retry3.json`
+- decision:
+  - 回退到 app 主模板作为唯一默认路径
+  - protocol 分拆模板暂不默认启用，待 FOFA 返回稳定后再评估
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 Day 2 批次执行完成（Q4/Q3/Q5 + app 查询策略）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 将 Ollama FOFA 默认查询切换为 `app="Ollama" && is_domain=false`
+  - 执行 Day 2 三个批次：Q4（openclaw-gateway）、Q3（autogpt）、Q5（ollama refined）
+  - 生成批次汇总并落盘到 `docs/temp/`
+- tests updated:
+  - `tests/repository/fofa-api-task-scan.spec.ts`（默认查询断言对齐 app 查询）
+- test result: pass（FOFA 脚本与查询基线）
+  - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-api-task-scan.spec.ts`
+- execution result: pass
+  - Day 2 共创建任务 60 条（Q4/Q3/Q5 各 20）
+  - batch-report：`finished=60`
+  - 风险分布：`info=50`、`high=10`
+  - Q5 `/api/tags` 复核：20 个 candidate 中 16 个满足 `status=200 + models`
+- docs updated:
+  - `docs/plans/plan-overview.md`
+  - `docs/progress.md`
+- artifacts:
+  - `docs/temp/fofa-day2-q4-openclaw.json`
+  - `docs/temp/fofa-day2-q3-autogpt.json`
+  - `docs/temp/fofa-day2-q5-ollama-refined.json`
+  - `docs/temp/fofa-day2-batch-report.json`
+  - `docs/temp/fofa-day2-q5-ollama-verify-report.json`
+- notes:
+  - 3000 端口由现有 backend 实例占用，复用健康实例继续执行
+  - 后续需进入“候选 -> 已验证”复核阶段（`/api/tags` + `models`）
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 Ollama 查询策略对比（仅 Ollama）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 仅针对 Ollama 比较端口查询与 app 查询的 candidate -> verified 转化效果
+  - 统一使用 `/api/tags` + `models` 作为 verified 判定标准
+- execution result:
+  - 端口查询 `port="11434" && protocol="http"`：verified 0/20（0.0%）
+  - app 查询 `app="Ollama" && is_domain=false && country="CN"`：verified 16/20（80.0%）
+- artifacts:
+  - `docs/temp/fofa-day1-q1-ollama-verify-report.json`
+  - `docs/temp/fofa-day2-q5-ollama-verify-report.json`
+  - `docs/temp/fofa-ollama-query-comparison.json`
+- decision:
+  - 后续 Ollama 主查询固定为 app 查询路径；端口查询不再作为主入口
+
 ## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 工作流脚本 RED->GREEN（naabu+nmap + 样本分层导出）
 - requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
 - scope:

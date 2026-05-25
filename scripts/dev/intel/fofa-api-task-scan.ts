@@ -1,11 +1,34 @@
+/**
+ * FOFA 资产扫描任务编排器 (Fofa Asset Scan Orchestrator)
+ * 
+ * 该脚本是一个自动化数据管道，用于将 FOFA 空间测绘数据转化为本地安全扫描任务。
+ * 
+ * 核心功能：
+ * 1. 凭证管理：自动按优先级加载 FOFA Email/Key (CLI > Env > .env files)。
+ * 2. 智能搜索：默认搜索暴露的 Ollama 服务 (app="Ollama")，支持自定义 FOFA 语法。
+ * 3. 数据清洗：将 FOFA 原始数组数据归一化为标准 URL (http://ip:port)。
+ * 4. 任务下发：将清洗后的资产包装为 AssetScanTaskRequest，发送至本地后端 API。
+ * 
+ * 默认配置：
+ * - FOFA 查询: app="Ollama" && is_domain=false
+ * - 后端地址: http://127.0.0.1:3000
+ * - 字段映射: host, ip, port, protocol, org
+ * 
+ */
+
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 const DEFAULT_FOFA_BASE_URL = "https://en.fofa.info";
+// 后端地址
 const DEFAULT_BACKEND_BASE_URL = "http://127.0.0.1:3000";
-const DEFAULT_OLLAMA_QUERY = 'port="11434" && protocol="http"';
+// 查询语句
+const DEFAULT_OLLAMA_QUERY = 'app="Ollama" && is_domain=false';
+// 字段映射
 const DEFAULT_FIELDS = ["host", "ip", "port", "protocol", "org"];
+
+// 通过注入 fetch 与文件读取依赖，保证脚本在测试中尽量无副作用。
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
@@ -72,6 +95,8 @@ function normalizePort(value: unknown): number | null {
 }
 
 function buildTargetUrl(record: FofaApiRecord): string {
+  // FOFA 可能返回完整 host URL，也可能拆分为 host/ip/protocol/port 字段。
+  // 这里统一归一化为 POST /api/tasks 可直接接收的 target URL。
   const host = record.host?.trim();
   if (host && /^https?:\/\//i.test(host)) {
     return host;
@@ -88,6 +113,8 @@ function buildTargetUrl(record: FofaApiRecord): string {
 }
 
 function normalizeFofaRecord(row: unknown, fields: string[]): FofaApiRecord {
+  // FOFA 返回行是位置数组，因此先按请求 fields 顺序建立 field->value 映射，
+  // 再做类型归一化，避免字段错位。
   if (!Array.isArray(row)) {
     throw new Error("FOFA API result row must be an array");
   }
@@ -114,6 +141,7 @@ function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+  // 同时兼容 .env 与 export KEY=value 两种写法，降低本地配置成本。
 function parseShellEnvText(content: string): Record<string, string> {
   const values: Record<string, string> = {};
 
@@ -147,6 +175,8 @@ function parseShellEnvText(content: string): Record<string, string> {
   return values;
 }
 
+  // 优先级: CLI 参数 > 进程环境变量 > 本地 env 文件 > 用户目录 env 文件。
+  // 本地文件只补齐缺失值，不覆盖显式传入或现有环境变量。
 export async function resolveFofaCredentials(options?: {
   email?: string;
   key?: string;
@@ -193,6 +223,10 @@ export async function resolveFofaCredentials(options?: {
   return { email, key, loadedFiles };
 }
 
+/**
+ * 构建 FOFA 搜索 API 的完整 URL。
+ * 自动处理 query 的 base64 编码、字段排序和分页参数。
+ */
 export function buildFofaSearchUrl(options: {
   baseUrl?: string;
   email: string;
@@ -208,6 +242,7 @@ export function buildFofaSearchUrl(options: {
   url.searchParams.set("email", options.email);
   url.searchParams.set("key", options.key);
   url.searchParams.set("qbase64", Buffer.from(options.query, "utf8").toString("base64"));
+  // 使用确定性字段顺序，保证测试夹具与解析行为稳定。
   url.searchParams.set("fields", (options.fields ?? DEFAULT_FIELDS).join(","));
 
   if (options.page) {
@@ -221,6 +256,11 @@ export function buildFofaSearchUrl(options: {
   return url.toString();
 }
 
+/**
+ * 将单个 FOFA 资产记录转换为 AssetScanTaskRequest 格式。
+ * 目标 URL 归一化为 http://ip:port 或 https://... 形式。
+ * 通过 metadata 保留来源 ip/port/protocol，便于审计与下游处理。
+ */
 export function buildAssetScanTaskRequest(options: {
   record: FofaApiRecord;
   probeTargetId: string;
@@ -235,6 +275,7 @@ export function buildAssetScanTaskRequest(options: {
       target_value: targetValue,
       display_name: `${options.probeTargetId} candidate ${targetValue}`,
       metadata: {
+        // 保留 FOFA 来源信息，便于后续审计与离线样本处理。
         intel_source: "fofa_api",
         source_ip: options.record.ip,
         source_port: options.record.port,
@@ -244,6 +285,7 @@ export function buildAssetScanTaskRequest(options: {
     parameters: {
       probe_mode: "live",
       probe_target_id: options.probeTargetId,
+      // probe_port_hint 让下游扫描流程优先尝试来源端口。
       probe_port_hint: options.record.port ?? undefined,
       intel_source: "fofa_api"
     }
@@ -256,6 +298,12 @@ export function buildAssetScanTaskRequest(options: {
   return taskRequest;
 }
 
+/**
+ * 主编排函数：
+ * 1. 调用 FOFA API 获取资产列表；
+ * 2. 逐条创建本地后端扫描任务；
+ * 3. 返回统计信息和任务清单。
+ */
 export async function runFofaApiTaskScan(options: {
   fofaEmail: string;
   fofaKey: string;
@@ -311,6 +359,7 @@ export async function runFofaApiTaskScan(options: {
   }
 
   const records = (fofaPayload.results ?? []).map((row) => normalizeFofaRecord(row, fields));
+  // 返回任务级 source_ip/source_port，供 naabu+nmap 复核与样本入库流程继续使用。
   const taskResults: Array<{ task_id: string; target_value: string; source_ip: string | null; source_port: number | null }> = [];
 
   for (const record of records) {
@@ -343,7 +392,7 @@ export async function runFofaApiTaskScan(options: {
     }
 
     taskResults.push({
-      task_id: createTaskPayload.data.task_id,
+      task_id: createTaskPayload.data.task_id, 
       target_value: taskRequest.target.target_value,
       source_ip: record.ip,
       source_port: record.port

@@ -1,3 +1,7 @@
+// 后端逐个读取每个任务的 result 和 risk-summary，
+// 把它们汇总成一份批次报告，看看这批任务里 
+// finished、failed、high、info 分别有多少。
+
 import { parseArgs } from "node:util";
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;

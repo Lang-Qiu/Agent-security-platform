@@ -12,6 +12,13 @@ function readOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+// 用于构建 execution_context（执行上下文），记录这次扫描的配置和审计信息
+// 示例：
+// max_targets、max_ports_per_target：限制扫描范围
+// max_runtime_seconds：超时控制
+// audit.query、audit.source：记录当初的 FOFA 查询语句或情报来源
+// audit.requested_by：谁发起的
+// audit.interruption_reason：任务中断的原因（预算用尽、超时、手动停止等）
 export function buildExecutionContextFromTask(
   task: Pick<Task, "parameters" | "requested_by">,
   runtimeExecutionContext?: AssetScanResultDetails["execution_context"]

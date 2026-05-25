@@ -1,0 +1,12 @@
+{
+  "sample_id": "s020",
+  "target_id": "ollama",
+  "request_summary": "GET /api/tags",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json"
+  },
+  "response_body_excerpt": "{\"models\":[{\"name\":\"glm-ocr:latest\",\"model\":\"glm-ocr:latest\",\"modified_at\":\"2026-04-24T01:40:34.5902668+08:00\",\"size\":2219299168,\"digest\":\"6effedd0dc8aec66ad86c94b8099395376e212f22c87a9d7147c422f7e447be4\",\"details\":{\"parent_model\":\"\",\"format\":\"gguf\",\"family\":\"glmocr\",\"families\":[\"glmocr\"],\"parameter_size\":\"1.1B\",\"quantization_level\":\"F16\"}},{\"name\":\"qwen3.6:27b\",\"model\":\"qwen3.6:27b\",\"modified_at\":\"2026-04-23T12:08:56.0186507+08:00\",\"size\":17420432739,\"digest\":\"a50eda8ed977ab48a12431878896b27ffd5cef552c17af",
+  "source": "fofa-verify: http://183.128.157.92:18000",
+  "collected_at": "2026-05-09T07:35:00.000Z"
+}

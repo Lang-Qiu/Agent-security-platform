@@ -1,0 +1,12 @@
+{
+  "sample_id": "s061",
+  "target_id": "ollama",
+  "request_summary": "GET /api/tags",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json"
+  },
+  "response_body_excerpt": "{\"models\":[{\"name\":\"glm-4.6:cloud\",\"model\":\"glm-4.6:cloud\",\"remote_model\":\"glm-4.6\",\"remote_host\":\"https://ollama.com:443\",\"modified_at\":\"2026-05-09T19:24:18.780890118+08:00\",\"size\":366,\"digest\":\"05277b76269f8831b289e8f11f1f46136f9214d9c0a6399f1b580003e74f887c\",\"details\":{\"parent_model\":\"\",\"format\":\"\",\"family\":\"glm4\",\"families\":[\"glm4\"],\"parameter_size\":\"355B\",\"quantization_level\":\"FP8\"}},{\"name\":\"nemotron-3-super:cloud\",\"model\":\"nemotron-3-super:cloud\",\"remote_model\":\"nemotron-3-super\",\"remote_host\":\"https",
+  "source": "fofa-verify: http://43.138.119.76:11434",
+  "collected_at": "2026-05-09T11:35:53.561Z"
+}

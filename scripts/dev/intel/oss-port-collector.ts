@@ -1,3 +1,4 @@
+// 对调用 naabu 和 nmap 的抽象与封装
 export interface PortCollectorCommandRunner {
 	run(command: string, args: string[], timeoutMs?: number): Promise<{
 		stdout: string;

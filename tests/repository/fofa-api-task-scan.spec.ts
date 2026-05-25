@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
 const modulePath = resolve(import.meta.dirname, "../../scripts/dev/intel/fofa-api-task-scan.ts");
+const DEFAULT_OLLAMA_APP_QUERY = 'app="Ollama" && is_domain=false';
 
 type FetchCall = {
   input: string | URL;
@@ -168,7 +169,7 @@ test("buildFofaSearchUrl encodes the ollama query and selected fields for the of
       baseUrl: "https://en.fofa.info",
       email: "dev@example.com",
       key: "secret-key",
-      query: 'port="11434" && protocol="http"',
+      query: DEFAULT_OLLAMA_APP_QUERY,
       fields: ["host", "ip", "port", "protocol", "org"],
       page: 2,
       size: 50
@@ -182,7 +183,7 @@ test("buildFofaSearchUrl encodes the ollama query and selected fields for the of
   assert.equal(url.searchParams.get("fields"), "host,ip,port,protocol,org");
   assert.equal(url.searchParams.get("page"), "2");
   assert.equal(url.searchParams.get("size"), "50");
-  assert.equal(Buffer.from(url.searchParams.get("qbase64") ?? "", "base64").toString("utf8"), 'port="11434" && protocol="http"');
+  assert.equal(Buffer.from(url.searchParams.get("qbase64") ?? "", "base64").toString("utf8"), DEFAULT_OLLAMA_APP_QUERY);
 });
 
 test("buildAssetScanTaskRequest maps a FOFA ollama record into the current asset_scan API contract", async () => {
@@ -248,7 +249,7 @@ test("runFofaApiTaskScan queries FOFA and submits mapped asset_scan tasks to the
           mode: "extended",
           page: 1,
           size: 2,
-          query: 'port="11434" && protocol="http"',
+          query: DEFAULT_OLLAMA_APP_QUERY,
           results: [
             ["https://47.96.196.35:11434", "47.96.196.35", 11434, "https", "Hangzhou Alibaba Advertising Co.,Ltd."],
             ["47.113.241.78:11434", "47.113.241.78", 11434, "http", "Hangzhou Alibaba Advertising Co.,Ltd."]
@@ -286,7 +287,7 @@ test("runFofaApiTaskScan queries FOFA and submits mapped asset_scan tasks to the
     fofaEmail: "dev@example.com",
     fofaKey: "secret-key",
     backendBaseUrl: "http://127.0.0.1:3000",
-    query: 'port="11434" && protocol="http"',
+    query: DEFAULT_OLLAMA_APP_QUERY,
     size: 2,
     probeTargetId: "ollama",
     requestedBy: "fofa-dev-script",
@@ -294,7 +295,7 @@ test("runFofaApiTaskScan queries FOFA and submits mapped asset_scan tasks to the
     fetchImpl
   });
 
-  assert.equal(result.query, 'port="11434" && protocol="http"');
+  assert.equal(result.query, DEFAULT_OLLAMA_APP_QUERY);
   assert.equal(result.fetched, 2);
   assert.equal(result.created, 2);
   assert.deepEqual(
@@ -324,4 +325,54 @@ test("runFofaApiTaskScan queries FOFA and submits mapped asset_scan tasks to the
     probe_port_hint: 11434,
     intel_source: "fofa_api"
   });
+});
+
+test("runFofaApiTaskScan defaults to app-based Ollama query when query is omitted", async () => {
+  const module = (await import(pathToFileURL(modulePath).href)) as FofaApiTaskScanModule;
+
+  assert.equal(typeof module.runFofaApiTaskScan, "function", "runFofaApiTaskScan should be exported");
+
+  if (!module.runFofaApiTaskScan) {
+    return;
+  }
+
+  const calls: FetchCall[] = [];
+  const fetchImpl = async (input: string | URL): Promise<Response> => {
+    calls.push({ input });
+    const url = String(input);
+
+    if (url.startsWith("https://en.fofa.info/api/v1/search/all")) {
+      return new Response(
+        JSON.stringify({
+          error: false,
+          mode: "extended",
+          page: 1,
+          size: 1,
+          query: DEFAULT_OLLAMA_APP_QUERY,
+          results: []
+        }),
+        {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        }
+      );
+    }
+
+    throw new Error(`Unexpected fetch call: ${url}`);
+  };
+
+  const result = await module.runFofaApiTaskScan({
+    fofaEmail: "dev@example.com",
+    fofaKey: "secret-key",
+    backendBaseUrl: "http://127.0.0.1:3000",
+    size: 1,
+    fetchImpl
+  });
+
+  assert.equal(result.query, DEFAULT_OLLAMA_APP_QUERY);
+  assert.equal(calls.length, 1);
+
+  const fofaUrl = new URL(String(calls[0].input));
+  const decodedQuery = Buffer.from(fofaUrl.searchParams.get("qbase64") ?? "", "base64").toString("utf8");
+  assert.equal(decodedQuery, DEFAULT_OLLAMA_APP_QUERY);
 });
