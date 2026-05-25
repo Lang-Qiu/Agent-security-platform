@@ -8,13 +8,23 @@ import type { AssetScanResult } from "../../../../shared/types/asset-scan.ts";
 // 引入重构好的流水线
 import { AssetScanPipeline } from "./pipeline.ts";
 
-export async function runAssetScanTask(task: Task): Promise<AssetScanResult> {
+interface RunAssetScanTaskOptions {
+    pipeline?: {
+        run: (
+            targetUrl: string,
+            options?: { discoveryInput?: { seed: string[] } }
+        ) => Promise<Partial<AssetScanResult>>;
+    };
+    workspaceRoot?: string;
+}
+
+export async function runAssetScanTask(task: Task, options?: RunAssetScanTaskOptions): Promise<AssetScanResult> {
     // 1. 解析工作区根目录，确保 Pipeline 能准确找到 rules/ 目录下的 yaml 文件
     const currentDir = dirname(fileURLToPath(import.meta.url));
-    const workspaceRoot = resolve(currentDir, "../../../..");
+    const workspaceRoot = options?.workspaceRoot ?? resolve(currentDir, "../../../..");
 
     // 2. 实例化扫描流水线
-    const pipeline = new AssetScanPipeline(workspaceRoot);
+    const pipeline = options?.pipeline ?? new AssetScanPipeline(workspaceRoot);
 
     // 3. 从标准 Task 契约中提取探测目标
     if (!task.target || !task.target.target_value) {
@@ -23,8 +33,16 @@ export async function runAssetScanTask(task: Task): Promise<AssetScanResult> {
     const targetUrl = task.target.target_value;
 
     try {
-        // 4. 执行底层测绘流水线 (Step 4 ~ Step 6)(Step 1 ~ Step 3 )
-        const pipelineResult = await pipeline.run(targetUrl);
+        const discoverySeed = Array.isArray(task.parameters?.discovery_seed)
+            ? task.parameters.discovery_seed.filter((item): item is string => typeof item === "string")
+            : [new URL(targetUrl).hostname];
+
+        // 4. 执行底层测绘流水线 (Step 1 ~ Step 6)
+        const pipelineResult = await pipeline.run(targetUrl, {
+            discoveryInput: {
+                seed: discoverySeed
+            }
+        });
 
         // 5. 补全平台级任务元数据，满足 AssetScanResult 接口的完整性要求
         const finalResult: AssetScanResult = {

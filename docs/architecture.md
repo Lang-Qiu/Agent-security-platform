@@ -382,3 +382,17 @@ The real `skills_static` path now has one minimal runtime-governance layer on to
 - `SemgrepRunner` now owns the minimal timeout boundary for the real provider path and maps missing target/ruleset, binary startup failure, non-zero exit, invalid JSON, and timeout into stable runner failures
 - `TaskCenterService` keeps the public write entry unchanged, but runtime failures no longer bubble out as raw provider exceptions after the initial save; instead the task-center path backfills stable failed `Task / BaseResult / RiskSummary` shells
 - timeout and provider/runtime diagnostics remain backend-internal; raw stderr/stdout and arbitrary exception strings are intentionally not promoted into shared or public API contracts
+## Asset-Scan Step Boundary
+
+`asset-scan` now keeps Step 1 to Step 6 inside the engine runtime boundary instead of mocking Step 1 to Step 3 directly in the pipeline.
+
+- `AssetDiscoveryService`: converts `seed[]` into candidate `Asset[]`
+- `PortScanService`: scans relevant ports for a discovered IP and returns `PortInfo`
+- `ProtocolIdentificationService`: inspects open ports and returns `ProtocolInfo`
+- `AssetScanPipeline`: composes Step 1 to Step 6 and converts Step 1 to Step 3 outputs into the `ScanContext` consumed by Step 4
+
+Current runtime guardrails:
+
+- default discovery is conservative and local-first
+- default pipeline execution uses the target URL hostname and hinted port
+- public-platform orchestration remains in backend; protocol probing and fingerprint logic remain engine-private

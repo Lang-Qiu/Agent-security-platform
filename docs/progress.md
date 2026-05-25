@@ -559,3 +559,48 @@ Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/tasks/task_1776345291388_adbdb
 或者浏览器输入 http://127.0.0.1:3000/api/tasks/task_1776345291388_adbdb8/result
 
 可以在 Agent-security-platform路径下运行 node --experimental-strip-types engines\asset-scan\src\cli.ts 测试中间过程的输出（目前写死 ollama）
+## 2026-05-07 - asset-scan engine Step 1 to Step 3 implementation
+- requirement: implement the first three asset-scan steps inside `engines/asset-scan` for teaching-stage exposure mapping and fingerprint identification
+- scope:
+  - added explicit Step 1 `AssetDiscoveryService`, Step 2 `PortScanService`, and Step 3 `ProtocolIdentificationService`
+  - extended `shared/types/asset-scan.ts` with `DiscoveryInput`, `Asset`, `PortScanInput`, `PortInfo`, `ProtocolInput`, `ProtocolInfo`, `PortProtocol`, and `TlsInfo`
+  - rewired `AssetScanPipeline` to compose Step 1 to Step 6 instead of mocking Step 1 to Step 3 inline
+  - updated classification output so final engine results preserve discovered asset source and protocol metadata
+  - added engine-owned tests for discovery, port scan, protocol identification, pipeline context composition, and run-task result preservation
+- tests added:
+  - `engines/asset-scan/tests/asset-probe.runtime.spec.ts`
+  - `engines/asset-scan/tests/asset-fingerprint.runtime.spec.ts`
+  - `engines/asset-scan/tests/scan-task.bridge.spec.ts`
+- test result:
+  - pass: `npm run test:engine:asset-scan`
+  - pass for asset-scan relevant backend integration after sandbox escalation: `npm run test:backend`
+  - known unrelated failure remains in backend suite: `skills-static` semgrep provider path fails with `spawn semgrep ENOENT` when local `semgrep` binary is unavailable
+- docs updated:
+  - `README.md`
+  - `docs/architecture.md`
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - default pipeline behavior stays conservative: it uses URL hostname plus hinted port unless candidate ports are explicitly widened
+  - this requirement completes the teaching-stage Step 1 to Step 3 implementation without expanding into public-internet scanning orchestration
+
+- test command:
+  - \Agent-security-platform\backend: node --experimental-strip-types src/main.ts
+  - another terminal \Agent-security-platform:
+  ```bash
+  $body = @{
+  task_type = "asset_scan"
+  title = "Local asset scan test"
+  target = @{
+    target_type = "url"
+    target_value = "http://127.0.0.1:11434"
+  }
+  parameters = @{
+    discovery_seed = @("127.0.0.1", "localhost")
+  }
+} | ConvertTo-Json -Depth 5
+
+Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/tasks" -Method Post -Body $body -ContentType "application/json"
+```
+
+check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result

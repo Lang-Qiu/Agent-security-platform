@@ -37,12 +37,18 @@ export class ClassificationService {
 
         // 2. 组装端口信息
         // 这里的 context.discoveredPorts 起到了承上启下的作用
-        const openPorts = context.discoveredPorts.map(port => ({
-            port: port,
-            protocol: "tcp" as const, // 资产扫描目前默认是 TCP
-            service: (context.identifiedProtocols[port] || "unknown") as any,   // 应用层服务
-            status: "open" as const
-        }));
+        const openPorts = context.discoveredPorts.map((port) => {
+            const protocolInfo = context.protocols.find((item) => item.port === port);
+
+            return {
+                port,
+                protocol: "tcp" as const,
+                service: protocolInfo?.service && protocolInfo.service !== "unknown"
+                    ? protocolInfo.service
+                    : context.identifiedProtocols[port] ?? "unknown",
+                status: "open" as const
+            };
+        });
 
         // 3. 生成基础风险与漏洞发现
         const findings: Finding[] = this.inferFindings(matches, endpoints);
@@ -55,14 +61,13 @@ export class ClassificationService {
             },
             asset: {
                 ip: context.ip,
-                domain: context.domain,
-                // mock 数据源与发现时间
-                source: ["engine_mock_task"],
-                timestamp: new Date().toISOString()
+                domain: context.domain ?? context.asset?.domain,
+                source: context.asset?.source ?? ["engine_runtime"],
+                timestamp: context.asset?.timestamp ?? new Date().toISOString()
             },
             network: {
                 open_ports: openPorts,
-                protocols: [] // Step 3 若有深层协议识别特征可填入此处
+                protocols: context.protocols
             },
             application: {
                 http_endpoints: endpoints,
