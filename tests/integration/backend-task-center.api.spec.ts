@@ -199,7 +199,7 @@ test("backend task center creates and lists in-memory tasks through the shared r
       };
     }),
     [
-      { task_type: "asset_scan", engine_type: "asset_scan", status: "pending" },
+      { task_type: "asset_scan", engine_type: "asset_scan", status: "finished" },
       { task_type: "static_analysis", engine_type: "skills_static", status: "finished" },
       { task_type: "sandbox_run", engine_type: "sandbox", status: "pending" }
     ]
@@ -396,6 +396,253 @@ test("backend task center keeps static-analysis creation on POST /api/tasks with
   assert.notEqual(normalizedTask.summary, createdTaskData.summary);
   assert.equal(normalizedTask.updated_at, normalizedResult.updated_at);
   assert.equal(normalizedResult.updated_at, normalizedRiskSummary.updated_at);
+});
+
+test("backend task center normalizes asset-scan governance and audit fields through POST /api/tasks", async (t) => {
+  const mainModule = await importIfExists<MainModule>(mainModulePath);
+  const sharedModule = await importIfExists<SharedModule>(sharedEntrypointPath);
+
+  assert.notEqual(mainModule, null, "backend main module should exist before asset-scan governance API contract can be verified");
+  assert.notEqual(sharedModule, null, "shared module should exist before task API response shell can be validated");
+
+  if (!mainModule?.createAppServer || !sharedModule) {
+    return;
+  }
+
+  const server = mainModule.createAppServer();
+  const { baseUrl, close } = await startServer(server);
+  t.after(close);
+
+  const createdTask = await createTask(baseUrl, {
+    task_type: "asset_scan",
+    title: "Public asset scan",
+    target: {
+      target_type: "ip",
+      target_value: "1.1.1.1"
+    },
+    requested_by: "sec-ops",
+    parameters: {
+      query: "port=\"11434\" && protocol=\"http\"",
+      source: "fofa",
+      max_targets: 0,
+      max_ports_per_target: 999,
+      max_runtime_seconds: -1,
+      target_http_rps_cap: "6",
+      max_tcp_concurrency_per_target: 0
+    }
+  });
+
+  assert.equal(createdTask.status, 201);
+  assert.equal(sharedModule.isApiResponse?.(createdTask.body), true);
+
+  const createdTaskData = sharedModule.normalizeTask?.(createdTask.body.data) as
+    | {
+        task_id: string;
+      }
+    | null;
+
+  assert.notEqual(createdTaskData, null);
+
+  if (!createdTaskData) {
+    return;
+  }
+
+  const taskResponse = await fetch(`${baseUrl}/api/tasks/${createdTaskData.task_id}`);
+  const taskBody = (await taskResponse.json()) as Record<string, unknown>;
+
+  assert.equal(taskResponse.status, 200);
+  assert.equal(sharedModule.isApiResponse?.(taskBody), true);
+
+  const normalizedTask = sharedModule.normalizeTask?.(taskBody.data) as
+    | {
+        parameters?: Record<string, unknown>;
+      }
+    | null;
+
+  assert.notEqual(normalizedTask, null);
+
+  if (!normalizedTask) {
+    return;
+  }
+
+  const taskParameters = normalizedTask.parameters as Record<string, unknown> | undefined;
+  const audit = taskParameters?.audit as Record<string, unknown> | undefined;
+
+  assert.equal(taskParameters?.query, "port=\"11434\" && protocol=\"http\"");
+  assert.equal(taskParameters?.source, "fofa");
+  assert.equal(taskParameters?.max_targets, 1);
+  assert.equal(taskParameters?.max_ports_per_target, 128);
+  assert.equal(taskParameters?.max_runtime_seconds, 60);
+  assert.equal(taskParameters?.target_http_rps_cap, 6);
+  assert.equal(taskParameters?.max_tcp_concurrency_per_target, 1);
+
+  assert.equal(audit?.query, "port=\"11434\" && protocol=\"http\"");
+  assert.equal(audit?.source, "fofa");
+  assert.equal(audit?.requested_by, "sec-ops");
+  assert.equal(typeof audit?.requested_at, "string");
+});
+
+test("backend task center persists asset-scan execution context and interruption reason in result details", async (t) => {
+  const mainModule = await importIfExists<MainModule>(mainModulePath);
+  const sharedModule = await importIfExists<SharedModule>(sharedEntrypointPath);
+
+  assert.notEqual(mainModule, null, "backend main module should exist before asset-scan result execution context can be verified");
+  assert.notEqual(sharedModule, null, "shared module should exist before result normalization can be verified");
+
+  if (!mainModule?.createAppServer || !sharedModule) {
+    return;
+  }
+
+  const server = mainModule.createAppServer();
+  const { baseUrl, close } = await startServer(server);
+  t.after(close);
+
+  const createdTask = await createTask(baseUrl, {
+    task_type: "asset_scan",
+    title: "Public asset scan",
+    target: {
+      target_type: "ip",
+      target_value: "1.1.1.1"
+    },
+    requested_by: "sec-ops",
+    parameters: {
+      query: "port=\"11434\" && protocol=\"http\"",
+      source: "fofa",
+      max_targets: 9,
+      max_ports_per_target: 30,
+      max_runtime_seconds: 180,
+      target_http_rps_cap: 4,
+      max_tcp_concurrency_per_target: 6,
+      audit: {
+        interruption_reason: "budget"
+      }
+    }
+  });
+
+  assert.equal(createdTask.status, 201);
+  assert.equal(sharedModule.isApiResponse?.(createdTask.body), true);
+
+  const createdTaskData = sharedModule.normalizeTask?.(createdTask.body.data) as
+    | {
+        task_id: string;
+      }
+    | null;
+
+  assert.notEqual(createdTaskData, null);
+
+  if (!createdTaskData) {
+    return;
+  }
+
+  const resultResponse = await fetch(`${baseUrl}/api/tasks/${createdTaskData.task_id}/result`);
+  const resultBody = (await resultResponse.json()) as Record<string, unknown>;
+
+  assert.equal(resultResponse.status, 200);
+  assert.equal(sharedModule.isApiResponse?.(resultBody), true);
+
+  const normalizedResult = sharedModule.normalizeBaseResult?.(resultBody.data) as
+    | {
+        details: {
+          execution_context?: {
+            max_targets?: number;
+            max_ports_per_target?: number;
+            max_runtime_seconds?: number;
+            target_http_rps_cap?: number;
+            max_tcp_concurrency_per_target?: number;
+            audit?: {
+              query?: string;
+              source?: string;
+              requested_by?: string;
+              requested_at?: string;
+              interruption_reason?: string;
+            };
+          };
+        };
+      }
+    | null;
+
+  assert.notEqual(normalizedResult, null);
+
+  if (!normalizedResult) {
+    return;
+  }
+
+  const executionContext = normalizedResult.details.execution_context;
+  assert.notEqual(executionContext, undefined);
+  assert.equal(executionContext?.max_targets, 9);
+  assert.equal(executionContext?.max_ports_per_target, 30);
+  assert.equal(executionContext?.max_runtime_seconds, 180);
+  assert.equal(executionContext?.target_http_rps_cap, 4);
+  assert.equal(executionContext?.max_tcp_concurrency_per_target, 6);
+  assert.equal(executionContext?.audit?.query, "port=\"11434\" && protocol=\"http\"");
+  assert.equal(executionContext?.audit?.source, "fofa");
+  assert.equal(executionContext?.audit?.requested_by, "sec-ops");
+  assert.equal(typeof executionContext?.audit?.requested_at, "string");
+  assert.equal(executionContext?.audit?.interruption_reason, "budget");
+});
+
+test("backend task center returns partial_success asset-scan result when execution context records a non-none interruption reason", async (t) => {
+  const mainModule = await importIfExists<MainModule>(mainModulePath);
+  const sharedModule = await importIfExists<SharedModule>(sharedEntrypointPath);
+
+  assert.notEqual(mainModule, null, "backend main module should exist before partial_success asset-scan API contract can be verified");
+  assert.notEqual(sharedModule, null, "shared module should exist before partial_success result normalization can be verified");
+
+  if (!mainModule?.createAppServer || !sharedModule) {
+    return;
+  }
+
+  const server = mainModule.createAppServer();
+  const { baseUrl, close } = await startServer(server);
+  t.after(close);
+
+  const createdTask = await createTask(baseUrl, {
+    task_type: "asset_scan",
+    title: "Public asset scan",
+    target: {
+      target_type: "ip",
+      target_value: "1.1.1.1"
+    },
+    requested_by: "sec-ops",
+    parameters: {
+      query: "port=\"11434\" && protocol=\"http\"",
+      source: "fofa",
+      max_targets: 9,
+      max_ports_per_target: 30,
+      max_runtime_seconds: 180,
+      target_http_rps_cap: 4,
+      max_tcp_concurrency_per_target: 6,
+      audit: {
+        interruption_reason: "timeout"
+      }
+    }
+  });
+
+  assert.equal(createdTask.status, 201);
+  assert.equal(sharedModule.isApiResponse?.(createdTask.body), true);
+
+  const createdTaskData = sharedModule.normalizeTask?.(createdTask.body.data) as { task_id: string } | null;
+  assert.notEqual(createdTaskData, null);
+
+  if (!createdTaskData) {
+    return;
+  }
+
+  const taskResponse = await fetch(`${baseUrl}/api/tasks/${createdTaskData.task_id}`);
+  const taskBody = (await taskResponse.json()) as Record<string, unknown>;
+  const resultResponse = await fetch(`${baseUrl}/api/tasks/${createdTaskData.task_id}/result`);
+  const resultBody = (await resultResponse.json()) as Record<string, unknown>;
+  const riskSummaryResponse = await fetch(`${baseUrl}/api/tasks/${createdTaskData.task_id}/risk-summary`);
+  const riskSummaryBody = (await riskSummaryResponse.json()) as Record<string, unknown>;
+
+  const normalizedTask = sharedModule.normalizeTask?.((taskBody as { data?: unknown }).data) as { status?: string; summary?: string } | null;
+  const normalizedResult = sharedModule.normalizeBaseResult?.((resultBody as { data?: unknown }).data) as { status?: string; summary?: string } | null;
+  const normalizedRiskSummary = sharedModule.normalizeRiskSummary?.((riskSummaryBody as { data?: unknown }).data) as { status?: string; summary?: string } | null;
+
+  assert.equal(normalizedTask?.status, "partial_success");
+  assert.equal(normalizedResult?.status, "partial_success");
+  assert.equal(normalizedRiskSummary?.status, "partial_success");
+  assert.equal(normalizedTask?.summary, "Asset scan partially completed with 0 findings");
 });
 
 test("backend task center keeps mock and semgrep providers aligned on the standardized static-analysis read contract", async (t) => {
@@ -763,7 +1010,7 @@ test("backend task center returns a created task together with its initial resul
   assert.equal(taskResponse.status, 200);
   assert.equal(taskBody.success, true);
   assert.equal(taskBody.data.task_id, taskId);
-  assert.equal(taskBody.data.status, "pending");
+  assert.equal(taskBody.data.status, "finished");
 
   const resultResponse = await fetch(`${baseUrl}/api/tasks/${taskId}/result`);
   const resultBody = (await resultResponse.json()) as {
@@ -780,7 +1027,7 @@ test("backend task center returns a created task together with its initial resul
   assert.equal(resultBody.success, true);
   assert.equal(resultBody.data.task_id, taskId);
   assert.equal(resultBody.data.task_type, "asset_scan");
-  assert.equal(resultBody.data.status, "pending");
+  assert.equal(resultBody.data.status, "finished");
   assert.deepEqual(resultBody.data.details.target, {
     target_type: "url",
     target_value: "https://demo-agent.example.com"
@@ -800,7 +1047,7 @@ test("backend task center returns a created task together with its initial resul
   assert.equal(summaryResponse.status, 200);
   assert.equal(summaryBody.success, true);
   assert.equal(summaryBody.data.task_id, taskId);
-  assert.equal(summaryBody.data.status, "pending");
+  assert.equal(summaryBody.data.status, "finished");
   assert.equal(summaryBody.data.risk_level, "info");
   assert.equal(summaryBody.data.total_findings, 0);
 });

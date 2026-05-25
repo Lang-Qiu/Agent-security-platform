@@ -1,0 +1,12 @@
+{
+  "sample_id": "s074",
+  "target_id": "ollama",
+  "request_summary": "GET /api/tags",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json"
+  },
+  "response_body_excerpt": "{\"models\":[{\"name\":\"hf.co/DavidAU/Qwen3.6-27B-Heretic-Uncensored-FINETUNE-NEO-CODE-Di-IMatrix-MAX-GGUF:IQ4_XS\",\"model\":\"hf.co/DavidAU/Qwen3.6-27B-Heretic-Uncensored-FINETUNE-NEO-CODE-Di-IMatrix-MAX-GGUF:IQ4_XS\",\"modified_at\":\"2026-05-08T18:51:59.0363497+08:00\",\"size\":16324850081,\"digest\":\"e3207347d9da09ec0e924f1afa7f0ff05bf720823b6a256683cec91e1d5196a7\",\"details\":{\"parent_model\":\"\",\"format\":\"gguf\",\"family\":\"qwen35\",\"families\":[\"qwen35\"],\"parameter_size\":\"26.9B\",\"quantization_level\":\"unknown\"}},{\"name\":\"bge-",
+  "source": "fofa-verify: http://103.119.104.16:11434",
+  "collected_at": "2026-05-09T11:35:54.355Z"
+}

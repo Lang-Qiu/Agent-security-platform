@@ -1,0 +1,12 @@
+{
+  "sample_id": "s026",
+  "target_id": "ollama",
+  "request_summary": "GET /api/tags",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json"
+  },
+  "response_body_excerpt": "{\"models\":[{\"name\":\"glm-4.6:cloud\",\"model\":\"glm-4.6:cloud\",\"remote_model\":\"glm-4.6\",\"remote_host\":\"https://ollama.com:443\",\"modified_at\":\"2026-05-09T07:14:05.618285052Z\",\"size\":366,\"digest\":\"05277b76269f8831b289e8f11f1f46136f9214d9c0a6399f1b580003e74f887c\",\"details\":{\"parent_model\":\"\",\"format\":\"\",\"family\":\"glm4\",\"families\":[\"glm4\"],\"parameter_size\":\"355B\",\"quantization_level\":\"FP8\"}},{\"name\":\"glm-5:cloud\",\"model\":\"glm-5:cloud\",\"remote_model\":\"glm-5\",\"remote_host\":\"https://ollama.com:443\",\"modified_at\":\"2026",
+  "source": "fofa-verify: http://114.33.15.170:7007",
+  "collected_at": "2026-05-09T07:35:00.000Z"
+}

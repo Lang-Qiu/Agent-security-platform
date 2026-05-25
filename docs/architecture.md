@@ -269,11 +269,6 @@ engines/<engine-name>/
   - engine placeholder result -> `SkillsStaticResultDetails`
 - public task-center API 保持不变，controller 路由不新增
 - `BaseResult` 继续作为唯一统一结果外壳，`static_analysis` 只在 `details.rule_hits[]` 这一处收敛更强类型
-- `EngineAdapterRegistry` 继续按 `task_type` 注册平台 adapter
-- `EngineClientRegistry` 新增按 `engine_type` 注册平台内部引擎入口的职责
-- `SkillsStaticEngineClient` 是当前唯一落地的 `skills_static` 入口桥接
-- `TaskEngineService` 同时持有 adapter registry 与 engine client registry，并负责把 `EngineDispatchTicket` 转发到已注册 client
-- `TaskCenterService` 仍保持任务中心职责，只在任务创建完成后触发一次已注册 client 转发
 
 当前明确不做：
 
@@ -382,3 +377,19 @@ The real `skills_static` path now has one minimal runtime-governance layer on to
 - `SemgrepRunner` now owns the minimal timeout boundary for the real provider path and maps missing target/ruleset, binary startup failure, non-zero exit, invalid JSON, and timeout into stable runner failures
 - `TaskCenterService` keeps the public write entry unchanged, but runtime failures no longer bubble out as raw provider exceptions after the initial save; instead the task-center path backfills stable failed `Task / BaseResult / RiskSummary` shells
 - timeout and provider/runtime diagnostics remain backend-internal; raw stderr/stdout and arbitrary exception strings are intentionally not promoted into shared or public API contracts
+
+## REQ-ASSET-SCAN-PORT-007 FOFA Workflow Script Layer
+
+Repository-side FOFA workflow scripts are treated as a dev execution/support layer, not a backend platform API layer.
+
+- `scripts/dev/intel/fofa-portscan-workflow.ts` coordinates the minimal `naabu -> nmap -> sample output` flow.
+- `scripts/dev/intel/fofa-sample-export.ts` persists separated JSON sample artifacts.
+
+Boundary rules for this layer:
+
+- Scripts do not introduce new public HTTP endpoints.
+- Scripts do not bypass backend task-center contracts.
+- Script outputs are artifacts for evidence accumulation and replay, not frontend-facing API payloads.
+- Tool responsibilities remain explicit: naabu for open ports, nmap for hit-port service evidence.
+
+This preserves the platform architecture baseline: backend remains the only frontend entry, engines remain independent execution units, and repository scripts remain auxiliary orchestration tooling.

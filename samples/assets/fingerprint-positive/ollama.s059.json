@@ -1,0 +1,12 @@
+{
+  "sample_id": "s059",
+  "target_id": "ollama",
+  "request_summary": "GET /api/tags",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json"
+  },
+  "response_body_excerpt": "{\"models\": [{\"name\": \"codellama:13b\", \"modified_at\": \"2023-11-04T14:56:49.277302595-07:00\", \"size\": 7365960935, \"digest\": \"9f438cb9cd581fc025612d27f7c1a6669ff83a8bb0ed86c94fcf4c5440555697\", \"details\": {\"format\": \"gguf\", \"family\": \"llama\", \"families\": null, \"parameter_size\": \"13B\", \"quantization_level\": \"Q4_0\"}}, {\"name\": \"qwen2.5:1.5b\", \"model\": \"qwen2.5:1.5b\", \"modified_at\": \"2025-02-13T19:55:50.4459752+08:00\", \"size\": 986061892, \"digest\": \"65ec06548149b04c096a120e4a6da9d4017ea809c91734ea5631e89f96ddc57b\",",
+  "source": "fofa-verify: http://95.40.34.217:9943",
+  "collected_at": "2026-05-09T11:25:50.437Z"
+}

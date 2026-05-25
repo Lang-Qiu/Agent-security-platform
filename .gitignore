@@ -34,6 +34,7 @@ temp/
 artifacts/
 reports/
 sandbox-data/
+CLAUDE.md
 
 # Test outputs
 playwright-report/

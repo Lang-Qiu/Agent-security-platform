@@ -1,0 +1,12 @@
+{
+  "sample_id": "s022",
+  "target_id": "ollama",
+  "request_summary": "GET /api/tags",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json"
+  },
+  "response_body_excerpt": "{\"models\":[{\"name\":\"granite3.1-moe:3b\",\"model\":\"granite3.1-moe:3b\",\"modified_at\":\"2026-04-27T21:36:44.4865953+08:00\",\"size\":2035187356,\"digest\":\"b43d80d7fca796d3b4f7fe87a2ac92b13bcabe3758b413019b7e55126950a0f3\",\"details\":{\"parent_model\":\"\",\"format\":\"gguf\",\"family\":\"granitemoe\",\"families\":[\"granitemoe\"],\"parameter_size\":\"3.3B\",\"quantization_level\":\"Q4_K_M\"}},{\"name\":\"qwen3.5:2b-q4_K_M\",\"model\":\"qwen3.5:2b-q4_K_M\",\"modified_at\":\"2026-04-27T21:29:17.371962+08:00\",\"size\":1945323638,\"digest\":\"124a03c347777e8e4e5",
+  "source": "fofa-verify: http://103.236.67.228:51434",
+  "collected_at": "2026-05-09T07:35:00.000Z"
+}

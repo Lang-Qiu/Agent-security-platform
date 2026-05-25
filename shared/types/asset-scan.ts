@@ -1,3 +1,4 @@
+import type { AssetScanExecutionContext } from "./result.ts";
 import type { TaskStatus, RiskLevel, TaskTarget } from "./task.ts";
 
 // --- 枚举类 ---
@@ -13,12 +14,66 @@ export type FrameworkType = "langchain" | "llamaindex" | "autogen" | "haystack" 
 export type FindingType = "unauthorized_access" | "info_leak" | "misconfiguration" | "weak_auth" | "exposed_api";
 export type MatchOperator = "equals" | "contains" | "regex" | "in" | "has_key";
 
-// --- 运行时上下文抽象 (预留 Step 1~3 扩展点) ---
+// --- Step 1 ~ 3 输入输出契约 ---
+export interface DiscoveryInput {
+    seed: string[];
+}
+
+export interface Asset {
+    asset_id: string;
+    ip: string;
+    domain?: string;
+    source: string[];
+    tags: string[];
+    timestamp: string;
+}
+
+export interface PortScanInput {
+    ip: string;
+    ports?: number[];
+}
+
+export interface PortInfo {
+    ip: string;
+    ports: Array<{
+        port: number;
+        status: PortStatus;
+    }>;
+}
+
+export interface ProtocolInput {
+    ip: string;
+    ports: number[];
+    domain?: string;
+}
+
+export interface TlsInfo {
+    version: string;
+    alpn: string[];
+}
+
+export interface PortProtocol {
+    port: number;
+    protocol: Protocol;
+    subprotocol?: SubProtocol | string;
+    service: ServiceType | string;
+    tls?: TlsInfo;
+}
+
+export interface ProtocolInfo {
+    ip: string;
+    port_protocols: PortProtocol[];
+    confidence: number;
+}
+
+// --- 运行时上下文抽象 ---
 export interface ScanContext {
-    ip: string;                  // 必须有
-    domain?: string;             // 可选，如果存在，HTTP 请求应该携带 Host 头
+    ip: string;
+    domain?: string;
+    asset?: Asset;
     discoveredPorts: number[]; // Step 2 的输出预留位
     identifiedProtocols: Record<number, Protocol>; // Step 3 的输出预留位, 记录每个开放端口对应的基础协议
+    protocols: PortProtocol[];
 }
 
 // --- Step 4 输出契约 ---
@@ -111,7 +166,7 @@ export interface AssetScanResult {
             service: string;
             status: string;
         }>;
-        protocols: Array<any>;
+        protocols: PortProtocol[];
     };
     
     // PDF P9-10: application 区块
@@ -131,4 +186,7 @@ export interface AssetScanResult {
     
     // PDF P12: findings 区块
     findings: Finding[];
+
+    // 平台执行治理快照与中断语义
+    execution_context?: AssetScanExecutionContext;
 }

@@ -10,6 +10,818 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-05-22 - REQ-ASSET-SCAN-PORT-007 样本治理阶段计划文档更新
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 将主计划从“继续扩样”明确切换为“先治理后扩容”
+  - 补充失败分桶分析、query A/B 收敛、strong_negative 补采、固定评测集与升级门禁
+  - 同步修正“正在进行”状态为 `size=50` 受控扩样
+- tests added: none（纯文档更新）
+- test result: not run（无业务代码变更）
+- docs updated:
+  - `docs/plans/fofa-scan-plan.md`
+  - `docs/progress.md`
+- notes:
+  - round5 到 round9 的核心瓶颈是运输失败占比偏高，当前先执行治理计划，不直接升到 `size=100`
+
+## 2026-05-22 - REQ-ASSET-SCAN-PORT-007 naabu+nmap 接入试运行计划先行更新
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 按“先计划后执行”补充 naabu+nmap 接入主线脚本的完整执行方案
+  - 明确 Design/Test/Implement/Document/Stop 顺序与 size=50 试运行口径
+  - 明确阻塞处理：工具缺失时保留审计证据，不回滚现有主线
+- tests added: none（纯文档更新）
+- test result: not run（无业务代码变更）
+- docs updated:
+  - `docs/plans/fofa-scan-plan.md`
+  - `docs/progress.md`
+- notes:
+  - 已完成计划先行，下一步进入 TDD 接入实现与 size=50 实测
+
+## 2026-05-22 - REQ-ASSET-SCAN-PORT-007 naabu+nmap 接入主线脚本并完成 size=50 试跑
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 新增主线编排脚本，支持将 task-scan 结果直接接入 naabu+nmap 工作流
+  - 通过 TDD 完成接入实现（RED -> GREEN）
+  - 执行一次 `size=50` 真实试跑并记录产物
+- tests added:
+  - `tests/repository/fofa-mainline-portscan.spec.ts`
+    - 混合日志输出中的 JSON 解析
+    - workflow target 构建与 `target_value` 回退解析
+- test result: pass（先 RED 后 GREEN）
+  - RED：`ERR_MODULE_NOT_FOUND`（目标接入脚本不存在）
+  - GREEN：`node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-mainline-portscan.spec.ts`
+- implementation:
+  - 新增：`scripts/dev/intel/fofa-mainline-portscan.ts`
+    - 读取 task-scan 文件
+    - 构建 `runFofaPortscanWorkflow` 目标
+    - 提供 shell runner（naabu/nmap 超时控制与退出码落盘）
+  - 更新：`package.json`
+    - 新增运行命令：`run:fofa:mainline:portscan`
+    - `test:repo` 纳入 `fofa-mainline-portscan.spec.ts`
+- execution result (size=50):
+  - 候选输入：`docs/temp/fofa-ollama-naabu-nmap-round1.json`
+  - 工作流摘要：`docs/temp/fofa-ollama-naabu-nmap-round1-workflow-summary.json`
+  - summary:
+    - `total_targets=50`
+    - `naabu_success_targets=0`
+    - `nmap_attempted_targets=0`
+    - `verified_count=0`
+    - `candidate_count=50`
+- artifacts:
+  - `docs/temp/fofa-ollama-naabu-nmap-round1-workflow/exposure-candidates.json`
+  - `docs/temp/fofa-ollama-naabu-nmap-round1-workflow/raw-evidence.json`
+  - `docs/temp/fofa-ollama-naabu-nmap-round1-workflow/verified-fingerprints.json`
+  - `docs/temp/fofa-ollama-naabu-nmap-round1-workflow/workflow-summary.json`
+- notes:
+  - 当前阻塞来自 naabu 运行环境外部依赖（`Could not create runner: Get https://ipinfo.io/... connection reset by peer`），导致 naabu 全量退出码 `1`，未进入 nmap 阶段
+  - 现有主线未回滚；下一步需先解决 naabu 外联依赖/参数策略，再开展 query 收敛对比
+
+## 2026-05-22 - REQ-ASSET-SCAN-PORT-007 naabu ipinfo 外联失败回退修复（TDD）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 修复 naabu 在 `ipinfo` 外联失败时导致工作流无法前进的问题
+  - 在不破坏 naabu-first 边界下增加降级回退：
+    - 当识别到 `Could not create runner` + `ipinfo.io` 失败时，先用 `nmap --open` 做端口开放检查
+    - 命中开放后再执行完整 nmap 证据采集
+- tests updated:
+  - `tests/repository/fofa-portscan-workflow.spec.ts`
+    - 新增用例：`workflow falls back when naabu runner init fails due ipinfo lookup`
+- test result: pass（先 RED 后 GREEN）
+  - RED：新增回退用例失败（nmap 调用次数为 0）
+  - GREEN：`node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-portscan-workflow.spec.ts`
+- implementation:
+  - 更新：`scripts/dev/intel/fofa-portscan-workflow.ts`
+    - 新增 `isNaabuRunnerInitFailure`
+    - 新增 `detectOpenPortFromNmapOpenCheck`
+    - 新增 naabu 失败后的 nmap open-check 回退路径及计数逻辑
+- notes:
+  - 代码级回退已生效并通过测试；`size=50` 全量实跑仍需完整跑完后输出最终对比指标
+
+## 2026-05-22 - REQ-ASSET-SCAN-PORT-007 修复后 size=50 round2 实跑结果落盘
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 在 naabu 回退修复后，完成 `size=50` round2 实跑并读取 workflow summary
+- execution result:
+  - 输入：`docs/temp/fofa-ollama-naabu-nmap-round2.json`
+  - summary:
+    - `total_targets=50`
+    - `naabu_success_targets=0`
+    - `nmap_attempted_targets=46`
+    - `verified_count=0`
+    - `candidate_count=50`
+    - `failed_count=43`
+- artifacts:
+  - `docs/temp/fofa-ollama-naabu-nmap-round2-workflow-summary.json`
+  - `docs/temp/fofa-ollama-naabu-nmap-round2-workflow/workflow-summary.json`
+  - `docs/temp/fofa-ollama-naabu-nmap-round2-workflow/raw-evidence.json`
+- notes:
+  - 回退修复已将流程从“naabu 全量阻断”推进到“可进入 nmap 阶段”（`nmap_attempted_targets=46`）
+  - 当前主要瓶颈转为 nmap 阶段失败占比高（`failed_count=43`），下一步应进入 query 收敛与 nmap 超时/并发策略治理
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama round4 稳定批次执行
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 继续沿 Ollama 主线执行 size=50 稳定批次
+  - 记录本轮 task-scan 与 batch-report 结果作为后续复核输入
+- execution result:
+  - query: `app="Ollama" && is_domain=false && country="CN"`
+  - task-scan: `fetched=50`、`created=50`
+  - batch-report: `finished=50`、`failed=0`
+  - byRiskLevel: `info=34`、`high=16`
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round4.json`
+  - `docs/temp/fofa-ollama-smallsize-round4-batch-report.json`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - 本轮继续证明 Ollama 主模板可稳定产出高风险候选，下一步优先围绕 high 风险任务做 `/api/tags` 复核与样本分层
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama round4 high 风险复核与样本扩充
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 仅针对 round4 的 `high` 风险任务执行 `/api/tags` 复核
+  - 将满足强正条件的目标继续写入 Ollama 正样本库
+- execution result:
+  - 复核目标：`16`（来自 round4 的全部 high 风险任务）
+  - 强正样本：`16`
+  - 强负样本：`0`
+  - 运输失败：`0`
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round4-high-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round4-high-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round4-high-verified.json`
+  - `docs/temp/fofa-ollama-smallsize-round4-high-negative-review.json`
+- implementation:
+  - `scripts/dev/intel/fofa-fingerprint-library-sync.ts` 同步结果：`verifiedWritten=16`、`negativeWritten=0`
+  - 正样本新增范围：`samples/assets/fingerprint-positive/ollama.s027.json` 到 `samples/assets/fingerprint-positive/ollama.s042.json`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - round4 的 high 风险任务在本轮复核中全部回证为 Ollama 强正样本，主模板对高风险候选的真阳性质量稳定
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama round5 受控扩样执行（high 全量 + info 抽样）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 按计划文档新增策略执行 round5（`size=50`）
+  - 对 `high` 风险任务做全量 `/api/tags` 复核
+  - 对 `info` 风险任务做 10 条抽样复核，用于监控噪声与运输失败占比
+- execution result:
+  - query: `app="Ollama" && is_domain=false && country="CN"`
+  - task-scan: `fetched=50`、`created=50`
+  - batch-report: `finished=50`、`failed=0`
+  - byRiskLevel: `high=16`、`info=34`
+  - review 总量: `26`（high 16 + info 抽样 10）
+  - review 分层: `strong_positive=18`、`strong_negative=0`、`transport_failure=8`
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round5.json`
+  - `docs/temp/fofa-ollama-smallsize-round5-batch-report.json`
+  - `docs/temp/fofa-ollama-smallsize-round5-high-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round5-info-sample-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round5-high-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round5-info-sample-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round5-verified.json`
+  - `docs/temp/fofa-ollama-smallsize-round5-negative-review.json`
+- implementation:
+  - `scripts/dev/intel/fofa-fingerprint-library-sync.ts` 同步结果：`verifiedWritten=18`、`negativeWritten=0`
+  - 正样本新增范围：`samples/assets/fingerprint-positive/ollama.s043.json` 到 `samples/assets/fingerprint-positive/ollama.s060.json`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - high 组强正率 100%（16/16）；info 抽样运输失败占比 80%（8/10），当前不满足放大到 `size=100` 的门槛，应继续保持 `size=50` 并收紧查询或抽样策略
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama round6 受控扩样复验（high 全量 + info 抽样）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 延续 round5 策略执行 round6（`size=50`）
+  - 保持 high 全量复核 + info 抽样 10 条复核
+  - 继续以三分类准入规则执行样本同步
+- execution result:
+  - query: `app="Ollama" && is_domain=false && country="CN"`
+  - task-scan: `fetched=50`、`created=50`
+  - batch-report: `finished=50`、`failed=0`
+  - byRiskLevel: `high=16`、`info=34`
+  - review 总量: `26`（high 16 + info 抽样 10）
+  - review 分层: `strong_positive=18`、`strong_negative=0`、`transport_failure=8`
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round6.json`
+  - `docs/temp/fofa-ollama-smallsize-round6-batch-report.json`
+  - `docs/temp/fofa-ollama-smallsize-round6-high-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round6-info-sample-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round6-high-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round6-info-sample-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round6-verified.json`
+  - `docs/temp/fofa-ollama-smallsize-round6-negative-review.json`
+- implementation:
+  - `scripts/dev/intel/fofa-fingerprint-library-sync.ts` 同步结果：`verifiedWritten=18`、`negativeWritten=0`
+  - 正样本新增范围：`samples/assets/fingerprint-positive/ollama.s061.json` 到 `samples/assets/fingerprint-positive/ollama.s078.json`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - 连续两轮结果一致：high 组强正率稳定为 100%，但 info 抽样运输失败占比仍为 80%，当前仍不满足升到 `size=100` 的门槛
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama round7 受控扩样延续（high 全量 + info 抽样）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 继续按 round5/round6 的受控策略执行 round7（`size=50`）
+  - 保持 high 全量复核 + info 抽样 10 条
+  - 仅同步 strong_positive/strong_negative，运输失败不入库
+- execution result:
+  - query: `app="Ollama" && is_domain=false && country="CN"`
+  - task-scan: `fetched=50`、`created=50`
+  - batch-report: `finished=50`、`failed=0`
+  - byRiskLevel: `high=16`、`info=34`
+  - review 总量: `26`（high 16 + info 抽样 10）
+  - review 分层: `strong_positive=17`、`strong_negative=0`、`transport_failure=9`
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round7.json`
+  - `docs/temp/fofa-ollama-smallsize-round7-batch-report.json`
+  - `docs/temp/fofa-ollama-smallsize-round7-high-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round7-info-sample-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round7-high-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round7-info-sample-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round7-verified.json`
+  - `docs/temp/fofa-ollama-smallsize-round7-negative-review.json`
+- implementation:
+  - `scripts/dev/intel/fofa-fingerprint-library-sync.ts` 同步结果：`verifiedWritten=17`、`negativeWritten=0`
+  - 正样本新增范围：`samples/assets/fingerprint-positive/ollama.s079.json` 到 `samples/assets/fingerprint-positive/ollama.s095.json`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - 与 round6 相比，strong_positive 由 18 降至 17，运输失败由 8 升至 9，当前质量门槛仍不足以放大到 `size=100`
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama round8 受控扩样延续（high 全量 + info 抽样）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 按既定策略继续执行 round8（`size=50`）
+  - high 全量复核 + info 抽样 10 条复核
+  - 按三分类准入规则同步样本
+- execution result:
+  - query: `app="Ollama" && is_domain=false && country="CN"`
+  - task-scan: `fetched=50`、`created=50`
+  - batch-report: `finished=50`、`failed=0`
+  - byRiskLevel: `high=16`、`info=34`
+  - review 总量: `26`（high 16 + info 抽样 10）
+  - review 分层: `strong_positive=17`、`strong_negative=0`、`transport_failure=9`
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round8.json`
+  - `docs/temp/fofa-ollama-smallsize-round8-batch-report.json`
+  - `docs/temp/fofa-ollama-smallsize-round8-high-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round8-info-sample-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round8-high-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round8-info-sample-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round8-verified.json`
+  - `docs/temp/fofa-ollama-smallsize-round8-negative-review.json`
+- implementation:
+  - `scripts/dev/intel/fofa-fingerprint-library-sync.ts` 同步结果：`verifiedWritten=17`、`negativeWritten=0`
+  - 正样本新增范围：`samples/assets/fingerprint-positive/ollama.s096.json` 到 `samples/assets/fingerprint-positive/ollama.s112.json`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - round7 与 round8 均为 `17/26` strong_positive、`9/26` transport_failure，当前仍不满足升到 `size=100` 的门槛
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama round9 受控扩样延续（high 全量 + info 抽样）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 延续受控扩样策略执行 round9（`size=50`）
+  - high 全量复核 + info 抽样 10 条复核
+  - 按三分类准入执行样本同步
+- execution result:
+  - query: `app="Ollama" && is_domain=false && country="CN"`
+  - task-scan: `fetched=50`、`created=50`
+  - batch-report: `finished=50`、`failed=0`
+  - byRiskLevel: `high=16`、`info=34`
+  - review 总量: `26`（high 16 + info 抽样 10）
+  - review 分层: `strong_positive=16`、`strong_negative=0`、`transport_failure=10`
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round9.json`
+  - `docs/temp/fofa-ollama-smallsize-round9-batch-report.json`
+  - `docs/temp/fofa-ollama-smallsize-round9-high-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round9-info-sample-targets.json`
+  - `docs/temp/fofa-ollama-smallsize-round9-high-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round9-info-sample-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round9-verified.json`
+  - `docs/temp/fofa-ollama-smallsize-round9-negative-review.json`
+- implementation:
+  - `scripts/dev/intel/fofa-fingerprint-library-sync.ts` 同步结果：`verifiedWritten=16`、`negativeWritten=0`
+  - 正样本新增范围：`samples/assets/fingerprint-positive/ollama.s113.json` 到 `samples/assets/fingerprint-positive/ollama.s128.json`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - 相比 round7/round8，round9 强正数继续下降、运输失败继续上升，扩样质量未改善，仍不满足升到 `size=100` 的门槛
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 三目标旁线验证收口，恢复 Ollama 主线
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 将 Langflow / AutoGPT / OpenClaw 的 query 验证明确标记为旁线实验
+  - 恢复 Ollama 为当前唯一主线，避免后续继续分叉推进
+  - 保持现有 Ollama 样本库与小批次验证节奏
+- tests added: none（纯文档更新）
+- test result: not run（无业务代码变更）
+- docs updated:
+  - `docs/plans/fofa-scan-plan.md`
+  - `docs/progress.md`
+- notes:
+  - 本轮旁线复核显示三目标均未产出 strong_positive，后续优先回到 Ollama 专项收紧 query 与复核门槛
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 非 Ollama Query 设计文档化
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 将工作重点从 Ollama 扩展到 Langflow/AutoGPT/OpenClaw 的 query 设计
+  - 固化 T1/T2/T3 分层模板和切换门槛
+  - 明确每轮输出文件命名规范，保证可复盘
+- tests added: none（纯文档更新）
+- test result: not run（无业务代码变更）
+- docs updated:
+  - `docs/plans/fofa-scan-plan.md`
+  - `docs/temp/asset-scan-port-scan-v1.md`
+  - `docs/progress.md`
+- notes:
+  - 当前输出为首版查询草案，后续将通过小批次 round1 实测再收敛
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama size=50 扩容与强正样本入库
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 将主模板从 size=20 提升到 size=50 做扩容验证
+  - 对 batch-report 中的 info 风险任务继续做 `/api/tags` 复核
+  - 将满足强正条件的样本写入长期样本库
+- execution result:
+  - 扩容批次：`fetched=50`、`created=50`、`finished=50`、`failed=0`
+  - 风险分布：`info=34`、`high=16`
+  - info 复核：`34` 个目标中 `12` 条强正、`0` 条强负、`22` 条运输失败
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round3.json`
+  - `docs/temp/fofa-ollama-smallsize-round3-batch-report.json`
+  - `docs/temp/fofa-ollama-smallsize-round3-info-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round3-verified.json`
+- implementation:
+  - `scripts/dev/intel/fofa-fingerprint-library-sync.ts` 已将 12 条强正样本同步到 `samples/assets/fingerprint-positive/`
+- docs updated:
+  - `docs/plans/fofa-scan-plan.md`
+  - `docs/progress.md`
+- notes:
+  - size=50 仍然稳定，可继续使用该区间做 Ollama 强正样本扩容；强负样本仍未形成，需要后续专门补采
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama round2 强正样本复核并入库
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 对 round2 中非 11434 的命中目标做 `/api/tags` 复核
+  - 将满足三分类强正条件的样本写入长期样本库
+- execution result:
+  - 复核目标：`12`
+  - 强正样本：`5`
+  - 强负样本：`0`
+  - 运输失败：`7`
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round2-negative-review.json`
+  - `docs/temp/fofa-ollama-smallsize-round2-verified.json`
+- implementation:
+  - `scripts/dev/intel/fofa-fingerprint-library-sync.ts` 已将 5 条强正样本同步到 `samples/assets/fingerprint-positive/`
+- docs updated:
+  - `docs/plans/fofa-scan-plan.md`
+  - `docs/progress.md`
+- notes:
+  - round2 进一步证明小批量主模板可稳定产出可用强正样本，但强负样本仍需后续专门补采
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama round1 强正样本复核并入库
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 对 round1 主模板结果中 11434 目标做 `/api/tags` 复核
+  - 将满足三分类强正条件的样本写入长期样本库
+- execution result:
+  - 复核目标：`8`
+  - 强正样本：`8`
+  - 强负样本：`0`
+  - 运输失败：`0`
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round1-verified.json`
+- implementation:
+  - `scripts/dev/intel/fofa-fingerprint-library-sync.ts` 已将 8 条强正样本同步到 `samples/assets/fingerprint-positive/`
+- docs updated:
+  - `docs/plans/fofa-scan-plan.md`
+  - `docs/progress.md`
+- notes:
+  - round1 说明主模板可稳定拿到 Ollama 强正样本，但强负样本还需通过后续轮次继续采集
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama 主模板小批次执行 round1（size=20）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 按计划执行 Ollama 主模板小批次任务创建与批量结果汇总
+  - 记录 round1 运行结果作为后续强样本复核输入
+- execution result:
+  - query：`app="Ollama" && is_domain=false && country="CN"`
+  - task-scan：`fetched=20`、`created=20`
+  - batch-report：`finished=20`、`failed=0`
+  - byRiskLevel：`info=12`、`high=8`
+- artifacts:
+  - `docs/temp/fofa-ollama-smallsize-round1.json`
+  - `docs/temp/fofa-ollama-smallsize-round1-batch-report.json`
+- docs updated:
+  - `docs/plans/fofa-scan-plan.md`
+  - `docs/progress.md`
+- notes:
+  - 本轮仅执行主模板与结果汇总，下一步进入强样本复核与入库
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 强样本准入规则执行（仅 Ollama）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 在样本入库同步脚本中落实三分类准入：强正样本、强负样本、运输失败样本
+  - 明确运输失败样本（timeout/refused/tls）不得进入正负样本库
+  - 强正样本必须满足非空 `response_body_excerpt`
+- tests updated:
+  - `tests/repository/fofa-fingerprint-library-sync.spec.ts`
+    - 新增用例：仅写入强样本并排除运输失败
+    - 调整旧用例夹具以满足新准入规则
+- test result: pass（先 RED 后 GREEN）
+  - RED: 新增用例失败，实测出现弱样本被写入（`3 !== 1`）
+  - GREEN:
+    - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-fingerprint-library-sync.spec.ts`
+- implementation:
+  - 更新 `scripts/dev/intel/fofa-fingerprint-library-sync.ts`
+    - 增加 `isStrongPositive`、`isStrongNegative`、`isTransportFailure` 过滤
+    - 正负样本写入前先按准入规则筛选
+    - 正样本 `response_body_excerpt` 从输入透传并截断到 512
+    - 负样本优先使用 `exclusion_reason`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - 本次仅执行规则准入，不扩展到其他 probeTargetId
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama 样本库入库同步（naabu+nmap 复核产物）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 新增 Ollama 样本库同步脚本，将 verified/negative_or_pending 结果写入标准样本库目录
+  - 仅处理 Ollama，保持现有最小闭环，不扩展到其他 probeTargetId
+- tests added:
+  - `tests/repository/fofa-fingerprint-library-sync.spec.ts`
+- test result: pass（先 RED 后 GREEN）
+  - RED: 目标脚本不存在（`ERR_MODULE_NOT_FOUND`）
+  - GREEN:
+    - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-fingerprint-library-sync.spec.ts`
+- implementation:
+  - 新增 `scripts/dev/intel/fofa-fingerprint-library-sync.ts`
+  - 执行同步：verified 写入 16 条，negative 写入 4 条
+  - 产出目录：
+    - `samples/assets/fingerprint-positive/`（新增 `ollama.s002.json` 到 `ollama.s017.json`）
+    - `samples/assets/fingerprint-negative/`（新增 `ollama.neg.n010.json` 到 `ollama.neg.n013.json`）
+- docs updated:
+  - `docs/plans/plan-overview.md`
+  - `docs/progress.md`
+- notes:
+  - 之前未开始“入库”是因为此前阶段聚焦查询稳定性与候选转化验证，工作流仅导出到 `docs/temp/`，尚未实现样本库同步脚本
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama 样本分层落盘（仅 Ollama）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 仅处理 Ollama app 查询复核结果，拆分 verified 与 negative_or_pending 样本
+  - 产出可直接用于后续规则/样本维护的分层文件
+- execution result:
+  - source report：`docs/temp/fofa-day2-q5-ollama-verify-report.json`
+  - total checked：20
+  - verified：16
+  - negative_or_pending：4
+  - conversion_rate：80.0%
+- artifacts:
+  - `docs/temp/fofa-ollama-verified-candidates.json`
+  - `docs/temp/fofa-ollama-negative-or-pending.json`
+  - `docs/temp/fofa-ollama-processing-summary.json`
+- docs updated:
+  - `docs/plans/plan-overview.md`
+  - `docs/progress.md`
+- notes:
+  - 当前阶段仅聚焦 Ollama；未推进其他 probeTargetId
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama 下一轮查询模板固化（仅 Ollama）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 基于 verified 与 negative_or_pending 样本统计，生成下一轮 Ollama 查询模板
+  - 明确主模板/稳定模板/回溯模板的使用方式
+- analysis basis:
+  - verified 端口分布：11434 为主（10/16），其余为少量离散端口
+  - verified 协议分布：http 13、https 3
+  - negative_or_pending：4 条，均为连接失败类（timeout 或 refused）
+- artifacts:
+  - `docs/temp/fofa-ollama-next-query-templates.md`
+  - `docs/temp/fofa-ollama-verified-candidates.json`
+  - `docs/temp/fofa-ollama-negative-or-pending.json`
+- docs updated:
+  - `docs/plans/plan-overview.md`
+  - `docs/progress.md`
+- notes:
+  - 当前样本量下不引入硬编码端口黑名单，先采用协议分批模板验证稳定性
+
+## 2026-05-09 - REQ-ASSET-SCAN-PORT-007 Ollama round2 试跑与回退决策（仅 Ollama）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 按新模板执行 Ollama round2 小批次
+  - 记录 protocol 分拆模板与主模板重试结果
+- execution result:
+  - protocol 分拆模板：
+    - `app="Ollama" && is_domain=false && country="CN" && protocol="http"` -> fetched 0
+    - `app="Ollama" && is_domain=false && country="CN" && protocol="https"` -> fetched 0
+  - 主模板重试 3 次：均为 `fetch failed`
+- diagnostics:
+  - FOFA 主站连通性正常（`https://en.fofa.info` 可访问）
+  - Node 直连 FOFA API 主机可达（状态 200）
+- artifacts:
+  - `docs/temp/fofa-ollama-round2-http.json`
+  - `docs/temp/fofa-ollama-round2-https.json`
+  - `docs/temp/fofa-ollama-round2-http-verify.json`
+  - `docs/temp/fofa-ollama-round2-https-verify.json`
+  - `docs/temp/fofa-ollama-round2-comparison.json`
+  - `docs/temp/fofa-ollama-round2-baseline.retry1.json`
+  - `docs/temp/fofa-ollama-round2-baseline.retry2.json`
+  - `docs/temp/fofa-ollama-round2-baseline.retry3.json`
+- decision:
+  - 回退到 app 主模板作为唯一默认路径
+  - protocol 分拆模板暂不默认启用，待 FOFA 返回稳定后再评估
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 Day 2 批次执行完成（Q4/Q3/Q5 + app 查询策略）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 将 Ollama FOFA 默认查询切换为 `app="Ollama" && is_domain=false`
+  - 执行 Day 2 三个批次：Q4（openclaw-gateway）、Q3（autogpt）、Q5（ollama refined）
+  - 生成批次汇总并落盘到 `docs/temp/`
+- tests updated:
+  - `tests/repository/fofa-api-task-scan.spec.ts`（默认查询断言对齐 app 查询）
+- test result: pass（FOFA 脚本与查询基线）
+  - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-api-task-scan.spec.ts`
+- execution result: pass
+  - Day 2 共创建任务 60 条（Q4/Q3/Q5 各 20）
+  - batch-report：`finished=60`
+  - 风险分布：`info=50`、`high=10`
+  - Q5 `/api/tags` 复核：20 个 candidate 中 16 个满足 `status=200 + models`
+- docs updated:
+  - `docs/plans/plan-overview.md`
+  - `docs/progress.md`
+- artifacts:
+  - `docs/temp/fofa-day2-q4-openclaw.json`
+  - `docs/temp/fofa-day2-q3-autogpt.json`
+  - `docs/temp/fofa-day2-q5-ollama-refined.json`
+  - `docs/temp/fofa-day2-batch-report.json`
+  - `docs/temp/fofa-day2-q5-ollama-verify-report.json`
+- notes:
+  - 3000 端口由现有 backend 实例占用，复用健康实例继续执行
+  - 后续需进入“候选 -> 已验证”复核阶段（`/api/tags` + `models`）
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 Ollama 查询策略对比（仅 Ollama）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 仅针对 Ollama 比较端口查询与 app 查询的 candidate -> verified 转化效果
+  - 统一使用 `/api/tags` + `models` 作为 verified 判定标准
+- execution result:
+  - 端口查询 `port="11434" && protocol="http"`：verified 0/20（0.0%）
+  - app 查询 `app="Ollama" && is_domain=false && country="CN"`：verified 16/20（80.0%）
+- artifacts:
+  - `docs/temp/fofa-day1-q1-ollama-verify-report.json`
+  - `docs/temp/fofa-day2-q5-ollama-verify-report.json`
+  - `docs/temp/fofa-ollama-query-comparison.json`
+- decision:
+  - 后续 Ollama 主查询固定为 app 查询路径；端口查询不再作为主入口
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 工作流脚本 RED->GREEN（naabu+nmap + 样本分层导出）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 新增统一工作流脚本 `fofa-portscan-workflow`，落地 naabu-first 与 nmap-on-hit-only 执行边界
+  - 新增样本导出脚本 `fofa-sample-export`，落地候选/已验证/原始证据三层分离
+  - 新增 repository 级测试，覆盖执行分层、失败审计与样本分层写盘
+- tests added:
+  - `tests/repository/fofa-portscan-workflow.spec.ts`
+  - `tests/repository/fofa-sample-export.spec.ts`
+- test result: pass（先 RED 后 GREEN）
+  - RED: `ERR_MODULE_NOT_FOUND`（目标脚本未实现）
+  - GREEN:
+    - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-portscan-workflow.spec.ts tests/repository/fofa-sample-export.spec.ts`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+- notes:
+  - 当前实现为 requirement 最小闭环，不扩展到分布式调度、数据库迁移与前端改造
+  - 下一步执行应继续按当前 requirement 计划推进批次复跑与证据复核
+
+## 2026-04-30 - REQ-ASSET-INTEL-006 六步流程最小实现收敛版
+- requirement: 基于现有 FOFA CSV 数据实现资产测绘六步流程最小可测试模型，并输出符合 `资产测绘_指纹整理` 的最小结构
+- scope:
+  - 保留 `scripts/dev/intel/fofa-six-step-minimal.ts`，实现 Step1~Step6 的最小闭环
+  - 复用 `scripts/dev/intel/oss-port-collector.ts` 做 Naabu 验活
+  - 删除与当前最小 requirement 无关的新增 FOFA 辅助脚本与简单测试
+- tests added:
+  - `tests/repository/fofa-six-step-minimal.spec.ts`
+- test result: pass
+  - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-six-step-minimal.spec.ts`
+  - `npm run test:repo`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - 实际 CSV 跑批受网络可达性影响，可能出现 `step2_live_targets=0`
+  - 该版本定位为最小模型，便于后续接入真实探针编排与风险规则扩展
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 文档修改阶段收口（计划对齐）
+- requirement: 先完善对应文档，清理矛盾与不需要项
+- scope:
+  - 在主计划文档中新增 naabu+nmap 工作流脚本的完整实施计划（Design/Test/Implement/Document/Stop）
+  - 补充统一 JSON 样本输出规范与拟修改文件清单
+  - 清理 `sprint-current` 中失效的 Related Plan 路径引用
+  - 更新 FOFA 总览页的下一步执行清单，切换到“文档完善 -> RED 测试 -> 实现”阶段
+- tests added: none（纯文档变更）
+- test result: not run（无业务代码改动）
+- docs updated:
+  - `docs/temp/asset-scan-port-scan-v1.md`
+  - `docs/sprint-current.md`
+  - `docs/plans/plan-overview.md`
+  - `docs/progress.md`
+- notes:
+  - 已删除失效计划路径与职责冲突描述，后续可直接进入脚本 RED 用例编写
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 Day 1 扫描执行启动（运行记录）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 按第一阶段扫描计划启动 Day 1 批次执行
+  - 实际完成 Q1（ollama）与 Q2（langflow）两个批次
+  - 保存批次结果到 `docs/temp/` 并完成 batch-report 汇总
+- tests added: none（运行执行记录）
+- test result: execution pass（Day 1 已执行部分）
+  - Q1：20 fetched / 20 created
+  - Q2：20 fetched / 20 created
+  - batch-report：40 total / 40 finished / 0 findings
+- docs updated:
+  - `docs/plans/plan-overview.md`
+  - `docs/progress.md`
+- notes:
+  - 计划基线为 `size=200`，但实际执行中 `size=200` 出现过 `fetch failed`
+  - 当前先以 `size=20` 建立稳定基线，后续再逐步提升到 100 或 200
+
+## 2026-05-08 - FOFA 扫描总览文档去无关重构（文档）
+- requirement: 仅保留当前 FOFA 扫描全计划总览，删除无关信息
+- scope:
+  - 将 `docs/plans/plan-overview.md` 重构为 FOFA 扫描专项总览
+  - 删除泛项目阶段、前端/架构等非当前扫描执行信息
+  - 对齐当前扫描设计文档路径为 `docs/temp/asset-scan-port-scan-v1.md`
+- tests added: none（纯文档变更）
+- test result: not run（无业务代码改动）
+- docs updated:
+  - `docs/plans/plan-overview.md`
+  - `docs/progress.md`
+- notes:
+  - 本页后续仅维护 FOFA 批次执行、验收、阻塞与回退规则
+
+## 2026-05-08 - 计划总览文档重构（文档）
+- requirement: 为当前仓库重构一份简洁的计划总览与当前 focus 文档
+- scope:
+  - 新增单页总览文档，统一收口“全局计划、当前 requirement、当前 focus、阶段成果、下一步、风险”
+  - 作为计划入口，减少在多个文档之间来回切换的成本
+- tests added: none（纯文档变更）
+- test result: not run（无业务代码改动）
+- docs updated:
+  - `docs/plan-overview.md`
+  - `docs/progress.md`
+- notes:
+  - 本次重构不改变现有 requirement 与执行策略，仅优化项目管理可读性
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 第一阶段扫描设计蓝图（文档）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 基于项目总计划与当前 requirement 约束，新增第一阶段扫描执行蓝图
+  - 固化 Go/No-Go 准备完成定义、首批 query 包、S 档参数基线、2 天执行节奏与验收指标
+  - 保持当前阶段不引入分布式扫描与数据库迁移的边界
+- tests added: none（纯文档设计变更）
+- test result: not run（无业务代码改动）
+- docs updated:
+  - `docs/plans/asset-scan-port-scan-v1.md`
+  - `docs/progress.md`
+- notes:
+  - 第一阶段采用“小批量、强留痕、可复跑”策略，为后续受控扩容提供参数与 query 基线
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 资产扫描公网治理参数最小落地
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 在 `asset_scan` 任务创建路径加入治理参数规范化：预算、限速、审计字段
+  - 保持 `static_analysis` 与 `sandbox_run` 的参数行为不变
+  - API 集成层补充 `POST /api/tasks` 后可回读规范化参数的契约校验
+- tests added:
+  - `backend/tests/task-center.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- test result: pass（本 requirement 聚焦验证集）
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern="backend task center normalizes asset-scan governance and audit fields through POST /api/tasks" tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - 预算字段在创建阶段执行最小值与上限归一化，避免无效输入直接进入执行链路
+  - 审计字段自动补齐 `requested_at`，并映射 `requested_by/query/source`
+  - 全量 integration 套件中仍存在 semgrep 环境依赖项（`semgrep` 二进制缺失）导致的非本变更失败
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 执行上下文与中断原因结果落盘
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 在 `asset_scan` 任务参数中归一化 `audit.interruption_reason`
+  - 在 `asset_scan` 结果 `details.execution_context` 中持久化预算、限速与审计快照
+  - 共享契约层补充 `execution_context` 与 `interruption_reason` 的标准化保留规则
+- tests added:
+  - `backend/tests/task-center.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- tests updated:
+  - `shared/tests/result-contract.spec.ts`
+- test result: pass（本 requirement 聚焦验证集）
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern="backend task center persists asset-scan execution context and interruption reason in result details" tests/integration/backend-task-center.api.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/result-contract.spec.ts`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - `interruption_reason` 枚举：`none` / `budget` / `timeout` / `manual_stop`
+  - 当输入缺失或非法时，默认落盘为 `none`
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 asset_scan 失败回填与 bridge 执行上下文打通
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 在 `TaskCenterService` 中为 `asset_scan` 增加初始执行失败回填，避免直接抛错中断任务记录
+  - 在 `TaskEngineService` 中新增 `createFailedAssetScanArtifacts`，统一 `failed` 结果壳与风险汇总
+  - 在 `engines/asset-scan` bridge 中导出并启用 `buildExecutionContextFromTask`，使引擎输出链路原生携带 `execution_context`
+- tests added:
+  - `tests/repository/asset-scan-bridge.execution-context.spec.ts`
+  - `backend/tests/task-center.service.spec.ts`（新增 asset_scan 初始失败回填场景）
+- tests updated:
+  - `package.json`（`test:repo` 纳入 bridge execution_context 测试）
+- test result: pass（本 requirement 聚焦验证集）
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern='backend task center persists asset-scan execution context and interruption reason in result details|backend task center normalizes asset-scan governance and audit fields through POST /api/tasks' tests/integration/backend-task-center.api.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test shared/tests/result-contract.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/asset-scan-bridge.execution-context.spec.ts`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - `asset_scan` 初始执行失败将回填 `failed` 任务壳，且保留 `execution_context.audit.interruption_reason`
+  - bridge 侧默认将非法中断原因归一化为 `none`
+  - 当参数中的中断原因为默认 `none` 时，平台会优先基于错误语义推断（如 `timeout`、`budget`）
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 asset_scan partial_success 状态回填
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 为 `asset_scan` completed 工件增加 `finished` / `partial_success` 状态派生
+  - 当 `details.execution_context.audit.interruption_reason` 为非 `none` 时，将 `task/result/risk-summary` 统一回填为 `partial_success`
+  - 保持 `failed` 回填与纯完成态 `finished` 语义不变
+- tests added:
+  - `backend/tests/task-center.service.spec.ts`
+  - `tests/integration/backend-task-center.api.spec.ts`
+- test result: pass（本 requirement 聚焦验证集）
+  - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/task-center.service.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern='backend task center persists asset-scan execution context and interruption reason in result details|backend task center normalizes asset-scan governance and audit fields through POST /api/tasks|partial_success asset-scan result' tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - 当前 `partial_success` 的判定依赖 `execution_context.audit.interruption_reason`
+  - 这一步先收口平台回填语义，尚未继续下沉到 L1/L2/L3 执行层的中断事件源
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 执行层 interruption_reason 下沉到 runtime/bridge
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 在 `engines/asset-scan` runtime 中根据 `execution_context.audit.interruption_reason` 派生 `finished` / `partial_success`
+  - 在 bridge 中合并 task 参数与 runtime `execution_context` 时，保留 runtime 产生的非 `none` 中断原因
+  - 在 task-center 中避免参数默认 `none` 覆盖引擎返回的 `timeout`/`budget` 语义
+- tests added:
+  - `tests/repository/asset-scan-runtime.interruption-reason.spec.ts`
+  - `tests/repository/asset-scan-bridge.execution-context.spec.ts`（新增 runtime 保留场景）
+  - `backend/tests/task-center.service.spec.ts`（新增引擎侧中断原因保留场景）
+- tests updated:
+  - `package.json`（`test:repo` 纳入 runtime interruption-reason 测试）
+- test result: pass（本 requirement 聚焦验证集）
+  - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/asset-scan-runtime.interruption-reason.spec.ts tests/repository/asset-scan-bridge.execution-context.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern='preserves engine-derived interruption reason|partial_success asset-scan result|persists asset-scan execution context and interruption reason' backend/tests/task-center.service.spec.ts tests/integration/backend-task-center.api.spec.ts`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - 当前已打通 runtime -> bridge -> task-center 的 interruption_reason 传递链路
+  - 这一步仍是最小语义下沉，尚未在真实 naabu/nmap/L3 probe 中细分不同步骤的预算耗尽或局部超时事件
+
+## 2026-05-08 - REQ-ASSET-SCAN-PORT-007 runtime 异常错误处理与脚本测试执行
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 在 `runAssetScanTask` 的异常分支中将错误语义映射到 `execution_context.audit.interruption_reason`
+  - 支持最小映射：`timeout`、`budget`，其余错误回退 `none`
+  - 继续保持 runtime -> bridge -> task-center 的 interruption_reason 合并与回填一致性
+  - 按照当前阶段要求执行 dev 脚本入口验证与测试回归
+- tests added:
+  - `tests/repository/asset-scan-runtime.interruption-reason.spec.ts`（新增 runtime 抛错映射场景）
+- test result: pass（本 requirement 聚焦验证集）
+  - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/asset-scan-runtime.interruption-reason.spec.ts tests/repository/asset-scan-bridge.execution-context.spec.ts`
+  - `node --experimental-strip-types --experimental-test-isolation=none --test --test-name-pattern='marks asset-scan as partial_success|preserves engine-derived interruption reason|partial_success asset-scan result|persists asset-scan execution context and interruption reason|runtime records timeout interruption reason when pipeline throws timeout error' backend/tests/task-center.service.spec.ts tests/integration/backend-task-center.api.spec.ts tests/repository/asset-scan-runtime.interruption-reason.spec.ts`
+  - `npm run test:repo`
+- scripts run:
+  - `npm run run:fofa:api:task-scan -- --help`
+  - `npm run run:fofa:task-batch-report -- --help`
+- docs updated:
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - runtime 抛错测试会打印预期的 `[Engine Error]` 日志，这是当前测试夹具用于触发异常分支的正常现象
+
 ## 2026-04-11 - REQ-ASSET-PROBE-004 backend probe/scoring migration to engine
 - requirement: keep backend as orchestrator and migrate asset-scan probe/scoring execution to engine runtime with process bridge invocation
 - scope:
@@ -331,7 +1143,7 @@ Recommended fields:
 - test result: 未执行；本次更新不涉及运行时行为变更
 - docs updated:
   - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
-  - `docs/plans/agent-asset-fingerprinting-discovery-plan.md`
+  - `docs/development-plan.md`
   - `docs/sprint-current.md`
   - `docs/progress.md`
 - notes:
@@ -384,7 +1196,7 @@ Recommended fields:
 - test result: 未执行；本次变更为纯文档更新
 - docs updated:
   - `docs/sprint-current.md`
-  - `docs/plans/agent-asset-fingerprinting-discovery-plan.md`
+  - `docs/development-plan.md`
   - `docs/temp/beginner-learning-guide-asset-fingerprint.md`
   - `docs/progress.md`
 - notes:
@@ -559,7 +1371,6 @@ Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/tasks/task_1776345291388_adbdb
 或者浏览器输入 http://127.0.0.1:3000/api/tasks/task_1776345291388_adbdb8/result
 
 可以在 Agent-security-platform路径下运行 node --experimental-strip-types engines\asset-scan\src\cli.ts 测试中间过程的输出（目前写死 ollama）
-
 ## 2026-04-26 - StaticAnalysisResultSection 规则命中明细渲染
 
 - requirement: 用后端已就绪的 rule_hits 数据替换 StaticAnalysisResultSection 中的 placeholder，渲染规则命中明细列表和敏感能力标签
@@ -627,3 +1438,171 @@ Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/tasks/task_1776345291388_adbdb
   - entry_files 区域在 Statistic 行下方、Rule Hits 列表上方渲染，仅非空时显示
   - code_snippet 以原生 `<pre>` 块展示（背景 #f5f5f5，字号 12px）
   - dependency_summary 以 Ant Design Descriptions（column=1，size="small"，bordered）展示键值对
+
+## 2026-05-07 - asset-scan engine Step 1 to Step 3 implementation
+- requirement: implement the first three asset-scan steps inside `engines/asset-scan` for teaching-stage exposure mapping and fingerprint identification
+- scope:
+  - added explicit Step 1 `AssetDiscoveryService`, Step 2 `PortScanService`, and Step 3 `ProtocolIdentificationService`
+  - extended `shared/types/asset-scan.ts` with `DiscoveryInput`, `Asset`, `PortScanInput`, `PortInfo`, `ProtocolInput`, `ProtocolInfo`, `PortProtocol`, and `TlsInfo`
+  - rewired `AssetScanPipeline` to compose Step 1 to Step 6 instead of mocking Step 1 to Step 3 inline
+  - updated classification output so final engine results preserve discovered asset source and protocol metadata
+  - added engine-owned tests for discovery, port scan, protocol identification, pipeline context composition, and run-task result preservation
+- tests added:
+  - `engines/asset-scan/tests/asset-probe.runtime.spec.ts`
+  - `engines/asset-scan/tests/asset-fingerprint.runtime.spec.ts`
+  - `engines/asset-scan/tests/scan-task.bridge.spec.ts`
+- test result:
+  - pass: `npm run test:engine:asset-scan`
+  - pass for asset-scan relevant backend integration after sandbox escalation: `npm run test:backend`
+  - known unrelated failure remains in backend suite: `skills-static` semgrep provider path fails with `spawn semgrep ENOENT` when local `semgrep` binary is unavailable
+- docs updated:
+  - `README.md`
+  - `docs/architecture.md`
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - default pipeline behavior stays conservative: it uses URL hostname plus hinted port unless candidate ports are explicitly widened
+  - this requirement completes the teaching-stage Step 1 to Step 3 implementation without expanding into public-internet scanning orchestration
+
+## 2026-04-28 - REQ-ASSET-INTEL-006 FOFA 外部情报接入与评估闭环（第一阶段）
+- requirement: 引入 FOFA dev 侧外部情报能力，打通采集 -> 标准化 -> 批次化 -> 评估最小闭环，并保持 asset-scan 主链路解耦
+- scope:
+  - 新增 `scripts/dev/intel/fofa-collector.ts`，支持 query 构造、分页、重试、请求间隔与预算阈值控制
+  - 新增 `scripts/dev/intel/fofa-normalizer.ts`，支持 fields 映射、缺失字段容错与去重
+  - 新增 `scripts/dev/intel/fofa-batch-writer.ts`，支持按 `batch_id` 输出可复现样本
+  - 新增 `scripts/dev/intel/fofa-evaluator.ts`，输出 TP/FP/FN 与 recall/precision/F1
+  - 新增 FOFA fixture、单测与集成测试，纳入 root `test:repo` 脚本入口
+- tests added:
+  - `tests/repository/fofa-collector.spec.ts`
+  - `tests/repository/fofa-normalizer.spec.ts`
+  - `tests/repository/fofa-evaluator.spec.ts`
+  - `tests/integration/fofa-intel-pipeline.spec.ts`
+- test result:
+  - RED: fail（模块不存在，`ERR_MODULE_NOT_FOUND`，符合先测后实现）
+  - GREEN: pass
+    - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-collector.spec.ts tests/repository/fofa-normalizer.spec.ts tests/repository/fofa-evaluator.spec.ts tests/integration/fofa-intel-pipeline.spec.ts`
+  - regression:
+    - `npm run test:repo` pass
+    - `npm run test:backend` 存在 1 个历史环境依赖项失败（semgrep 二进制缺失，非本需求引入）
+    - `npm run test:engine:asset-scan` 当前脚本引用缺失测试文件（仓库既有问题）
+- docs updated:
+  - `docs/sprint-current.md`
+  - `docs/architecture.md`
+  - `docs/api-contract.md`
+  - `docs/development-plan.md`
+  - `docs/progress.md`
+  - `README.md`
+- notes:
+  - FOFA 失败路径不影响既有 sample_ref/live probe 主流程
+  - 本 requirement 完成后已停止扩展相邻需求
+
+## 2026-04-28 - REQ-ASSET-INTEL-006 follow-up stabilization and documentation
+- requirement: 完成后续动作并补充 FOFA 详细文档
+- scope:
+  - 修复 `test:engine:asset-scan` 失效引用，新增稳定 engine 测试 `engines/asset-scan/tests/run-task.contract.spec.ts`
+  - 增强 semgrep runner 的执行回退逻辑（优先 `semgrep`，缺失时回退 `python -m semgrep`）
+  - 调整 backend semgrep provider parity 集成测试，在本地 semgrep runtime 缺失场景下走稳定失败断言而非误报
+  - 新增 FOFA 详细文档 `docs/fofa-intel-phase1.md`
+- tests:
+  - `npm run test:engine:asset-scan` pass
+  - `npm run test:backend` pass
+  - `npm run test:repo` pass
+- docs updated:
+  - `docs/fofa-intel-phase1.md`
+  - `README.md`
+  - `docs/progress.md`
+
+## 2026-04-29 - OSS Port Collector interface and simple port-read test
+- requirement: 参考现有 probe 风格接口，增加不依赖 FOFA 的开源端口采集抽象，并提供最小端口读取测试
+- scope:
+  - 新增 `scripts/dev/intel/oss-port-collector.ts`
+  - 提供 `NmapPortCollector`、`NaabuPortCollector`、`collectOpenPortsWithFallback`
+  - 新增 `tests/repository/oss-port-collector.spec.ts`，覆盖端口解析与降级链行为
+- tests added:
+  - `tests/repository/oss-port-collector.spec.ts`
+- test result:
+  - RED: fail（`ERR_MODULE_NOT_FOUND`，模块不存在）
+  - GREEN: pass
+    - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/oss-port-collector.spec.ts`
+- docs updated:
+  - `README.md`
+  - `docs/architecture.md`
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - default pipeline behavior stays conservative: it uses URL hostname plus hinted port unless candidate ports are explicitly widened
+  - this requirement completes the teaching-stage Step 1 to Step 3 implementation without expanding into public-internet scanning orchestration
+
+- test command:
+  - \Agent-security-platform\backend: node --experimental-strip-types src/main.ts
+  - another terminal \Agent-security-platform:
+  ```bash
+  $body = @{
+  task_type = "asset_scan"
+  title = "Local asset scan test"
+  target = @{
+    target_type = "url"
+    target_value = "http://127.0.0.1:11434"
+  }
+  parameters = @{
+    discovery_seed = @("127.0.0.1", "localhost")
+  }
+} | ConvertTo-Json -Depth 5
+
+Invoke-RestMethod -Uri "http://127.0.0.1:3000/api/tasks" -Method Post -Body $body -ContentType "application/json"
+```
+
+check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
+  - 新增能力为 dev 侧采集层，不修改现有 backend/engine 主链路
+
+## 2026-05-08 - FOFA API direct task-scan dev script for ollama
+- requirement: 提供一个直接调用 FOFA 官方 API 的 dev 侧测试脚本，将 Ollama 11434 候选目标转换为现有 `asset_scan` 任务请求并提交到 `POST /api/tasks`
+- scope:
+  - 新增 `scripts/dev/intel/fofa-api-task-scan.ts`
+  - 支持 FOFA 官方 `GET /api/v1/search/all` 请求拼装、字段映射、以及向 backend `POST /api/tasks` 批量提交
+  - 默认围绕 `ollama`/`11434` 构造 live probe 任务参数
+  - 新增 `tests/repository/fofa-api-task-scan.spec.ts`，覆盖 FOFA URL 构造、任务 payload 映射、以及批量 API 提交流
+- tests added:
+  - `tests/repository/fofa-api-task-scan.spec.ts`
+- test result:
+  - RED: fail（脚本不存在，`ERR_MODULE_NOT_FOUND`）
+  - GREEN: pass
+    - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-api-task-scan.spec.ts`
+- docs updated:
+  - `README.md`
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- notes:
+  - 该能力为 dev 侧 FOFA 接入脚本，复用现有 `asset_scan` API，不新增平台公开扫描路由
+
+## 2026-05-08 - FOFA env auto-load, batch report, and asset-scan result backfill
+- requirement: 继续完善 FOFA dev 侧工作流，支持本地 env 自动加载、批量结果汇总，并使 FOFA 创建的 `asset_scan` 任务立即回填 finished 结果
+- scope:
+  - `scripts/dev/intel/fofa-api-task-scan.ts` 支持从 `.env.local`、`.env`、`~/.config/agent-security-platform/fofa.env` 自动加载 FOFA 凭据
+  - 新增 `scripts/dev/intel/fofa-task-batch-report.ts`，批量拉取 `result` 与 `risk-summary` 并输出汇总
+  - `backend` 在 `asset_scan` 的初始引擎详情已生成时，直接回填 finished 任务/result/risk-summary，而不是停留在 pending
+- tests added:
+  - `tests/repository/fofa-task-batch-report.spec.ts`
+  - `backend/tests/task-center.service.spec.ts` 新增 asset-scan 回填场景
+- test result:
+  - RED: fail（缺少 env resolver、缺少 batch report 脚本、asset_scan 仍停留 pending）
+  - GREEN: pass
+    - `node --experimental-strip-types --experimental-test-isolation=none --test backend/tests/task-center.service.spec.ts backend/tests/asset-scan-flow.spec.ts tests/repository/fofa-api-task-scan.spec.ts`
+    - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-task-batch-report.spec.ts`
+- docs updated:
+  - `README.md`
+  - `docs/progress.md`
+- notes:
+  - 该阶段未新增平台公开路由，仍复用 `POST /api/tasks` 和现有结果查询接口
+
+## 2026-05-08 - Port-scan requirement updated for authorized public-network execution
+- requirement: 在现有端口扫描策略基础上，明确“可扫描公网”边界与治理约束
+- scope:
+  - 更新 `docs/sprint-current.md`，加入公网扫描目标、预算控制、速率控制、审计留痕要求
+  - 更新 `docs/plans/asset-scan-port-scan-v1.md`，补充公网执行 guardrails
+- docs updated:
+  - `docs/sprint-current.md`
+  - `docs/plans/asset-scan-port-scan-v1.md`
+  - `docs/progress.md`
+- notes:
+  - 当前仅完成 requirement 和设计文档收口；实现与测试将按 RED -> GREEN 继续推进

@@ -1,85 +1,163 @@
-// 负责解析受控目标的 URL，将应用层输入“降维”模拟成网络层的 ScanContext 供下游消费
-
 import { resolve } from "node:path";
-import type { ScanContext, AssetScanResult, Protocol } from "../../../../shared/types/asset-scan.ts";
+
+import type {
+    Asset,
+    AssetScanResult,
+    DiscoveryInput,
+    FeatureData,
+    FingerprintMatchItem,
+    PortInfo,
+    ProtocolInfo,
+    ScanContext
+} from "../../../../shared/types/asset-scan.ts";
 import { ProbeService } from "./asset-probe.service.ts";
 import { FingerprintService } from "./asset-fingerprint.service.ts";
 import { ClassificationService } from "./classification.service.ts";
+import { AssetDiscoveryService } from "./asset-discovery.service.ts";
+import { PortScanService } from "./port-scan.service.ts";
+import { ProtocolIdentificationService } from "./protocol-identification.service.ts";
+
+type DiscoveryServiceLike = {
+    discover: (input: DiscoveryInput) => Promise<Asset[]>;
+};
+
+type PortScanServiceLike = {
+    scan: (input: { ip: string; ports?: number[] }) => Promise<PortInfo>;
+};
+
+type ProtocolIdentificationServiceLike = {
+    identify: (input: { ip: string; ports: number[]; domain?: string }) => Promise<ProtocolInfo>;
+};
+
+type ProbeServiceLike = {
+    execute: (context: ScanContext) => Promise<FeatureData>;
+};
+
+type FingerprintServiceLike = {
+    evaluate: (featureData: FeatureData) => FingerprintMatchItem[];
+};
+
+type ClassificationServiceLike = {
+    buildResult: (
+        originalTargetUrl: string,
+        context: ScanContext,
+        matches: FingerprintMatchItem[],
+        endpoints: FeatureData["endpoints"]
+    ) => Partial<AssetScanResult>;
+};
+
+export interface AssetScanPipelineDependencies {
+    discoveryService: DiscoveryServiceLike;
+    portScanService: PortScanServiceLike;
+    protocolIdentificationService: ProtocolIdentificationServiceLike;
+    probeService: ProbeServiceLike;
+    fingerprintService: FingerprintServiceLike;
+    classificationService: ClassificationServiceLike;
+}
+
+export interface AssetScanPipelineRunOptions {
+    discoveryInput?: DiscoveryInput;
+    candidatePorts?: number[];
+}
 
 export class AssetScanPipeline {
-    private probeService: ProbeService;
-    private fingerprintService: FingerprintService;
-    private classificationService: ClassificationService;
+    private readonly discoveryService: DiscoveryServiceLike;
+    private readonly portScanService: PortScanServiceLike;
+    private readonly protocolIdentificationService: ProtocolIdentificationServiceLike;
+    private readonly probeService: ProbeServiceLike;
+    private readonly fingerprintService: FingerprintServiceLike;
+    private readonly classificationService: ClassificationServiceLike;
 
-    constructor(workspaceRoot: string) {
+    constructor(workspaceRoot: string, dependencies?: Partial<AssetScanPipelineDependencies>) {
         const probeRules = resolve(workspaceRoot, "engines/asset-scan/rules/probes.v2.yaml");
         const fingerprintRules = resolve(workspaceRoot, "engines/asset-scan/rules/fingerprints.v2.yaml");
 
-        this.probeService = new ProbeService(probeRules);
-        this.fingerprintService = new FingerprintService(fingerprintRules);
-        this.classificationService = new ClassificationService();
+        this.discoveryService = dependencies?.discoveryService ?? new AssetDiscoveryService();
+        this.portScanService = dependencies?.portScanService ?? new PortScanService();
+        this.protocolIdentificationService = dependencies?.protocolIdentificationService ?? new ProtocolIdentificationService();
+        this.probeService = dependencies?.probeService ?? new ProbeService(probeRules);
+        this.fingerprintService = dependencies?.fingerprintService ?? new FingerprintService(fingerprintRules);
+        this.classificationService = dependencies?.classificationService ?? new ClassificationService();
     }
 
-    // 返回 Partial<AssetScanResult>，由外层 run-task 补齐 task_id 等任务调度属性
-    public async run(targetUrl: string): Promise<Partial<AssetScanResult>> {
-        
-        // ==========================================
-        // 【Mocking】模拟 Step 1 ~ 3 的执行结果(真实的DNS解析和端口扫描)
-        // ==========================================
+    public async run(targetUrl: string, options?: AssetScanPipelineRunOptions): Promise<Partial<AssetScanResult>> {
         const parsedUrl = new URL(targetUrl);
         const hostname = parsedUrl.hostname;
+        const candidatePorts = this.buildCandidatePorts(parsedUrl, options?.candidatePorts);
+        const discoveryInput = options?.discoveryInput ?? { seed: [hostname] };
 
-        let ip = hostname;
-        let domain: string | undefined = undefined;
+        const assets = await this.discoveryService.discover(discoveryInput);
+        const asset = this.selectAsset(assets, hostname);
 
-        // 根据受控测试目标模拟 DNS 资产发现 (Step 1)
-        if (hostname === "localhost") {
-            ip = "127.0.0.1";
-            domain = "localhost";
-        } else if (!/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(hostname)) {
-            // 如果是域名（如 test.example.com），在没有真实 DNS 解析的情况下，mock 一个受控 IP
-            ip = "127.0.0.1"; 
-            domain = hostname;
+        if (!asset) {
+            throw new Error(`No candidate asset discovered for target ${targetUrl}`);
         }
 
-        // 确定端口号：优先使用URL指定的端口，否则根据协议默认端口
-        const port = parsedUrl.port ? Number(parsedUrl.port) : (parsedUrl.protocol === "https:" ? 443 : 80);
-        const protocol = parsedUrl.protocol.replace(':', '') as Protocol;
+        const portInfo = await this.portScanService.scan({
+            ip: asset.ip,
+            ports: candidatePorts
+        });
+        const openPorts = portInfo.ports.filter((item) => item.status === "open").map((item) => item.port);
 
-        // 构造严谨的、基于 IP 的 ScanContext
-        const context: ScanContext = {
-            ip: ip,                               // e.g., 127.0.0.1
-            domain: domain,                       // e.g., demo-agent.example.com (可选)
-            discoveredPorts: [port],              // e.g., [11434]
-            identifiedProtocols: {                // e.g., { 11434: "http" }
-                [port]: protocol
+        const protocolInfo = await this.protocolIdentificationService.identify({
+            ip: asset.ip,
+            domain: asset.domain,
+            ports: openPorts
+        });
+        const hintedPort = parsedUrl.port
+            ? Number(parsedUrl.port)
+            : parsedUrl.protocol === "https:"
+                ? 443
+                : 80;
+        const hintedProtocol = parsedUrl.protocol === "https:" ? "https" : "http";
+        const normalizedPortProtocols = protocolInfo.port_protocols.map((item) => {
+            if (item.port !== hintedPort || item.protocol !== "tcp") {
+                return item;
             }
+
+            return {
+                ...item,
+                protocol: hintedProtocol,
+                service: item.service === "unknown" ? hintedProtocol : item.service
+            };
+        });
+
+        const context: ScanContext = {
+            ip: asset.ip,
+            domain: asset.domain,
+            asset,
+            discoveredPorts: openPorts,
+            identifiedProtocols: Object.fromEntries(
+                normalizedPortProtocols.map((item) => [item.port, item.protocol])
+            ),
+            protocols: normalizedPortProtocols
         };
 
-        // ==========================================
-        // Step 4: 执行探针并收集特征
-        // ==========================================
         const featureData = await this.probeService.execute(context);
-
-        // 开放端口记录转换为 FeatureData，供指纹匹配规则使用
-        for (const p of context.discoveredPorts) {
-            featureData.features.push({ feature_type: "open_port", value: String(p), confidence: 1.0 });
+        for (const port of context.discoveredPorts) {
+            featureData.features.push({
+                feature_type: "open_port",
+                value: String(port),
+                confidence: 1.0
+            });
         }
 
-        // =======================  添加调试代码  =======================
-        console.error(`\n[Debug] Features Extracted:`);
-        console.error(JSON.stringify(featureData.features, null, 2));
-        // =======================  添加调试代码  =======================
-
-        // ==========================================
-        // Step 5: 指纹判定
-        // ==========================================
         const matches = this.fingerprintService.evaluate(featureData);
-
-        // ==========================================
-        // Step 6: 资产归类与风险标签
-        // ==========================================
-        // 将原始输入URL与解析后的上下文一并传入，用于最终展示拼接
         return this.classificationService.buildResult(targetUrl, context, matches, featureData.endpoints);
+    }
+
+    private selectAsset(assets: Asset[], hostname: string): Asset | undefined {
+        return assets.find((candidate) => candidate.domain === hostname || candidate.ip === hostname) ?? assets[0];
+    }
+
+    private buildCandidatePorts(parsedUrl: URL, override?: number[]): number[] {
+        const hintedPort = parsedUrl.port
+            ? Number(parsedUrl.port)
+            : parsedUrl.protocol === "https:"
+                ? 443
+                : 80;
+        const configuredPorts = override ?? [hintedPort];
+
+        return Array.from(new Set([...configuredPorts, hintedPort])).sort((a, b) => a - b);
     }
 }

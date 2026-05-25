@@ -4,6 +4,8 @@ import { SKILLS_STATIC_SEVERITIES } from "../types/skills-static.ts";
 import type { RiskSummary, Task, TaskResultRef, TaskTarget, TaskType } from "../types/task.ts";
 import { isBoolean, isNumber, isOneOf, isPlainObject, isString, isStringArray } from "./guards.ts";
 
+const ASSET_SCAN_ALLOWED_INTERRUPTION_REASONS = ["none", "budget", "timeout", "manual_stop"] as const;
+
 function copyPlainObject(value: Record<string, unknown>): Record<string, unknown> {
   return { ...value };
 }
@@ -225,6 +227,61 @@ function normalizeAssetScanDetails(value: unknown): AssetScanResultDetails | nul
 
   if (Array.isArray(value.findings)) {
     normalizedDetails.findings = copyArray(value.findings);
+  }
+
+  if (isPlainObject(value.execution_context)) {
+    const executionContext: AssetScanResultDetails["execution_context"] = {};
+
+    if (isNumber(value.execution_context.max_targets)) {
+      executionContext.max_targets = value.execution_context.max_targets;
+    }
+
+    if (isNumber(value.execution_context.max_ports_per_target)) {
+      executionContext.max_ports_per_target = value.execution_context.max_ports_per_target;
+    }
+
+    if (isNumber(value.execution_context.max_runtime_seconds)) {
+      executionContext.max_runtime_seconds = value.execution_context.max_runtime_seconds;
+    }
+
+    if (isNumber(value.execution_context.target_http_rps_cap)) {
+      executionContext.target_http_rps_cap = value.execution_context.target_http_rps_cap;
+    }
+
+    if (isNumber(value.execution_context.max_tcp_concurrency_per_target)) {
+      executionContext.max_tcp_concurrency_per_target = value.execution_context.max_tcp_concurrency_per_target;
+    }
+
+    if (isPlainObject(value.execution_context.audit)) {
+      const audit: NonNullable<AssetScanResultDetails["execution_context"]>["audit"] = {};
+
+      if (isString(value.execution_context.audit.query)) {
+        audit.query = value.execution_context.audit.query;
+      }
+
+      if (isString(value.execution_context.audit.source)) {
+        audit.source = value.execution_context.audit.source;
+      }
+
+      if (isString(value.execution_context.audit.requested_by)) {
+        audit.requested_by = value.execution_context.audit.requested_by;
+      }
+
+      if (isString(value.execution_context.audit.requested_at)) {
+        audit.requested_at = value.execution_context.audit.requested_at;
+      }
+
+      if (
+        isString(value.execution_context.audit.interruption_reason) &&
+        isOneOf(ASSET_SCAN_ALLOWED_INTERRUPTION_REASONS, value.execution_context.audit.interruption_reason)
+      ) {
+        audit.interruption_reason = value.execution_context.audit.interruption_reason;
+      }
+
+      executionContext.audit = audit;
+    }
+
+    normalizedDetails.execution_context = executionContext;
   }
 
   return normalizedDetails;

@@ -1,0 +1,12 @@
+{
+  "sample_id": "s109",
+  "target_id": "ollama",
+  "request_summary": "GET /api/tags",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json"
+  },
+  "response_body_excerpt": "{\"models\":[{\"name\":\"nomic-embed-text:latest\",\"model\":\"nomic-embed-text:latest\",\"modified_at\":\"2026-03-05T09:48:27.455548536Z\",\"size\":274302450,\"digest\":\"0a109f422b47e3a30ba2b10eca18548e944e8a23073ee3f3e947efcf3c45e59f\",\"details\":{\"parent_model\":\"\",\"format\":\"gguf\",\"family\":\"nomic-bert\",\"families\":[\"nomic-bert\"],\"parameter_size\":\"137M\",\"quantization_level\":\"F16\"}},{\"name\":\"deepseek-r1:1.5b\",\"model\":\"deepseek-r1:1.5b\",\"modified_at\":\"2026-01-30T06:47:59.23864511Z\",\"size\":1117322768,\"digest\":\"e0979632db5a88d1a53",
+  "source": "fofa-verify: http://117.72.38.119:11434",
+  "collected_at": "2026-05-09T12:42:07.906Z"
+}

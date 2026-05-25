@@ -1,0 +1,12 @@
+{
+  "sample_id": "s025",
+  "target_id": "ollama",
+  "request_summary": "GET /api/tags",
+  "response_status": 200,
+  "response_headers": {
+    "content-type": "application/json"
+  },
+  "response_body_excerpt": "{\"models\":[{\"name\":\"Zhongsen-Text\",\"model\":\"Zhongsen-Text\",\"modified_at\":\"2026-05-09T07:31:44.260Z\",\"size\":0,\"digest\":\"sha256:sglang0000000000000000000000000000000000000000000000000000000000\",\"details\":{\"format\":\"sglang\",\"family\":\"Zhongsen-Text\",\"parameter_size\":\"unknown\"}}]}",
+  "source": "fofa-verify: http://159.75.85.114:8045",
+  "collected_at": "2026-05-09T07:35:00.000Z"
+}
