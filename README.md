@@ -1,5 +1,20 @@
 # agent-security-platform
 
+## Asset Scan Discovery Pipeline
+
+`engines/asset-scan` now models the first six-step asset-scan flow inside the engine runtime.
+
+- Step 1 `asset discovery`: normalize `seed[]` into candidate `Asset[]` with merged `ip`, `domain`, `source`, `tags`, and `timestamp`
+- Step 2 `port scan`: scan candidate IPs into `PortInfo`, preserving `open`, `closed`, and `filtered` status
+- Step 3 `protocol identification`: classify open ports into `ProtocolInfo` with `protocol`, `subprotocol`, `service`, optional `tls`, and aggregated `confidence`
+- Step 4 to Step 6 remain probe collection, fingerprint matching, and asset classification
+
+Current teaching-stage boundary:
+
+- default runtime path is for controlled targets such as `localhost` and explicitly provided URLs
+- the pipeline uses URL-derived port hints by default and only widens the scan set when candidate ports are explicitly provided
+- backend continues to orchestrate through the engine bridge; discovery, scanning, and protocol classification now live in `engines/asset-scan/src/runtime/*`
+
 ## Backend Internal Engine Wiring
 
 - `static_analysis` still enters through `POST /api/tasks`

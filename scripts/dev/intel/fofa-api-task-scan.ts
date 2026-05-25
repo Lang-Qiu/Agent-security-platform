@@ -17,7 +17,7 @@
  */
 
 import { readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { parseArgs } from "node:util";
 
 const DEFAULT_FOFA_BASE_URL = "https://en.fofa.info";
@@ -33,6 +33,16 @@ const DEFAULT_FIELDS = ["host", "ip", "port", "protocol", "org"];
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 type TextFileReader = (filePath: string) => Promise<string>;
+
+function appendPath(basePath: string, ...segments: string[]): string {
+  const normalizedBase = basePath.replace(/[\\/]+$/, "");
+
+  if (normalizedBase.startsWith("/")) {
+    return [normalizedBase, ...segments].join("/");
+  }
+
+  return join(normalizedBase, ...segments);
+}
 
 type FofaApiRecord = {
   host: string | null;
@@ -192,10 +202,10 @@ export async function resolveFofaCredentials(options?: {
 
   const mergedEnv: Record<string, string | undefined> = { ...env };
   const loadedFiles: string[] = [];
-  const candidates = [resolve(cwd, ".env.fofa.local"), resolve(cwd, ".env.local"), resolve(cwd, ".env")];
+  const candidates = [appendPath(cwd, ".env.fofa.local"), appendPath(cwd, ".env.local"), appendPath(cwd, ".env")];
 
   if (homeDir) {
-    candidates.push(join(homeDir, ".config/agent-security-platform/fofa.env"));
+    candidates.push(appendPath(homeDir, ".config", "agent-security-platform", "fofa.env"));
   }
 
   for (const filePath of candidates) {

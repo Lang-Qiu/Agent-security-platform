@@ -1418,6 +1418,22 @@ Current shared formatter responsibilities:
 - task timestamps -> stable UTC `en-US` display label
 
 This keeps the Tasks page and Task detail page aligned while the admin console grows. Shared platform contracts still live in `shared/`, but repeated view-only formatting logic should stay in one frontend utility instead of drifting across multiple components.
+## Asset-Scan Step Contracts
+
+The shared asset-scan types now include explicit engine-internal contracts for the first three runtime steps:
+
+- `DiscoveryInput -> Asset[]`
+- `PortScanInput -> PortInfo`
+- `ProtocolInput -> ProtocolInfo`
+
+Current field baseline:
+
+- `Asset`: `asset_id`, `ip`, optional `domain`, `source[]`, `tags[]`, `timestamp`
+- `PortInfo.ports[]`: `port`, `status`
+- `ProtocolInfo.port_protocols[]`: `port`, `protocol`, optional `subprotocol`, `service`, optional `tls`
+- `ProtocolInfo.confidence`: aggregated confidence for the inspected open ports
+
+These contracts are shared for type consistency, but they are still engine-private runtime steps rather than frontend-facing public API payloads.
 
 ## REQ-ASSET-SCAN-PORT-007 Repository Workflow Script Contract
 

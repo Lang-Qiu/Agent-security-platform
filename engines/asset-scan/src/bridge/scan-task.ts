@@ -1,6 +1,7 @@
 import { runAssetScanTask } from "../runtime/run-task.ts";
 import type { Task } from "../../../../shared/types/task.ts";
 import type { AssetScanResultDetails } from "../../../../shared/types/result.ts";
+import { pathToFileURL } from "node:url";
 
 const ALLOWED_INTERRUPTION_REASONS = ["none", "budget", "timeout", "manual_stop"] as const;
 
@@ -110,4 +111,6 @@ async function main() {
   }
 }
 
-main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main();
+}
