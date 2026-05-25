@@ -404,17 +404,16 @@ test("task engine service maps tasks into initial result and risk summary shells
               target_value: "https://demo-agent.example.com"
             },
             fingerprint: {},
-            open_ports: [
-              {
-                port: 443,
-                protocol: "tcp",
-                service: "https",
-                status: "open"
-              }
-            ],
+            open_ports: [],
             http_endpoints: [],
             auth_detected: false,
-            findings: []
+            findings: [],
+            execution_context: {
+              audit: {
+                interruption_reason: "none",
+                requested_by: "ops@example.com"
+              }
+            }
           },
           created_at: "2026-03-26T02:00:00Z",
           updated_at: "2026-03-26T02:00:00Z"
