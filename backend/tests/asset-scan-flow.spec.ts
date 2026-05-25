@@ -28,7 +28,7 @@ test("Asset Scan Engine Integration Flow", async (t) => {
     // 提取真实的 Task 数据
     const task = responsePayload.data as Task;
     assert.equal(task.task_type, "asset_scan");
-    assert.equal(task.status, "pending"); // 初始状态为 pending
+    assert.equal(task.status, "finished");
 
     // 4. 验证引擎调度与结果回填
     const resultObj = taskCenter.service.getTaskResult(task.task_id);

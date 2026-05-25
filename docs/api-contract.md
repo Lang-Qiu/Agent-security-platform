@@ -135,10 +135,18 @@
   - `parameters.probe_mode = "live"`
   - `parameters.probe_target_id`（如 `langflow`、`autogpt`）
   - `parameters.probe_port_hint`（可选；用于受控测试环境下补齐逻辑端口信号，如 `11434`、`18789`）
+- 阶段 H 起，`asset_scan` 在授权前提下支持公网目标治理参数：
+  - 预算控制：`parameters.max_targets`、`parameters.max_ports_per_target`、`parameters.max_runtime_seconds`
+  - 速率控制：`parameters.target_http_rps_cap`、`parameters.max_tcp_concurrency_per_target`
+  - 审计留痕：`parameters.audit`（包含 `query`、`source`、`requested_by`、`requested_at`）
+  - backend 在创建 `asset_scan` 任务时会对上述预算/速率字段做最小值与上限归一化
+  - 中断原因：`parameters.audit.interruption_reason`（`none`/`budget`/`timeout`/`manual_stop`）
+  - 若未显式提供中断原因，backend 会归一化为 `none`
 - 当前 live probe 已覆盖：
   - HTTP: `langflow`、`autogpt`、`ollama`
   - WebSocket: `openclaw-gateway`
-- live probe 仅允许在 localhost/测试容器/mock server 等受控目标上执行，本阶段不包含公网扫描和分布式调度。
+- live probe 允许在授权范围内覆盖公网目标；本阶段仍不包含分布式调度。
+- dev 侧可通过 FOFA 官方 `search/all` API 采集候选 `host/ip/port/protocol`，再转换成既有 `POST /api/tasks` 请求；该接入方式不新增平台公开路由，只复用现有 `asset_scan` 契约。
 
 #### target 子对象
 
@@ -241,7 +249,22 @@
 
 #### details 细化约定
 
-- `asset_scan`：`details` 主要承载 `target`、`fingerprint`、`matched_features`、`open_ports`、`http_endpoints`、`auth_detected`、`findings`
+- `asset_scan`：`details` 主要承载 `target`、`fingerprint`、`matched_features`、`open_ports`、`http_endpoints`、`auth_detected`、`findings`，以及执行治理快照 `execution_context`
+  - `execution_context` 当前包含：
+    - `max_targets`
+    - `max_ports_per_target`
+    - `max_runtime_seconds`
+    - `target_http_rps_cap`
+    - `max_tcp_concurrency_per_target`
+    - `audit`（`query`、`source`、`requested_by`、`requested_at`、`interruption_reason`）
+  - 当 `asset_scan` 在初始执行阶段失败时，平台会回填 `status=failed` 的结果壳，并保留 `execution_context.audit.interruption_reason`
+  - 当引擎 runtime 在流水线阶段抛出异常时，会将错误语义映射到 `execution_context.audit.interruption_reason`（如 `timeout`、`budget`）；映射失败时回退为 `none`
+  - 当 `asset_scan` 已产出结果壳，但 `execution_context.audit.interruption_reason` 为非 `none` 时，平台会将 `task/result/risk-summary` 统一回填为 `partial_success`
+  - `execution_context.audit.interruption_reason` 可来自两类来源：
+    - 任务参数审计字段（平台创建阶段归一化）
+    - 引擎执行层 runtime/bridge 产生的中断语义（如 probe timeout）
+  - 若任务参数中的中断原因仅为默认 `none`，平台会优先保留引擎执行层返回的非 `none` 原因，避免执行语义在 bridge 或 task-center 合并阶段被覆盖
+  - `interruption_reason` 优先取任务参数中的审计值；若缺失则根据错误语义推断（如 timeout/budget），否则为 `none`
 - `static_analysis`：`details` 主要承载 `sample_name`、`language`、`entry_files`、`files_scanned`、`rule_hits`、`sensitive_capabilities`、`dependency_summary`
 - `sandbox_run`：`details` 主要承载 `session_id`、`target`、`alerts`、`blocked`、`event_count`
 
@@ -770,6 +793,33 @@
   },
   "parameters": {
     "sample_ref": "samples/assets/fingerprint-positive/ollama.s001.json"
+  }
+}
+```
+
+FOFA dev 侧接入示例：
+
+```json
+{
+  "task_type": "asset_scan",
+  "title": "FOFA ollama scan http://47.113.241.78:11434",
+  "requested_by": "fofa-dev-script",
+  "target": {
+    "target_type": "url",
+    "target_value": "http://47.113.241.78:11434",
+    "display_name": "ollama candidate http://47.113.241.78:11434",
+    "metadata": {
+      "intel_source": "fofa_api",
+      "source_ip": "47.113.241.78",
+      "source_port": 11434,
+      "source_protocol": "http"
+    }
+  },
+  "parameters": {
+    "probe_mode": "live",
+    "probe_target_id": "ollama",
+    "probe_port_hint": 11434,
+    "intel_source": "fofa_api"
   }
 }
 ```
@@ -1384,3 +1434,42 @@ Current field baseline:
 - `ProtocolInfo.confidence`: aggregated confidence for the inspected open ports
 
 These contracts are shared for type consistency, but they are still engine-private runtime steps rather than frontend-facing public API payloads.
+
+## REQ-ASSET-SCAN-PORT-007 Repository Workflow Script Contract
+
+For requirement REQ-ASSET-SCAN-PORT-007, repository-side FOFA workflow scripts define a minimal execution/output contract that does not change public backend API routes.
+
+Script entrypoints:
+
+- `scripts/dev/intel/fofa-portscan-workflow.ts`
+- `scripts/dev/intel/fofa-sample-export.ts`
+
+`runFofaPortscanWorkflow` input (minimal):
+
+- `targets[]` with `source_query/source_ip/source_port/protocol/target_value/probe_target_id/task_id/requested_by`
+- `outputDir`
+- command `runner`
+
+`runFofaPortscanWorkflow` output summary:
+
+- `total_targets`
+- `naabu_success_targets`
+- `nmap_attempted_targets`
+- `verified_count`
+- `candidate_count`
+- `failed_count`
+
+Sample output layering (separated files):
+
+- `exposure-candidates.json`:
+  - candidate-layer only, with source/task/audit fields
+- `verified-fingerprints.json`:
+  - verified fingerprint samples only
+- `raw-evidence.json`:
+  - raw tool outputs and tool exit codes for audit/replay
+
+Boundary notes:
+
+- `naabu` is limited to open-port detection.
+- `nmap` is limited to service evidence on naabu-hit ports.
+- Candidate and verified samples must stay separated; candidate records are not auto-promoted to verified without evidence.

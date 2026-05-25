@@ -396,3 +396,19 @@ Current runtime guardrails:
 - default discovery is conservative and local-first
 - default pipeline execution uses the target URL hostname and hinted port
 - public-platform orchestration remains in backend; protocol probing and fingerprint logic remain engine-private
+
+## REQ-ASSET-SCAN-PORT-007 FOFA Workflow Script Layer
+
+Repository-side FOFA workflow scripts are treated as a dev execution/support layer, not a backend platform API layer.
+
+- `scripts/dev/intel/fofa-portscan-workflow.ts` coordinates the minimal `naabu -> nmap -> sample output` flow.
+- `scripts/dev/intel/fofa-sample-export.ts` persists separated JSON sample artifacts.
+
+Boundary rules for this layer:
+
+- Scripts do not introduce new public HTTP endpoints.
+- Scripts do not bypass backend task-center contracts.
+- Script outputs are artifacts for evidence accumulation and replay, not frontend-facing API payloads.
+- Tool responsibilities remain explicit: naabu for open ports, nmap for hit-port service evidence.
+
+This preserves the platform architecture baseline: backend remains the only frontend entry, engines remain independent execution units, and repository scripts remain auxiliary orchestration tooling.
