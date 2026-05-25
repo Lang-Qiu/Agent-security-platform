@@ -10,6 +10,159 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-05-25 - REQ-ASSET-SCAN-PORT-007 扩展小批次（smoke10/实际8）复跑与失败分桶
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 按既定下一步计划执行扩展小批次复跑（目标 smoke10；可用样本 8 条）
+  - 输出标准时延与快速时延两组工作流结果
+  - 基于 `raw-evidence.json` 生成失败分桶报告（timeout / tls / refused / other）
+- tests added: none（本次为执行与证据分析，不涉及实现改动）
+- test result: not run（无代码变更）
+- execution result:
+  - 输入：`docs/temp/fofa-ollama-naabu-nmap-smoke10-reachable.json`（`tasks=8`）
+  - 标准时延输出：`docs/temp/fofa-ollama-naabu-nmap-smoke10-reachable-workflow/workflow-summary.json`
+    - `total_targets=8`
+    - `naabu_success_targets=0`
+    - `nmap_attempted_targets=7`
+    - `verified_count=7`
+    - `failed_count=0`
+  - 快速时延输出：`docs/temp/fofa-ollama-naabu-nmap-smoke10-reachable-workflow-fast/workflow-summary.json`
+    - `total_targets=8`
+    - `naabu_success_targets=0`
+    - `nmap_attempted_targets=5`
+    - `verified_count=5`
+    - `failed_count=0`
+- failure bucketing:
+  - 报告：`docs/temp/fofa-ollama-naabu-nmap-smoke10-reachable-failure-buckets.json`
+  - 统计：`timeout=7`、`tls_or_cert=0`、`refused_or_reset=0`、`other=1`、`none=0`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - 在当前网络条件下，`naabu` 仍稳定受 `ipinfo` 依赖影响，但工作流已可通过 nmap + `/api/tags` 回退稳定产出 verified
+  - 同一批次在更宽松 nmap 超时下（20s）产出显著高于快速参数（8s），后续建议保留双档参数并按场景选择
+
+## 2026-05-25 - REQ-ASSET-SCAN-PORT-007 naabu ipinfo 跳过优化回归修复与案例复跑
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 优化：检测到 `naabu` 的 `ipinfo` 初始化失败后，后续目标不再重复执行 naabu
+  - 回归修复：确保“跳过 naabu”后，后续目标仍执行 `nmap --open`，避免只扫描首个目标
+  - 执行两组小量案例复跑并验证结果
+- tests updated:
+  - `tests/repository/fofa-portscan-workflow.spec.ts`
+    - 新增用例：`workflow skips repeated naabu runs after ipinfo runner init failure is detected`
+    - 扩展断言：跳过 naabu 后，`nmap --open` 仍应对每个目标执行
+- test result: pass（两次 RED -> GREEN）
+  - RED-1：naabu 仍重复调用（`2 !== 1`）
+  - GREEN-1：实现全局 skip 后通过
+  - RED-2：发现回归，仅首个目标执行 open-check（`1 !== 2`）
+  - GREEN-2：修复后通过
+    - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-portscan-workflow.spec.ts tests/repository/fofa-mainline-portscan.spec.ts`
+    - `npm run test:repo`
+- implementation:
+  - 更新：`scripts/dev/intel/fofa-portscan-workflow.ts`
+    - 新增 `skipNaabuDueToRunnerInitFailure` 状态
+    - 首次识别 ipinfo runner 初始化失败后，后续目标跳过 naabu
+    - 修复回归：在 skip 模式下仍对每个目标执行 `nmap --open`
+- execution result:
+  - 对照批次复跑：`docs/temp/fofa-ollama-naabu-nmap-smoke5-workflow-rerun/workflow-summary.json`
+    - `total_targets=5`
+    - `nmap_attempted_targets=1`
+    - `verified_count=1`
+    - `failed_count=0`
+  - 可达批次复跑（修复前）：`docs/temp/fofa-ollama-naabu-nmap-smoke5-reachable-workflow-rerun/workflow-summary.json`
+    - `nmap_attempted_targets=1`
+    - `verified_count=1`
+  - 可达批次复跑（修复后）：`docs/temp/fofa-ollama-naabu-nmap-smoke5-reachable-workflow-rerun2/workflow-summary.json`
+    - `total_targets=5`
+    - `nmap_attempted_targets=4`
+    - `verified_count=4`
+    - `failed_count=0`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - 当前已完成“发现新问题 -> 定位 -> 修复 -> 复跑验证”闭环
+  - 现阶段瓶颈主要仍是目标批次质量差异，不是工作流卡死
+
+## 2026-05-25 - REQ-ASSET-SCAN-PORT-007 naabu+nmap 根因分析与有效跑通（smoke5-reachable）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 对 smoke5 失败样本做 raw-evidence 根因分析
+  - 在 workflow 中增加 `/api/tags` 回退补证能力（nmap 失败或证据不足时）
+  - 以历史强正可达目标执行 smoke5-reachable 验证“有效跑通”
+- root cause:
+  - `naabu` 在当前环境受 `ipinfo.io` 外联失败影响，经常触发 runner 初始化错误
+  - 回退到 `nmap --open` 后可推进流程，但 full nmap 在短超时下经常退出 `124`，只留下启动行证据
+  - 原流程对 verified 过度依赖 nmap 输出关键词，导致可达 Ollama 目标未被确认
+- tests updated:
+  - `tests/repository/fofa-portscan-workflow.spec.ts`
+    - 新增用例：`workflow verifies via /api/tags fallback when nmap evidence times out`
+- test result: pass（先 RED 后 GREEN）
+  - RED：新增用例失败（`http probe fallback should be triggered once`）
+  - GREEN：
+    - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/fofa-portscan-workflow.spec.ts tests/repository/fofa-mainline-portscan.spec.ts`
+    - `npm run test:repo`
+- implementation:
+  - 更新：`scripts/dev/intel/fofa-portscan-workflow.ts`
+    - 新增 `enableHttpProbeFallback` 开关（默认关闭）
+    - 新增可注入 `httpProbe`，默认使用 `fetch` + 超时控制
+    - 新增 `/api/tags` URL 构建与响应判定（`status=200` 且含 `"models"/ollama`）
+    - 当 nmap 非零退出或证据不足时，执行 `/api/tags` 补证并可写入 verified
+  - 更新：`scripts/dev/intel/fofa-mainline-portscan.ts`
+    - CLI 新增 `--enableHttpProbeFallback`（默认 `true`）
+    - 主线运行默认启用补证路径
+- execution result:
+  - 失败对照批次（旧 smoke5）：`docs/temp/fofa-ollama-naabu-nmap-smoke5-workflow/workflow-summary.json`
+    - `verified_count=0`、`failed_count=4`
+  - 有效跑通批次（smoke5-reachable）：
+    - 输入：`docs/temp/fofa-ollama-naabu-nmap-smoke5-reachable.json`
+    - 输出：`docs/temp/fofa-ollama-naabu-nmap-smoke5-reachable-workflow/workflow-summary.json`
+    - summary：
+      - `total_targets=5`
+      - `naabu_success_targets=0`
+      - `nmap_attempted_targets=4`
+      - `verified_count=4`
+      - `candidate_count=5`
+      - `failed_count=0`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - 本次已验证“在 naabu 受限场景下仍可有效产出 verified”的可行路径
+  - 下一步建议对新批次继续做目标质量筛选和失败分桶，避免样本中非 11434 噪声目标拉低产出
+
+## 2026-05-25 - REQ-ASSET-SCAN-PORT-007 naabu+nmap 测试门禁补齐与 smoke5 实跑
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 将 naabu+nmap workflow 仓库测试纳入根级 `test:repo` 质量门禁
+  - 通过 TDD 完成一次 RED -> GREEN（先新增断言，再修复脚本配置）
+  - 基于现有 FOFA 候选执行一次 `size=5` 小量实跑并落盘结果
+- tests updated:
+  - `tests/repository/root-test-entry.spec.ts`
+    - 新增断言：`test:repo` 必须包含 `tests/repository/fofa-portscan-workflow.spec.ts`
+- test result: pass（先 RED 后 GREEN）
+  - RED：`root-test-entry.spec.ts` 失败，提示 `test:repo` 未覆盖 `fofa-portscan-workflow.spec.ts`
+  - GREEN：更新后通过
+    - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/root-test-entry.spec.ts tests/repository/fofa-mainline-portscan.spec.ts tests/repository/fofa-portscan-workflow.spec.ts`
+    - `npm run test:repo`
+- implementation:
+  - 更新：`package.json`
+    - `test:repo` 新增 `tests/repository/fofa-portscan-workflow.spec.ts`
+- execution result (smoke5):
+  - 输入：`docs/temp/fofa-ollama-naabu-nmap-smoke5.json`（由 round2 候选裁剪 5 条）
+  - 输出目录：`docs/temp/fofa-ollama-naabu-nmap-smoke5-workflow/`
+  - summary:
+    - `total_targets=5`
+    - `naabu_success_targets=0`
+    - `nmap_attempted_targets=4`
+    - `verified_count=0`
+    - `candidate_count=5`
+    - `failed_count=4`
+  - summary file: `docs/temp/fofa-ollama-naabu-nmap-smoke5-workflow/workflow-summary.json`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - 小量实跑确认工作流可从 naabu 失败分支继续推进到 nmap（回退生效）
+  - 当前瓶颈仍在 nmap 阶段失败率与 verified 转化率，下一步应继续做 query 收敛与 nmap 参数治理
+
 ## 2026-05-22 - REQ-ASSET-SCAN-PORT-007 样本治理阶段计划文档更新
 - requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
 - scope:

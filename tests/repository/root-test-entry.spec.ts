@@ -32,4 +32,10 @@ test("root quality gate delegates to test:all and includes frontend coverage", (
     /\bnpm run test:shared\b/,
     "test:all should include shared contract coverage"
   );
+
+  assert.match(
+    scripts["test:repo"] ?? "",
+    /\btests\/repository\/fofa-portscan-workflow\.spec\.ts\b/,
+    "test:repo should include naabu+nmap workflow repository coverage"
+  );
 });
