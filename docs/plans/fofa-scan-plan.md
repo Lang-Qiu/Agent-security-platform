@@ -192,6 +192,30 @@
 - 新增 strong_negative 样本形成可用规模；
 - 升级门禁结论写入 `docs/progress.md`。
 
+最新执行检查点（2026-05-25）：
+- round1（A vs B=protocol=http）：
+  - `docs/temp/fofa-ollama-query-ab-compare-round10.json`
+  - 结果：`query_b fetched=0`，winner=`query_a`
+- round2（A vs B2=port=11434）：
+  - `docs/temp/fofa-ollama-query-ab-compare-round11.json`
+  - 结果：`query_a high_rate=75%`，`query_b2 high_rate=90%`，winner=`query_b2`
+- round3（A vs B2=port=11434）：
+  - `docs/temp/fofa-ollama-query-ab-compare-round12.json`
+  - 结果：`query_a high_rate=65%`，`query_b2 high_rate=75%`，winner=`query_b2`
+- strong_negative 补采（跨目标 round12）：
+  - `docs/temp/fofa-ollama-negative-harvest-round12-cross-target.json`
+  - 结果：`strong_negative=14`，`transport_failure=16`
+- 固定评测集（v1）：
+  - `docs/temp/fofa-ollama-eval-benchmark-v1.json`
+  - 结果：`positive=4`、`negative=10`、`transport_failure=10`
+- round13（query_b2, size=100 升级轮）：
+  - `docs/temp/fofa-ollama-query-ab-b2-round13-size100-compare.json`
+  - 结果：`finished=100`、`high=94`、`high_rate=94%`、`keep_size_100=true`
+- round14（query_b2, size=100 稳定性复测）：
+  - `docs/temp/fofa-ollama-query-ab-b2-round14-size100-compare.json`
+  - 结果：`finished=100`、`high=92`、`high_rate=92%`、`keep_size_100=true`
+- 当前收敛建议：`query_b2` 作为默认提纯模板，`query_a` 作为召回基线与回退模板并行保留。
+
 ### 8.3 naabu+nmap 接入主线脚本试运行计划（size=50）
 
 目标：

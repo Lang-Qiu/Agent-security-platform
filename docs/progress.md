@@ -10,6 +10,229 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-05-25 - REQ-ASSET-SCAN-PORT-007 执行基线文档固化（doc-only）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 将当前稳定执行口径整理为单页基线文档（模板、规模、回退链路、门禁、样本口径）
+  - 作为后续周度滚动批次的标准执行参考
+- tests added: none（纯文档更新）
+- test result: not run（无代码变更）
+- docs updated:
+  - `docs/plans/fofa-ollama-run-baseline.md`
+  - `docs/progress.md`
+- notes:
+  - 文档已固化当前默认基线：`query_b2 + size=100`
+  - 本次为文档/配置例外，不涉及业务实现改动
+
+## 2026-05-25 - REQ-ASSET-SCAN-PORT-007 size=100 稳定性复测（round14）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 在 `size=100` 下执行 round14（query_b2）验证升级后稳定性
+  - 产出相对 round13 的质量对比与 info 组负样本分层结果
+- tests added: none（本次为执行与证据分析，不涉及实现改动）
+- test result: not run（无代码变更）
+- execution result:
+  - task-scan：`docs/temp/fofa-ollama-query-ab-b2-round14-size100.json`
+    - `fetched=100`
+    - `created=100`
+  - batch-report：`docs/temp/fofa-ollama-query-ab-b2-round14-size100-batch-report.json`
+    - `finished=100`
+    - `high=92`
+    - `info=8`
+    - `high_rate=92%`
+  - 对比文件：`docs/temp/fofa-ollama-query-ab-b2-round14-size100-compare.json`
+    - `baseline_round13_high_rate=94%`
+    - `delta=-2%`
+    - `keep_size_100=true`
+  - info 分层：`docs/temp/fofa-ollama-negative-harvest-round14-size100.json`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - `size=100` 连续两轮（round13/round14）均保持高命中且无退化到门禁线以下，当前可继续维持
+  - 下一步建议开始“周度滚动批次”并保留同口径对比文件，持续监控运输失败与 strong_negative 净增
+
+## 2026-05-25 - REQ-ASSET-SCAN-PORT-007 size=100 升级轮执行与验证（round13）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 按门禁判定执行 `query_b2` 的 `size=100` 受控升级轮
+  - 产出 task-scan、batch-report 与相对 round12 的质量对比
+- tests added: none（本次为执行与证据分析，不涉及实现改动）
+- test result: not run（无代码变更）
+- execution result:
+  - task-scan：`docs/temp/fofa-ollama-query-ab-b2-round13-size100.json`
+    - `fetched=100`
+    - `created=100`
+  - batch-report：`docs/temp/fofa-ollama-query-ab-b2-round13-size100-batch-report.json`
+    - `finished=100`
+    - `high=94`
+    - `info=6`
+    - `high_rate=94%`
+  - 对比文件：`docs/temp/fofa-ollama-query-ab-b2-round13-size100-compare.json`
+    - `baseline_round12_b2_high_rate=75%`
+    - `delta=+19%`
+    - `keep_size_100=true`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - 本轮升级后质量未下降且显著提升，`size=100` 可继续保持为当前执行规模
+  - 下一步建议在 `size=100` 下继续跟踪运输失败占比与 strong_negative 净增，防止只提升高命中而丢失覆盖面
+
+## 2026-05-25 - REQ-ASSET-SCAN-PORT-007 门禁升级判定（round12）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 基于 round11/round12 的 query_b2 收敛结果与 `eval-benchmark-v1` 生成门禁判定
+  - 输出是否可从 `size=50` 升级到 `size=100` 的结论文件
+- tests added: none（本次为执行与证据分析，不涉及实现改动）
+- test result: not run（无代码变更）
+- execution result:
+  - 判定文件：`docs/temp/fofa-ollama-gate-decision-round12.json`
+  - 关键指标：
+    - `b2_high_rate_round11=90%`
+    - `b2_high_rate_round12=75%`
+    - `b2_high_rate_avg=82.5%`
+    - `benchmark_transport_ratio=41.67%`
+  - 判定结论：`can_upgrade_to_size_100=true`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - 当前满足门禁阈值（高风险命中均值 >= 80%、运输失败占比 <= 50%）
+  - 下一步建议按 `query_b2` 执行一次 `size=100` 受控升级轮，并复用现有审计与分层产物口径
+
+## 2026-05-25 - REQ-ASSET-SCAN-PORT-007 跨目标 strong_negative 补采成功与评测集 v1 固化
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 从旁线历史批次（langflow/autogpt/openclaw）提取非 11434 候选进行 `/api/tags` 定向复核
+  - 形成跨目标 strong_negative 样本增量
+  - 基于 round10/11/12 补采结果固化评测集 `v1`（positive/negative/transport_failure）
+- tests added: none（本次为执行与证据分析，不涉及实现改动）
+- test result: not run（无代码变更）
+- execution result:
+  - 跨目标补采：`docs/temp/fofa-ollama-negative-harvest-round12-cross-target.json`
+    - `total_targets=30`
+    - `strong_positive=0`
+    - `strong_negative=14`
+    - `transport_failure=16`
+  - 固定评测集：`docs/temp/fofa-ollama-eval-benchmark-v1.json`
+    - `positive=4`
+    - `negative=10`
+    - `transport_failure=10`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - “strong_negative 样本不足”阻塞已解除，已形成可复用负样本集
+  - 当前下一步可进入门禁升级判定（基于 `query_b2` 与 `eval-benchmark-v1` 做连续轮次回归）
+
+## 2026-05-25 - REQ-ASSET-SCAN-PORT-007 强负样本专项补采（round10/round11）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 基于 Query A/B round3 的 info 目标执行 `/api/tags` 直连复核
+  - 按规则输出 strong_positive / strong_negative / transport_failure 分层
+  - 产出负样本补采文件并确认是否形成 strong_negative 增量
+- tests added: none（本次为执行与证据分析，不涉及实现改动）
+- test result: not run（无代码变更）
+- execution result:
+  - round10（来源：B2 info 组）：`docs/temp/fofa-ollama-negative-harvest-round10.json`
+    - `total_info_targets=5`
+    - `strong_positive=3`
+    - `strong_negative=0`
+    - `transport_failure=2`
+  - round11（来源：A info 组）：`docs/temp/fofa-ollama-negative-harvest-round11.json`
+    - `total_info_targets=7`
+    - `strong_positive=2`
+    - `strong_negative=0`
+    - `transport_failure=5`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - 本轮未获得 strong_negative 样本增量，当前阻塞为“可达但非 Ollama 响应”目标不足
+  - 现有 info 目标主要分化为“可达后转 strong_positive”或“运输失败”，下一步需引入非 11434 旁线可达目标做定向负样本补采
+
+## 2026-05-25 - REQ-ASSET-SCAN-PORT-007 Query A/B 收敛第三轮复核（winner 稳定）
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 执行 Query A/B 收敛 round3（A=主模板；B2=port=11434 提纯模板）
+  - 验证 round2 的 winner（query_b2）是否在下一轮保持稳定
+- tests added: none（本次为执行与证据分析，不涉及实现改动）
+- test result: not run（无代码变更）
+- execution result:
+  - round3 对比：`docs/temp/fofa-ollama-query-ab-compare-round12.json`
+    - query_a：`fetched=20`、`finished=20`、`high=13`、`high_rate=65%`
+    - query_b2（`port="11434"`）：`fetched=20`、`finished=20`、`high=15`、`high_rate=75%`
+    - 决策：`winner=query_b2`
+- artifacts:
+  - `docs/temp/fofa-ollama-query-ab-a-round3.json`
+  - `docs/temp/fofa-ollama-query-ab-b2-round3.json`
+  - `docs/temp/fofa-ollama-query-ab-a-round3-batch-report.json`
+  - `docs/temp/fofa-ollama-query-ab-b2-round3-batch-report.json`
+  - `docs/temp/fofa-ollama-query-ab-compare-round12.json`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - query_b2 已连续两轮胜出（round2 与 round3），当前可作为默认提纯模板
+  - query_a 仍保留为召回基线模板，用于并行对照与回退
+
+## 2026-05-25 - REQ-ASSET-SCAN-PORT-007 Query A/B 收敛首轮与二轮结果
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 执行 Query A/B 收敛 round1（A=主模板；B=protocol=http 模板）
+  - 在 round1 的 B=0 命中后，执行 round2（B2=port=11434 提纯模板）
+  - 产出两轮 task-scan、batch-report 与对比决策文件
+- tests added: none（本次为执行与证据分析，不涉及实现改动）
+- test result: not run（无代码变更）
+- execution result:
+  - round1 对比：`docs/temp/fofa-ollama-query-ab-compare-round10.json`
+    - query_a：`fetched=20`、`finished=20`、`high=15`、`high_rate=75%`
+    - query_b（`protocol="http"`）：`fetched=0`
+    - 决策：`winner=query_a`
+  - round2 对比：`docs/temp/fofa-ollama-query-ab-compare-round11.json`
+    - query_a：`fetched=20`、`finished=20`、`high=15`、`high_rate=75%`
+    - query_b2（`port="11434"`）：`fetched=20`、`finished=20`、`high=18`、`high_rate=90%`
+    - 决策：`winner=query_b2`
+- artifacts:
+  - round1:
+    - `docs/temp/fofa-ollama-query-ab-a-round1.json`
+    - `docs/temp/fofa-ollama-query-ab-b-round1.json`
+    - `docs/temp/fofa-ollama-query-ab-a-round1-batch-report.json`
+    - `docs/temp/fofa-ollama-query-ab-b-round1-batch-report.json`
+    - `docs/temp/fofa-ollama-query-ab-compare-round10.json`
+  - round2:
+    - `docs/temp/fofa-ollama-query-ab-a-round2.json`
+    - `docs/temp/fofa-ollama-query-ab-b2-round2.json`
+    - `docs/temp/fofa-ollama-query-ab-a-round2-batch-report.json`
+    - `docs/temp/fofa-ollama-query-ab-b2-round2-batch-report.json`
+    - `docs/temp/fofa-ollama-query-ab-compare-round11.json`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - `protocol=http` 过滤在本轮样本中召回为 0，不适合作为默认 B 模板
+  - `port=11434` 提纯模板在保持召回的同时提升 high 占比，当前可作为收敛优先候选
+
+## 2026-05-25 - REQ-ASSET-SCAN-PORT-007 timeout 定向重试首轮执行与决策
+- requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
+- scope:
+  - 按计划文档 8.4 执行 timeout 桶定向重试（仅重试 timeout 目标）
+  - 产出重试工作流结果与“重试前后对比”决策报告
+- tests added: none（本次为执行与证据分析，不涉及实现改动）
+- test result: not run（无代码变更）
+- execution result:
+  - 重试输入：`docs/temp/fofa-ollama-naabu-nmap-smoke10-timeout-retry.json`（`tasks=7`）
+  - 重试输出：`docs/temp/fofa-ollama-naabu-nmap-smoke10-timeout-retry-workflow/workflow-summary.json`
+    - `total_targets=7`
+    - `naabu_success_targets=0`
+    - `nmap_attempted_targets=6`
+    - `verified_count=5`
+    - `failed_count=0`
+  - 对比报告：`docs/temp/fofa-ollama-naabu-nmap-smoke10-timeout-retry-compare.json`
+    - `timeout_drop_pct=28.57`
+    - `verified_delta_vs_timeout_subset=-2`
+    - `timeout_to_verified_conversion_rate_pct=71.43`
+    - `recommend_default_timeout_retry=false`
+- docs updated:
+  - `docs/progress.md`
+- notes:
+  - timeout 定向重试可降低 timeout 数量，但在本轮未提升 timeout 子集 verified 产出
+  - 结论为“保留为可选 playbook，不纳入默认第二遍”；下一步进入 query A/B 收敛与模板收紧
+
 ## 2026-05-25 - REQ-ASSET-SCAN-PORT-007 扩展小批次（smoke10/实际8）复跑与失败分桶
 - requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
 - scope:
