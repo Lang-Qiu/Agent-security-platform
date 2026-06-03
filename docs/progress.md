@@ -10,6 +10,19 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-05-28 - 阶段总结报告提交版整理（纯文档）
+- requirement: 整合现有阶段性报告与 FOFA/Ollama 分层扫描补充说明，形成可提交给老师的阶段总结报告
+- scope:
+  - 将原阶段总结整理为“阶段目标、完成工作、工程结构、FOFA 闭环、测试评估、边界问题、下一步计划”的提交版结构
+  - 融合 FOFA 查询模板、task-scan、naabu、nmap、HTTP `/api/tags` 补证、正负样本与执行基线说明
+- tests added: none（纯文档整理）
+- test result: not run（无业务代码变更）
+- docs updated:
+  - `docs/李珮莹阶段总结报告-提交版.md`
+  - `docs/progress.md`
+- notes:
+  - 本次未进入业务实现阶段，属于文档更新对完整 TDD 的允许例外
+
 ## 2026-05-22 - REQ-ASSET-SCAN-PORT-007 样本治理阶段计划文档更新
 - requirement: 端口扫描执行策略与结果落盘闭环（阶段 H）
 - scope:
