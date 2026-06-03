@@ -95,7 +95,10 @@ async function main() {
       http_endpoints: fullResult.application?.http_endpoints || [],
       auth_detected: fullResult.application?.auth?.auth_detected || false,
       findings: fullResult.findings || [],
-      execution_context: buildExecutionContextFromTask(task, fullResult.execution_context)
+      execution_context: buildExecutionContextFromTask(task, fullResult.execution_context),
+      overall_risk_score: fullResult.overall_risk_score,
+      overall_risk_level: fullResult.overall_risk_level,
+      max_privilege: fullResult.max_privilege
     };
 
     console.log(JSON.stringify({

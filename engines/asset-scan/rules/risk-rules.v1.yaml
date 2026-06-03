@@ -1,0 +1,213 @@
+version: "1.0"
+updated_at: "2026-06-03"
+owner: "asset-scan"
+description: "Agent 资产可利用性判定规则 — 风险推断、权限映射与复合评分"
+
+# ============================================================
+# 权限映射表 (L0-L8)
+# 按 FingerprintCategory 映射到攻破后最高权限等级
+# ============================================================
+privilege_map:
+  llm_api:
+    level: "L7"
+    score: 9
+    identity_scope: "llm-service-account"
+    blast_radius: "外部系统/API"
+  agent_framework:
+    level: "L6"
+    score: 8
+    identity_scope: "agent-runtime"
+    blast_radius: "受限执行容器"
+  agent_application:
+    level: "L5"
+    score: 7
+    identity_scope: "application-context"
+    blast_radius: "单业务域"
+  agent_gateway:
+    level: "L6"
+    score: 8
+    identity_scope: "gateway-proxy"
+    blast_radius: "所有下游 Agent"
+  mcp_server:
+    level: "L5"
+    score: 7
+    identity_scope: "mcp-context"
+    blast_radius: "工具调用链"
+  web_framework:
+    level: "L4"
+    score: 6
+    identity_scope: "web-service"
+    blast_radius: "单服务"
+  middleware:
+    level: "L4"
+    score: 6
+    identity_scope: "middleware-service"
+    blast_radius: "依赖服务"
+  cloud_service:
+    level: "L7"
+    score: 9
+    identity_scope: "cloud-identity"
+    blast_radius: "云资源"
+
+# ============================================================
+# 复合评分权重
+# FinalRisk = 100 × (
+#   w_exposure × ExposureScore +
+#   w_exploitability × ExploitabilityScore +
+#   w_privilege × PrivilegeImpactScore +
+#   w_path × PathReachabilityScore +
+#   w_control × ControlGapScore
+# )
+# ============================================================
+scoring_weights:
+  exposure: 0.20
+  exploitability: 0.25
+  privilege_impact: 0.30
+  path_reachability: 0.15
+  control_gap: 0.10
+
+# 阶段一：路径可达性固定值（等 Neo4j 图谱就绪后改为动态计算）
+path_reachability_default: 0.50
+
+# ============================================================
+# 风险等级映射（基于复合总分）
+# ============================================================
+risk_level_thresholds:
+  critical: 75
+  high: 50
+  medium: 25
+  low: 0
+
+# ============================================================
+# 推断规则列表
+# 每条规则独立评估，可产生多个 findings
+# ============================================================
+rules:
+  # --- exposed_api ---
+  - rule_id: "exposed_api_critical"
+    name: "LLM API 未认证暴露"
+    finding_type: "exposed_api"
+    conditions:
+      fingerprint_category_in: ["llm_api"]
+      has_unauthenticated_endpoints: true
+    risk_level: "critical"
+    exposure_score: 1.0
+    exploitability_status: "reproducible"
+    control_gap_score: 1.0
+    remediation:
+      - "限制网络访问，仅允许可信 IP"
+      - "强制启用 API Key 认证"
+      - "启用请求速率限制"
+
+  - rule_id: "exposed_api_high"
+    name: "Agent 框架/应用未认证暴露"
+    finding_type: "exposed_api"
+    conditions:
+      fingerprint_category_in: ["agent_framework", "agent_application", "mcp_server", "agent_gateway"]
+      has_unauthenticated_endpoints: true
+    risk_level: "high"
+    exposure_score: 0.75
+    exploitability_status: "plausible"
+    control_gap_score: 0.75
+    remediation:
+      - "收紧 API 访问控制"
+      - "启用认证机制"
+      - "审计敏感端点调用日志"
+
+  # --- info_leak ---
+  - rule_id: "info_leak_version"
+    name: "版本信息泄露"
+    finding_type: "info_leak"
+    conditions:
+      feature_patterns:
+        - feature_type: "http_header"
+          key_pattern: "Server"
+          version_regex: true
+        - feature_type: "http_header"
+          key_pattern: "X-Powered-By"
+    risk_level: "low"
+    exposure_score: 0.50
+    exploitability_status: "theoretical"
+    control_gap_score: 0.50
+    remediation:
+      - "移除或混淆 Server/X-Powered-By 头"
+
+  - rule_id: "info_leak_debug"
+    name: "调试信息泄露"
+    finding_type: "info_leak"
+    conditions:
+      feature_patterns:
+        - feature_type: "http_body"
+          value_contains_any: ["traceback", "stack trace", "debug=true", "/debug/", "Exception"]
+        - feature_type: "error_message"
+    risk_level: "medium"
+    exposure_score: 0.75
+    exploitability_status: "plausible"
+    control_gap_score: 0.75
+    remediation:
+      - "关闭调试模式"
+      - "配置自定义错误页面"
+      - "禁止在生产环境输出堆栈信息"
+
+  # --- misconfiguration ---
+  - rule_id: "misconfiguration_cors"
+    name: "CORS 全开"
+    finding_type: "misconfiguration"
+    conditions:
+      feature_patterns:
+        - feature_type: "http_header"
+          key: "Access-Control-Allow-Origin"
+          value_equals: "*"
+    risk_level: "medium"
+    exposure_score: 0.75
+    exploitability_status: "plausible"
+    control_gap_score: 0.50
+    remediation:
+      - "限制 CORS AllowOrigin 为可信域名"
+
+  - rule_id: "misconfiguration_http_sensitive"
+    name: "HTTP 明文传输敏感 API"
+    finding_type: "misconfiguration"
+    conditions:
+      protocol_is: "http"
+      path_matches_any: ["/api/", "/v1/", "/v2/"]
+    risk_level: "medium"
+    exposure_score: 0.75
+    exploitability_status: "plausible"
+    control_gap_score: 0.50
+    remediation:
+      - "启用 HTTPS"
+      - "强制 HTTP → HTTPS 重定向"
+
+  # --- weak_auth ---
+  - rule_id: "weak_auth_basic"
+    name: "使用弱认证 (Basic Auth)"
+    finding_type: "weak_auth"
+    conditions:
+      feature_patterns:
+        - feature_type: "http_header"
+          key: "WWW-Authenticate"
+          value_contains: "Basic"
+    risk_level: "medium"
+    exposure_score: 0.50
+    exploitability_status: "plausible"
+    control_gap_score: 0.50
+    remediation:
+      - "升级为 Token/Bearer 认证"
+      - "确保使用 HTTPS 传输"
+
+  # --- unauthorized_access ---
+  - rule_id: "unauthorized_sensitive_endpoint"
+    name: "敏感端点未授权访问"
+    finding_type: "unauthorized_access"
+    conditions:
+      sensitive_paths: ["/api/v1/flows", "/api/tags", "/api/agent/status", "/api/models", "/api/v1/models"]
+      has_unauthenticated_endpoints: true
+    risk_level: "high"
+    exposure_score: 0.75
+    exploitability_status: "reproducible"
+    control_gap_score: 1.0
+    remediation:
+      - "为敏感端点添加认证"
+      - "实施最小权限原则"
+      - "启用访问审计日志"

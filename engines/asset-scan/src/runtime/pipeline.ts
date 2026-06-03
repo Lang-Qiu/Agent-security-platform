@@ -42,7 +42,8 @@ type ClassificationServiceLike = {
         originalTargetUrl: string,
         context: ScanContext,
         matches: FingerprintMatchItem[],
-        endpoints: FeatureData["endpoints"]
+        endpoints: FeatureData["endpoints"],
+        features?: FeatureData["features"]
     ) => Partial<AssetScanResult>;
 };
 
@@ -71,13 +72,14 @@ export class AssetScanPipeline {
     constructor(workspaceRoot: string, dependencies?: Partial<AssetScanPipelineDependencies>) {
         const probeRules = resolve(workspaceRoot, "engines/asset-scan/rules/probes.v2.yaml");
         const fingerprintRules = resolve(workspaceRoot, "engines/asset-scan/rules/fingerprints.v2.yaml");
+        const riskRules = resolve(workspaceRoot, "engines/asset-scan/rules/risk-rules.v1.yaml");
 
         this.discoveryService = dependencies?.discoveryService ?? new AssetDiscoveryService();
         this.portScanService = dependencies?.portScanService ?? new PortScanService();
         this.protocolIdentificationService = dependencies?.protocolIdentificationService ?? new ProtocolIdentificationService();
         this.probeService = dependencies?.probeService ?? new ProbeService(probeRules);
         this.fingerprintService = dependencies?.fingerprintService ?? new FingerprintService(fingerprintRules);
-        this.classificationService = dependencies?.classificationService ?? new ClassificationService();
+        this.classificationService = dependencies?.classificationService ?? new ClassificationService(riskRules);
     }
 
     public async run(targetUrl: string, options?: AssetScanPipelineRunOptions): Promise<Partial<AssetScanResult>> {
@@ -143,7 +145,7 @@ export class AssetScanPipeline {
         }
 
         const matches = this.fingerprintService.evaluate(featureData);
-        return this.classificationService.buildResult(targetUrl, context, matches, featureData.endpoints);
+        return this.classificationService.buildResult(targetUrl, context, matches, featureData.endpoints, featureData.features);
     }
 
     private selectAsset(assets: Asset[], hostname: string): Asset | undefined {

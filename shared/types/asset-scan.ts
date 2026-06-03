@@ -14,6 +14,45 @@ export type FrameworkType = "langchain" | "llamaindex" | "autogen" | "haystack" 
 export type FindingType = "unauthorized_access" | "info_leak" | "misconfiguration" | "weak_auth" | "exposed_api";
 export type MatchOperator = "equals" | "contains" | "regex" | "in" | "has_key";
 
+// --- 风险评估扩展类型 ---
+/** 权限等级 L0-L8 */
+export type PrivilegeLevel = "L0" | "L1" | "L2" | "L3" | "L4" | "L5" | "L6" | "L7" | "L8";
+
+/** 可利用性状态 */
+export type ExploitabilityStatus = "none" | "theoretical" | "plausible" | "reproducible" | "deterministic";
+
+/** 风险维度分数 */
+export interface RiskDimensionScores {
+    exposure: number;          // 0.00 - 1.00
+    exploitability: number;    // 0.00 - 1.00
+    privilege_impact: number;  // 0.00 - 1.00
+    path_reachability: number; // 0.00 - 1.00
+    control_gap: number;       // 0.00 - 1.00
+}
+
+/** 最高权限评估 */
+export interface MaxPrivilegeAssessment {
+    level: PrivilegeLevel;
+    score: number;             // 0-10
+    identity_scope: string;    // e.g. "agent-runtime", "browser-session"
+    blast_radius: string;      // e.g. "单 Agent", "用户会话", "内网一跳"
+}
+
+/** 可利用性评估 */
+export interface ExploitabilityAssessment {
+    status: ExploitabilityStatus;
+    preconditions: string[];   // 前置条件列表
+    control_gaps: string[];    // 缺失的控制措施
+}
+
+/** 暴露面评估 */
+export interface ExposureAssessment {
+    reachable_from: string[];  // e.g. ["user_prompt", "plugin_input", "public"]
+    auth_required: boolean;
+    cross_boundary: boolean;
+    notes: string;
+}
+
 // --- Step 1 ~ 3 输入输出契约 ---
 export interface DiscoveryInput {
     seed: string[];
@@ -135,9 +174,16 @@ export interface Finding {
     title: string;
     risk_level: RiskLevel;
     reason: string;
-    evidence: FindingEvidence[];    
+    evidence: FindingEvidence[];
     related_fingerprints: string[];
-    recommendation: string;  
+    recommendation: string;
+
+    // === 风险评估扩展字段 ===
+    exposure?: ExposureAssessment;
+    exploitability?: ExploitabilityAssessment;
+    max_privilege?: MaxPrivilegeAssessment;
+    risk_dimensions?: RiskDimensionScores;
+    composite_risk_score?: number;  // 0-100
 }
 
 export interface AssetScanResult {
@@ -189,4 +235,9 @@ export interface AssetScanResult {
 
     // 平台执行治理快照与中断语义
     execution_context?: AssetScanExecutionContext;
+
+    // === 风险评估扩展字段 ===
+    overall_risk_score?: number;           // 0-100 复合总分
+    overall_risk_level?: RiskLevel;        // 基于总分映射的等级
+    max_privilege?: MaxPrivilegeAssessment; // 全局最高权限评估
 }

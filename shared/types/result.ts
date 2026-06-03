@@ -1,4 +1,5 @@
 import type { EngineType, RiskLevel, TaskStatus, TaskTarget, TaskType } from "./task.ts";
+import type { MaxPrivilegeAssessment } from "./asset-scan.ts";
 import type { SkillsStaticResultDetails } from "./skills-static-result-details.ts";
 
 export type AssetScanInterruptionReason = "none" | "budget" | "timeout" | "manual_stop";
@@ -30,6 +31,11 @@ export interface AssetScanResultDetails {
   auth_detected?: boolean;
   findings?: unknown[];
   execution_context?: AssetScanExecutionContext;
+
+  // === 风险评估扩展字段 ===
+  overall_risk_score?: number;
+  overall_risk_level?: RiskLevel;
+  max_privilege?: MaxPrivilegeAssessment;
 }
 
 export type StaticAnalysisResultDetails = SkillsStaticResultDetails;

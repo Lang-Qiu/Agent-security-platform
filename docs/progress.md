@@ -10,6 +10,27 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-06-03 - REQ-ASSET-SCAN-RISK-001 asset-scan 引擎多维度风险评估深化（阶段一）
+
+- requirement: asset-scan 引擎多维度风险评估深化（阶段一）
+- scope:
+  - 扩展 `shared/types/asset-scan.ts`：新增 PrivilegeLevel、ExploitabilityStatus、RiskDimensionScores、MaxPrivilegeAssessment、ExploitabilityAssessment、ExposureAssessment 类型；扩展 Finding 和 AssetScanResult 接口
+  - 新建 `engines/asset-scan/rules/risk-rules.v1.yaml`：8 条风险推断规则 + 权限映射表 + 评分权重
+  - 重构 `engines/asset-scan/src/runtime/classification.service.ts`：YAML 驱动的多规则推断引擎 + 复合评分 + 权限映射
+  - 更新 `engines/asset-scan/src/runtime/pipeline.ts`：传递 risk rules 路径和 features
+  - 扩展 `shared/types/result.ts`：AssetScanResultDetails 新增 overall_risk_score、overall_risk_level、max_privilege
+  - 更新 `engines/asset-scan/src/runtime/run-task.ts` 和 `engines/asset-scan/src/bridge/scan-task.ts`：透传新字段
+- tests added:
+  - `engines/asset-scan/tests/risk-classification.spec.ts`（16 个测试用例）
+  - 覆盖：5 种 FindingType 触发、L0-L8 权限映射、复合风险评分、五维分数验证
+- test result: 16 pass, 0 fail
+- docs updated:
+  - `docs/sprint-current.md`（更新为 REQ-ASSET-SCAN-RISK-001）
+  - `docs/progress.md`
+  - `docs/asset-scan-深化拓展-阶段一实现计划.md`
+- current conclusion: 阶段一完成，后端引擎已具备多维度风险评估能力
+- next blocker: 阶段二需引入外部扫描器（Gitleaks/Trivy/Semgrep），需确认依赖接入方式
+
 ## 2026-05-28 - 阶段总结报告提交版整理（纯文档）
 - requirement: 整合现有阶段性报告与 FOFA/Ollama 分层扫描补充说明，形成可提交给老师的阶段总结报告
 - scope:

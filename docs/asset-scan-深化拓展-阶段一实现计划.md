@@ -322,6 +322,8 @@ rules:
 
 在 `ClassificationService` 构造函数中加载此 YAML 文件（与 ProbeService/FingerprintService 模式一致）。
 
+---
+
 ### Step 3: 重构 `classification.service.ts` — 多规则推断 + 复合评分
 
 将 `inferFindings()` 从单规则改为**YAML 驱动的策略链模式**，每条规则独立评估，可产生多个 findings。
@@ -398,24 +400,6 @@ private calculateCompositeScore(
 }
 ```
 
----
-
-### Step 4: 更新 `buildResult()` 组装逻辑
-
-新增私有方法：
-
-```typescript
-private calculateCompositeScore(finding: Finding): number {
-  // FinalRisk = 100 × (
-  //   0.20 × ExposureScore +
-  //   0.25 × ExploitabilityScore +
-  //   0.30 × PrivilegeImpactScore +
-  //   0.15 × PathReachabilityScore +
-  //   0.10 × ControlGapScore
-  // )
-}
-```
-
 各维度取值逻辑：
 
 | 维度 | 取值规则 |
@@ -437,7 +421,7 @@ private calculateCompositeScore(finding: Finding): number {
 
 ---
 
-### Step 5: 更新 `buildResult()` 组装逻辑
+### Step 4: 更新 `buildResult()` 组装逻辑
 
 在 `buildResult()` 中：
 1. 调用新的 `evaluateRiskRules()` 替代原有 `inferFindings()`
@@ -448,7 +432,7 @@ private calculateCompositeScore(finding: Finding): number {
 
 ---
 
-### Step 6: 更新结果类型 (`shared/types/result.ts`)
+### Step 5: 更新结果类型 (`shared/types/result.ts`)
 
 扩展 `AssetScanResultDetails`：
 
@@ -474,7 +458,7 @@ export interface AssetScanResultDetails {
 
 ---
 
-### Step 7: 适配后端 (`task-engine.service.ts`)
+### Step 6: 适配后端 (`task-engine.service.ts`)
 
 `deriveAssetScanRiskSummary()` 已有逻辑按 `finding.risk_level` 计数，无需改动——新增的 findings 会自动被计入。
 

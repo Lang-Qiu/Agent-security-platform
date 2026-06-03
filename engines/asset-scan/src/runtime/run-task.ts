@@ -87,7 +87,10 @@ export async function runAssetScanTask(task: Task, options?: RunAssetScanTaskOpt
             fingerprints: pipelineResult.fingerprints || {},
             inferred_attributes: pipelineResult.inferred_attributes || {},
             findings: pipelineResult.findings || [],
-            execution_context: pipelineResult.execution_context
+            execution_context: pipelineResult.execution_context,
+            overall_risk_score: pipelineResult.overall_risk_score,
+            overall_risk_level: pipelineResult.overall_risk_level,
+            max_privilege: pipelineResult.max_privilege
         };
 
         return finalResult;
