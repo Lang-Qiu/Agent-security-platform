@@ -22,6 +22,15 @@ export type PortscanCommandRunner = {
   }>;
 };
 
+export type PortscanHttpProbeResult = {
+  ok: boolean;
+  status: number;
+  body: string;
+  error?: string;
+};
+
+export type PortscanHttpProbe = (url: string, timeoutMs: number) => Promise<PortscanHttpProbeResult>;
+
 export type FofaPortscanWorkflowOutput = {
   summary: {
     total_targets: number;
@@ -71,12 +80,62 @@ function detectOpenPortFromNmapOpenCheck(output: string, sourcePort: number): bo
   return pattern.test(output);
 }
 
+function buildApiTagsProbeUrl(targetValue: string): string | null {
+  try {
+    const parsed = new URL(targetValue);
+    parsed.pathname = "/api/tags";
+    parsed.search = "";
+    parsed.hash = "";
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function detectOllamaFromApiTagsBody(body: string): boolean {
+  const lower = body.toLowerCase();
+  return lower.includes('"models"') || lower.includes("ollama");
+}
+
+async function defaultHttpProbe(url: string, timeoutMs: number): Promise<PortscanHttpProbeResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      signal: controller.signal,
+      headers: {
+        accept: "application/json"
+      }
+    });
+    const body = await response.text();
+
+    return {
+      ok: response.ok,
+      status: response.status,
+      body
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 0,
+      body: "",
+      error: error instanceof Error ? error.message : String(error)
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function runFofaPortscanWorkflow(options: {
   targets: PortscanWorkflowTarget[];
   outputDir: string;
   runner: PortscanCommandRunner;
   naabuTimeoutMs?: number;
   nmapTimeoutMs?: number;
+  enableHttpProbeFallback?: boolean;
+  httpProbe?: PortscanHttpProbe;
 }): Promise<FofaPortscanWorkflowOutput> {
   // 三层输出模型:
   // 1) exposureCandidates: 进入复核流程的 FOFA 候选。
@@ -89,6 +148,9 @@ export async function runFofaPortscanWorkflow(options: {
   let naabuSuccessTargets = 0;
   let nmapAttemptedTargets = 0;
   let failedCount = 0;
+  let skipNaabuDueToRunnerInitFailure = false;
+  const httpProbe = options.httpProbe ?? defaultHttpProbe;
+  const enableHttpProbeFallback = options.enableHttpProbeFallback ?? false;
 
   for (const target of options.targets) {
     const now = new Date().toISOString();
@@ -106,11 +168,17 @@ export async function runFofaPortscanWorkflow(options: {
       requested_by: target.requested_by
     });
 
-    const naabuExecution = await options.runner.run(
-      "naabu",
-      ["-host", target.source_ip, "-silent"],
-      options.naabuTimeoutMs ?? 12_000
-    );
+    const naabuExecution = skipNaabuDueToRunnerInitFailure
+      ? {
+          stdout: "",
+          stderr: "[naabu skipped] previous ipinfo runner init failure detected",
+          exitCode: 1
+        }
+      : await options.runner.run(
+          "naabu",
+          ["-host", target.source_ip, "-silent"],
+          options.naabuTimeoutMs ?? 12_000
+        );
 
     if (naabuExecution.exitCode === 0) {
       naabuSuccessTargets += 1;
@@ -123,7 +191,8 @@ export async function runFofaPortscanWorkflow(options: {
     if (!isPortOpen && naabuExecution.exitCode !== 0) {
       const naabuFailureOutput = `${naabuExecution.stdout}\n${naabuExecution.stderr}`;
 
-      if (isNaabuRunnerInitFailure(naabuFailureOutput)) {
+      if (skipNaabuDueToRunnerInitFailure || isNaabuRunnerInitFailure(naabuFailureOutput)) {
+        skipNaabuDueToRunnerInitFailure = true;
         const openCheckExecution = await options.runner.run(
           "nmap",
           ["-Pn", "-p", String(target.source_port), "--open", target.source_ip],
@@ -175,6 +244,7 @@ export async function runFofaPortscanWorkflow(options: {
     );
 
     const nmapOutput = nmapExecution.stdout || nmapExecution.stderr;
+    const apiTagsProbeUrl = buildApiTagsProbeUrl(target.target_value);
 
     rawEvidence.push({
       task_id: target.task_id,
@@ -189,14 +259,43 @@ export async function runFofaPortscanWorkflow(options: {
       }
     });
 
+    const verifyWithHttpProbe = async (): Promise<boolean> => {
+      if (!enableHttpProbeFallback || !apiTagsProbeUrl) {
+        return false;
+      }
+
+      const probeResult = await httpProbe(apiTagsProbeUrl, options.nmapTimeoutMs ?? 15_000);
+
+      if (!probeResult.ok || probeResult.status !== 200 || !detectOllamaFromApiTagsBody(probeResult.body)) {
+        return false;
+      }
+
+      verifiedFingerprints.push({
+        sample_id: `${target.probe_target_id}.${target.task_id}`,
+        target_id: `${target.source_ip}:${target.source_port}`,
+        request_summary: `${target.protocol} ${target.target_value}`,
+        response_status: probeResult.status,
+        response_headers: {},
+        response_body_excerpt: probeResult.body.slice(0, 512),
+        source: "fofa_scan",
+        collected_at: new Date().toISOString()
+      });
+
+      return true;
+    };
+
     if (nmapExecution.exitCode !== 0) {
-      // nmap 失败仍保留原始证据，但不进入 verified。
-      failedCount += 1;
+      // nmap 失败时，允许用 /api/tags 做一次低成本补证。
+      const fallbackVerified = await verifyWithHttpProbe();
+      if (!fallbackVerified) {
+        failedCount += 1;
+      }
       continue;
     }
 
     if (!detectOllamaFingerprint(nmapOutput)) {
-      // nmap 虽执行成功但 Ollama 信号不足时，保持为未验证候选。
+      // nmap 成功但证据不足时，同样允许 /api/tags 补证。
+      await verifyWithHttpProbe();
       continue;
     }
 

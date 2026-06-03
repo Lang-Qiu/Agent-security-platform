@@ -183,6 +183,8 @@ export async function runFofaMainlinePortscan(options: {
   requestedBy: string;
   naabuTimeoutMs?: number;
   nmapTimeoutMs?: number;
+  enableHttpProbeFallback?: boolean;
+  httpProbeTimeoutMs?: number;
   runner?: PortscanCommandRunner;
 }) {
   const raw = await readFile(options.taskScanFile, "utf8");
@@ -199,7 +201,8 @@ export async function runFofaMainlinePortscan(options: {
     outputDir: options.outputDir,
     runner,
     naabuTimeoutMs: options.naabuTimeoutMs,
-    nmapTimeoutMs: options.nmapTimeoutMs
+    nmapTimeoutMs: options.nmapTimeoutMs,
+    enableHttpProbeFallback: options.enableHttpProbeFallback
   });
 
   return {
@@ -217,6 +220,7 @@ async function main() {
       requestedBy: { type: "string", default: "fofa-dev-script" },
       naabuTimeoutMs: { type: "string", default: "12000" },
       nmapTimeoutMs: { type: "string", default: "15000" },
+      enableHttpProbeFallback: { type: "string", default: "true" },
       help: { type: "boolean", short: "h" }
     }
   });
@@ -230,7 +234,8 @@ async function main() {
       "  --probeTargetId <id>       Probe target id. Default: ollama",
       "  --requestedBy <name>       requested_by for workflow targets. Default: fofa-dev-script",
       "  --naabuTimeoutMs <ms>      naabu timeout. Default: 12000",
-      "  --nmapTimeoutMs <ms>       nmap timeout. Default: 15000"
+      "  --nmapTimeoutMs <ms>       nmap timeout. Default: 15000",
+      "  --enableHttpProbeFallback <bool>   Verify via /api/tags when nmap evidence is weak. Default: true"
     ].join("\n"));
     return;
   }
@@ -241,7 +246,8 @@ async function main() {
     probeTargetId: values.probeTargetId,
     requestedBy: values.requestedBy,
     naabuTimeoutMs: Number(values.naabuTimeoutMs),
-    nmapTimeoutMs: Number(values.nmapTimeoutMs)
+    nmapTimeoutMs: Number(values.nmapTimeoutMs),
+    enableHttpProbeFallback: String(values.enableHttpProbeFallback).toLowerCase() !== "false"
   });
 
   console.log(JSON.stringify(result, null, 2));

@@ -131,11 +131,12 @@
 
 ## 8. 下一步
 
-1. 恢复 Ollama 为唯一主线，继续以 size=50 作为稳定基线对照。
-2. 只围绕 Ollama 继续做候选验证、强正/强负样本补采与入库。
-3. 结合本轮三目标旁线结果，收紧 Ollama query 与复核条件，优先提高真命中率。
-4. 每轮必须产出 query 模板版本、batch-report、样本分层结果。
-5. Langflow / AutoGPT / OpenClaw 暂停继续推进，除非后续再次明确要求。
+1. 先执行 timeout 定向重试治理（只重试 timeout 桶，不做全量重跑）。
+2. 固化双档参数：快扫（短超时）与复核（长超时）并行保留。
+3. 只围绕 Ollama 继续做 query A/B 收敛与候选验证，优先提高真命中率。
+4. 在可达但非 Ollama 响应目标中补采 strong_negative，并保持运输失败不入库。
+5. 每轮必须产出 query 模板版本、batch-report、样本分层结果。
+6. Langflow / AutoGPT / OpenClaw 暂停继续推进，除非后续再次明确要求。
 
 ### 8.1 Ollama 受控扩样执行方案（先质量后规模）
 
@@ -191,6 +192,30 @@
 - 新增 strong_negative 样本形成可用规模；
 - 升级门禁结论写入 `docs/progress.md`。
 
+最新执行检查点（2026-05-25）：
+- round1（A vs B=protocol=http）：
+  - `docs/temp/fofa-ollama-query-ab-compare-round10.json`
+  - 结果：`query_b fetched=0`，winner=`query_a`
+- round2（A vs B2=port=11434）：
+  - `docs/temp/fofa-ollama-query-ab-compare-round11.json`
+  - 结果：`query_a high_rate=75%`，`query_b2 high_rate=90%`，winner=`query_b2`
+- round3（A vs B2=port=11434）：
+  - `docs/temp/fofa-ollama-query-ab-compare-round12.json`
+  - 结果：`query_a high_rate=65%`，`query_b2 high_rate=75%`，winner=`query_b2`
+- strong_negative 补采（跨目标 round12）：
+  - `docs/temp/fofa-ollama-negative-harvest-round12-cross-target.json`
+  - 结果：`strong_negative=14`，`transport_failure=16`
+- 固定评测集（v1）：
+  - `docs/temp/fofa-ollama-eval-benchmark-v1.json`
+  - 结果：`positive=4`、`negative=10`、`transport_failure=10`
+- round13（query_b2, size=100 升级轮）：
+  - `docs/temp/fofa-ollama-query-ab-b2-round13-size100-compare.json`
+  - 结果：`finished=100`、`high=94`、`high_rate=94%`、`keep_size_100=true`
+- round14（query_b2, size=100 稳定性复测）：
+  - `docs/temp/fofa-ollama-query-ab-b2-round14-size100-compare.json`
+  - 结果：`finished=100`、`high=92`、`high_rate=92%`、`keep_size_100=true`
+- 当前收敛建议：`query_b2` 作为默认提纯模板，`query_a` 作为召回基线与回退模板并行保留。
+
 ### 8.3 naabu+nmap 接入主线脚本试运行计划（size=50）
 
 目标：
@@ -233,6 +258,37 @@
 - 脚本可执行并产出 workflow summary；
 - 至少记录 `total_targets`、`naabu_success_targets`、`nmap_attempted_targets`、`verified_count`；
 - 失败场景具备可审计输出（原始命令输出和退出码）。
+
+### 8.4 timeout 定向重试治理计划（按顺序第一优先）
+
+目标：
+- 以最小执行成本降低 timeout 占比，并验证 `verified_count` 是否可稳定提升。
+
+输入：
+- 基线批次：`docs/temp/fofa-ollama-naabu-nmap-smoke10-reachable-workflow/`。
+- timeout 桶：`docs/temp/fofa-ollama-naabu-nmap-smoke10-reachable-failure-buckets.json` 中 `bucket=timeout` 的目标。
+
+执行顺序：
+1. 从 timeout 桶提取目标，生成重试输入文件（仅包含 timeout 目标）。
+2. 使用“复核档参数”执行一次重试：
+  - `naabuTimeoutMs` 维持当前值；
+  - `nmapTimeoutMs` 使用长超时档（不低于 20s）；
+  - `enableHttpProbeFallback=true`。
+3. 产出重试批次的 `workflow-summary.json` 与 `raw-evidence.json`。
+4. 生成“重试前后对比”报告，至少比较：
+  - `verified_count` 变化；
+  - timeout 数量变化；
+  - 单目标重试转化率（timeout -> verified）。
+
+产物路径（本轮固定）：
+- 重试输入：`docs/temp/fofa-ollama-naabu-nmap-smoke10-timeout-retry.json`
+- 重试输出目录：`docs/temp/fofa-ollama-naabu-nmap-smoke10-timeout-retry-workflow/`
+- 对比报告：`docs/temp/fofa-ollama-naabu-nmap-smoke10-timeout-retry-compare.json`
+
+验收标准（本小节 DoD）：
+- 成功完成 1 轮 timeout 定向重试并产出上述 3 类文件。
+- 对比报告中明确给出“是否建议将定向重试纳入默认流程”的结论。
+- 若 timeout 仍无明显下降（下降 < 20%），则保持双档参数并转入 query A/B 收敛，不继续扩大样本规模。
 
 ## 9. 非 Ollama Query 设计计划（旁线记录）
 
