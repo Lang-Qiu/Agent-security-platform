@@ -6,10 +6,12 @@ import type {
     DiscoveryInput,
     FeatureData,
     FingerprintMatchItem,
+    Finding,
     PortInfo,
     ProtocolInfo,
     ScanContext
 } from "../../../../shared/types/asset-scan.ts";
+import type { ScannerRunner } from "../scanners/runner.ts";
 import { ProbeService } from "./asset-probe.service.ts";
 import { FingerprintService } from "./asset-fingerprint.service.ts";
 import { ClassificationService } from "./classification.service.ts";
@@ -54,6 +56,7 @@ export interface AssetScanPipelineDependencies {
     probeService: ProbeServiceLike;
     fingerprintService: FingerprintServiceLike;
     classificationService: ClassificationServiceLike;
+    scannerRunner?: ScannerRunner;
 }
 
 export interface AssetScanPipelineRunOptions {
@@ -68,6 +71,7 @@ export class AssetScanPipeline {
     private readonly probeService: ProbeServiceLike;
     private readonly fingerprintService: FingerprintServiceLike;
     private readonly classificationService: ClassificationServiceLike;
+    private readonly scannerRunner?: ScannerRunner;
 
     constructor(workspaceRoot: string, dependencies?: Partial<AssetScanPipelineDependencies>) {
         const probeRules = resolve(workspaceRoot, "engines/asset-scan/rules/probes.v2.yaml");
@@ -80,6 +84,7 @@ export class AssetScanPipeline {
         this.probeService = dependencies?.probeService ?? new ProbeService(probeRules);
         this.fingerprintService = dependencies?.fingerprintService ?? new FingerprintService(fingerprintRules);
         this.classificationService = dependencies?.classificationService ?? new ClassificationService(riskRules);
+        this.scannerRunner = dependencies?.scannerRunner;
     }
 
     public async run(targetUrl: string, options?: AssetScanPipelineRunOptions): Promise<Partial<AssetScanResult>> {
@@ -144,8 +149,23 @@ export class AssetScanPipeline {
             });
         }
 
+        // === 阶段二：外部扫描器增强 ===
+        let scannerMergedFindings: Finding[] = [];
+        if (this.scannerRunner) {
+            const scannerOutput = await this.scannerRunner.runAll(targetUrl, featureData, context);
+            featureData.features.push(...scannerOutput.mergedFeatures);
+            scannerMergedFindings = scannerOutput.mergedFindings;
+        }
+
         const matches = this.fingerprintService.evaluate(featureData);
-        return this.classificationService.buildResult(targetUrl, context, matches, featureData.endpoints, featureData.features);
+        const result = this.classificationService.buildResult(targetUrl, context, matches, featureData.endpoints, featureData.features);
+
+        // 合并外部扫描器直接产出的 findings
+        if (scannerMergedFindings.length > 0) {
+            result.findings = [...(result.findings ?? []), ...scannerMergedFindings];
+        }
+
+        return result;
     }
 
     private selectAsset(assets: Asset[], hostname: string): Asset | undefined {

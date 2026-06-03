@@ -7,7 +7,12 @@ export type ProbeType = "port_exposure" | "web_root" | "api_endpoint" | "rpc_ser
 export type Protocol = "http" | "https" | "tcp" | "udp" | "grpc" | "websocket";
 export type SubProtocol = "http/1.1" | "h2" | "grpc" | "ws" | "wss";
 export type ServiceType = "nginx" | "apache" | "uvicorn" | "gunicorn" | "nodejs" | "fastapi" | "flask" | "ollama" | "openclaw" | "mcp" | "unknown";
-export type FeatureType = "http_header" | "http_body" | "http_status" | "api_path" | "response_time" | "tls_cert" | "banner" | "favicon_hash" | "html_title" | "cookie" | "js_variable" | "error_message" | "open_port" | "ws_message" | "json_key";
+export type FeatureType = "http_header" | "http_body" | "http_status" | "api_path" | "response_time" | "tls_cert" | "banner" | "favicon_hash" | "html_title" | "cookie" | "js_variable" | "error_message" | "open_port" | "ws_message" | "json_key"
+  // === 阶段二：外部扫描器 ===
+  | "secret_leak"        // Gitleaks: 泄露的密钥/Token
+  | "cve_vulnerability"  // Trivy: CVE 漏洞
+  | "misconfig_finding"  // Trivy: 配置错误
+  | "dependency_risk";   // Trivy: 有风险的依赖
 export type FingerprintCategory = "llm_api" | "agent_framework" | "web_framework" | "middleware" | "cloud_service" | "agent_gateway" | "mcp_server" | "agent_application";
 export type ModelProvider = "openai" | "azure_openai" | "anthropic" | "google" | "local" | "unknown";
 export type FrameworkType = "langchain" | "llamaindex" | "autogen" | "haystack" | "custom" | "unknown" | "langflow" | "autogpt" | "dify" | "anythingllm";

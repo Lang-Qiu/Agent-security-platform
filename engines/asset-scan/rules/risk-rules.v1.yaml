@@ -211,3 +211,69 @@ rules:
       - "为敏感端点添加认证"
       - "实施最小权限原则"
       - "启用访问审计日志"
+
+  # ============================================================
+  # 阶段二：基于外部扫描器的规则
+  # ============================================================
+
+  # --- CVE 漏洞 ---
+  - rule_id: "cve_critical"
+    name: "关键 CVE 漏洞"
+    finding_type: "unauthorized_access"
+    conditions:
+      feature_patterns:
+        - feature_type: "cve_vulnerability"
+          value_contains_any: ["CRITICAL"]
+    risk_level: "critical"
+    exposure_score: 0.75
+    exploitability_status: "reproducible"
+    control_gap_score: 1.0
+    remediation:
+      - "升级受影响依赖到修复版本"
+      - "若无修复版本，评估缓解措施或替换依赖"
+
+  - rule_id: "cve_high"
+    name: "高危 CVE 漏洞"
+    finding_type: "unauthorized_access"
+    conditions:
+      feature_patterns:
+        - feature_type: "cve_vulnerability"
+          value_contains_any: ["HIGH"]
+    risk_level: "high"
+    exposure_score: 0.50
+    exploitability_status: "plausible"
+    control_gap_score: 0.75
+    remediation:
+      - "升级受影响依赖到修复版本"
+      - "评估漏洞在当前上下文中的可利用性"
+
+  # --- 泄露密钥 ---
+  - rule_id: "secret_api_key"
+    name: "API Key 泄露"
+    finding_type: "unauthorized_access"
+    conditions:
+      feature_patterns:
+        - feature_type: "secret_leak"
+          value_contains_any: ["api-key", "token", "secret", "password", "Bearer", "sk-", "AKIA"]
+    risk_level: "critical"
+    exposure_score: 1.0
+    exploitability_status: "deterministic"
+    control_gap_score: 1.0
+    remediation:
+      - "立即轮换泄露的凭据"
+      - "从代码/配置中移除硬编码密钥"
+      - "使用环境变量或密钥管理服务"
+
+  - rule_id: "secret_generic"
+    name: "通用密钥泄露"
+    finding_type: "info_leak"
+    conditions:
+      feature_patterns:
+        - feature_type: "secret_leak"
+    risk_level: "high"
+    exposure_score: 0.75
+    exploitability_status: "plausible"
+    control_gap_score: 0.75
+    remediation:
+      - "检查泄露凭据的权限范围"
+      - "轮换受影响凭据"

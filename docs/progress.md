@@ -10,6 +10,28 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-06-03 - REQ-ASSET-SCAN-SCANNER-002 asset-scan 引擎外部扫描器集成（阶段二）
+
+- requirement: asset-scan 引擎外部扫描器集成（阶段二）
+- scope:
+  - 新增 `shared/types/asset-scan.ts` 中的 FeatureType 值（secret_leak, cve_vulnerability, misconfig_finding, dependency_risk）
+  - 新建 `engines/asset-scan/src/scanners/` 目录：scanner.interface.ts、gitleaks.adapter.ts、trivy.adapter.ts、runner.ts、version-check.ts
+  - 修改 `pipeline.ts`：在 Step 4 和 Step 5 之间插入 ScannerRunner 增强
+  - 扩展 `risk-rules.v1.yaml`：新增 4 条基于扫描器输出的风险规则（cve_critical、cve_high、secret_api_key、secret_generic）
+  - 版本锁定机制（gitleaks 8.18.4、trivy 0.52.0）
+- tests added:
+  - `engines/asset-scan/tests/scanners/gitleaks-adapter.spec.ts`（12 个测试）
+  - `engines/asset-scan/tests/scanners/trivy-adapter.spec.ts`（10 个测试）
+  - `engines/asset-scan/tests/scanners/scanner-runner.spec.ts`（3 个测试）
+  - `engines/asset-scan/tests/scanners/version-check.spec.ts`（3 个测试）
+- test result: 28 pass, 0 fail（扫描器测试）+ 16 pass（阶段一回归）+ 6 pass（FOFA 回归）= 50 pass, 0 fail
+- docs updated:
+  - `docs/sprint-current.md`（更新为 REQ-ASSET-SCAN-SCANNER-002）
+  - `docs/progress.md`
+  - `docs/asset-scan-深化拓展-阶段二实现计划.md`
+- current conclusion: 阶段二完成，引擎具备外部扫描器集成能力
+- next blocker: 阶段三需引入 Promptfoo（Agent/LLM 红队）和 Neo4j（攻击路径图谱）
+
 ## 2026-06-03 - REQ-ASSET-SCAN-RISK-001 asset-scan 引擎多维度风险评估深化（阶段一）
 
 - requirement: asset-scan 引擎多维度风险评估深化（阶段一）
