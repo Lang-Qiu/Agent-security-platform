@@ -10,6 +10,26 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-06-27 - REQ-T1-SPEC-001 赛题一方向化总体设计文档
+
+- requirement: 赛题一方向化总体设计文档
+- scope:
+  - 确认采用方案 A：成果闭环优先
+  - 新增赛题一方向化 spec，映射赛题一预期成果到仓库 requirements
+  - 明确复用 `asset_scan`、`static_analysis`、`sandbox_run` 三条既有任务线，不新增第四个引擎
+  - 初始锁定三类攻击场景：prompt injection / jailbreak、tool-call hijacking、context / memory poisoning
+  - 将当前 active requirement 切换为 `REQ-T1-SPEC-001`
+- tests added: none
+- test result: not run for this doc-only change
+  - reason: 本 requirement 仅更新文档与 requirement 收敛，不修改业务逻辑，属于仓库允许的完整 TDD 例外
+  - baseline note: 新 worktree 中 `test:repo`、`test:shared`、`test:frontend` 已通过；`test:backend` 存在既有失败（asset-scan 期望漂移、本机 Semgrep Python 依赖缺 `google.protobuf`）
+- docs updated:
+  - `docs/superpowers/specs/2026-06-27-track1-agent-security-design.md`
+  - `docs/sprint-current.md`
+  - `docs/progress.md`
+- current conclusion: 赛题一方向化 requirement 已收敛为成果验收层与仓库实现层，后续应从 `REQ-T1-SCENARIO-002` 开始进入可测试用例集与场景矩阵设计
+- next blocker: 需要用户 review 并批准 written spec 后，再进入 implementation planning
+
 ## 2026-06-03 - REQ-ASSET-SCAN-SCANNER-002 asset-scan 引擎外部扫描器集成（阶段二）
 
 - requirement: asset-scan 引擎外部扫描器集成（阶段二）

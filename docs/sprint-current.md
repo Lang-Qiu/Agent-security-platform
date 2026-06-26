@@ -1,54 +1,55 @@
 # Sprint Current
 
 ## Requirement ID
-REQ-ASSET-SCAN-SCANNER-002
+REQ-T1-SPEC-001
 
 ## Requirement Name
-asset-scan 引擎外部扫描器集成（阶段二）
+赛题一方向化总体设计文档
 
 ## Background
-阶段一已完成多维度风险评估体系（YAML 驱动规则、L0-L8 权限映射、复合评分）。当前引擎仅依赖自身探针（HTTP/WS/TCP）采集特征，无法发现泄露密钥、已知 CVE 漏洞等深层风险。本 requirement 接入 Gitleaks 和 Trivy 两个外部扫描器，在远程资产发现场景下扩展证据来源。
+
+当前仓库已经具备 Agent 安全平台骨架，包含 `asset_scan`、`static_analysis`、`sandbox_run` 三条任务线，以及前后端共享任务、结果和风险摘要契约。根据《命题挑战赛赛题.pdf》，项目与赛题一“面向大模型及其应用的安全性研究”最契合。
+
+本 requirement 的目标是先完成赛题一方向化的设计和 requirement 收敛，把最终成果形态明确映射到仓库可持续演进的工程结构中，避免直接进入一次性 demo 实现。
 
 ## Goal
-- 接入 Gitleaks：扫描 HTTP 响应中的泄露密钥/Token
-- 接入 Trivy：扫描远程 URL 的已知 CVE 漏洞
-- 统一扫描器接口（IScannerAdapter），便于后续扩展
-- 扫描器输出转化为 ExtractedFeature[] + Finding[]，流入现有指纹匹配和分类引擎
+
+- 明确赛题一预期成果与本仓库现有能力的映射关系。
+- 确认采用“成果闭环优先”的方案 A。
+- 定义后续 Track 1 requirements 的实施顺序。
+- 记录 OpenClaw、攻击场景、用例集、攻击脚本、模拟业务工具、行为监督、模型过滤、监督 UI 和报告之间的边界。
 
 ## In Scope
-- 新增 `shared/types/asset-scan.ts` 中的 FeatureType 值（secret_leak, cve_vulnerability, misconfig_finding, dependency_risk）
-- 新建 `engines/asset-scan/src/scanners/` 目录：
-  - `scanner.interface.ts` — IScannerAdapter 接口 + ScannerConfig 类型
-  - `gitleaks.adapter.ts` — Gitleaks CLI 适配器（扫描 HTTP 响应文本）
-  - `trivy.adapter.ts` — Trivy CLI 适配器（扫描远程 URL）
-  - `runner.ts` — ScannerRunner 并行编排器
-- 修改 `pipeline.ts`：在 Step 4 和 Step 5 之间插入扫描器增强
-- 扩展 `risk-rules.v1.yaml`：新增基于扫描器输出的风险规则
-- 版本锁定与供应链安全（固定工具版本）
 
-## Acceptance Criteria
-- 新增测试遵循 RED -> GREEN
-- Gitleaks 适配器可从 HTTP 响应中检测泄露密钥并产出 secret_leak feature + finding
-- Trivy 适配器可扫描远程目标并产出 cve_vulnerability feature + finding
-- ScannerRunner 支持并行执行、错误容错（工具未安装时跳过）
-- 扫描器输出正确流入指纹匹配和分类引擎
-- 版本校验机制正常工作
-- `npm run test:engine:asset-scan` 全绿
+- 新增赛题一方向化 spec 文档。
+- 记录至少三类初始攻击场景：
+  - prompt injection / jailbreak
+  - tool-call hijacking
+  - context / memory poisoning
+- 复用矩阵：说明哪些赛题一成果可复用 `asset_scan`、`static_analysis`、`sandbox_run`、任务中心和前端 sandbox 页面。
+- 将当前 active requirement 切换为 `REQ-T1-SPEC-001`。
+- 更新 `docs/progress.md` 记录该 doc-only requirement。
 
 ## Out of Scope
-- 不实现 Semgrep 适配器（需要源码访问，留到仓库扫描场景）
-- 不实现 Promptfoo（Agent/LLM 红队，留到阶段三）
-- 不新增前端页面或 UI 改动
-- 不实现攻击路径图谱（Neo4j，属于阶段三）
-- 不修改现有 API 路由
+
+- 不新增业务逻辑。
+- 不新增攻击脚本。
+- 不新增模拟工具。
+- 不修改 shared/backend/frontend/engine 生产代码。
+- 不新增第四个引擎。
+- 不实现真实 OpenClaw 接入。
+
+## Acceptance Criteria
+
+- `docs/superpowers/specs/2026-06-27-track1-agent-security-design.md` 存在并覆盖 Objective、Commands、Project Structure、Code Style、Testing Strategy、Boundaries、Success Criteria、Open Questions。
+- spec 明确赛题一成果验收层和仓库实现层 requirement。
+- spec 明确采用方案 A：成果闭环优先。
+- spec 说明本 requirement 属于纯文档更新，是完整 TDD 的允许例外。
+- `docs/sprint-current.md` 只包含当前唯一 active requirement。
+- `docs/progress.md` 有本 requirement 的记录。
 
 ## Constraints / Notes
-- 严格一次只处理当前 requirement，不扩展相邻需求
-- 必须遵守 `NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST`
-- 假设 Gitleaks/Trivy 已安装在 PATH 中，未安装时自动跳过
-- 远程响应分析模式：Gitleaks 扫描 HTTP 响应文本，Trivy 扫描远程 URL
-- 工具版本固定，不使用 floating tag
-- 若发生 `node` 环境缺失，必须先 `nvm use` 再执行 backend/dev 脚本
 
-## Related Plan
-- docs/asset-scan-深化拓展-阶段二实现计划.md
+- 后续修改都在 worktree `codex/track1-requirements-spec` 上进行。
+- 后续实现每次只处理一个 requirement，并继续遵守 `NO PRODUCTION CODE WITHOUT A FAILING TEST FIRST`。
+- 当前 worktree 的后端基线存在既有失败：asset-scan 期望漂移和本机 Semgrep Python 依赖缺失；本 requirement 不修复这些问题。
