@@ -24,6 +24,7 @@ Recommended fields:
 - test result:
   - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/track1-scenario-matrix.spec.ts`: pass
   - `npm.cmd run test:repo`: pass; note that at this step the root repository gate still covers the existing 24 repository tests and the Track 1 scenario test remains covered by the focused command until Task 4 adds it to `test:repo`
+  - `git diff --check`: pass
 - docs updated:
   - `docs/sprint-current.md`
   - `docs/track1/scenario-acceptance-matrix.md`
