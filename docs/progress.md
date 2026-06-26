@@ -23,7 +23,7 @@ Recommended fields:
   - `tests/repository/track1-scenario-matrix.spec.ts`
 - test result:
   - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/track1-scenario-matrix.spec.ts`: pass
-  - `npm.cmd run test:repo`: pass; note that at this step the root repository gate still covers the existing 24 repository tests and the Track 1 scenario test remains covered by the focused command until Task 4 adds it to `test:repo`
+  - `npm.cmd run test:repo`: pass; root repository gate now includes the Track 1 scenario matrix test after `tests/repository/frontend-formatting-boundary.spec.ts`
   - `git diff --check`: pass
 - docs updated:
   - `docs/sprint-current.md`
