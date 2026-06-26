@@ -12,6 +12,7 @@ const requiredAttackClasses = new Set([
   "context_memory_poisoning"
 ]);
 
+const requiredScenarioIds = new Set(["T1-SC-001", "T1-SC-002", "T1-SC-003"]);
 const allowedPolicyActions = new Set(["allow", "deny", "ask", "alert"]);
 const placeholderPattern = new RegExp(["TB" + "D", "TO" + "DO", "FIX" + "ME", "\\?\\?\\?"].join("|"), "i");
 
@@ -77,6 +78,11 @@ test("REQ-T1-SCENARIO-002 defines the required Track 1 seed attack classes", () 
   for (const requiredClass of requiredAttackClasses) {
     assert.ok(classes.has(requiredClass), `missing required attack class ${requiredClass}`);
   }
+
+  const scenarioIds = new Set(manifest.scenarios.map((scenario) => scenario.scenario_id));
+  for (const requiredScenarioId of requiredScenarioIds) {
+    assert.ok(scenarioIds.has(requiredScenarioId), `missing required scenario id ${requiredScenarioId}`);
+  }
 });
 
 test("REQ-T1-SCENARIO-002 scenarios include safety, replay, policy, and evidence requirements", () => {
@@ -94,7 +100,15 @@ test("REQ-T1-SCENARIO-002 scenarios include safety, replay, policy, and evidence
     assert.ok(scenario.research_boundary.includes("controlled"));
     assert.ok(scenario.case_requirements.minimum_cases >= 3);
     assert.ok(scenario.case_requirements.required_case_types.length >= 3);
+    assert.equal(
+      scenario.case_requirements.expected_case_file_pattern,
+      `samples/track1/cases/${scenario.scenario_id}/*.json`
+    );
     assert.match(scenario.case_requirements.expected_case_file_pattern, /^samples\/track1\/cases\/T1-SC-\d{3}\/\*\.json$/);
+    assert.equal(
+      scenario.attack_script_requirements.entrypoint,
+      `samples/track1/attack-scripts/${scenario.scenario_id}/replay.ts`
+    );
     assert.match(scenario.attack_script_requirements.entrypoint, /^samples\/track1\/attack-scripts\/T1-SC-\d{3}\/replay\.ts$/);
     assert.ok(scenario.attack_script_requirements.required_events.includes("model_input"));
     assert.ok(scenario.attack_script_requirements.required_events.includes("tool_request"));
@@ -104,6 +118,7 @@ test("REQ-T1-SCENARIO-002 scenarios include safety, replay, policy, and evidence
     assert.ok(scenario.evidence_requirements.includes("report_evidence_ref"));
     assert.ok(scenario.report_section.startsWith("Track 1 Scenario"));
 
+    assert.ok(scenario.expected_policy_actions.length >= 1);
     for (const action of scenario.expected_policy_actions) {
       assert.ok(allowedPolicyActions.has(action), `unsupported policy action ${action}`);
     }
