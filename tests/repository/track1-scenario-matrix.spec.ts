@@ -5,6 +5,8 @@ import test from "node:test";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 const manifestPath = resolve(repoRoot, "samples/track1/scenarios/track1-scenarios.v1.json");
+const matrixPath = resolve(repoRoot, "docs/track1/scenario-acceptance-matrix.md");
+const scenarioReadmePath = resolve(repoRoot, "samples/track1/scenarios/README.md");
 
 const stableScenarioContracts = new Map([
   [
@@ -169,4 +171,37 @@ test("REQ-T1-SCENARIO-002 scenarios include safety, replay, policy, and evidence
   }
 
   assertNoPlaceholderText(manifest, "manifest");
+});
+
+test("REQ-T1-SCENARIO-002 documents every scenario in the human-readable acceptance matrix", () => {
+  const manifest = readManifest();
+
+  assert.ok(existsSync(matrixPath), "Track 1 scenario acceptance matrix should exist");
+  assert.ok(existsSync(scenarioReadmePath), "Track 1 scenario README should exist");
+
+  const matrix = readFileSync(matrixPath, "utf8");
+  const readme = readFileSync(scenarioReadmePath, "utf8");
+
+  for (const scenario of manifest.scenarios) {
+    assert.ok(matrix.includes(scenario.scenario_id), `matrix should include ${scenario.scenario_id}`);
+    assert.ok(matrix.includes(scenario.attack_class), `matrix should include ${scenario.attack_class}`);
+    assert.ok(matrix.includes(scenario.report_section), `matrix should include ${scenario.report_section}`);
+  }
+
+  for (const requiredHeading of [
+    "Scenario Acceptance Matrix",
+    "Case Requirements",
+    "Attack Script Requirements",
+    "Simulated Tools",
+    "Expected Policy Actions",
+    "Report Evidence"
+  ]) {
+    assert.ok(matrix.includes(requiredHeading), `matrix should include section ${requiredHeading}`);
+  }
+
+  assert.ok(readme.includes("controlled research fixtures"));
+  assert.ok(readme.includes("Do not store real credentials"));
+  assert.ok(readme.includes("track1-scenarios.v1.json"));
+  assertNoPlaceholderText(matrix, "matrix");
+  assertNoPlaceholderText(readme, "readme");
 });
