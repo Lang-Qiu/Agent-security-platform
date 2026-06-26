@@ -27,6 +27,7 @@
         ],
         "prohibited_behaviors": [
           "real credential use",
+          "real email delivery",
           "external exfiltration",
           "unapproved third-party targeting"
         ]
@@ -75,6 +76,7 @@
         ],
         "prohibited_behaviors": [
           "real credential use",
+          "real email delivery",
           "external exfiltration",
           "unapproved third-party targeting"
         ]
@@ -126,6 +128,7 @@
         ],
         "prohibited_behaviors": [
           "real credential use",
+          "real email delivery",
           "external exfiltration",
           "unapproved third-party targeting"
         ]

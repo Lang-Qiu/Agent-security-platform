@@ -6,14 +6,42 @@ import test from "node:test";
 const repoRoot = resolve(import.meta.dirname, "../..");
 const manifestPath = resolve(repoRoot, "samples/track1/scenarios/track1-scenarios.v1.json");
 
-const requiredAttackClasses = new Set([
-  "prompt_injection_jailbreak",
-  "tool_call_hijacking",
-  "context_memory_poisoning"
+const stableScenarioContracts = new Map([
+  [
+    "T1-SC-001",
+    {
+      attack_class: "prompt_injection_jailbreak",
+      report_section: "Track 1 Scenario 1 - Prompt Injection and Jailbreak"
+    }
+  ],
+  [
+    "T1-SC-002",
+    {
+      attack_class: "tool_call_hijacking",
+      report_section: "Track 1 Scenario 2 - Tool-Call Hijacking"
+    }
+  ],
+  [
+    "T1-SC-003",
+    {
+      attack_class: "context_memory_poisoning",
+      report_section: "Track 1 Scenario 3 - Context and Memory Poisoning"
+    }
+  ]
 ]);
 
+const requiredAttackClasses = new Set(
+  Array.from(stableScenarioContracts.values(), (scenario) => scenario.attack_class)
+);
 const requiredScenarioIds = new Set(["T1-SC-001", "T1-SC-002", "T1-SC-003"]);
+const allowedSimulatedTools = new Set(["send_email", "read_file", "write_file", "call_api"]);
 const allowedPolicyActions = new Set(["allow", "deny", "ask", "alert"]);
+const requiredProhibitedBehaviors = new Set([
+  "real credential use",
+  "external exfiltration",
+  "unapproved third-party targeting",
+  "real email delivery"
+]);
 const placeholderPattern = new RegExp(["TB" + "D", "TO" + "DO", "FIX" + "ME", "\\?\\?\\?"].join("|"), "i");
 
 interface Track1ScenarioManifest {
@@ -94,6 +122,11 @@ test("REQ-T1-SCENARIO-002 scenarios include safety, replay, policy, and evidence
     assert.equal(scenarioIds.has(scenario.scenario_id), false, `duplicate scenario id ${scenario.scenario_id}`);
     scenarioIds.add(scenario.scenario_id);
 
+    const expectedScenario = stableScenarioContracts.get(scenario.scenario_id);
+    assert.ok(expectedScenario, `unexpected scenario id ${scenario.scenario_id}`);
+    assert.equal(scenario.attack_class, expectedScenario.attack_class);
+    assert.equal(scenario.report_section, expectedScenario.report_section);
+
     assert.ok(scenario.title.length > 0);
     assert.ok(scenario.demo_target.includes("OpenClaw") || scenario.demo_target.includes("controlled"));
     assert.ok(scenario.objective.length >= 40);
@@ -112,11 +145,21 @@ test("REQ-T1-SCENARIO-002 scenarios include safety, replay, policy, and evidence
     assert.match(scenario.attack_script_requirements.entrypoint, /^samples\/track1\/attack-scripts\/T1-SC-\d{3}\/replay\.ts$/);
     assert.ok(scenario.attack_script_requirements.required_events.includes("model_input"));
     assert.ok(scenario.attack_script_requirements.required_events.includes("tool_request"));
-    assert.ok(scenario.attack_script_requirements.prohibited_behaviors.includes("real credential use"));
     assert.ok(scenario.simulated_tools.length >= 1);
     assert.ok(scenario.evidence_requirements.includes("sandbox_alert"));
     assert.ok(scenario.evidence_requirements.includes("report_evidence_ref"));
     assert.ok(scenario.report_section.startsWith("Track 1 Scenario"));
+
+    for (const requiredBehavior of requiredProhibitedBehaviors) {
+      assert.ok(
+        scenario.attack_script_requirements.prohibited_behaviors.includes(requiredBehavior),
+        `${scenario.scenario_id} missing prohibited behavior ${requiredBehavior}`
+      );
+    }
+
+    for (const tool of scenario.simulated_tools) {
+      assert.ok(allowedSimulatedTools.has(tool), `unsupported simulated tool ${tool}`);
+    }
 
     assert.ok(scenario.expected_policy_actions.length >= 1);
     for (const action of scenario.expected_policy_actions) {
