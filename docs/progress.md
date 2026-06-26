@@ -10,6 +10,27 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-06-27 - REQ-T1-SCENARIO-002 Track 1 attack scenario matrix
+
+- requirement: Track 1 attack scenario matrix
+- scope:
+  - added a tested Track 1 scenario manifest at `samples/track1/scenarios/track1-scenarios.v1.json`
+  - defined the first three controlled attack classes: prompt injection / jailbreak, tool-call hijacking, and context / memory poisoning
+  - added a human-readable acceptance matrix at `docs/track1/scenario-acceptance-matrix.md`
+  - added scenario fixture safety boundaries in `samples/track1/scenarios/README.md`
+  - switched the active requirement to `REQ-T1-SCENARIO-002`
+- tests added:
+  - `tests/repository/track1-scenario-matrix.spec.ts`
+- test result:
+  - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/track1-scenario-matrix.spec.ts`: pass
+  - `npm.cmd run test:repo`: pass; note that at this step the root repository gate still covers the existing 24 repository tests and the Track 1 scenario test remains covered by the focused command until Task 4 adds it to `test:repo`
+- docs updated:
+  - `docs/sprint-current.md`
+  - `docs/track1/scenario-acceptance-matrix.md`
+  - `docs/progress.md`
+- current conclusion: the Track 1 scenario IDs and acceptance matrix are stable enough for the next requirement, `REQ-T1-CASESET-003`
+- next blocker: create the adversarial and jailbreak case-set schema and fixtures under the scenario IDs
+
 ## 2026-06-27 - REQ-T1-SPEC-001 赛题一方向化总体设计文档
 
 - requirement: 赛题一方向化总体设计文档
