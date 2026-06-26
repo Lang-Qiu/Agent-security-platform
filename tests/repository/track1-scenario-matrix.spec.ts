@@ -98,6 +98,12 @@ function assertNoPlaceholderText(value: unknown, path: string): void {
   }
 }
 
+function assertIncludesAll(text: string, values: string[], context: string): void {
+  for (const value of values) {
+    assert.ok(text.includes(value), `${context} should include ${value}`);
+  }
+}
+
 test("REQ-T1-SCENARIO-002 defines the required Track 1 seed attack classes", () => {
   const manifest = readManifest();
 
@@ -186,6 +192,32 @@ test("REQ-T1-SCENARIO-002 documents every scenario in the human-readable accepta
     assert.ok(matrix.includes(scenario.scenario_id), `matrix should include ${scenario.scenario_id}`);
     assert.ok(matrix.includes(scenario.attack_class), `matrix should include ${scenario.attack_class}`);
     assert.ok(matrix.includes(scenario.report_section), `matrix should include ${scenario.report_section}`);
+    assertIncludesAll(
+      matrix,
+      scenario.case_requirements.required_case_types,
+      `matrix case requirements for ${scenario.scenario_id}`
+    );
+    assert.ok(
+      matrix.includes(scenario.case_requirements.expected_case_file_pattern),
+      `matrix should include ${scenario.case_requirements.expected_case_file_pattern}`
+    );
+    assert.ok(
+      matrix.includes(scenario.attack_script_requirements.entrypoint),
+      `matrix should include ${scenario.attack_script_requirements.entrypoint}`
+    );
+    assertIncludesAll(
+      matrix,
+      scenario.attack_script_requirements.required_events,
+      `matrix attack script events for ${scenario.scenario_id}`
+    );
+    assertIncludesAll(
+      matrix,
+      scenario.attack_script_requirements.prohibited_behaviors,
+      `matrix prohibited behaviors for ${scenario.scenario_id}`
+    );
+    assertIncludesAll(matrix, scenario.simulated_tools, `matrix simulated tools for ${scenario.scenario_id}`);
+    assertIncludesAll(matrix, scenario.expected_policy_actions, `matrix policy actions for ${scenario.scenario_id}`);
+    assertIncludesAll(matrix, scenario.evidence_requirements, `matrix evidence requirements for ${scenario.scenario_id}`);
   }
 
   for (const requiredHeading of [
@@ -201,6 +233,7 @@ test("REQ-T1-SCENARIO-002 documents every scenario in the human-readable accepta
 
   assert.ok(readme.includes("controlled research fixtures"));
   assert.ok(readme.includes("Do not store real credentials"));
+  assert.ok(readme.includes("real external API calls"));
   assert.ok(readme.includes("track1-scenarios.v1.json"));
   assertNoPlaceholderText(matrix, "matrix");
   assertNoPlaceholderText(readme, "readme");

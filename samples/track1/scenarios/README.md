@@ -12,7 +12,7 @@ These are controlled research fixtures.
 - Do not point scenarios at third-party systems.
 - Do not use live private data.
 - Do not send real email.
-- Do not call production APIs.
+- Do not make real external API calls.
 - Use local mock tools and synthetic evidence references.
 
 ## Scenario ID Rules
