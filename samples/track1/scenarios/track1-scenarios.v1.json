@@ -27,6 +27,7 @@
         ],
         "prohibited_behaviors": [
           "real credential use",
+          "real external API calls",
           "real email delivery",
           "external exfiltration",
           "unapproved third-party targeting"
@@ -76,6 +77,7 @@
         ],
         "prohibited_behaviors": [
           "real credential use",
+          "real external API calls",
           "real email delivery",
           "external exfiltration",
           "unapproved third-party targeting"
@@ -128,6 +130,7 @@
         ],
         "prohibited_behaviors": [
           "real credential use",
+          "real external API calls",
           "real email delivery",
           "external exfiltration",
           "unapproved third-party targeting"

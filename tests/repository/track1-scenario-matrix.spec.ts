@@ -33,11 +33,12 @@ const stableScenarioContracts = new Map([
 const requiredAttackClasses = new Set(
   Array.from(stableScenarioContracts.values(), (scenario) => scenario.attack_class)
 );
-const requiredScenarioIds = new Set(["T1-SC-001", "T1-SC-002", "T1-SC-003"]);
+const requiredScenarioIds = new Set(stableScenarioContracts.keys());
 const allowedSimulatedTools = new Set(["send_email", "read_file", "write_file", "call_api"]);
 const allowedPolicyActions = new Set(["allow", "deny", "ask", "alert"]);
 const requiredProhibitedBehaviors = new Set([
   "real credential use",
+  "real external API calls",
   "external exfiltration",
   "unapproved third-party targeting",
   "real email delivery"
