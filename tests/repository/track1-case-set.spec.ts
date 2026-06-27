@@ -8,7 +8,7 @@ const casesRoot = resolve(repoRoot, "samples/track1/cases");
 const schemaPath = resolve(casesRoot, "track1-case.schema.json");
 const readmePath = resolve(casesRoot, "README.md");
 const manifestPath = resolve(repoRoot, "samples/track1/scenarios/track1-scenarios.v1.json");
-const sprintPath = resolve(repoRoot, "docs/sprint-current.md");
+const progressPath = resolve(repoRoot, "docs/progress.md");
 const packagePath = resolve(repoRoot, "package.json");
 
 const allowedCategories = new Set(["adversarial", "jailbreak", "negative_control"]);
@@ -317,9 +317,12 @@ test("REQ-T1-CASESET-003 documents the schema, case index, and safety boundary",
   assert.ok(existsSync(readmePath), "Track 1 case-set README should exist");
   const readme = readFileSync(readmePath, "utf8");
   const manifest = readJson<ScenarioManifest>(manifestPath);
-  const sprint = readFileSync(sprintPath, "utf8");
+  const progress = readFileSync(progressPath, "utf8");
 
-  assert.ok(sprint.includes("REQ-T1-CASESET-003"));
+  assert.ok(
+    progress.includes("REQ-T1-CASESET-003"),
+    "completed case-set requirement should remain in the progress archive"
+  );
   assert.ok(readme.includes("track1-case.schema.json"));
   assert.ok(readme.includes("controlled research"));
   assert.ok(readme.includes("Attack replay scripts are out of scope"));
