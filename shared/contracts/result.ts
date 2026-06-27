@@ -1,7 +1,8 @@
 import { TASK_TYPE_TO_ENGINE_TYPE } from "../constants/task-type.ts";
-import type { BaseResult, ResultDetails, StaticAnalysisResultDetails } from "../types/result.ts";
+import type { BaseResult, ResultDetails, SandboxRunResultDetails, StaticAnalysisResultDetails } from "../types/result.ts";
 import { isPlainObject, isString } from "../utils/guards.ts";
 import { normalizeResultDetails } from "../utils/normalizers.ts";
+import { satisfiesSandboxSupervisionContract } from "./sandbox.ts";
 import { isRiskLevel, isTaskStatus, isTaskType } from "./task.ts";
 
 function satisfiesFinishedStaticAnalysisContract(details: StaticAnalysisResultDetails): boolean {
@@ -64,6 +65,26 @@ export function normalizeBaseResult(value: unknown): BaseResult<ResultDetails> |
     !satisfiesFinishedStaticAnalysisContract(normalizedDetails as StaticAnalysisResultDetails)
   ) {
     return null;
+  }
+
+  if (value.task_type === "sandbox_run") {
+    const sandboxDetails = normalizedDetails as SandboxRunResultDetails;
+    const hasAllCollections =
+      sandboxDetails.events !== undefined &&
+      sandboxDetails.policy_decisions !== undefined &&
+      sandboxDetails.alerts !== undefined &&
+      sandboxDetails.blocked_records !== undefined;
+
+    if (hasAllCollections && !satisfiesSandboxSupervisionContract(sandboxDetails)) {
+      return null;
+    }
+
+    if (
+      (value.status === "finished" || value.status === "blocked") &&
+      !satisfiesSandboxSupervisionContract(sandboxDetails)
+    ) {
+      return null;
+    }
   }
 
   const normalizedResult: BaseResult<ResultDetails> = {

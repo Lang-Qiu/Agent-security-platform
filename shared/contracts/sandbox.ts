@@ -17,6 +17,7 @@ import type {
   SandboxToolRequestPayload,
   SandboxToolResultPayload
 } from "../types/sandbox.ts";
+import type { SandboxRunResultDetails } from "../types/result.ts";
 import { isOneOf, isPlainObject, isString, isStringArray } from "../utils/guards.ts";
 
 const ISO_8601_PATTERN =
@@ -299,4 +300,133 @@ export function normalizeSandboxBlockedRecord(value: unknown): SandboxBlockedRec
   }
 
   return normalized;
+}
+
+// -- supervision collection consistency -------------------------------------------
+
+type DecisionEqualityFields = Pick<
+  SandboxPolicyDecision,
+  "decision_id" | "subject_event_id" | "policy_id" | "action" | "reason_code" | "reason"
+>;
+
+function decisionFieldsEqual(a: DecisionEqualityFields, b: DecisionEqualityFields): boolean {
+  return (
+    a.decision_id === b.decision_id &&
+    a.subject_event_id === b.subject_event_id &&
+    a.policy_id === b.policy_id &&
+    a.action === b.action &&
+    a.reason_code === b.reason_code &&
+    a.reason === b.reason
+  );
+}
+
+function arraysEqual(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((value, index) => value === b[index]);
+}
+
+function fullDecisionEqual(a: SandboxPolicyDecision, b: SandboxPolicyDecision): boolean {
+  return (
+    decisionFieldsEqual(a, b) &&
+    arraysEqual(a.evidence_refs, b.evidence_refs) &&
+    a.decided_at === b.decided_at
+  );
+}
+
+export function satisfiesSandboxSupervisionContract(details: SandboxRunResultDetails): boolean {
+  const { events, policy_decisions, alerts, blocked_records } = details;
+
+  if (!events || !policy_decisions || !alerts || !blocked_records) {
+    return false;
+  }
+
+  if (!Array.isArray(events) || !Array.isArray(policy_decisions) || !Array.isArray(alerts) || !Array.isArray(blocked_records)) {
+    return false;
+  }
+
+  // event ID uniqueness
+  const eventIds = events.map((event) => event.event_id);
+  if (new Set(eventIds).size !== eventIds.length) return false;
+
+  // sequence uniqueness and strict order
+  const sequences = events.map((event) => event.sequence);
+  if (new Set(sequences).size !== sequences.length) return false;
+  for (let i = 1; i < sequences.length; i++) {
+    if (sequences[i] <= sequences[i - 1]) return false;
+  }
+
+  // every event session matches details.session_id
+  if (details.session_id !== undefined) {
+    if (!events.every((event) => event.session_id === details.session_id)) return false;
+  }
+
+  // decision ID uniqueness
+  const decisionIds = policy_decisions.map((d) => d.decision_id);
+  if (new Set(decisionIds).size !== decisionIds.length) return false;
+
+  // every decision subject exists in event IDs
+  const eventIdSet = new Set(eventIds);
+  if (!policy_decisions.every((d) => eventIdSet.has(d.subject_event_id))) return false;
+
+  // policy decision events and policy_decisions are 1:1 and field-equal
+  const policyEvents = events.filter(
+    (event) => event.event_type === "policy_decision"
+  );
+  if (policyEvents.length !== policy_decisions.length) return false;
+
+  const decisionMap = new Map(policy_decisions.map((d) => [d.decision_id, d]));
+  for (const event of policyEvents) {
+    const payload = event.payload as SandboxPolicyDecision;
+    const matching = decisionMap.get(payload.decision_id);
+    if (!matching) return false;
+    if (!fullDecisionEqual(payload, matching)) return false;
+  }
+
+  // alert ID uniqueness
+  const alertIds = alerts.map((a) => a.alert_id);
+  if (new Set(alertIds).size !== alertIds.length) return false;
+
+  // blocked record ID uniqueness
+  const blockedIds = blocked_records.map((b) => b.blocked_record_id);
+  if (new Set(blockedIds).size !== blockedIds.length) return false;
+
+  // every alert resolves to an "alert" decision with same subject
+  for (const alert of alerts) {
+    const decision = decisionMap.get(alert.decision_id);
+    if (!decision) return false;
+    if (decision.action !== "alert") return false;
+    if (decision.subject_event_id !== alert.subject_event_id) return false;
+  }
+
+  // every blocked record resolves to a "deny" decision with same subject
+  for (const record of blocked_records) {
+    const decision = decisionMap.get(record.decision_id);
+    if (!decision) return false;
+    if (decision.action !== "deny") return false;
+    if (decision.subject_event_id !== record.subject_event_id) return false;
+  }
+
+  // every "alert" decision has at least one alert
+  for (const decision of policy_decisions) {
+    if (decision.action === "alert") {
+      if (!alerts.some((a) => a.decision_id === decision.decision_id)) return false;
+    }
+  }
+
+  // every "deny" decision has at least one blocking record
+  for (const decision of policy_decisions) {
+    if (decision.action === "deny") {
+      if (!blocked_records.some((b) => b.decision_id === decision.decision_id)) return false;
+    }
+  }
+
+  // event_count === events.length
+  if (details.event_count !== undefined && details.event_count !== events.length) return false;
+
+  // blocked === (blocked_records.length > 0)
+  if (details.blocked !== undefined) {
+    if (details.blocked !== (blocked_records.length > 0)) return false;
+  }
+
+  return true;
 }

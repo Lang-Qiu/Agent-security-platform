@@ -13,6 +13,7 @@ type SharedModule = {
   normalizeSandboxPolicyDecision?: (value: unknown) => unknown;
   normalizeSandboxAlert?: (value: unknown) => unknown;
   normalizeSandboxBlockedRecord?: (value: unknown) => unknown;
+  satisfiesSandboxSupervisionContract?: (value: unknown) => boolean;
 };
 
 async function loadSharedModule(): Promise<SharedModule> {
@@ -274,5 +275,122 @@ test("REQ-T1-SANDBOX-CONTRACT-005 rejects malformed event and outcome records", 
       occurred_at: "invalid"
     }),
     null
+  );
+});
+
+test("REQ-T1-SANDBOX-CONTRACT-005 validates sandbox supervision collection invariants", async () => {
+  const shared = await loadSharedModule();
+
+  const validContract = {
+    session_id: "session_001",
+    events: [
+      {
+        event_id: "event_tool_001",
+        session_id: "session_001",
+        sequence: 1,
+        event_type: "tool_request",
+        occurred_at: "2026-06-27T08:00:01Z",
+        source: "agent",
+        evidence_refs: ["evidence://tool/request/001"],
+        payload: {
+          call_id: "call_001",
+          tool_name: "send_email",
+          target_ref: "recipient://outside.example",
+          arguments_ref: "fixture://cases/T1-SC-002-C01/tool-request"
+        }
+      },
+      {
+        event_id: "event_decision_001",
+        session_id: "session_001",
+        sequence: 2,
+        event_type: "policy_decision",
+        occurred_at: "2026-06-27T08:00:02Z",
+        source: "policy",
+        evidence_refs: ["evidence://decision/001"],
+        payload: {
+          decision_id: "decision_001",
+          subject_event_id: "event_tool_001",
+          policy_id: "policy_tool_target",
+          action: "deny",
+          reason_code: "target_not_approved",
+          reason: "Target is outside the approved fixture set",
+          evidence_refs: ["evidence://decision/001"],
+          decided_at: "2026-06-27T08:00:02Z"
+        }
+      }
+    ],
+    policy_decisions: [
+      {
+        decision_id: "decision_001",
+        subject_event_id: "event_tool_001",
+        policy_id: "policy_tool_target",
+        action: "deny",
+        reason_code: "target_not_approved",
+        reason: "Target is outside the approved fixture set",
+        evidence_refs: ["evidence://decision/001"],
+        decided_at: "2026-06-27T08:00:02Z"
+      }
+    ],
+    alerts: [],
+    blocked_records: [
+      {
+        blocked_record_id: "blocked_001",
+        subject_event_id: "event_tool_001",
+        decision_id: "decision_001",
+        resource_ref: "recipient://outside.example",
+        reason: "Policy denied the target",
+        evidence_refs: ["evidence://blocked/001"],
+        occurred_at: "2026-06-27T08:00:02Z"
+      }
+    ],
+    blocked: true,
+    event_count: 2
+  };
+
+  assert.equal(
+    shared.satisfiesSandboxSupervisionContract?.(validContract),
+    true,
+    "valid contract should satisfy supervision invariants"
+  );
+
+  assert.equal(
+    shared.satisfiesSandboxSupervisionContract?.({
+      ...validContract,
+      event_count: 99
+    }),
+    false,
+    "mismatched event_count should fail"
+  );
+
+  assert.equal(
+    shared.satisfiesSandboxSupervisionContract?.({
+      ...validContract,
+      blocked: false
+    }),
+    false,
+    "blocked mismatch should fail"
+  );
+
+  assert.equal(
+    shared.satisfiesSandboxSupervisionContract?.({
+      ...validContract,
+      events: []
+    }),
+    false,
+    "empty events with non-zero event_count should fail"
+  );
+
+  assert.equal(
+    shared.satisfiesSandboxSupervisionContract?.({
+      session_id: "session_001",
+      events: [],
+      policy_decisions: [],
+      alerts: [],
+      blocked_records: [],
+      blocked: false,
+      event_count: 0
+    }),
+    true,
+    "empty supervision should satisfy invariants"
   );
 });

@@ -1,3 +1,9 @@
+import {
+  normalizeSandboxAlert,
+  normalizeSandboxBehaviorEvent,
+  normalizeSandboxBlockedRecord,
+  normalizeSandboxPolicyDecision
+} from "../contracts/sandbox.ts";
 import type { AssetScanResultDetails, SandboxRunResultDetails, StaticAnalysisResultDetails } from "../types/result.ts";
 import type { SkillsStaticRuleHit, SkillsStaticTraceStep } from "../types/skills-static-rule-hit.ts";
 import { SKILLS_STATIC_SEVERITIES } from "../types/skills-static.ts";
@@ -452,8 +458,50 @@ function normalizeSandboxRunDetails(value: unknown): SandboxRunResultDetails | n
     normalizedDetails.target = normalizedTarget;
   }
 
-  if (Array.isArray(value.alerts)) {
-    normalizedDetails.alerts = copyArray(value.alerts);
+  if ("events" in value) {
+    if (!Array.isArray(value.events)) {
+      return null;
+    }
+    const normalizedEvents = value.events.map(normalizeSandboxBehaviorEvent);
+    if (normalizedEvents.some((event) => event === null)) {
+      return null;
+    }
+    normalizedDetails.events = normalizedEvents as NonNullable<SandboxRunResultDetails["events"]>;
+  }
+
+  if ("policy_decisions" in value) {
+    if (!Array.isArray(value.policy_decisions)) {
+      return null;
+    }
+    const normalizedDecisions = value.policy_decisions.map(normalizeSandboxPolicyDecision);
+    if (normalizedDecisions.some((decision) => decision === null)) {
+      return null;
+    }
+    normalizedDetails.policy_decisions =
+      normalizedDecisions as NonNullable<SandboxRunResultDetails["policy_decisions"]>;
+  }
+
+  if ("alerts" in value) {
+    if (!Array.isArray(value.alerts)) {
+      return null;
+    }
+    const normalizedAlerts = value.alerts.map(normalizeSandboxAlert);
+    if (normalizedAlerts.some((alert) => alert === null)) {
+      return null;
+    }
+    normalizedDetails.alerts = normalizedAlerts as NonNullable<SandboxRunResultDetails["alerts"]>;
+  }
+
+  if ("blocked_records" in value) {
+    if (!Array.isArray(value.blocked_records)) {
+      return null;
+    }
+    const normalizedBlockedRecords = value.blocked_records.map(normalizeSandboxBlockedRecord);
+    if (normalizedBlockedRecords.some((record) => record === null)) {
+      return null;
+    }
+    normalizedDetails.blocked_records =
+      normalizedBlockedRecords as NonNullable<SandboxRunResultDetails["blocked_records"]>;
   }
 
   if (isBoolean(value.blocked)) {

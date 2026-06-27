@@ -1,5 +1,11 @@
 import type { EngineType, RiskLevel, TaskStatus, TaskTarget, TaskType } from "./task.ts";
 import type { MaxPrivilegeAssessment } from "./asset-scan.ts";
+import type {
+  SandboxAlert,
+  SandboxBehaviorEvent,
+  SandboxBlockedRecord,
+  SandboxPolicyDecision
+} from "./sandbox.ts";
 import type { SkillsStaticResultDetails } from "./skills-static-result-details.ts";
 
 export type AssetScanInterruptionReason = "none" | "budget" | "timeout" | "manual_stop";
@@ -43,7 +49,10 @@ export type StaticAnalysisResultDetails = SkillsStaticResultDetails;
 export interface SandboxRunResultDetails {
   session_id?: string;
   target?: TaskTarget;
-  alerts?: unknown[];
+  events?: SandboxBehaviorEvent[];
+  policy_decisions?: SandboxPolicyDecision[];
+  alerts?: SandboxAlert[];
+  blocked_records?: SandboxBlockedRecord[];
   blocked?: boolean;
   event_count?: number;
 }
