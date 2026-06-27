@@ -320,8 +320,8 @@ test("REQ-T1-CASESET-003 documents the schema, case index, and safety boundary",
   const progress = readFileSync(progressPath, "utf8");
 
   assert.ok(
-    progress.includes("REQ-T1-CASESET-003"),
-    "completed case-set requirement should remain in the progress archive"
+    progress.includes("## 2026-06-27 - REQ-T1-CASESET-003 Track 1 adversarial and jailbreak case set"),
+    "completed case-set heading should remain in the progress archive"
   );
   assert.ok(readme.includes("track1-case.schema.json"));
   assert.ok(readme.includes("controlled research"));
