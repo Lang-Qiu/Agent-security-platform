@@ -182,7 +182,8 @@ Known current baseline in `codex/track1-requirements-spec`:
 - `test:repo` passes.
 - `test:shared` passes.
 - `test:frontend` passes.
-- `test:backend` currently has pre-existing baseline failures unrelated to this spec: an asset-scan expectation drift and a local Semgrep Python dependency issue involving `google.protobuf`.
+- The local Semgrep provider path passes after installing its required `protobuf>=5,<7` Python dependency.
+- `test:backend` still has one pre-existing baseline failure unrelated to this spec: an asset-scan expectation drift in `task-engine.service.spec.ts`.
 
 ## Project Structure
 

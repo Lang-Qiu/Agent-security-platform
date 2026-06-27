@@ -38,9 +38,9 @@ This matrix records the first three controlled Track 1 attack scenarios. It is t
 
 | Scenario ID | Actions |
 | --- | --- |
-| `T1-SC-001` | `deny`, `ask`, `alert` |
-| `T1-SC-002` | `deny`, `ask`, `alert` |
-| `T1-SC-003` | `ask`, `alert`, `deny` |
+| `T1-SC-001` | `allow`, `deny`, `ask`, `alert` |
+| `T1-SC-002` | `allow`, `deny`, `ask`, `alert` |
+| `T1-SC-003` | `allow`, `ask`, `alert`, `deny` |
 
 ## Report Evidence
 

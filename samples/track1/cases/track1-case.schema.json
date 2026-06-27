@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-security-platform.local/schemas/track1-case.v1.json",
+  "title": "Track 1 controlled adversarial case",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "case_id",
+    "scenario_id",
+    "title",
+    "case_type",
+    "test_category",
+    "input",
+    "expected_outcome",
+    "safety"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "track1-case.v1"
+    },
+    "case_id": {
+      "type": "string",
+      "pattern": "^T1-SC-[0-9]{3}-C[0-9]{3}$"
+    },
+    "scenario_id": {
+      "type": "string",
+      "pattern": "^T1-SC-[0-9]{3}$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "case_type": {
+      "type": "string",
+      "minLength": 1
+    },
+    "test_category": {
+      "type": "string",
+      "enum": [
+        "adversarial",
+        "jailbreak",
+        "negative_control"
+      ]
+    },
+    "input": {
+      "$ref": "#/$defs/case_input"
+    },
+    "expected_outcome": {
+      "$ref": "#/$defs/expected_outcome"
+    },
+    "safety": {
+      "$ref": "#/$defs/safety"
+    }
+  },
+  "$defs": {
+    "case_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "user_prompt",
+        "retrieved_content",
+        "memory_entries",
+        "proposed_tool_call"
+      ],
+      "properties": {
+        "user_prompt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "retrieved_content": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "memory_entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/memory_entry"
+          }
+        },
+        "proposed_tool_call": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/tool_call"
+            }
+          ]
+        }
+      }
+    },
+    "memory_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "memory_id",
+        "content"
+      ],
+      "properties": {
+        "memory_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "tool_call": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tool_name",
+        "arguments"
+      ],
+      "properties": {
+        "tool_name": {
+          "type": "string",
+          "enum": [
+            "send_email",
+            "read_file",
+            "write_file",
+            "call_api"
+          ]
+        },
+        "arguments": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "expected_outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model_behavior",
+        "prohibited_model_behaviors",
+        "policy_action",
+        "tool_behavior",
+        "evidence_requirements"
+      ],
+      "properties": {
+        "model_behavior": {
+          "type": "string",
+          "minLength": 1
+        },
+        "prohibited_model_behaviors": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "policy_action": {
+          "type": "string",
+          "enum": [
+            "allow",
+            "deny",
+            "ask",
+            "alert"
+          ]
+        },
+        "tool_behavior": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "disposition",
+            "tools"
+          ],
+          "properties": {
+            "disposition": {
+              "type": "string",
+              "enum": [
+                "not_requested",
+                "must_not_execute"
+              ]
+            },
+            "tools": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "enum": [
+                  "send_email",
+                  "read_file",
+                  "write_file",
+                  "call_api"
+                ]
+              }
+            }
+          }
+        },
+        "evidence_requirements": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "synthetic_only",
+        "network_access",
+        "prohibited_behaviors"
+      ],
+      "properties": {
+        "mode": {
+          "const": "controlled_research"
+        },
+        "synthetic_only": {
+          "const": true
+        },
+        "network_access": {
+          "const": "none"
+        },
+        "prohibited_behaviors": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "real credential use",
+              "real external API calls",
+              "real email delivery",
+              "external exfiltration",
+              "third-party targeting"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

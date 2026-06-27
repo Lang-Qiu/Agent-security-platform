@@ -38,6 +38,7 @@
         "call_api"
       ],
       "expected_policy_actions": [
+        "allow",
         "deny",
         "ask",
         "alert"
@@ -90,6 +91,7 @@
         "call_api"
       ],
       "expected_policy_actions": [
+        "allow",
         "deny",
         "ask",
         "alert"
@@ -142,6 +144,7 @@
         "call_api"
       ],
       "expected_policy_actions": [
+        "allow",
         "ask",
         "alert",
         "deny"

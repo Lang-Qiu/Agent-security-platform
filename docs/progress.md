@@ -10,6 +10,39 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-06-27 - REQ-T1-CASESET-003 Track 1 adversarial and jailbreak case set
+
+- requirement: Track 1 adversarial and jailbreak case set
+- scope:
+  - added the closed `track1-case.v1` JSON schema at `samples/track1/cases/track1-case.schema.json`
+  - added exactly nine controlled fixtures, with three cases for each stable Track 1 scenario ID
+  - covered every scenario `required_case_types` entry exactly once
+  - added adversarial, jailbreak, and negative-control categories with explicit model, policy, tool, evidence, and safety expectations
+  - added `allow` to scenario policy expectations for negative-control false-positive measurement
+  - added the case index and safety boundary at `samples/track1/cases/README.md`
+- tests added:
+  - `tests/repository/track1-case-set.spec.ts`
+- test result:
+  - RED confirmed for the missing schema, missing `allow` action, missing scenario directories, missing README, and missing root test-gate entry
+  - focused case-set test: 4 pass, 0 fail
+  - scenario and case-set contract regression: 7 pass, 0 fail
+  - `npm.cmd run test:repo`: 31 pass, 0 fail
+  - Draft 2020-12 schema verification: all 9 fixtures validate; missing-required-field and extra-field probes are rejected
+  - Semgrep provider parity test: pass after installing the required `protobuf>=5,<7` Python dependency
+  - full `npm.cmd run test`: repository and shared stages pass; backend has 39 pass and 1 unrelated pre-existing asset-scan expectation-drift failure, so the chained frontend stage does not run
+  - standalone `npm.cmd run test:frontend`: 36 pass, 0 fail when run outside the sandbox path remapping
+- docs updated:
+  - `docs/sprint-current.md`
+  - `docs/track1/scenario-acceptance-matrix.md`
+  - `docs/progress.md`
+  - `samples/track1/cases/README.md`
+- docs checked and unchanged:
+  - `README.md`: no root usage or runtime behavior changed
+  - `docs/architecture.md`: no architecture boundary changed
+  - `docs/api-contract.md`: no public API or shared runtime contract changed
+- current conclusion: the controlled case set is ready to be consumed by later mock-tool, filter, replay, sandbox, and report requirements
+- next blocker: define the simulated email, file, and API tool contract in `REQ-T1-MOCK-TOOLS-004`
+
 ## 2026-06-27 - REQ-T1-SCENARIO-002 Track 1 attack scenario matrix
 
 - requirement: Track 1 attack scenario matrix
