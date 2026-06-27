@@ -28,6 +28,7 @@
 - `shared/package.json`: register the focused sandbox contract test.
 - `package.json`: register the focused sandbox contract test in the root shared gate.
 - `tests/repository/root-test-entry.spec.ts`: guard test registration.
+- `tests/repository/track1-case-set.spec.ts`: verify completed REQ-003 history from the progress archive instead of the active sprint file.
 - `docs/architecture.md`: record shared ownership and normalization flow.
 - `docs/api-contract.md`: replace the placeholder `block` alert schema with the approved contract.
 - `docs/progress.md`: record RED/GREEN evidence and final verification.
@@ -74,6 +75,69 @@ export function normalizeSandboxBehaviorEvent(value: unknown): SandboxBehaviorEv
 export function normalizeSandboxAlert(value: unknown): SandboxAlert | null;
 export function normalizeSandboxBlockedRecord(value: unknown): SandboxBlockedRecord | null;
 export function satisfiesSandboxSupervisionContract(details: SandboxRunResultDetails): boolean;
+```
+
+## Task 0: Restore The Requirement-Lifecycle Repository Baseline
+
+**Files:**
+- Modify: `tests/repository/track1-case-set.spec.ts`
+
+- [ ] **Step 1: Preserve the observed RED evidence**
+
+Run:
+
+```powershell
+npm.cmd run test:repo
+```
+
+Observed baseline: 30 tests pass and `REQ-T1-CASESET-003 documents the schema, case index, and safety boundary` fails because it requires the active `docs/sprint-current.md` to still name completed REQ-003.
+
+- [ ] **Step 2: Point the historical requirement assertion at the progress archive**
+
+Replace:
+
+```typescript
+const sprintPath = resolve(repoRoot, "docs/sprint-current.md");
+```
+
+with:
+
+```typescript
+const progressPath = resolve(repoRoot, "docs/progress.md");
+```
+
+In the documentation test, replace:
+
+```typescript
+const sprint = readFileSync(sprintPath, "utf8");
+assert.ok(sprint.includes("REQ-T1-CASESET-003"));
+```
+
+with:
+
+```typescript
+const progress = readFileSync(progressPath, "utf8");
+assert.ok(
+  progress.includes("REQ-T1-CASESET-003"),
+  "completed case-set requirement should remain in the progress archive"
+);
+```
+
+Do not weaken the schema, case index, safety-boundary, manifest, or package-gate assertions.
+
+- [ ] **Step 3: Run the repository gate and verify GREEN**
+
+```powershell
+npm.cmd run test:repo
+```
+
+Expected: 31 tests PASS.
+
+- [ ] **Step 4: Commit Task 0**
+
+```powershell
+git add tests/repository/track1-case-set.spec.ts
+git commit -m "test(track1): read completed case set from progress"
 ```
 
 ## Task 1: Event Stream And Policy Decision Records
