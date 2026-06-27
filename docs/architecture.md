@@ -417,3 +417,30 @@ Track 1 simulated business actions are owned by `engines/sandbox/src/simulated-t
 - Safety rejection is limited to malformed or non-local targets and is not a sandbox policy decision.
 
 This requirement does not change `shared/`, backend task orchestration, frontend behavior, or the public REST API. Typed policy actions and behavior-supervision events remain the responsibility of `REQ-T1-SANDBOX-CONTRACT-005`.
+
+## REQ-T1-ATTACK-REPLAY-006 Controlled Attack Replay Data Flow
+
+Track 1 controlled attack replay compiles fixed repository fixture files into normalized sandbox supervision results. The replay contract is engine-private metadata layered on the unchanged shared REQ-005 result contract. Policy outcomes are fixture oracles in REQ-006, not a policy evaluator.
+
+```
+fixed case fixtures
+  -> replay loader and runtime validation
+  -> deterministic event/result compiler
+  -> shared sandbox normalization
+  -> scenario coverage runner
+  -> JSON stdout for later monitoring and reporting
+```
+
+### Module boundary
+
+- **Replay core:** `engines/sandbox/src/replay/` — closed fixture/manifest loader, SHA-256 deterministic ID/evidence/timestamp primitives, case-to-result compiler, scenario runner, and atomic CLI entrypoint.
+- **Entrypoints:** `samples/track1/attack-scripts/T1-SC-NNN/replay.ts` — three thin script bindings that each call `executeTrack1ReplayEntrypoint` with a fixed scenario ID.
+- **Quality gates:** `engines/sandbox/tests/attack-replay-*.spec.ts` (engine), `tests/repository/track1-attack-replay.spec.ts` (repository safety scan), `tests/repository/root-test-entry.spec.ts` (permanent registration).
+
+### Replay invariants
+
+- Every run of the same script produces byte-for-byte identical stdout.
+- All identifiers, hashes, timestamps, event sequences, and evidence references are derived from fixed inputs and a single replay epoch (`2026-06-28T00:00:00.000Z`).
+- Raw fixture content (prompts, retrieved text, memory content, tool argument values) is never present in serialized output.
+- No model, network, or simulated-tool execution occurs.
+- The shared `BaseResult<SandboxRunResultDetails>` contract and `normalizeBaseResult` remain unchanged.

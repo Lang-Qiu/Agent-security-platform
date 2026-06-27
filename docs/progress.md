@@ -10,6 +10,53 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-06-28 - REQ-T1-ATTACK-REPLAY-006 Controlled attack replay
+
+- requirement: Track 1 controlled attack replay — deterministic compilation of nine repository fixtures into normalized sandbox supervision results
+- scope:
+  - added `engines/sandbox/src/replay/` with contract, loader, deterministic primitives, compiler, runner, and barrel exports
+  - added three thin attack-script entrypoints under `samples/track1/attack-scripts/`
+  - added three engine-level replay test suites (loader, compiler, entrypoints) and one repository safety gate
+  - registered all new tests in `test:engine:sandbox` and `test:repo` package scripts
+  - added permanent quality gate assertions in `tests/repository/root-test-entry.spec.ts`
+- files added:
+  - `engines/sandbox/src/replay/contract.ts`
+  - `engines/sandbox/src/replay/loader.ts`
+  - `engines/sandbox/src/replay/deterministic.ts`
+  - `engines/sandbox/src/replay/compiler.ts`
+  - `engines/sandbox/src/replay/runner.ts`
+  - `engines/sandbox/src/replay/index.ts`
+  - `engines/sandbox/tests/attack-replay-loader.spec.ts`
+  - `engines/sandbox/tests/attack-replay-compiler.spec.ts`
+  - `engines/sandbox/tests/attack-replay-entrypoints.spec.ts`
+  - `samples/track1/attack-scripts/README.md`
+  - `samples/track1/attack-scripts/T1-SC-001/replay.ts`
+  - `samples/track1/attack-scripts/T1-SC-002/replay.ts`
+  - `samples/track1/attack-scripts/T1-SC-003/replay.ts`
+  - `tests/repository/track1-attack-replay.spec.ts`
+- files modified:
+  - `engines/sandbox/README.md`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+  - `tests/repository/root-test-entry.spec.ts`
+  - `package.json`
+- RED evidence:
+  - T1 loader: `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` (parameter properties), then `case_invalid` (scenario_id off-by-one)
+  - T2 compiler: 9/9 RED — modules absent
+  - T3 entrypoints: 9/9 RED — runner/scripts absent
+  - T4 gates: gate registration assertions RED before package.json update
+- GREEN counts:
+  - `test:engine:sandbox`: 41 pass, 0 fail
+  - `test:repo`: 38 pass, 0 fail
+  - `test:shared`: 26 pass, 0 fail
+  - `test:backend`: 39 pass, 1 fail (unrelated pre-existing asset-scan drift)
+  - `test:frontend`: 36 pass, 0 fail
+- determinism: two identical runs produce byte-identical SHA-256 output
+- no-side-effect: source scan confirms no network/process/random/non-deterministic patterns
+- unchanged: `shared/`, `backend/`, `frontend/`, `docs/api-contract.md`, `README.md`
+- current conclusion: three controlled attack replay scripts produce deterministic, normalized sandbox supervision results for all 9 Track 1 fixtures
+- next blocker: attack replay monitoring and reporting in REQ-007
+
 ## 2026-06-28 - REQ-T1-SANDBOX-CONTRACT-005 Sandbox supervision contract
 
 - requirement: Track 1 sandbox behavior supervision contract with typed events, policy actions, and result invariants

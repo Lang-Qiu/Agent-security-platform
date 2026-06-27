@@ -58,3 +58,47 @@ engines/sandbox/
 ```powershell
 npm.cmd run test:engine:sandbox
 ```
+
+## 受控攻击重放 (Controlled Attack Replay)
+
+`src/replay/` 提供 Track 1 攻击场景的确定性重放能力。该模块将固定仓库 fixture 编译为归一化沙箱监控结果，不调用真实模型、不执行任何模拟工具、不访问网络。
+
+### 所有权
+
+- **模块路径：** `engines/sandbox/src/replay/`
+- **测试路径：** `engines/sandbox/tests/attack-replay-*.spec.ts`
+- **仓库质量门禁：** `tests/repository/track1-attack-replay.spec.ts`
+- **需求编号：** `REQ-T1-ATTACK-REPLAY-006`
+
+### 固定输入
+
+- **场景清单：** `samples/track1/scenarios/track1-scenarios.v1.json`
+- **案例 fixture：** `samples/track1/cases/<scenario-id>/*.json`（每个场景 3 个案例，共 9 个）
+- 所有路径均为固定相对路径，不接受调用方传入的路径、环境变量或 glob。
+
+### 执行命令
+
+```bash
+node --experimental-strip-types samples/track1/attack-scripts/T1-SC-001/replay.ts
+node --experimental-strip-types samples/track1/attack-scripts/T1-SC-002/replay.ts
+node --experimental-strip-types samples/track1/attack-scripts/T1-SC-003/replay.ts
+```
+
+### 输出与错误契约
+
+- **stdout：** 单个 JSON 数组，包含恰好三个 `BaseResult<SandboxRunResultDetails>` 对象。不做美观打印，无尾随换行。
+- **stderr：** 成功时为空。受控失败时输出单行 `<error_code>: <message>\n`。意外失败时输出 `replay_result_invalid: Unexpected replay failure\n`。
+- **退出码：** 成功时 `0`，任何失败时 `1`。
+
+### 不做什么
+
+- 不调用真实模型或 LLM API。
+- 不执行 `SimulatedToolExecutor` 或调用 `.execute(`。
+- 不打开网络连接（`node:http`、`node:https`、`node:net`、`fetch`）。
+- 不调用外部进程。
+- 不使用 `Date.now()`、`Math.random()` 或非确定性 UUID 生成。
+- 不接受 CLI 参数、基于环境的路径、模型名称、URL 或输出目标。
+
+### 引用/哈希替代原始内容
+
+所有原始 fixture 内容（提示词、检索文本、记忆内容、工具参数值）在输出中均替换为 SHA-256 哈希和稳定引用 URI。
