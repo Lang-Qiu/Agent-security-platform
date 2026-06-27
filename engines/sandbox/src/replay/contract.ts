@@ -1,3 +1,5 @@
+import type { BaseResult } from "../../../../shared/types/result.ts";
+import type { SandboxRunResultDetails } from "../../../../shared/types/result.ts";
 import type { SandboxPolicyAction } from "../../../../shared/types/sandbox.ts";
 import type { SimulatedToolName } from "../simulated-tools/contract.ts";
 
@@ -147,4 +149,15 @@ export interface Track1ScenarioDefinition {
 export interface Track1ReplayScenarioBundle {
   scenario: Track1ScenarioDefinition;
   cases: Track1CaseFixture[];
+}
+
+// -- entrypoint ports ----------------------------------------------------
+
+export interface Track1ReplayEntrypointPorts {
+  run(
+    scenarioId: Track1ScenarioId
+  ): BaseResult<SandboxRunResultDetails>[];
+  writeStdout(value: string): void;
+  writeStderr(value: string): void;
+  setExitCode(value: number): void;
 }
