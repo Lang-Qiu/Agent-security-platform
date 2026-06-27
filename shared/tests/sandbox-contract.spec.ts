@@ -11,6 +11,8 @@ type SharedModule = {
   SANDBOX_POLICY_ACTIONS?: readonly string[];
   normalizeSandboxBehaviorEvent?: (value: unknown) => unknown;
   normalizeSandboxPolicyDecision?: (value: unknown) => unknown;
+  normalizeSandboxAlert?: (value: unknown) => unknown;
+  normalizeSandboxBlockedRecord?: (value: unknown) => unknown;
 };
 
 async function loadSharedModule(): Promise<SharedModule> {
@@ -169,4 +171,108 @@ test("REQ-T1-SANDBOX-CONTRACT-005 normalizes all seven typed event variants", as
     "raw model content must not cross the shared boundary"
   );
   assert.deepEqual(shared.normalizeSandboxPolicyDecision?.(decision), decision);
+});
+
+test("REQ-T1-SANDBOX-CONTRACT-005 accepts only the four approved policy actions", async () => {
+  const shared = await loadSharedModule();
+
+  for (const action of ["allow", "deny", "ask", "alert"]) {
+    assert.equal(
+      (shared.normalizeSandboxPolicyDecision?.({ ...decision, action }) as { action?: string })?.action,
+      action
+    );
+  }
+
+  assert.equal(shared.normalizeSandboxPolicyDecision?.({ ...decision, action: "block" }), null);
+});
+
+test("REQ-T1-SANDBOX-CONTRACT-005 normalizes typed alert and blocking records", async () => {
+  const shared = await loadSharedModule();
+
+  assert.deepEqual(
+    shared.normalizeSandboxAlert?.({
+      alert_id: "alert_001",
+      subject_event_id: "event_tool_001",
+      decision_id: "decision_alert_001",
+      risk_level: "high",
+      category: "tool_target",
+      title: "Tool target requires attention",
+      reason: "Target differs from the approved case fixture",
+      evidence_refs: ["evidence://alert/001"],
+      occurred_at: "2026-06-27T08:00:08Z",
+      raw_prompt: "must be stripped"
+    }),
+    {
+      alert_id: "alert_001",
+      subject_event_id: "event_tool_001",
+      decision_id: "decision_alert_001",
+      risk_level: "high",
+      category: "tool_target",
+      title: "Tool target requires attention",
+      reason: "Target differs from the approved case fixture",
+      evidence_refs: ["evidence://alert/001"],
+      occurred_at: "2026-06-27T08:00:08Z"
+    }
+  );
+
+  assert.deepEqual(
+    shared.normalizeSandboxBlockedRecord?.({
+      blocked_record_id: "blocked_001",
+      subject_event_id: "event_tool_001",
+      decision_id: "decision_001",
+      resource_ref: "recipient://reviewer@local.invalid",
+      reason: "Policy denied the target",
+      evidence_refs: ["evidence://blocked/001"],
+      occurred_at: "2026-06-27T08:00:08Z"
+    }),
+    {
+      blocked_record_id: "blocked_001",
+      subject_event_id: "event_tool_001",
+      decision_id: "decision_001",
+      resource_ref: "recipient://reviewer@local.invalid",
+      reason: "Policy denied the target",
+      evidence_refs: ["evidence://blocked/001"],
+      occurred_at: "2026-06-27T08:00:08Z"
+    }
+  );
+});
+
+test("REQ-T1-SANDBOX-CONTRACT-005 rejects malformed event and outcome records", async () => {
+  const shared = await loadSharedModule();
+  const invalidEvents = [
+    { ...events[0], sequence: 0 },
+    { ...events[0], sequence: 1.5 },
+    { ...events[0], occurred_at: "not-a-timestamp" },
+    { ...events[0], event_type: "command_execution" },
+    { ...events[0], source: "unknown" },
+    { ...events[0], payload: { ...events[0].payload, content_sha256: "not-sha256" } }
+  ];
+
+  for (const event of invalidEvents) {
+    assert.equal(shared.normalizeSandboxBehaviorEvent?.(event), null);
+  }
+
+  assert.equal(
+    shared.normalizeSandboxAlert?.({
+      alert_id: "legacy_alert",
+      event_type: "command_execution",
+      action: "block",
+      resource: "powershell",
+      timestamp: "2026-06-27T08:00:08Z",
+      reason: "legacy",
+      risk_level: "critical"
+    }),
+    null
+  );
+  assert.equal(
+    shared.normalizeSandboxBlockedRecord?.({
+      blocked_record_id: "blocked_001",
+      subject_event_id: "event_tool_001",
+      decision_id: "decision_001",
+      reason: "Policy denied the target",
+      evidence_refs: [],
+      occurred_at: "invalid"
+    }),
+    null
+  );
 });

@@ -1,3 +1,4 @@
+import { RISK_LEVELS } from "../constants/risk-level.ts";
 import {
   SANDBOX_EVENT_SOURCES,
   SANDBOX_EVENT_TYPES,
@@ -5,7 +6,9 @@ import {
   SANDBOX_TOOL_RESULT_STATUSES
 } from "../types/sandbox.ts";
 import type {
+  SandboxAlert,
   SandboxBehaviorEvent,
+  SandboxBlockedRecord,
   SandboxEventEnvelope,
   SandboxEventType,
   SandboxMemoryPayload,
@@ -230,4 +233,70 @@ export function normalizeSandboxBehaviorEvent(value: unknown): SandboxBehaviorEv
     default:
       return unreachableEventType(eventType);
   }
+}
+
+export function normalizeSandboxAlert(value: unknown): SandboxAlert | null {
+  if (
+    !isPlainObject(value) ||
+    !isNonEmptyString(value.alert_id) ||
+    !isNonEmptyString(value.subject_event_id) ||
+    !isNonEmptyString(value.decision_id) ||
+    !isOneOf(RISK_LEVELS, value.risk_level) ||
+    !isNonEmptyString(value.category) ||
+    !isNonEmptyString(value.title) ||
+    !isNonEmptyString(value.reason) ||
+    !isNonEmptyStringArray(value.evidence_refs) ||
+    !isIso8601(value.occurred_at)
+  ) {
+    return null;
+  }
+
+  return {
+    alert_id: value.alert_id,
+    subject_event_id: value.subject_event_id,
+    decision_id: value.decision_id,
+    risk_level: value.risk_level,
+    category: value.category,
+    title: value.title,
+    reason: value.reason,
+    evidence_refs: [...value.evidence_refs],
+    occurred_at: value.occurred_at
+  };
+}
+
+export function normalizeSandboxBlockedRecord(value: unknown): SandboxBlockedRecord | null {
+  if (
+    !isPlainObject(value) ||
+    !isNonEmptyString(value.blocked_record_id) ||
+    !isNonEmptyString(value.subject_event_id) ||
+    !isNonEmptyString(value.decision_id) ||
+    !isNonEmptyString(value.reason) ||
+    !isNonEmptyStringArray(value.evidence_refs) ||
+    !isIso8601(value.occurred_at)
+  ) {
+    return null;
+  }
+
+  if (
+    "resource_ref" in value &&
+    value.resource_ref !== undefined &&
+    (!isString(value.resource_ref) || value.resource_ref.trim().length === 0)
+  ) {
+    return null;
+  }
+
+  const normalized: SandboxBlockedRecord = {
+    blocked_record_id: value.blocked_record_id,
+    subject_event_id: value.subject_event_id,
+    decision_id: value.decision_id,
+    reason: value.reason,
+    evidence_refs: [...value.evidence_refs],
+    occurred_at: value.occurred_at
+  };
+
+  if (isNonEmptyString(value.resource_ref)) {
+    normalized.resource_ref = value.resource_ref;
+  }
+
+  return normalized;
 }
