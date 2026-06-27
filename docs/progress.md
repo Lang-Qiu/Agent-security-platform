@@ -40,13 +40,20 @@ Recommended fields:
   - `docs/progress.md`
   - `tests/repository/root-test-entry.spec.ts`
   - `package.json`
-- RED evidence:
-  - T1 loader: `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` (parameter properties), then `case_invalid` (scenario_id off-by-one)
-  - T2 compiler: 9/9 RED — modules absent
-  - T3 entrypoints: 9/9 RED — runner/scripts absent
-  - T4 gates: gate registration assertions RED before package.json update
-- GREEN counts:
-  - `test:engine:sandbox`: 41 pass, 0 fail
+- RED evidence (review-corrected):
+  - T1 loader: initial RED was `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX` (parameter properties) — a test harness error, not a valid missing-behavior RED per AGENTS.md. Real functional RED would have been a missing-module assertion.
+  - T2 compiler: 9/9 RED — modules absent (valid missing-behavior RED)
+  - T3 entrypoints: 9/9 RED — runner/scripts absent (valid missing-behavior RED)
+  - T4 gates: gate registration assertions RED before package.json update (valid)
+  - Review regression RED (2026-06-28): `alert subject_event_id matches decision subject` RED — `replay_result_invalid` confirmed before fix (`959bb30`)
+- review findings (2026-06-28):
+  - [P1] alert `subject_event_id` pointed at `policyDecisionEvent.event_id` instead of decision's `subject_event_id`, causing `normalizeBaseResult` to reject all alert-action results
+  - [P1] loader accepted empty `retrieved_content` strings, empty memory `content`, unknown tool names in `tool_behavior.tools`, empty `evidence_requirements`, and duplicate `prohibited_behaviors`
+  - [P1] `BaseResult<{ __brand: ... }>` branded type did not satisfy `ResultDetails` constraint (TS2344)
+  - [P2] manifest validator only checked surface-level strings; `tool_result` hardcoded to SC-002 instead of reading `required_events`
+  - all fixed in `959bb30`
+- GREEN counts (post-fix):
+  - `test:engine:sandbox`: 43 pass, 0 fail (includes 2 new regression tests)
   - `test:repo`: 38 pass, 0 fail
   - `test:shared`: 26 pass, 0 fail
   - `test:backend`: 39 pass, 1 fail (unrelated pre-existing asset-scan drift)
