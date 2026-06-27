@@ -1,8 +1,14 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, resolve } from "node:path";
 
-import { SANDBOX_POLICY_ACTIONS } from "../../../../shared/types/sandbox.ts";
-import { normalizeSimulatedToolRequest } from "../simulated-tools/contract.ts";
+import {
+  SANDBOX_EVENT_TYPES,
+  SANDBOX_POLICY_ACTIONS
+} from "../../../../shared/types/sandbox.ts";
+import {
+  SIMULATED_TOOL_NAMES,
+  normalizeSimulatedToolRequest
+} from "../simulated-tools/contract.ts";
 import type { SimulatedToolRequest } from "../simulated-tools/contract.ts";
 import {
   TRACK1_REPLAY_EVIDENCE_REQUIREMENTS,
@@ -115,10 +121,10 @@ function validateMemoryEntry(
       `${caseId}: memory entry memory_id must be a non-empty string`
     );
   }
-  if (!isString(value.content)) {
+  if (!isNonEmptyString(value.content)) {
     throw new Track1ReplayError(
       "case_invalid",
-      `${caseId}: memory entry content must be a string`
+      `${caseId}: memory entry content must be a non-empty string`
     );
   }
 }
@@ -205,6 +211,14 @@ function validateToolBehavior(
       `${caseId}: tool_behavior.tools must be a string array`
     );
   }
+  for (const tool of value.tools) {
+    if (!(SIMULATED_TOOL_NAMES as readonly string[]).includes(tool)) {
+      throw new Track1ReplayError(
+        "case_invalid",
+        `${caseId}: unknown tool in tool_behavior.tools: ${tool}`
+      );
+    }
+  }
 }
 
 function validateSafety(
@@ -258,6 +272,7 @@ function validateSafety(
       `${caseId}: safety.prohibited_behaviors must have exactly 5 entries`
     );
   }
+  const seen = new Set<string>();
   for (const behavior of value.prohibited_behaviors) {
     if (!(VALID_PROHIBITED_BEHAVIORS as readonly string[]).includes(behavior)) {
       throw new Track1ReplayError(
@@ -265,6 +280,13 @@ function validateSafety(
         `${caseId}: safety.prohibited_behaviors contains unknown value: ${behavior}`
       );
     }
+    if (seen.has(behavior)) {
+      throw new Track1ReplayError(
+        "case_invalid",
+        `${caseId}: duplicate prohibited_behavior: ${behavior}`
+      );
+    }
+    seen.add(behavior);
   }
 }
 
@@ -324,6 +346,12 @@ function validateExpectedOutcome(
       `${caseId}: expected_outcome.evidence_requirements must be a string array`
     );
   }
+  if (value.evidence_requirements.length === 0) {
+    throw new Track1ReplayError(
+      "case_invalid",
+      `${caseId}: evidence_requirements must not be empty`
+    );
+  }
   for (const req of value.evidence_requirements) {
     if (
       !(TRACK1_REPLAY_EVIDENCE_REQUIREMENTS as readonly string[]).includes(req)
@@ -375,6 +403,14 @@ function validateInput(
       "case_invalid",
       `${caseId}: input.retrieved_content must be a string array`
     );
+  }
+  for (const item of value.retrieved_content) {
+    if (!isNonEmptyString(item)) {
+      throw new Track1ReplayError(
+        "case_invalid",
+        `${caseId}: retrieved_content entries must be non-empty strings`
+      );
+    }
   }
   if (!Array.isArray(value.memory_entries)) {
     throw new Track1ReplayError(
@@ -608,6 +644,8 @@ export function parseTrack1CaseFixture(
 
 // -- manifest validation -------------------------------------------------
 
+const VALID_SANDBOX_EVENT_TYPES = SANDBOX_EVENT_TYPES as readonly string[];
+
 function validateScenarioDefinition(
   value: unknown
 ): asserts value is Track1ScenarioDefinition {
@@ -637,6 +675,8 @@ function validateScenarioDefinition(
       `${value.scenario_id}: title must be a non-empty string`
     );
   }
+
+  // attack_script_requirements
   if (!isPlainObject(value.attack_script_requirements)) {
     throw new Track1ReplayError(
       "manifest_mismatch",
@@ -650,11 +690,91 @@ function validateScenarioDefinition(
       `${value.scenario_id}: entrypoint must be a non-empty string`
     );
   }
+  // Validate entrypoint matches expected pattern
+  if (
+    !asr.entrypoint.startsWith("samples/track1/attack-scripts/") ||
+    !asr.entrypoint.endsWith("/replay.ts")
+  ) {
+    throw new Track1ReplayError(
+      "manifest_mismatch",
+      `${value.scenario_id}: entrypoint must follow samples/track1/attack-scripts/<id>/replay.ts`
+    );
+  }
   if (!isStringArray(asr.required_events)) {
     throw new Track1ReplayError(
       "manifest_mismatch",
       `${value.scenario_id}: required_events must be a string array`
     );
+  }
+  for (const event of asr.required_events) {
+    if (!VALID_SANDBOX_EVENT_TYPES.includes(event)) {
+      throw new Track1ReplayError(
+        "manifest_mismatch",
+        `${value.scenario_id}: unsupported required event: ${event}`
+      );
+    }
+  }
+  if (!isStringArray(asr.prohibited_behaviors)) {
+    throw new Track1ReplayError(
+      "manifest_mismatch",
+      `${value.scenario_id}: prohibited_behaviors must be a string array`
+    );
+  }
+  for (const behavior of asr.prohibited_behaviors) {
+    if (!(VALID_PROHIBITED_BEHAVIORS as readonly string[]).includes(behavior)) {
+      throw new Track1ReplayError(
+        "manifest_mismatch",
+        `${value.scenario_id}: unsupported prohibited behavior: ${behavior}`
+      );
+    }
+  }
+
+  // simulated_tools
+  if (!isStringArray(value.simulated_tools)) {
+    throw new Track1ReplayError(
+      "manifest_mismatch",
+      `${value.scenario_id}: simulated_tools must be a string array`
+    );
+  }
+  for (const tool of value.simulated_tools) {
+    if (!(SIMULATED_TOOL_NAMES as readonly string[]).includes(tool)) {
+      throw new Track1ReplayError(
+        "manifest_mismatch",
+        `${value.scenario_id}: unknown simulated tool: ${tool}`
+      );
+    }
+  }
+
+  // expected_policy_actions
+  if (!isStringArray(value.expected_policy_actions)) {
+    throw new Track1ReplayError(
+      "manifest_mismatch",
+      `${value.scenario_id}: expected_policy_actions must be a string array`
+    );
+  }
+  for (const action of value.expected_policy_actions) {
+    if (!(SANDBOX_POLICY_ACTIONS as readonly string[]).includes(action)) {
+      throw new Track1ReplayError(
+        "manifest_mismatch",
+        `${value.scenario_id}: unknown policy action: ${action}`
+      );
+    }
+  }
+
+  // evidence_requirements
+  if (!isStringArray(value.evidence_requirements)) {
+    throw new Track1ReplayError(
+      "manifest_mismatch",
+      `${value.scenario_id}: evidence_requirements must be a string array`
+    );
+  }
+  for (const req of value.evidence_requirements) {
+    if (!(TRACK1_REPLAY_EVIDENCE_REQUIREMENTS as readonly string[]).includes(req)) {
+      throw new Track1ReplayError(
+        "manifest_mismatch",
+        `${value.scenario_id}: unsupported evidence requirement: ${req}`
+      );
+    }
   }
 }
 

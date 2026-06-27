@@ -1,4 +1,4 @@
-import type { BaseResult } from "../../../../shared/types/result.ts";
+import type { BaseResult, SandboxRunResultDetails } from "../../../../shared/types/result.ts";
 import type {
   SandboxAlert,
   SandboxBehaviorEvent,
@@ -70,7 +70,7 @@ function buildTimestamp(): string {
 export function compileTrack1ReplayCase(
   scenario: Track1ScenarioDefinition,
   fixture: Track1CaseFixture
-): BaseResult<{ __brand: "SandboxRunResultDetails" }> {
+): BaseResult<SandboxRunResultDetails> {
   resetSeq();
 
   const { case_id } = fixture;
@@ -265,10 +265,10 @@ export function compileTrack1ReplayCase(
   };
   events.push(policyDecisionEvent);
 
-  // -- 6. Tool result (SC-002 only, when proposed call exists) -----------
+  // -- 6. Tool result (when manifest requires it and proposed call exists) -
 
   if (
-    scenario.scenario_id === "T1-SC-002" &&
+    scenario.attack_script_requirements.required_events.includes("tool_result") &&
     fixture.input.proposed_tool_call !== null
   ) {
     const ptc = fixture.input.proposed_tool_call;
@@ -307,7 +307,7 @@ export function compileTrack1ReplayCase(
   if (mapping.alerts > 0) {
     const alert: SandboxAlert = {
       alert_id: replayId("alert", case_id),
-      subject_event_id: policyDecisionEvent.event_id,
+      subject_event_id: policyDecisionPayload.subject_event_id,
       decision_id: policyDecisionPayload.decision_id,
       risk_level: mapping.risk_level,
       category: "fixture_expected",
@@ -467,5 +467,5 @@ export function compileTrack1ReplayCase(
     );
   }
 
-  return normalized as BaseResult<{ __brand: "SandboxRunResultDetails" }>;
+  return normalized as BaseResult<SandboxRunResultDetails>;
 }

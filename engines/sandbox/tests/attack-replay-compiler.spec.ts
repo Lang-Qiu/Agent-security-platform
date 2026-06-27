@@ -447,3 +447,74 @@ test("REQ-T1-ATTACK-REPLAY-006: compiler - unsafe tool disposition rejects", asy
       err.code === "unsafe_tool_execution_requested"
   );
 });
+
+// -- regression: alert supervision invariants ---------------------------
+
+test("REQ-T1-ATTACK-REPLAY-006: compiler - alert subject_event_id matches decision subject", async () => {
+  const compiler = await tryImportCompiler();
+  assert.ok(compiler);
+
+  // Find alert-action fixtures: T1-SC-001 has "alert" as expected action,
+  // but in the current fixture set only allow/ask/deny appear.
+  // We create a variant with alert action to verify the invariant.
+  const bundle = loadTrack1ReplayScenario("T1-SC-001");
+  const baseCase = bundle.cases.find(
+    (c) => c.input.proposed_tool_call !== null
+  );
+  assert.ok(baseCase, "must find a tool-bearing case for alert variant");
+
+  const alertFixture = {
+    ...baseCase,
+    expected_outcome: {
+      ...baseCase.expected_outcome,
+      policy_action: "alert" as const
+    }
+  };
+
+  const result = compiler.compileTrack1ReplayCase(bundle.scenario, alertFixture);
+
+  // normalizeBaseResult must accept the result
+  const normalized = normalizeBaseResult(result);
+  assert.ok(normalized, "alert result must pass normalizeBaseResult");
+
+  // Alert subject_event_id must match the decision's subject_event_id
+  const details = normalized.details as SandboxRunResultDetails;
+  const decision = details.policy_decisions?.[0];
+  const alert = details.alerts?.[0];
+
+  assert.ok(decision, "must have a policy decision");
+  assert.ok(alert, "must have an alert");
+  assert.equal(decision.action, "alert");
+  assert.equal(
+    alert.subject_event_id,
+    decision.subject_event_id,
+    "alert.subject_event_id must equal decision.subject_event_id"
+  );
+});
+
+test("REQ-T1-ATTACK-REPLAY-006: compiler - blocked_record subject_event_id matches decision subject", async () => {
+  const compiler = await tryImportCompiler();
+  assert.ok(compiler);
+
+  const bundle = loadTrack1ReplayScenario("T1-SC-001");
+  // T1-SC-001-C001 is a deny case with no tool call
+  const denyCase = bundle.cases[0];
+  assert.equal(denyCase.expected_outcome.policy_action, "deny");
+
+  const result = compiler.compileTrack1ReplayCase(bundle.scenario, denyCase);
+  const normalized = normalizeBaseResult(result);
+  assert.ok(normalized, "deny result must pass normalizeBaseResult");
+
+  const details = normalized.details as SandboxRunResultDetails;
+  const decision = details.policy_decisions?.[0];
+  const blockedRecord = details.blocked_records?.[0];
+
+  assert.ok(decision, "must have a policy decision");
+  assert.ok(blockedRecord, "must have a blocked record");
+  assert.equal(decision.action, "deny");
+  assert.equal(
+    blockedRecord.subject_event_id,
+    decision.subject_event_id,
+    "blocked_record.subject_event_id must equal decision.subject_event_id"
+  );
+});
