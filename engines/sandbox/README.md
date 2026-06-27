@@ -39,3 +39,22 @@ engines/sandbox/
 - 先定义动作类型与告警结构。
 - 先用模拟事件流跑通告警回传，而不是一开始就实现复杂沙箱。
 - 在 `samples/sandbox` 中准备最小事件样本，用于规则验证和联调。
+
+## Track 1 模拟业务工具
+
+`src/simulated-tools/` 提供四种受控工具：
+
+- `send_email`：仅接受 `local.invalid` 收件人，结果写入内存 outbox。
+- `read_file`：仅读取 `sandbox://fixtures/` 虚拟文件。
+- `write_file`：仅写入 `sandbox://fixtures/` 虚拟文件。
+- `call_api`：仅解析注入的 `mock://api.local/` 路由。
+
+工具请求先经过严格运行时归一化，再由 `SimulatedToolExecutor` 执行。执行结果保留 `call_id`、`session_id`、`scenario_id`、`case_id` 与确定性证据引用。
+
+本层不发送邮件、不访问宿主文件系统、不发起网络请求，也不产生 `allow`、`deny`、`ask`、`alert` 策略决定。策略与监控事件由后续 sandbox requirement 承担。
+
+验证命令：
+
+```powershell
+npm.cmd run test:engine:sandbox
+```

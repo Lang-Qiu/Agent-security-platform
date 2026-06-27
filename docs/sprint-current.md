@@ -1,80 +1,67 @@
 # Sprint Current
 
 ## Requirement ID
-REQ-T1-CASESET-003
+REQ-T1-MOCK-TOOLS-004
 
 ## Requirement Name
-Track 1 adversarial and jailbreak case set
+Track 1 simulated business tool contract and in-memory execution
 
 ## Background
 
-`REQ-T1-SCENARIO-002` established three stable Track 1 scenario IDs, their required case types, safety boundaries, policy expectations, and evidence requirements. This requirement turns that matrix into a reusable, machine-validated case set for later attack replay, filtering, sandbox supervision, and report evidence.
+`REQ-T1-CASESET-003` created nine controlled cases that reference `send_email`, `read_file`, `write_file`, and `call_api`. This requirement gives those names a typed, executable, and strictly local tool boundary for later monitoring and replay work.
 
-Canonical scenario definitions remain in:
+The detailed design is:
 
-- `samples/track1/scenarios/track1-scenarios.v1.json`
-- `docs/track1/scenario-acceptance-matrix.md`
+- `docs/superpowers/specs/2026-06-27-track1-mock-tools-design.md`
 
 ## Goal
 
-- Define one durable JSON schema for Track 1 adversarial, jailbreak, and negative-control cases.
-- Create the first nine controlled fixtures: three cases for each existing scenario.
-- Give every fixture stable scenario and case identifiers.
-- Record expected model behavior, policy action, tool behavior, and evidence references without executing an attack.
-- Keep all content synthetic, local, deterministic, and suitable for repository tests.
-
-## Proposed Case Contract
-
-Each case should define at least:
-
-- schema version, case ID, scenario ID, title, and case type
-- test category: `adversarial`, `jailbreak`, or `negative_control`
-- synthetic input payload and controlled context or memory references
-- expected model behavior and prohibited model behavior
-- expected policy action and expected simulated tool behavior
-- required evidence references
-- explicit research-safety declarations
-
-Exact field names and required/optional rules must be finalized in the design before RED tests are written.
+- Define discriminated request/result contracts for all four simulated tools.
+- Validate untrusted tool requests before execution.
+- Execute all behavior against injected in-memory state.
+- Produce deterministic evidence metadata for later sandbox events.
+- Make unsafe targets fail closed without introducing policy-decision behavior.
 
 ## In Scope
 
-- Add a versioned JSON case schema under `samples/track1/cases/`.
-- Add exactly three seed fixtures under each of:
-  - `samples/track1/cases/T1-SC-001/`
-  - `samples/track1/cases/T1-SC-002/`
-  - `samples/track1/cases/T1-SC-003/`
-- Cover every `required_case_types` entry from the scenario manifest exactly once in the seed set.
-- Add a case-set README or index describing IDs, paths, safety rules, and future replay ownership.
-- Add repository tests for schema shape, scenario linkage, coverage, uniqueness, policy expectations, and prohibited real-world behavior.
-- Add the new repository test to the root `test:repo` gate.
-- Update `docs/progress.md` after verification.
+- Engine-private tool contracts under `engines/sandbox/src/simulated-tools/`.
+- Runtime request normalization.
+- In-memory email outbox.
+- Virtual `sandbox://fixtures/` file storage.
+- Mock `mock://api.local/` route storage.
+- Deterministic tool results and safety rejection codes.
+- Sandbox engine unit tests and root test-script integration.
+- Sandbox README, architecture, and progress updates after verification.
 
 ## Out of Scope
 
-- No attack replay script implementation.
-- No simulated email, file, or API tool implementation.
-- No sandbox event or public API contract changes.
-- No frontend or backend production behavior changes.
-- No real model calls, OpenClaw runtime integration, live credentials, external delivery, or third-party targeting.
-- No large-scale corpus generation or model-quality benchmark.
+- No real SMTP or email delivery.
+- No host filesystem reads or writes.
+- No real network calls.
+- No public REST API or backend task-center changes.
+- No frontend changes.
+- No `shared/` contract changes.
+- No sandbox policy decisions or typed monitoring events.
+- No attack replay scripts.
 
 ## Acceptance Criteria
 
-- A versioned JSON schema defines the case contract and rejects missing or invalid required fields.
-- The seed set contains exactly nine fixtures, with three fixtures linked to each existing scenario ID.
-- Every scenario manifest `required_case_types` value is represented exactly once.
-- Every case ID is unique and follows a stable scenario-scoped naming convention.
-- Every case records explicit expected model, policy, tool, and evidence outcomes.
-- Every case is synthetic and declares that real credentials, real email delivery, real external API calls, external exfiltration, and third-party targeting are prohibited.
-- Repository tests demonstrate RED before fixtures/schema completion and GREEN afterward.
-- `npm run test:repo` passes.
+- `send_email`, `read_file`, `write_file`, and `call_api` each have a typed request variant.
+- Runtime normalization rejects malformed requests, unknown fields, and unsupported tool names.
+- Successful calls mutate or read only injected in-memory state.
+- Email recipients are restricted to `local.invalid`.
+- File paths are restricted to normalized `sandbox://fixtures/` paths.
+- API endpoints are restricted to `mock://api.local/`.
+- Rejected calls return stable rejection codes and do not mutate state.
+- Results preserve case/session/scenario correlation and deterministic evidence.
+- Tests show RED before implementation and GREEN afterward.
+- `npm.cmd run test:engine:sandbox` and `npm.cmd run test:repo` pass.
 
 ## Design Decision
 
-Negative-control fixtures use the non-blocking `allow` expectation so later filtering and supervision requirements can measure false positives. The scenario manifest `expected_policy_actions` includes `allow` for this purpose.
+The tool contract remains engine-private and uses deterministic per-instance in-memory execution. Safety rejection stays separate from `allow`, `deny`, `ask`, and `alert` policy decisions.
 
 ## Constraints / Notes
 
-- This file update is a documentation/configuration exception to full TDD; no production behavior changes here.
+- This requirement switch and design draft are documentation exceptions to full TDD.
 - Implementation follows `Design -> Test -> Implement -> Document -> Stop and report`.

@@ -15,7 +15,10 @@
       "tool_name": "call_api",
       "arguments": {
         "endpoint": "mock://api.local/archive",
-        "payload": "TRACK1_TEST_SECRET"
+        "method": "POST",
+        "body": {
+          "payload": "TRACK1_TEST_SECRET"
+        }
       }
     }
   },

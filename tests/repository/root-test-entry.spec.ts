@@ -32,6 +32,21 @@ test("root quality gate delegates to test:all and includes frontend coverage", (
     /\bnpm run test:shared\b/,
     "test:all should include shared contract coverage"
   );
+  assert.match(
+    scripts["test:all"] ?? "",
+    /\bnpm run test:engine:sandbox\b/,
+    "test:all should include sandbox engine coverage"
+  );
+  assert.match(
+    scripts["test:engine:sandbox"] ?? "",
+    /\bengines\/sandbox\/tests\/simulated-tool-contract\.spec\.ts\b/,
+    "sandbox engine gate should include simulated-tool contract coverage"
+  );
+  assert.match(
+    scripts["test:engine:sandbox"] ?? "",
+    /\bengines\/sandbox\/tests\/simulated-tool-executor\.spec\.ts\b/,
+    "sandbox engine gate should include simulated-tool execution coverage"
+  );
 
   assert.match(
     scripts["test:repo"] ?? "",

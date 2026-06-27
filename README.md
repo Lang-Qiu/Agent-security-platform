@@ -26,6 +26,15 @@ Current teaching-stage boundary:
 - both providers now converge on the same standardized risk-result core before the finished `static_analysis` record is exposed to the platform read APIs
 - operators still read the closed-loop state through the existing `GET /api/tasks/:taskId`, `GET /api/tasks/:taskId/result`, and `GET /api/tasks/:taskId/risk-summary` routes
 
+## Track 1 Simulated Business Tools
+
+- `engines/sandbox/src/simulated-tools` provides deterministic `send_email`, `read_file`, `write_file`, and `call_api` behavior for controlled Track 1 cases.
+- Email is restricted to the reserved `local.invalid` domain and is stored only in an in-memory outbox.
+- File operations are restricted to the in-memory `sandbox://fixtures/` namespace.
+- API operations resolve only against injected `mock://api.local/` routes and never call a network.
+- Safety rejection is separate from sandbox policy decisions; `allow`, `deny`, `ask`, and `alert` remain owned by the next supervision-contract requirement.
+- Targeted verification command: `npm run test:engine:sandbox`.
+
 ## FOFA API Dev Script
 
 - `FOFA_EMAIL=your_email FOFA_KEY=your_key npm run run:fofa:api:task-scan -- --backend http://127.0.0.1:3000 --query='port="11434" && protocol="http"'`

@@ -15,6 +15,7 @@
       "tool_name": "send_email",
       "arguments": {
         "recipient": "audit-sink@local.invalid",
+        "subject": "Controlled audit message",
         "body": "Synthetic controlled payload"
       }
     }

@@ -10,6 +10,41 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-06-27 - REQ-T1-MOCK-TOOLS-004 Track 1 simulated business tools
+
+- requirement: Track 1 simulated business tool contract and in-memory execution
+- scope:
+  - added strict engine-private request/result contracts and runtime normalization for `send_email`, `read_file`, `write_file`, and `call_api`
+  - added per-instance in-memory outbox, virtual files, and mock API routes
+  - added deterministic execution results with case, scenario, session, call, and evidence correlation
+  - enforced `local.invalid`, `sandbox://fixtures/`, and `mock://api.local/` target boundaries
+  - kept safety rejection separate from future `allow` / `deny` / `ask` / `alert` policy decisions
+  - aligned the existing Track 1 proposed tool-call fixtures with the executable contract
+  - added `test:engine:sandbox` to the root full-stack test gate
+- tests added or updated:
+  - `engines/sandbox/tests/simulated-tool-contract.spec.ts`
+  - `engines/sandbox/tests/simulated-tool-executor.spec.ts`
+  - `tests/repository/root-test-entry.spec.ts`
+  - `tests/repository/track1-case-set.spec.ts`
+- test result:
+  - RED confirmed for the missing contract, incompatible case arguments, missing executor/state modules, and missing root test entry
+  - `npm.cmd run test:engine:sandbox`: 7 pass, 0 fail
+  - `npm.cmd run test:repo`: 31 pass, 0 fail
+  - focused strict TypeScript check for `engines/sandbox/src/simulated-tools/*.ts`: pass
+  - full `npm.cmd run test` in the real worktree: repository, shared, and sandbox stages pass; backend has 39 pass and 1 unrelated pre-existing asset-scan expectation-drift failure, so the chained frontend stage does not run
+  - external Draft 2020-12 validation: all 9 Track 1 fixtures pass; missing-required-field and extra-field probes are rejected
+- docs updated:
+  - `README.md`
+  - `engines/sandbox/README.md`
+  - `docs/superpowers/specs/2026-06-27-track1-mock-tools-design.md`
+  - `docs/sprint-current.md`
+  - `docs/architecture.md`
+  - `docs/progress.md`
+- docs checked and unchanged:
+  - `docs/api-contract.md`: no public API or shared runtime DTO changed
+- current conclusion: the four simulated tools are executable through a deterministic local-only boundary and are ready for sandbox policy/event wrapping
+- next blocker: define typed behavior-supervision events and `allow` / `deny` / `ask` / `alert` decisions in `REQ-T1-SANDBOX-CONTRACT-005`
+
 ## 2026-06-27 - REQ-T1-CASESET-003 Track 1 adversarial and jailbreak case set
 
 - requirement: Track 1 adversarial and jailbreak case set

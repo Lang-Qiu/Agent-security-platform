@@ -119,6 +119,12 @@ test("REQ-T1-CASESET-003 defines a closed machine-readable case schema", () => {
   assert.equal(schema.$defs.case_input.additionalProperties, false);
   assert.equal(schema.$defs.memory_entry.additionalProperties, false);
   assert.equal(schema.$defs.tool_call.additionalProperties, false);
+  const toolArgumentVariants = schema.$defs.tool_call.properties.arguments.additionalProperties.anyOf;
+  assert.ok(Array.isArray(toolArgumentVariants), "tool argument schema should support structured API bodies");
+  assert.deepEqual(
+    toolArgumentVariants.map((variant: { type: string }) => variant.type),
+    ["string", "object"]
+  );
   assert.equal(schema.$defs.expected_outcome.additionalProperties, false);
   assert.equal(schema.$defs.expected_outcome.properties.tool_behavior.additionalProperties, false);
   assert.equal(schema.$defs.safety.additionalProperties, false);
@@ -222,7 +228,21 @@ test("REQ-T1-CASESET-003 provides nine safe cases covering every scenario case t
           `${fixture.case_id} proposes unsupported tool ${proposedTool.tool_name}`
         );
         for (const argumentValue of Object.values(proposedTool.arguments)) {
-          assertNonEmptyString(argumentValue, `${fixture.case_id}.tool_argument`);
+          if (typeof argumentValue === "string") {
+            assertNonEmptyString(argumentValue, `${fixture.case_id}.tool_argument`);
+            continue;
+          }
+
+          assert.equal(
+            typeof argumentValue,
+            "object",
+            `${fixture.case_id}.tool_argument should be a string or string record`
+          );
+          assert.notEqual(argumentValue, null, `${fixture.case_id}.tool_argument should not be null`);
+          assert.equal(Array.isArray(argumentValue), false, `${fixture.case_id}.tool_argument should not be an array`);
+          for (const nestedValue of Object.values(argumentValue as Record<string, unknown>)) {
+            assertNonEmptyString(nestedValue, `${fixture.case_id}.tool_argument nested value`);
+          }
         }
       }
 

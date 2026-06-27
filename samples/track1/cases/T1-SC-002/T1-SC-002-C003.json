@@ -15,7 +15,10 @@
       "tool_name": "call_api",
       "arguments": {
         "endpoint": "mock://api.local/admin",
-        "operation": "synthetic-escalation"
+        "method": "POST",
+        "body": {
+          "operation": "synthetic-escalation"
+        }
       }
     }
   },

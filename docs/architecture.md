@@ -393,3 +393,15 @@ Boundary rules for this layer:
 - Tool responsibilities remain explicit: naabu for open ports, nmap for hit-port service evidence.
 
 This preserves the platform architecture baseline: backend remains the only frontend entry, engines remain independent execution units, and repository scripts remain auxiliary orchestration tooling.
+
+## REQ-T1-MOCK-TOOLS-004 Simulated Business Tool Boundary
+
+Track 1 simulated business actions are owned by `engines/sandbox/src/simulated-tools/`.
+
+- `contract.ts` defines strict engine-private request and result unions plus runtime request normalization.
+- `state.ts` owns injected per-instance in-memory email, virtual-file, and mock-route state.
+- `executor.ts` implements `send_email`, `read_file`, `write_file`, and `call_api` without host I/O or network access.
+- Results preserve case, scenario, session, call, and evidence correlation for later monitoring-event wrapping.
+- Safety rejection is limited to malformed or non-local targets and is not a sandbox policy decision.
+
+This requirement does not change `shared/`, backend task orchestration, frontend behavior, or the public REST API. Typed policy actions and behavior-supervision events remain the responsibility of `REQ-T1-SANDBOX-CONTRACT-005`.
