@@ -394,6 +394,18 @@ Boundary rules for this layer:
 
 This preserves the platform architecture baseline: backend remains the only frontend entry, engines remain independent execution units, and repository scripts remain auxiliary orchestration tooling.
 
+## REQ-T1-SANDBOX-CONTRACT-005 Track 1 Sandbox Supervision Contract
+
+Track 1 sandbox supervision data is owned by the shared contract layer and kept separate from engine execution.
+
+- `shared/types/sandbox.ts` is the cross-module source of truth for event enums, policy action constants, and typed behavior-event, policy-decision, alert, and blocked-record interfaces.
+- `shared/contracts/sandbox.ts` strips private and raw values (raw model content, raw prompts, engine-private fields) and validates record-level constraints and collection-level invariants.
+- Sandbox engines produce policy decisions as events, but shared code never chooses policy actions — it only validates that the resulting records are consistent.
+- The canonical event stream (`events`) feeds replay, monitoring, backend normalization, UI rendering, and report aggregation.
+- `satisfiesSandboxSupervisionContract` enforces that terminal `finished` and `blocked` sandbox results carry complete supervision collections and that cross-record references are consistent.
+- Pending sandbox result shells remain valid without complete supervision data.
+- Simulated-tool safety rejection (malformed or out-of-bounds targets) is not a sandbox policy decision and is handled inside `engines/sandbox/src/simulated-tools/`.
+
 ## REQ-T1-MOCK-TOOLS-004 Simulated Business Tool Boundary
 
 Track 1 simulated business actions are owned by `engines/sandbox/src/simulated-tools/`.

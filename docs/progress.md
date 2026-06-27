@@ -10,6 +10,58 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-06-28 - REQ-T1-SANDBOX-CONTRACT-005 Sandbox supervision contract
+
+- requirement: Track 1 sandbox behavior supervision contract with typed events, policy actions, and result invariants
+- scope:
+  - added `shared/types/sandbox.ts` with seven typed event variants, four policy actions (`allow`/`deny`/`ask`/`alert`), `SandboxAlert`, `SandboxBlockedRecord`, and `SandboxPolicyDecision`
+  - added `shared/contracts/sandbox.ts` with runtime normalizers for events, decisions, alerts, and blocking records plus `satisfiesSandboxSupervisionContract` for terminal-result invariant validation
+  - added typed `SandboxRunResultDetails` with `events`, `policy_decisions`, `alerts`, `blocked_records` replacing the legacy `alerts?: unknown[]`
+  - enforced terminal-result completeness: `finished`/`blocked` sandbox results require complete supervision collections
+  - stripped sensitive raw content: model payload `content` field is never exposed; raw prompts and engine-private fields are removed during normalization
+  - kept pending sandbox result shells compatible without full supervision data
+- files added:
+  - `shared/types/sandbox.ts`
+  - `shared/contracts/sandbox.ts`
+  - `shared/tests/sandbox-contract.spec.ts`
+- files modified:
+  - `shared/types/result.ts`
+  - `shared/utils/normalizers.ts`
+  - `shared/contracts/result.ts`
+  - `shared/tests/result-contract.spec.ts`
+  - `shared/index.ts`
+  - `shared/package.json`
+  - `package.json`
+  - `tests/repository/root-test-entry.spec.ts`
+  - `docs/architecture.md`
+  - `docs/api-contract.md`
+  - `docs/progress.md`
+- tests added or updated:
+  - `shared/tests/sandbox-contract.spec.ts`: 7 tests covering enums, seven event variants, four policy actions, alert/blocked record normalization, malformed record rejection, and supervision collection invariants
+  - `shared/tests/result-contract.spec.ts`: replaced legacy sandbox fixture with typed collections; added terminal-invariant rejection, missing-collection, pending-compatibility, and alert-materialization tests
+  - `tests/repository/root-test-entry.spec.ts`: added gate assertions for sandbox-contract in root and shared package test scripts
+- test result:
+  - RED confirmed for missing enums, normalizer exports, and gate registrations before implementation
+  - focused sandbox contract tests: 7 pass, 0 fail
+  - `npm run test:shared`: 21 pass, 0 fail
+  - `npm run test:repo`: 31 pass, 0 fail
+  - `npm run test:engine:sandbox`: 7 pass, 0 fail
+  - `npm run test:backend`: 39 pass, 1 fail (known unrelated asset-scan expectation drift)
+  - full gate: shared, repository, sandbox-engine pass; backend unrelated baseline failure remains
+- docs updated:
+  - `docs/architecture.md`: added REQ-T1-SANDBOX-CONTRACT-005 subsection
+  - `docs/api-contract.md`: replaced legacy `action: "block"` SandboxAlert with seven event types, four actions, typed PolicyDecision/SandboxAlert/SandboxBlockedRecord, terminal constraints, and a compact JSON example
+  - `docs/progress.md`
+- docs checked and unchanged:
+  - `README.md`: already mentions sandbox supervision concepts but does not promise a specific contract shape; no update needed
+- explicit exclusions:
+  - no policy evaluator implementation
+  - no event replay or monitoring plugin
+  - no new backend route or frontend UI
+  - no sandbox engine execution behavior changes
+- current conclusion: seven event discriminants, four policy actions, typed alert/blocked records, and terminal-result invariants are validated at the shared contract boundary; the contract is ready for downstream engine, backend, and frontend consumption
+- next blocker: attack replay and evidence replay tooling in `REQ-T1-ATTACK-REPLAY-006`
+
 ## 2026-06-27 - REQ-T1-MOCK-TOOLS-004 Track 1 simulated business tools
 
 - requirement: Track 1 simulated business tool contract and in-memory execution

