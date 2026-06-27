@@ -14,6 +14,10 @@ The approved detailed design is:
 
 - `docs/superpowers/specs/2026-06-28-track1-attack-replay-design.md`
 
+The approved implementation task DAG is:
+
+- `docs/superpowers/plans/2026-06-28-track1-attack-replay.md`
+
 ## Goal
 
 - Provide one executable `replay.ts` entrypoint for each Track 1 scenario.
