@@ -53,4 +53,20 @@ test("root quality gate delegates to test:all and includes frontend coverage", (
     /\btests\/repository\/fofa-portscan-workflow\.spec\.ts\b/,
     "test:repo should include naabu+nmap workflow repository coverage"
   );
+
+  assert.match(
+    scripts["test:shared"] ?? "",
+    /\bshared\/tests\/sandbox-contract\.spec\.ts\b/,
+    "test:shared should include sandbox supervision contract coverage"
+  );
+
+  const sharedPackageJson = JSON.parse(
+    readFileSync(new URL("../../shared/package.json", import.meta.url), "utf8")
+  ) as { scripts?: Record<string, string> };
+
+  assert.match(
+    sharedPackageJson.scripts?.test ?? "",
+    /\btests\/sandbox-contract\.spec\.ts\b/,
+    "the shared package test should include sandbox supervision contract coverage"
+  );
 });
