@@ -48,6 +48,22 @@ test("root quality gate delegates to test:all and includes frontend coverage", (
     "sandbox engine gate should include simulated-tool execution coverage"
   );
 
+  for (const replayTest of [
+    "engines/sandbox/tests/attack-replay-loader.spec.ts",
+    "engines/sandbox/tests/attack-replay-compiler.spec.ts",
+    "engines/sandbox/tests/attack-replay-entrypoints.spec.ts"
+  ]) {
+    assert.ok(
+      scripts["test:engine:sandbox"]?.includes(replayTest),
+      `sandbox gate should include ${replayTest}`
+    );
+  }
+
+  assert.ok(
+    scripts["test:repo"]?.includes("tests/repository/track1-attack-replay.spec.ts"),
+    "repository gate should include Track 1 attack replay coverage"
+  );
+
   assert.match(
     scripts["test:repo"] ?? "",
     /\btests\/repository\/fofa-portscan-workflow\.spec\.ts\b/,
