@@ -475,6 +475,39 @@ test("REQ-T1-SANDBOX-CONTRACT-005 rejects finished sandbox result with only four
   );
 });
 
+test("REQ-T1-SANDBOX-CONTRACT-005 rejects status=blocked with blocked=false", async () => {
+  const sharedModule = await loadSharedModule();
+
+  assert.notEqual(sharedModule, null);
+  if (!sharedModule) return;
+
+  // contract passes: blocked=false, blocked_records=[], event_count=0
+  // but outer status="blocked" is a semantic contradiction — blocked must mean blocked
+  assert.equal(
+    sharedModule.normalizeBaseResult?.({
+      task_id: "task_blocked_false_001",
+      task_type: "sandbox_run",
+      engine_type: "sandbox",
+      status: "blocked",
+      risk_level: "critical",
+      summary: "contradictory result",
+      details: {
+        session_id: "session_001",
+        events: [],
+        policy_decisions: [],
+        alerts: [],
+        blocked_records: [],
+        blocked: false,
+        event_count: 0
+      },
+      created_at: "2026-06-27T08:00:00Z",
+      updated_at: "2026-06-27T08:00:00Z"
+    }),
+    null,
+    "status=blocked with blocked=false must be rejected"
+  );
+});
+
 test("REQ-T1-SANDBOX-CONTRACT-005 rejects terminal alert result without materialized alerts", async () => {
   const sharedModule = await loadSharedModule();
 

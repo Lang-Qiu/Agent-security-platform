@@ -85,6 +85,10 @@ export function normalizeBaseResult(value: unknown): BaseResult<ResultDetails> |
     ) {
       return null;
     }
+
+    if (value.status === "blocked" && sandboxDetails.blocked !== true) {
+      return null;
+    }
   }
 
   const normalizedResult: BaseResult<ResultDetails> = {

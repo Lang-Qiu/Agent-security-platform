@@ -33,6 +33,8 @@ Recommended fields:
   - `shared/package.json`
   - `package.json`
   - `tests/repository/root-test-entry.spec.ts`
+  - `frontend/src/mocks/task-results.ts`
+  - `frontend/src/pages/task-detail.page.spec.tsx`
   - `docs/architecture.md`
   - `docs/api-contract.md`
   - `docs/progress.md`
@@ -41,18 +43,20 @@ Recommended fields:
   - `shared/tests/result-contract.spec.ts`: replaced legacy sandbox fixture with typed collections; added terminal-invariant rejection, missing-collection, pending-compatibility, bare-minimum rejection, and alert-materialization tests
   - `tests/repository/root-test-entry.spec.ts`: added gate assertions for sandbox-contract in root and shared package test scripts
 - review fixes (2026-06-28):
-  - [P1] terminal required fields: `satisfiesSandboxSupervisionContract` now rejects results missing `session_id`, `blocked`, or `event_count`; added `isValidCalendarDate` for true ISO 8601 date validation
+  - [P1] terminal required fields: `satisfiesSandboxSupervisionContract` now rejects results missing `session_id`, `blocked`, or `event_count`
   - [P1] one-to-one policy mapping: policy event decision IDs must be unique and form an identical set with `policy_decisions` IDs
   - [P2] calendar date validation: `isIso8601` rejects impossible dates (`2026-02-30`, `2025-02-29`) while accepting valid leap-year dates and timezone offsets
+  - [P1] outer status enforcement: `status="blocked"` requires `details.blocked === true` in `normalizeBaseResult`
+  - [P1] frontend fixture migration: migrated both `task-results.ts` mock and `task-detail.page.spec.tsx` inline fixture to typed events, decisions, alerts, and blocked records that satisfy the shared contract
 - test result:
-  - RED confirmed for missing enums, normalizer exports, gate registrations, missing terminal fields, duplicate decision IDs, and impossible calendar dates before implementation
+  - RED confirmed for missing enums, normalizer exports, gate registrations, missing terminal fields, duplicate decision IDs, impossible calendar dates, and blocked-status semantic contradiction before implementation
   - focused sandbox contract tests: 9 pass, 0 fail
-  - `npm run test:shared`: 25 pass, 0 fail
+  - `npm run test:shared`: 26 pass, 0 fail
   - `npm run test:repo`: 31 pass, 0 fail
   - `npm run test:engine:sandbox`: 7 pass, 0 fail
   - `npm run test:backend`: 39 pass, 1 fail (known unrelated asset-scan expectation drift)
-  - `npm run test:frontend`: 35 pass, 1 fail (pre-existing sandbox alert rendering test, unrelated to this requirement)
-  - `npm run test`: shared, repo, sandbox, backend stages pass (1 unrelated backend failure); frontend has 1 pre-existing failure
+  - `npm run test:frontend`: 36 pass, 0 fail
+  - `npm run test`: shared, repo, sandbox, frontend stages pass; backend has 1 unrelated baseline failure
 - docs updated:
   - `docs/architecture.md`: added REQ-T1-SANDBOX-CONTRACT-005 subsection
   - `docs/api-contract.md`: replaced legacy `action: "block"` SandboxAlert with seven event types, four actions, typed PolicyDecision/SandboxAlert/SandboxBlockedRecord, terminal constraints, and a compact JSON example
