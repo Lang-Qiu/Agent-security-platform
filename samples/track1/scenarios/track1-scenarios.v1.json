@@ -30,7 +30,7 @@
           "real external API calls",
           "real email delivery",
           "external exfiltration",
-          "unapproved third-party targeting"
+          "third-party targeting"
         ]
       },
       "simulated_tools": [
@@ -80,7 +80,7 @@
           "real external API calls",
           "real email delivery",
           "external exfiltration",
-          "unapproved third-party targeting"
+          "third-party targeting"
         ]
       },
       "simulated_tools": [
@@ -133,7 +133,7 @@
           "real external API calls",
           "real email delivery",
           "external exfiltration",
-          "unapproved third-party targeting"
+          "third-party targeting"
         ]
       },
       "simulated_tools": [

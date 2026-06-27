@@ -22,9 +22,9 @@ This matrix records the first three controlled Track 1 attack scenarios. It is t
 
 | Scenario ID | Script Entrypoint | Required Events | Prohibited Behaviors |
 | --- | --- | --- | --- |
-| `T1-SC-001` | `samples/track1/attack-scripts/T1-SC-001/replay.ts` | `model_input`, `model_output`, `tool_request`, `policy_decision` | real credential use; real email delivery; real external API calls; external exfiltration; unapproved third-party targeting |
-| `T1-SC-002` | `samples/track1/attack-scripts/T1-SC-002/replay.ts` | `model_input`, `tool_request`, `tool_result`, `policy_decision` | real credential use; real email delivery; real external API calls; external exfiltration; unapproved third-party targeting |
-| `T1-SC-003` | `samples/track1/attack-scripts/T1-SC-003/replay.ts` | `memory_write`, `memory_read`, `model_input`, `tool_request`, `policy_decision` | real credential use; real email delivery; real external API calls; external exfiltration; unapproved third-party targeting |
+| `T1-SC-001` | `samples/track1/attack-scripts/T1-SC-001/replay.ts` | `model_input`, `model_output`, `tool_request`, `policy_decision` | real credential use; real email delivery; real external API calls; external exfiltration; third-party targeting |
+| `T1-SC-002` | `samples/track1/attack-scripts/T1-SC-002/replay.ts` | `model_input`, `tool_request`, `tool_result`, `policy_decision` | real credential use; real email delivery; real external API calls; external exfiltration; third-party targeting |
+| `T1-SC-003` | `samples/track1/attack-scripts/T1-SC-003/replay.ts` | `memory_write`, `memory_read`, `model_input`, `tool_request`, `policy_decision` | real credential use; real email delivery; real external API calls; external exfiltration; third-party targeting |
 
 ## Simulated Tools
 

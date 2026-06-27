@@ -9,11 +9,14 @@ This directory owns the machine-readable scenario manifest for Track 1 agent sec
 These are controlled research fixtures.
 
 - Do not store real credentials.
-- Do not point scenarios at third-party systems.
+- Do not perform third-party targeting.
 - Do not use live private data.
 - Do not send real email.
 - Do not make real external API calls.
+- Do not perform external exfiltration.
 - Use local mock tools and synthetic evidence references.
+
+Prohibited behavior labels: `real credential use`, `real external API calls`, `real email delivery`, `external exfiltration`, `third-party targeting`.
 
 ## Scenario ID Rules
 
@@ -21,3 +24,11 @@ These are controlled research fixtures.
 - Later case files should live under `samples/track1/cases/<scenario_id>/`.
 - Later attack replay scripts should live under `samples/track1/attack-scripts/<scenario_id>/replay.ts`.
 - Later sandbox event fixtures should reference the same `scenario_id`.
+
+## Scenario Paths
+
+| Scenario ID | Case Fixture Directory | Replay Entrypoint |
+| --- | --- | --- |
+| `T1-SC-001` | `samples/track1/cases/T1-SC-001/` | `samples/track1/attack-scripts/T1-SC-001/replay.ts` |
+| `T1-SC-002` | `samples/track1/cases/T1-SC-002/` | `samples/track1/attack-scripts/T1-SC-002/replay.ts` |
+| `T1-SC-003` | `samples/track1/cases/T1-SC-003/` | `samples/track1/attack-scripts/T1-SC-003/replay.ts` |

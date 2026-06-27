@@ -42,9 +42,10 @@ const requiredProhibitedBehaviors = new Set([
   "real credential use",
   "real external API calls",
   "external exfiltration",
-  "unapproved third-party targeting",
+  "third-party targeting",
   "real email delivery"
 ]);
+const prohibitedWeakerBehaviorLabel = ["unapproved", "third-party targeting"].join(" ");
 const placeholderPattern = new RegExp(["TB" + "D", "TO" + "DO", "FIX" + "ME", "\\?\\?\\?"].join("|"), "i");
 
 interface Track1ScenarioManifest {
@@ -102,6 +103,10 @@ function assertIncludesAll(text: string, values: string[], context: string): voi
   for (const value of values) {
     assert.ok(text.includes(value), `${context} should include ${value}`);
   }
+}
+
+function assertDoesNotInclude(text: string, value: string, context: string): void {
+  assert.equal(text.includes(value), false, `${context} should not include ${value}`);
 }
 
 test("REQ-T1-SCENARIO-002 defines the required Track 1 seed attack classes", () => {
@@ -218,7 +223,20 @@ test("REQ-T1-SCENARIO-002 documents every scenario in the human-readable accepta
     assertIncludesAll(matrix, scenario.simulated_tools, `matrix simulated tools for ${scenario.scenario_id}`);
     assertIncludesAll(matrix, scenario.expected_policy_actions, `matrix policy actions for ${scenario.scenario_id}`);
     assertIncludesAll(matrix, scenario.evidence_requirements, `matrix evidence requirements for ${scenario.scenario_id}`);
+
+    assert.ok(readme.includes(scenario.scenario_id), `README should include ${scenario.scenario_id}`);
+    assert.ok(
+      readme.includes(scenario.case_requirements.expected_case_file_pattern) ||
+        readme.includes(`samples/track1/cases/${scenario.scenario_id}/`),
+      `README should include ${scenario.case_requirements.expected_case_file_pattern} or the scenario case directory`
+    );
+    assert.ok(
+      readme.includes(scenario.attack_script_requirements.entrypoint),
+      `README should include ${scenario.attack_script_requirements.entrypoint}`
+    );
   }
+
+  assertIncludesAll(readme, Array.from(requiredProhibitedBehaviors), "README prohibited behaviors");
 
   for (const requiredHeading of [
     "Scenario Acceptance Matrix",
@@ -235,6 +253,9 @@ test("REQ-T1-SCENARIO-002 documents every scenario in the human-readable accepta
   assert.ok(readme.includes("Do not store real credentials"));
   assert.ok(readme.includes("real external API calls"));
   assert.ok(readme.includes("track1-scenarios.v1.json"));
+  assertDoesNotInclude(JSON.stringify(manifest), prohibitedWeakerBehaviorLabel, "manifest");
+  assertDoesNotInclude(matrix, prohibitedWeakerBehaviorLabel, "matrix");
+  assertDoesNotInclude(readme, prohibitedWeakerBehaviorLabel, "README");
   assertNoPlaceholderText(matrix, "matrix");
   assertNoPlaceholderText(readme, "readme");
 });
