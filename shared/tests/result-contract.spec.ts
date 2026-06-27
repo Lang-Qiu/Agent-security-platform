@@ -447,6 +447,34 @@ test("REQ-T1-SANDBOX-CONTRACT-005 accepts a pending sandbox result without full 
   );
 });
 
+test("REQ-T1-SANDBOX-CONTRACT-005 rejects finished sandbox result with only four empty arrays", async () => {
+  const sharedModule = await loadSharedModule();
+
+  assert.notEqual(sharedModule, null);
+  if (!sharedModule) return;
+
+  assert.equal(
+    sharedModule.normalizeBaseResult?.({
+      task_id: "task_sandbox_bare_001",
+      task_type: "sandbox_run",
+      engine_type: "sandbox",
+      status: "finished",
+      risk_level: "info",
+      summary: "bare minimum",
+      details: {
+        events: [],
+        policy_decisions: [],
+        alerts: [],
+        blocked_records: []
+      },
+      created_at: "2026-06-27T08:00:00Z",
+      updated_at: "2026-06-27T08:00:00Z"
+    }),
+    null,
+    "finished result with only empty arrays but no session_id/blocked/event_count must be rejected"
+  );
+});
+
 test("REQ-T1-SANDBOX-CONTRACT-005 rejects terminal alert result without materialized alerts", async () => {
   const sharedModule = await loadSharedModule();
 

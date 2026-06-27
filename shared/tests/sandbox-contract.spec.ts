@@ -394,3 +394,239 @@ test("REQ-T1-SANDBOX-CONTRACT-005 validates sandbox supervision collection invar
     "empty supervision should satisfy invariants"
   );
 });
+
+test("REQ-T1-SANDBOX-CONTRACT-005 requires session_id, blocked, and event_count for terminal supervision", async () => {
+  const shared = await loadSharedModule();
+
+  const base = {
+    session_id: "session_001",
+    events: [
+      {
+        event_id: "event_tool_001",
+        session_id: "session_001",
+        sequence: 1,
+        event_type: "tool_request",
+        occurred_at: "2026-06-27T08:00:01Z",
+        source: "agent",
+        evidence_refs: ["evidence://tool/request/001"],
+        payload: {
+          call_id: "call_001",
+          tool_name: "send_email",
+          target_ref: "recipient://outside.example",
+          arguments_ref: "fixture://cases/T1-SC-002-C01/tool-request"
+        }
+      },
+      {
+        event_id: "event_decision_001",
+        session_id: "session_001",
+        sequence: 2,
+        event_type: "policy_decision",
+        occurred_at: "2026-06-27T08:00:02Z",
+        source: "policy",
+        evidence_refs: ["evidence://decision/001"],
+        payload: {
+          decision_id: "decision_001",
+          subject_event_id: "event_tool_001",
+          policy_id: "policy_tool_target",
+          action: "deny",
+          reason_code: "target_not_approved",
+          reason: "Target is outside",
+          evidence_refs: ["evidence://decision/001"],
+          decided_at: "2026-06-27T08:00:02Z"
+        }
+      }
+    ],
+    policy_decisions: [
+      {
+        decision_id: "decision_001",
+        subject_event_id: "event_tool_001",
+        policy_id: "policy_tool_target",
+        action: "deny",
+        reason_code: "target_not_approved",
+        reason: "Target is outside",
+        evidence_refs: ["evidence://decision/001"],
+        decided_at: "2026-06-27T08:00:02Z"
+      }
+    ],
+    alerts: [],
+    blocked_records: [
+      {
+        blocked_record_id: "blocked_001",
+        subject_event_id: "event_tool_001",
+        decision_id: "decision_001",
+        reason: "Policy denied",
+        evidence_refs: ["evidence://blocked/001"],
+        occurred_at: "2026-06-27T08:00:02Z"
+      }
+    ],
+    blocked: true,
+    event_count: 2
+  };
+
+  // missing session_id
+  const { session_id: _sid, ...noSession } = base;
+  assert.equal(shared.satisfiesSandboxSupervisionContract?.(noSession), false, "should reject missing session_id");
+
+  // missing blocked
+  const { blocked: _blk, ...noBlocked } = base;
+  assert.equal(shared.satisfiesSandboxSupervisionContract?.(noBlocked), false, "should reject missing blocked");
+
+  // missing event_count
+  const { event_count: _ec, ...noEventCount } = base;
+  assert.equal(shared.satisfiesSandboxSupervisionContract?.(noEventCount), false, "should reject missing event_count");
+
+  // status=blocked scenario: blocked=true but empty blocked_records
+  assert.equal(
+    shared.satisfiesSandboxSupervisionContract?.({
+      ...base,
+      blocked: true,
+      blocked_records: []
+    }),
+    false,
+    "should reject blocked=true with empty blocked_records"
+  );
+});
+
+test("REQ-T1-SANDBOX-CONTRACT-005 enforces one-to-one policy event-to-decision mapping", async () => {
+  const shared = await loadSharedModule();
+
+  const toolEvent = {
+    event_id: "event_tool_001",
+    session_id: "session_001",
+    sequence: 1,
+    event_type: "tool_request",
+    occurred_at: "2026-06-27T08:00:01Z",
+    source: "agent",
+    evidence_refs: ["evidence://tool/request/001"],
+    payload: {
+      call_id: "call_001",
+      tool_name: "send_email",
+      target_ref: "recipient://outside.example",
+      arguments_ref: "fixture://cases/T1-SC-002-C01/tool-request"
+    }
+  } as const;
+
+  const decisionD1 = {
+    decision_id: "decision_001",
+    subject_event_id: "event_tool_001",
+    policy_id: "policy_tool_target",
+    action: "deny",
+    reason_code: "target_not_approved",
+    reason: "Target is outside",
+    evidence_refs: ["evidence://decision/001"],
+    decided_at: "2026-06-27T08:00:02Z"
+  } as const;
+
+  const decisionD2 = {
+    ...decisionD1,
+    decision_id: "decision_002"
+  } as const;
+
+  const policyEvent = (payload: typeof decisionD1) => ({
+    event_id: `event_decision_${payload.decision_id}`,
+    session_id: "session_001",
+    sequence: 2,
+    event_type: "policy_decision",
+    occurred_at: "2026-06-27T08:00:02Z",
+    source: "policy",
+    evidence_refs: ["evidence://decision/001"],
+    payload
+  });
+
+  // duplicate policy event decision ID — two events both carry d1, but materialized has d1, d2
+  // use "ask" action for d2 so the only deficiency is the decision-ID mismatch
+  const decisionD2Ask = { ...decisionD2, action: "ask" as const, decision_id: "decision_002" };
+  assert.equal(
+    shared.satisfiesSandboxSupervisionContract?.({
+      session_id: "session_001",
+      events: [
+        toolEvent,
+        { ...policyEvent(decisionD1), event_id: "event_decision_001", sequence: 2 },
+        { ...policyEvent(decisionD1), event_id: "event_decision_002", sequence: 3 }
+      ],
+      policy_decisions: [decisionD1, decisionD2Ask],
+      alerts: [],
+      blocked_records: [
+        {
+          blocked_record_id: "blocked_001",
+          subject_event_id: "event_tool_001",
+          decision_id: "decision_001",
+          reason: "Policy denied",
+          evidence_refs: ["evidence://blocked/001"],
+          occurred_at: "2026-06-27T08:00:02Z"
+        }
+      ],
+      blocked: true,
+      event_count: 3
+    }),
+    false,
+    "should reject duplicate policy event decision IDs"
+  );
+
+  // orphan decision in materialized view — d2 has no matching event
+  assert.equal(
+    shared.satisfiesSandboxSupervisionContract?.({
+      session_id: "session_001",
+      events: [toolEvent, policyEvent(decisionD1)],
+      policy_decisions: [decisionD1, decisionD2],
+      alerts: [],
+      blocked_records: [
+        {
+          blocked_record_id: "blocked_001",
+          subject_event_id: "event_tool_001",
+          decision_id: "decision_001",
+          reason: "Policy denied",
+          evidence_refs: ["evidence://blocked/001"],
+          occurred_at: "2026-06-27T08:00:02Z"
+        }
+      ],
+      blocked: true,
+      event_count: 2
+    }),
+    false,
+    "should reject orphan policy_decision with no matching event"
+  );
+});
+
+test("REQ-T1-SANDBOX-CONTRACT-005 rejects impossible calendar dates", async () => {
+  const shared = await loadSharedModule();
+
+  const baseEvent = events[0];
+
+  assert.equal(
+    shared.normalizeSandboxBehaviorEvent?.({
+      ...baseEvent,
+      occurred_at: "2026-02-30T08:00:00Z"
+    }),
+    null,
+    "Feb 30 should be rejected"
+  );
+
+  assert.equal(
+    shared.normalizeSandboxBehaviorEvent?.({
+      ...baseEvent,
+      occurred_at: "2025-02-29T08:00:00Z"
+    }),
+    null,
+    "Feb 29 in non-leap year should be rejected"
+  );
+
+  // valid dates should still pass
+  assert.notEqual(
+    shared.normalizeSandboxBehaviorEvent?.({
+      ...baseEvent,
+      occurred_at: "2024-02-29T08:00:00Z"
+    }),
+    null,
+    "Feb 29 in leap year should be accepted"
+  );
+
+  assert.notEqual(
+    shared.normalizeSandboxBehaviorEvent?.({
+      ...baseEvent,
+      occurred_at: "2026-06-27T08:00:00+08:00"
+    }),
+    null,
+    "valid date with timezone offset should be accepted"
+  );
+});

@@ -37,17 +37,22 @@ Recommended fields:
   - `docs/api-contract.md`
   - `docs/progress.md`
 - tests added or updated:
-  - `shared/tests/sandbox-contract.spec.ts`: 7 tests covering enums, seven event variants, four policy actions, alert/blocked record normalization, malformed record rejection, and supervision collection invariants
-  - `shared/tests/result-contract.spec.ts`: replaced legacy sandbox fixture with typed collections; added terminal-invariant rejection, missing-collection, pending-compatibility, and alert-materialization tests
+  - `shared/tests/sandbox-contract.spec.ts`: 9 tests covering enums, seven event variants, four policy actions, alert/blocked record normalization, malformed record rejection, supervision collection invariants, terminal-field enforcement, one-to-one policy mapping, and calendar-date validation
+  - `shared/tests/result-contract.spec.ts`: replaced legacy sandbox fixture with typed collections; added terminal-invariant rejection, missing-collection, pending-compatibility, bare-minimum rejection, and alert-materialization tests
   - `tests/repository/root-test-entry.spec.ts`: added gate assertions for sandbox-contract in root and shared package test scripts
+- review fixes (2026-06-28):
+  - [P1] terminal required fields: `satisfiesSandboxSupervisionContract` now rejects results missing `session_id`, `blocked`, or `event_count`; added `isValidCalendarDate` for true ISO 8601 date validation
+  - [P1] one-to-one policy mapping: policy event decision IDs must be unique and form an identical set with `policy_decisions` IDs
+  - [P2] calendar date validation: `isIso8601` rejects impossible dates (`2026-02-30`, `2025-02-29`) while accepting valid leap-year dates and timezone offsets
 - test result:
-  - RED confirmed for missing enums, normalizer exports, and gate registrations before implementation
-  - focused sandbox contract tests: 7 pass, 0 fail
-  - `npm run test:shared`: 21 pass, 0 fail
+  - RED confirmed for missing enums, normalizer exports, gate registrations, missing terminal fields, duplicate decision IDs, and impossible calendar dates before implementation
+  - focused sandbox contract tests: 9 pass, 0 fail
+  - `npm run test:shared`: 25 pass, 0 fail
   - `npm run test:repo`: 31 pass, 0 fail
   - `npm run test:engine:sandbox`: 7 pass, 0 fail
   - `npm run test:backend`: 39 pass, 1 fail (known unrelated asset-scan expectation drift)
-  - full gate: shared, repository, sandbox-engine pass; backend unrelated baseline failure remains
+  - `npm run test:frontend`: 35 pass, 1 fail (pre-existing sandbox alert rendering test, unrelated to this requirement)
+  - `npm run test`: shared, repo, sandbox, backend stages pass (1 unrelated backend failure); frontend has 1 pre-existing failure
 - docs updated:
   - `docs/architecture.md`: added REQ-T1-SANDBOX-CONTRACT-005 subsection
   - `docs/api-contract.md`: replaced legacy `action: "block"` SandboxAlert with seven event types, four actions, typed PolicyDecision/SandboxAlert/SandboxBlockedRecord, terminal constraints, and a compact JSON example

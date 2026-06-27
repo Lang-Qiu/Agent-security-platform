@@ -20,16 +20,44 @@ import type {
 import type { SandboxRunResultDetails } from "../types/result.ts";
 import { isOneOf, isPlainObject, isString, isStringArray } from "../utils/guards.ts";
 
-const ISO_8601_PATTERN =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
-const SHA256_PATTERN = /^[a-f0-9]{64}$/;
-
 function isNonEmptyString(value: unknown): value is string {
   return isString(value) && value.trim().length > 0;
 }
 
+function isValidCalendarDate(year: number, month: number, day: number): boolean {
+  if (month < 1 || month > 12) return false;
+  if (day < 1 || day > 31) return false;
+
+  const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+  // leap year adjustment for February
+  if (month === 2) {
+    const isLeapYear = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+    const maxDay = isLeapYear ? 29 : 28;
+    return day <= maxDay;
+  }
+
+  return day <= daysInMonth[month - 1];
+}
+
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+
+const ISO_8601_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/;
+
 function isIso8601(value: unknown): value is string {
-  return isString(value) && ISO_8601_PATTERN.test(value) && Number.isFinite(Date.parse(value));
+  if (!isString(value)) return false;
+
+  const match = value.match(ISO_8601_PATTERN);
+  if (!match) return false;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+
+  if (!isValidCalendarDate(year, month, day)) return false;
+
+  return Number.isFinite(Date.parse(value));
 }
 
 function isNonEmptyStringArray(value: unknown): value is string[] {
@@ -336,6 +364,11 @@ function fullDecisionEqual(a: SandboxPolicyDecision, b: SandboxPolicyDecision): 
 export function satisfiesSandboxSupervisionContract(details: SandboxRunResultDetails): boolean {
   const { events, policy_decisions, alerts, blocked_records } = details;
 
+  // terminal fields are mandatory
+  if (!isNonEmptyString(details.session_id)) return false;
+  if (typeof details.blocked !== "boolean") return false;
+  if (!Number.isInteger(details.event_count) || (details.event_count as number) < 0) return false;
+
   if (!events || !policy_decisions || !alerts || !blocked_records) {
     return false;
   }
@@ -356,9 +389,7 @@ export function satisfiesSandboxSupervisionContract(details: SandboxRunResultDet
   }
 
   // every event session matches details.session_id
-  if (details.session_id !== undefined) {
-    if (!events.every((event) => event.session_id === details.session_id)) return false;
-  }
+  if (!events.every((event) => event.session_id === details.session_id)) return false;
 
   // decision ID uniqueness
   const decisionIds = policy_decisions.map((d) => d.decision_id);
@@ -373,6 +404,17 @@ export function satisfiesSandboxSupervisionContract(details: SandboxRunResultDet
     (event) => event.event_type === "policy_decision"
   );
   if (policyEvents.length !== policy_decisions.length) return false;
+
+  // policy event decision IDs must be unique
+  const policyEventDecisionIds = policyEvents.map(
+    (event) => (event.payload as SandboxPolicyDecision).decision_id
+  );
+  if (new Set(policyEventDecisionIds).size !== policyEventDecisionIds.length) return false;
+
+  // policy event decision IDs and policy_decisions IDs must be identical sets
+  const policyDecisionIdSet = new Set(decisionIds);
+  if (policyEventDecisionIds.length !== policyDecisionIdSet.size) return false;
+  if (!policyEventDecisionIds.every((id) => policyDecisionIdSet.has(id))) return false;
 
   const decisionMap = new Map(policy_decisions.map((d) => [d.decision_id, d]));
   for (const event of policyEvents) {
@@ -421,12 +463,10 @@ export function satisfiesSandboxSupervisionContract(details: SandboxRunResultDet
   }
 
   // event_count === events.length
-  if (details.event_count !== undefined && details.event_count !== events.length) return false;
+  if (details.event_count !== events.length) return false;
 
   // blocked === (blocked_records.length > 0)
-  if (details.blocked !== undefined) {
-    if (details.blocked !== (blocked_records.length > 0)) return false;
-  }
+  if (details.blocked !== (blocked_records.length > 0)) return false;
 
   return true;
 }
