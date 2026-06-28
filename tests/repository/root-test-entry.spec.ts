@@ -81,6 +81,23 @@ test("root quality gate delegates to test:all and includes frontend coverage", (
     "repository gate should include Track 1 monitor coverage"
   );
 
+  assert.ok(
+    scripts["test:repo"]?.includes("tests/repository/track1-base-filter.spec.ts"),
+    "repository gate should include Track 1 base filter coverage"
+  );
+
+  for (const baseFilterTest of [
+    "engines/sandbox/tests/base-filter-contract.spec.ts",
+    "engines/sandbox/tests/base-filter-evaluator.spec.ts",
+    "engines/sandbox/tests/base-filter-provider.spec.ts",
+    "engines/sandbox/tests/base-filter-evaluation.spec.ts"
+  ]) {
+    assert.ok(
+      scripts["test:engine:sandbox"]?.includes(baseFilterTest),
+      `sandbox gate should include ${baseFilterTest}`
+    );
+  }
+
   assert.match(
     scripts["test:repo"] ?? "",
     /\btests\/repository\/fofa-portscan-workflow\.spec\.ts\b/,
