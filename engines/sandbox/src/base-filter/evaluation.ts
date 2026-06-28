@@ -9,6 +9,8 @@ import type {
   Track1BaseFilterSummary
 } from "./contract.ts";
 import { runAllTrack1BaseFilterCases } from "./replay-adapter.ts";
+import { TRACK1_BASE_FILTER_RULES } from "./rule-catalog.ts";
+import type { Track1FilterRule } from "./contract.ts";
 
 // -- action ranking ---------------------------------------------------------
 
@@ -345,6 +347,238 @@ function isSafeRuleId(value: string): boolean {
   return SAFE_RULE_ID_PATTERN.test(value);
 }
 
+// ==============================================================================
+// Strict REQ-008 demo-result boundary validator
+// ==============================================================================
+
+const ISO_8601_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/;
+
+const SAFE_REF_PATTERN =
+  /^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s<>"{}|\\^`\x00-\x1f\x7f?&#]+$/;
+
+const FIXED_RESULT_SUMMARIES = new Set([
+  "Monitored sandbox session failed",
+  "Monitored sandbox session blocked",
+  "Monitored sandbox session completed"
+]);
+
+const MONITOR_EVIDENCE_REFS: Record<string, readonly string[]> = {
+  model_input: ["evidence://track1/monitor/model-input"],
+  model_output: ["evidence://track1/monitor/model-output"],
+  tool_request: ["evidence://track1/monitor/tool-request"],
+  tool_result: ["evidence://track1/monitor/tool-result"],
+  policy_decision: ["evidence://track1/monitor/policy-decision"]
+};
+
+const REPLAY_EVIDENCE_PREFIX = "evidence://track1/";
+
+const RESULT_BASE_KEYS: readonly string[] = [
+  "task_id", "task_type", "engine_type", "status", "risk_level",
+  "summary", "details", "created_at", "updated_at", "finished_at"
+];
+
+const MONITOR_METADATA_KEYS: readonly string[] = [
+  "schema_version", "model_call_count", "tool_call_count",
+  "decision_count", "executed_tool_count", "intercepted_tool_count",
+  "provider_failure_count"
+];
+
+function buildCatalogReasonMap(
+  catalog: readonly Track1FilterRule[]
+): Map<string, { reason: string; reason_code: string; action: string; rule_id: string }> {
+  const map = new Map<string, { reason: string; reason_code: string; action: string; rule_id: string }>();
+  for (const rule of catalog) {
+    map.set(rule.rule_id, {
+      reason: rule.reason,
+      reason_code: rule.reason_code,
+      action: rule.action,
+      rule_id: rule.rule_id
+    });
+  }
+  return map;
+}
+
+function validateDemoResult(
+  nr: BaseResult<SandboxRunResultDetails>,
+  caseId: string,
+  catalogRuleMap: Map<string, { reason: string; reason_code: string; action: string; rule_id: string }>
+): boolean {
+  // -- 1. Exact key set --
+  const hasMetadata = "metadata" in nr;
+  const nrKeys = Object.keys(nr).sort();
+  const expectedKeys = hasMetadata
+    ? [...RESULT_BASE_KEYS, "metadata"].sort()
+    : [...RESULT_BASE_KEYS].sort();
+  if (nrKeys.length !== expectedKeys.length) return false;
+  if (!nrKeys.every((k, i) => k === expectedKeys[i])) return false;
+
+  // -- 1b. Summary is a fixed monitor value --
+  if (!FIXED_RESULT_SUMMARIES.has(nr.summary)) return false;
+
+  // -- 2. task_id --
+  if (nr.task_id !== `task:${caseId}`) return false;
+
+  const details = nr.details as SandboxRunResultDetails;
+
+  // -- 3. session correlation --
+  if (details.session_id !== `session:${caseId}`) return false;
+
+  // -- 4. Event correlation --
+  const scenarioId = caseId.slice(0, 9); // "T1-SC-NNN"
+  if (!details.events) return false;
+  for (const evt of details.events) {
+    if (evt.session_id !== details.session_id) return false;
+    if (evt.case_id !== caseId) return false;
+    if (evt.scenario_id !== scenarioId) return false;
+  }
+
+  // -- 5. ISO-8601 timestamps --
+  if (!ISO_8601_PATTERN.test(nr.created_at)) return false;
+  if (!ISO_8601_PATTERN.test(nr.updated_at)) return false;
+  if (typeof nr.finished_at === "string" && !ISO_8601_PATTERN.test(nr.finished_at)) return false;
+
+  // -- 6. Metadata shape --
+  if (hasMetadata) {
+    const meta = nr.metadata as Record<string, unknown>;
+    if (!isPlainObject(meta)) return false;
+    const metaKeys = Object.keys(meta).sort();
+    if (metaKeys.length !== 1 || metaKeys[0] !== "monitor") return false;
+    const mon = meta.monitor as Record<string, unknown>;
+    if (!isPlainObject(mon)) return false;
+    const monKeys = Object.keys(mon).sort();
+    if (monKeys.length !== MONITOR_METADATA_KEYS.length) return false;
+    if (!MONITOR_METADATA_KEYS.every((k, i) => [...MONITOR_METADATA_KEYS].sort()[i] === monKeys[i])) { return false; }
+    // Validate fixed schema version and counters
+    const expectedMonKeys = [...MONITOR_METADATA_KEYS].sort();
+    for (let i = 0; i < expectedMonKeys.length; i++) {
+      if (monKeys[i] !== expectedMonKeys[i]) return false;
+    }
+    if (mon.schema_version !== "track1-monitor.v1") return false;
+    const counterKeys = ["model_call_count", "tool_call_count", "decision_count",
+      "executed_tool_count", "intercepted_tool_count", "provider_failure_count"];
+    for (const ck of counterKeys) {
+      const v = mon[ck];
+      if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || !Number.isFinite(v)) return false;
+    }
+  }
+
+  // -- 7. Model/tool payload content_ref --
+  for (const evt of details.events) {
+    const p = evt.payload as Record<string, unknown>;
+    if (p?.content_ref && typeof p.content_ref === "string") {
+      if (!SAFE_REF_PATTERN.test(p.content_ref)) return false;
+    }
+  }
+
+  // -- 8. Decision reason/reason_code/action must match catalog --
+  const decisions = details.policy_decisions ?? [];
+  for (const d of decisions) {
+    if (d.policy_id !== BASE_FILTER_POLICY_ID) return false;
+
+    // No-match decisions
+    if (d.action === "allow" && d.reason_code === "base_filter_no_match") {
+      if (d.evidence_refs.length !== 1) return false;
+      if (d.evidence_refs[0] !== NO_MATCH_EVIDENCE_REF) return false;
+      if (d.reason !== "No Track 1 base-filter rule matched") return false;
+      continue;
+    }
+
+    // Non-allow decisions: must reference catalog rules
+    if (d.action !== "allow") {
+      // Must not contain no-match evidence
+      if (d.evidence_refs.includes(NO_MATCH_EVIDENCE_REF)) return false;
+      // Must have at least one catalog rule reference
+      let hasRuleRef = false;
+      for (const ref of d.evidence_refs) {
+        const m = RULE_EVIDENCE_PATTERN.exec(ref);
+        if (m) {
+          const ruleId = m[1];
+          const ruleMeta = catalogRuleMap.get(ruleId);
+          if (!ruleMeta) return false; // unknown rule ID
+          hasRuleRef = true;
+        } else {
+          return false; // unparseable evidence ref in base-filter decision
+        }
+      }
+      if (!hasRuleRef) return false;
+
+      // reason and reason_code must match the winning rule
+      // Find the highest-ranked rule among referenced rules
+      const referencedRules = [];
+      for (const ref of d.evidence_refs) {
+        const m = RULE_EVIDENCE_PATTERN.exec(ref);
+        if (m) {
+          const meta = catalogRuleMap.get(m[1]);
+          if (meta) referencedRules.push(meta);
+        }
+      }
+      // Sort by action rank desc, then rule_id asc
+      referencedRules.sort((a, b) => {
+        const r = ACTION_RANK[b.action] - ACTION_RANK[a.action];
+        if (r !== 0) return r;
+        return a.rule_id.localeCompare(b.rule_id);
+      });
+      const winner = referencedRules[0];
+      if (d.reason_code !== winner.reason_code) return false;
+      if (d.reason !== winner.reason) return false;
+      if (d.action !== winner.action) {
+        // The decision action should be the highest action from matched rules
+        const highestAction = referencedRules.reduce(
+          (best, r) => ACTION_RANK[r.action] > ACTION_RANK[best] ? r.action : best,
+          "allow" as string
+        );
+        if (d.action !== highestAction) return false;
+      }
+    }
+  }
+
+  // -- 9. Event evidence_refs --
+  for (const evt of details.events) {
+    const et = evt.event_type;
+    // memory_write and memory_read use replay evidence refs
+    if (et === "memory_write" || et === "memory_read") {
+      for (const ref of evt.evidence_refs) {
+        if (!ref.startsWith(REPLAY_EVIDENCE_PREFIX)) return false;
+        if (!SAFE_REF_PATTERN.test(ref)) return false;
+      }
+    } else if (MONITOR_EVIDENCE_REFS[et]) {
+      const approved = MONITOR_EVIDENCE_REFS[et];
+      if (evt.evidence_refs.length !== approved.length) return false;
+      for (let i = 0; i < approved.length; i++) {
+        if (evt.evidence_refs[i] !== approved[i]) return false;
+      }
+    } else {
+      return false; // unknown event type
+    }
+  }
+
+  // -- 10. Alert/blocked record correlation --
+  for (const alert of details.alerts ?? []) {
+    const dec = decisions.find((d: any) => d.decision_id === alert.decision_id);
+    if (!dec) return false;
+    if (alert.subject_event_id !== dec.subject_event_id) return false;
+    if (alert.reason !== dec.reason) return false;
+    // Alert evidence_refs must match decision evidence_refs
+    if (alert.evidence_refs.length !== dec.evidence_refs.length) return false;
+    for (let i = 0; i < dec.evidence_refs.length; i++) {
+      if (alert.evidence_refs[i] !== dec.evidence_refs[i]) return false;
+    }
+  }
+  for (const br of details.blocked_records ?? []) {
+    const dec = decisions.find((d: any) => d.decision_id === br.decision_id);
+    if (!dec) return false;
+    if (br.subject_event_id !== dec.subject_event_id) return false;
+    if (br.reason !== dec.reason) return false;
+    if (br.evidence_refs.length !== dec.evidence_refs.length) return false;
+    for (let i = 0; i < dec.evidence_refs.length; i++) {
+      if (br.evidence_refs[i] !== dec.evidence_refs[i]) return false;
+    }
+  }
+
+  return true;
+}
+
 export function normalizeTrack1BaseFilterDemoReport(
   value: unknown
 ): Track1BaseFilterDemoReport | null {
@@ -375,29 +609,31 @@ export function normalizeTrack1BaseFilterDemoReport(
   if (value.cases.length !== 9 || value.results.length !== 9) return null;
 
   // ---- 0. Validate sort order: cases and results must be sorted by case_id ----
+  // Guard: every case must be a plain object before accessing .case_id
+  for (let i = 0; i < value.cases.length; i++) {
+    if (!isPlainObject(value.cases[i])) return null;
+  }
   for (let i = 1; i < value.cases.length; i++) {
-    const prevId = (value.cases[i - 1] as Record<string, unknown>).case_id as string;
-    const curId = (value.cases[i] as Record<string, unknown>).case_id as string;
+    const prevC = value.cases[i - 1] as Record<string, unknown>;
+    const curC = value.cases[i] as Record<string, unknown>;
+    const prevId = prevC.case_id as string;
+    const curId = curC.case_id as string;
     if (typeof prevId !== "string" || typeof curId !== "string") return null;
     if (curId <= prevId) return null;
   }
 
   // ---- 1. Normalize every result first ----
-  // Result summary values are fixed by the monitor; reject anything else.
-  const FIXED_RESULT_SUMMARIES = new Set([
-    "Monitored sandbox session failed",
-    "Monitored sandbox session blocked",
-    "Monitored sandbox session completed"
-  ]);
-
   const normalizedResults: BaseResult<SandboxRunResultDetails>[] = [];
   for (const r of value.results) {
     const nr = normalizeBaseResult(r);
     if (!nr) return null;
-    // Validate summary is one of the known fixed monitor values
-    if (!FIXED_RESULT_SUMMARIES.has((nr as BaseResult<any>).summary)) return null;
     normalizedResults.push(nr as BaseResult<SandboxRunResultDetails>);
   }
+
+  // Build catalog rule map for policy validation
+  const catalogRuleMap = buildCatalogReasonMap(
+    TRACK1_BASE_FILTER_RULES as unknown as Track1FilterRule[]
+  );
 
   // Verify results are also sorted by case_id (checked after we extract IDs)
   // First, validate each result has consistent event correlation
@@ -408,6 +644,8 @@ export function normalizeTrack1BaseFilterDemoReport(
     const cid = validateResultEventsConsistent(nr);
     if (!cid) return null;
     if (resultByCaseId.has(cid)) return null;
+    // Strict REQ-008 result boundary validation
+    if (!validateDemoResult(nr, cid, catalogRuleMap)) return null;
     resultByCaseId.set(cid, nr);
     resultCaseIds.push(cid);
   }
