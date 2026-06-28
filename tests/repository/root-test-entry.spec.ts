@@ -64,6 +64,23 @@ test("root quality gate delegates to test:all and includes frontend coverage", (
     "repository gate should include Track 1 attack replay coverage"
   );
 
+  for (const monitorTest of [
+    "engines/sandbox/tests/attack-monitor-contract.spec.ts",
+    "engines/sandbox/tests/attack-monitor-session.spec.ts",
+    "engines/sandbox/tests/attack-monitor-replay-adapter.spec.ts",
+    "engines/sandbox/tests/attack-monitor-demo.spec.ts"
+  ]) {
+    assert.ok(
+      scripts["test:engine:sandbox"]?.includes(monitorTest),
+      `sandbox gate should include ${monitorTest}`
+    );
+  }
+
+  assert.ok(
+    scripts["test:repo"]?.includes("tests/repository/track1-monitor-plugin.spec.ts"),
+    "repository gate should include Track 1 monitor coverage"
+  );
+
   assert.match(
     scripts["test:repo"] ?? "",
     /\btests\/repository\/fofa-portscan-workflow\.spec\.ts\b/,
