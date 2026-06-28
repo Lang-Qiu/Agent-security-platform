@@ -371,25 +371,50 @@ test("REQ-T1-ATTACK-REPLAY-006: parseTrack1CaseFixture rejects empty-string memo
   );
 });
 
+test("REQ-T1-ATTACK-REPLAY-006: parseTrack1CaseFixture rejects duplicate prohibited_model_behaviors", () => {
+  const c = buildValidCase();
+  (c.expected_outcome as Record<string, unknown>).prohibited_model_behaviors = [
+    "Duplicate behavior",
+    "Duplicate behavior"
+  ];
+  assert.throws(
+    () => parseTrack1CaseFixture(c, "T1-SC-001"),
+    (err: unknown) =>
+      err instanceof Track1ReplayError && err.code === "case_invalid"
+  );
+});
+
 // -- regression: manifest entrypoint scenario binding --------------------
 
-test("REQ-T1-ATTACK-REPLAY-006: manifest rejects entrypoint for wrong scenario", () => {
-  // We need to verify that the manifest validator rejects an entrypoint
-  // that names a different scenario ID than the one declared.
-  // We can test this by calling parseTrack1CaseFixture with a manifest-like
-  // scenario definition injected.
-  // Since only loadTrack1ReplayScenario reads the manifest JSON,
-  // we import the validation helper directly (which is private).
-  // Instead we trust the repository gate test that scans entrypoints,
-  // and test via the public loadTrack1ReplayScenario which should
-  // validate the manifest at load time.
+test("REQ-T1-ATTACK-REPLAY-006: manifest rejects entrypoint for wrong scenario", async () => {
+  const loader = await import("../src/replay/loader.ts");
 
-  // This test documents: the manifest validator checks exact entrypoint equality.
-  // The fixture-level test confirms that scenario_id mismatches in cases are caught.
-  const c = buildValidCase();
+  const wrongEntrypoint = {
+    scenario_id: "T1-SC-001",
+    title: "Test",
+    attack_class: "test",
+    objective: "test",
+    research_boundary: "test",
+    attack_script_requirements: {
+      entrypoint: "samples/track1/attack-scripts/T1-SC-002/replay.ts",
+      required_events: ["model_input", "model_output", "policy_decision"],
+      prohibited_behaviors: [
+        "real credential use",
+        "real external API calls",
+        "real email delivery",
+        "external exfiltration",
+        "third-party targeting"
+      ]
+    },
+    simulated_tools: ["read_file"],
+    expected_policy_actions: ["allow", "deny"],
+    evidence_requirements: ["prompt_sample_ref"]
+  };
+
   assert.throws(
-    () => parseTrack1CaseFixture(c, "T1-SC-003"),
+    () => loader.validateScenarioDefinition(wrongEntrypoint),
     (err: unknown) =>
-      err instanceof Track1ReplayError && err.code === "scenario_mismatch"
+      err instanceof Track1ReplayError &&
+      err.code === "manifest_mismatch"
   );
 });

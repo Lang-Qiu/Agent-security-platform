@@ -346,6 +346,7 @@ function validateExpectedOutcome(
       `${caseId}: prohibited_model_behaviors must not be empty`
     );
   }
+  const seenPmb = new Set<string>();
   for (const behavior of value.prohibited_model_behaviors) {
     if (!isNonEmptyString(behavior)) {
       throw new Track1ReplayError(
@@ -353,6 +354,13 @@ function validateExpectedOutcome(
         `${caseId}: prohibited_model_behaviors entries must be non-empty strings`
       );
     }
+    if (seenPmb.has(behavior)) {
+      throw new Track1ReplayError(
+        "case_invalid",
+        `${caseId}: duplicate prohibited_model_behavior: ${behavior}`
+      );
+    }
+    seenPmb.add(behavior);
   }
   if (!isOneOf(SANDBOX_POLICY_ACTIONS, value.policy_action)) {
     throw new Track1ReplayError(
@@ -668,7 +676,7 @@ export function parseTrack1CaseFixture(
 
 const VALID_SANDBOX_EVENT_TYPES = SANDBOX_EVENT_TYPES as readonly string[];
 
-function validateScenarioDefinition(
+export function validateScenarioDefinition(
   value: unknown
 ): asserts value is Track1ScenarioDefinition {
   if (!isPlainObject(value)) {
