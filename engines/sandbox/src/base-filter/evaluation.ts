@@ -228,21 +228,34 @@ const CANONICAL_CASE_IDS = new Set(Object.keys(CANONICAL_CASE_METADATA));
 
 // -- per-result derivation helpers -------------------------------------------
 
-function deriveActualAction(result: BaseResult<SandboxRunResultDetails>): SandboxPolicyAction {
+const VALID_SUBJECT_EVENT_TYPES = ["model_output", "tool_request"] as const;
+const NO_MATCH_EVIDENCE_REF = "evidence://track1/base-filter/no-match";
+const BASE_FILTER_POLICY_ID = "policy://track1/base-filter/v1";
+
+function validateAndDeriveActualAction(
+  result: BaseResult<SandboxRunResultDetails>
+): SandboxPolicyAction | null {
   const details = result.details as SandboxRunResultDetails;
   const decisions = details.policy_decisions ?? [];
+
+  // Every decision must reference the base-filter policy
+  for (const d of decisions) {
+    if (d.policy_id !== BASE_FILTER_POLICY_ID) return null;
+  }
+
+  if (decisions.length === 0) return "allow";
   return reduceAction(decisions.map((d) => d.action));
 }
 
-function deriveTerminalStageFromResult(
+function validateAndDeriveStage(
   result: BaseResult<SandboxRunResultDetails>,
   actualAction: SandboxPolicyAction
-): "model_output" | "tool_request" {
+): "model_output" | "tool_request" | null {
   const details = result.details as SandboxRunResultDetails;
   const decisions = details.policy_decisions ?? [];
   const events = details.events ?? [];
 
-  // Among decisions with the highest action, prefer tool_request
+  // Among decisions with the winning action, prefer tool_request
   let bestDecision: any = null;
   for (const d of decisions) {
     if (d.action !== actualAction) continue;
@@ -253,29 +266,52 @@ function deriveTerminalStageFromResult(
       bestDecision = d;
     }
   }
-  if (!bestDecision) return "model_output";
+  if (!bestDecision) return null; // no matching decision found
+
   const se = events.find((e: any) => e.event_id === bestDecision.subject_event_id);
-  return se?.event_type === "tool_request" ? "tool_request" : "model_output";
+  if (!se) return null;
+  // Only model_output and tool_request are valid subject types
+  if (!VALID_SUBJECT_EVENT_TYPES.includes(se.event_type as any)) return null;
+
+  return se.event_type === "tool_request" ? "tool_request" : "model_output";
 }
 
-function findResultCaseId(result: BaseResult<SandboxRunResultDetails>): string | null {
+function validateResultEventsConsistent(result: BaseResult<SandboxRunResultDetails>): string | null {
   const details = result.details as SandboxRunResultDetails;
-  if (!details.events) return null;
+  if (!details.events || details.events.length === 0) return null;
+
+  // Every event must carry the same case_id and scenario_id
+  let canonicalCaseId: string | null = null;
+  let canonicalScenarioId: string | null = null;
+
   for (const evt of details.events) {
-    if (evt.case_id) return evt.case_id;
+    if (!evt.case_id || !evt.scenario_id) return null;
+    if (canonicalCaseId === null) {
+      canonicalCaseId = evt.case_id;
+      canonicalScenarioId = evt.scenario_id;
+    } else {
+      if (evt.case_id !== canonicalCaseId) return null;
+      if (evt.scenario_id !== canonicalScenarioId) return null;
+    }
   }
-  return null;
+  return canonicalCaseId;
 }
 
-function deriveMatchedRuleIds(result: BaseResult<SandboxRunResultDetails>): string[] {
+function validateAndDeriveRuleIds(
+  result: BaseResult<SandboxRunResultDetails>
+): string[] | null {
   const details = result.details as SandboxRunResultDetails;
   const decisions = details.policy_decisions ?? [];
   const ids = new Set<string>();
+
   for (const d of decisions) {
-    if (d.policy_id !== "policy://track1/base-filter/v1") continue;
+    if (d.policy_id !== BASE_FILTER_POLICY_ID) continue;
     for (const ref of d.evidence_refs) {
+      // The no-match ref is valid but produces no rule ID
+      if (ref === NO_MATCH_EVIDENCE_REF) continue;
       const m = RULE_EVIDENCE_PATTERN.exec(ref);
-      if (m) ids.add(m[1]);
+      if (!m) return null; // unparseable or foreign evidence ref → reject
+      ids.add(m[1]);
     }
   }
   return [...ids].sort();
@@ -338,21 +374,47 @@ export function normalizeTrack1BaseFilterDemoReport(
 
   if (value.cases.length !== 9 || value.results.length !== 9) return null;
 
+  // ---- 0. Validate sort order: cases and results must be sorted by case_id ----
+  for (let i = 1; i < value.cases.length; i++) {
+    const prevId = (value.cases[i - 1] as Record<string, unknown>).case_id as string;
+    const curId = (value.cases[i] as Record<string, unknown>).case_id as string;
+    if (typeof prevId !== "string" || typeof curId !== "string") return null;
+    if (curId <= prevId) return null;
+  }
+
   // ---- 1. Normalize every result first ----
+  // Result summary values are fixed by the monitor; reject anything else.
+  const FIXED_RESULT_SUMMARIES = new Set([
+    "Monitored sandbox session failed",
+    "Monitored sandbox session blocked",
+    "Monitored sandbox session completed"
+  ]);
+
   const normalizedResults: BaseResult<SandboxRunResultDetails>[] = [];
   for (const r of value.results) {
     const nr = normalizeBaseResult(r);
     if (!nr) return null;
+    // Validate summary is one of the known fixed monitor values
+    if (!FIXED_RESULT_SUMMARIES.has((nr as BaseResult<any>).summary)) return null;
     normalizedResults.push(nr as BaseResult<SandboxRunResultDetails>);
   }
 
-  // Build result lookup by case_id
+  // Verify results are also sorted by case_id (checked after we extract IDs)
+  // First, validate each result has consistent event correlation
+  const resultCaseIds: string[] = [];
   const resultByCaseId = new Map<string, BaseResult<SandboxRunResultDetails>>();
+
   for (const nr of normalizedResults) {
-    const cid = findResultCaseId(nr);
+    const cid = validateResultEventsConsistent(nr);
     if (!cid) return null;
-    if (resultByCaseId.has(cid)) return null; // duplicate result for same case
+    if (resultByCaseId.has(cid)) return null;
     resultByCaseId.set(cid, nr);
+    resultCaseIds.push(cid);
+  }
+
+  // Verify results are sorted by case_id
+  for (let i = 1; i < resultCaseIds.length; i++) {
+    if (resultCaseIds[i] <= resultCaseIds[i - 1]) return null;
   }
 
   // ---- 2. Validate each case row against canonical metadata and its result ----
@@ -381,16 +443,19 @@ export function normalizeTrack1BaseFilterDemoReport(
     const result = resultByCaseId.get(c.case_id);
     if (!result) return null;
 
-    // -- derive actual_action from result and validate --
-    const derivedAction = deriveActualAction(result);
+    // -- derive actual_action from result (rejects foreign policy IDs) --
+    const derivedAction = validateAndDeriveActualAction(result);
+    if (derivedAction === null) return null;
     if (c.actual_action !== derivedAction) return null;
 
-    // -- derive terminal_stage from result and validate --
-    const derivedStage = deriveTerminalStageFromResult(result, derivedAction);
+    // -- derive terminal_stage from result (rejects unsupported subject types) --
+    const derivedStage = validateAndDeriveStage(result, derivedAction);
+    if (derivedStage === null) return null;
     if (c.terminal_stage !== derivedStage) return null;
 
-    // -- derive matched_rule_ids from result --
-    const derivedRuleIds = deriveMatchedRuleIds(result);
+    // -- derive matched_rule_ids from result (rejects unparseable evidence refs) --
+    const derivedRuleIds = validateAndDeriveRuleIds(result);
+    if (derivedRuleIds === null) return null;
 
     // -- validate claimed matched_rule_ids --
     if (!Array.isArray(c.matched_rule_ids)) return null;

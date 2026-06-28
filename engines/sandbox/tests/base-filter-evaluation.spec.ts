@@ -551,3 +551,117 @@ test("normalizer rejects wrong test_category for canonical case", async () => {
     null
   );
 });
+
+// ============================================================================
+// Round 3: evidence, policy, correlation, and sort validation
+// ============================================================================
+
+test("normalizer rejects reversed cases array (unsorted)", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const reversedCases = [...report.cases].reverse();
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, cases: reversedCases }),
+    null
+  );
+});
+
+test("normalizer rejects reversed results array (unsorted)", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const reversedResults = [...report.results].reverse();
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: reversedResults }),
+    null
+  );
+});
+
+test("normalizer rejects foreign policy ID in result decisions", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = JSON.parse(JSON.stringify(report.results));
+  const firstDetail = badResults[0].details;
+  if (firstDetail?.policy_decisions?.length > 0) {
+    firstDetail.policy_decisions[0] = {
+      ...firstDetail.policy_decisions[0],
+      policy_id: "policy://foreign/v1"
+    };
+  }
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects result with conflicting event case_ids", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = JSON.parse(JSON.stringify(report.results));
+  const firstDetail = badResults[0].details;
+  if (firstDetail?.events?.length > 1) {
+    firstDetail.events = firstDetail.events.map((e: any, i: number) =>
+      i === 1 ? { ...e, case_id: "T1-SC-999-C999" } : e
+    );
+  }
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects unparseable evidence_ref in base-filter decision", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = JSON.parse(JSON.stringify(report.results));
+  const firstDetail = badResults[0].details;
+  if (firstDetail?.policy_decisions?.length > 0) {
+    const pd = firstDetail.policy_decisions[0];
+    if (pd.policy_id === "policy://track1/base-filter/v1") {
+      pd.evidence_refs = [...pd.evidence_refs, "RAW_SENTINEL_IN_EVIDENCE"];
+    }
+  }
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects sentinel injected into result summary field", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = JSON.parse(JSON.stringify(report.results));
+  badResults[0] = {
+    ...badResults[0],
+    summary: "RAW_SENTINEL_IN_SUMMARY"
+  };
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects invalid subject event type", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = JSON.parse(JSON.stringify(report.results));
+  const firstDetail = badResults[0].details;
+  if (firstDetail?.policy_decisions?.length > 0 && firstDetail?.events?.length > 0) {
+    const policyEvent = firstDetail.events.find(
+      (e: any) => e.event_type === "policy_decision"
+    );
+    if (policyEvent) {
+      firstDetail.policy_decisions[0].subject_event_id = policyEvent.event_id;
+    }
+  }
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});

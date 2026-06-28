@@ -39,7 +39,7 @@ Recommended fields:
   - added `engines/sandbox/tests/base-filter-contract.spec.ts` — 92 focused tests (existence, error taxonomy, context/rule/catalog normalizers, serialization/parsing, content boundary, rule ID safety)
   - added `engines/sandbox/tests/base-filter-evaluator.spec.ts` — 33 focused tests (text normalization, source extraction, operators, conjunction, action reduction, built-in catalog, robustness)
   - added `engines/sandbox/tests/base-filter-provider.spec.ts` — 22 focused tests (provider construction, no-match, model/tool stage integration, all four actions, content boundary, mutation)
-  - added `engines/sandbox/tests/base-filter-evaluation.spec.ts` — 27 focused tests (nine-case execution, exact-action matrix, anti-oracle, stage correlation, normalizer validation, test_category coverage)
+  - added `engines/sandbox/tests/base-filter-evaluation.spec.ts` — 43 focused tests (nine-case execution, exact-action matrix, anti-oracle, stage correlation, normalizer validation, test_category coverage, evidence/policy/correlation/sort hardening, demo exception-path tests)
   - added `samples/track1/base-filter/demo.ts` fixed byte-identical demo entrypoint with README
   - added `tests/repository/track1-base-filter.spec.ts` — anti-oracle static/runtime safety scans and behavioral assertion
   - registered all new tests in `test:engine:sandbox` and `test:repo` package scripts
@@ -67,9 +67,9 @@ Recommended fields:
   - contract: 92 pass
   - evaluator: 33 pass
   - provider: 22 pass
-  - evaluation: 27 pass
+  - evaluation: 43 pass
   - repository: 18 pass
-  - test:engine:sandbox: 344 pass (all 14 engine test files)
+  - test:engine:sandbox: 359 pass (all 14 engine test files)
   - test:repo: 61 pass
   - test:shared: 26 pass
   - test:backend: pre-existing baseline only
