@@ -111,12 +111,14 @@ export interface MonitorDecisionProvider {
 
 // -- fail-closed proposal --------------------------------------------------
 
+const _failClosedEvidenceRefs: readonly string[] = Object.freeze(["evidence://track1/monitor/provider-failure"]);
+
 export const MONITOR_FAIL_CLOSED_PROPOSAL: Readonly<MonitorDecisionProposal> = Object.freeze({
   policy_id: "policy://track1/monitor-fail-closed",
   action: "deny",
   reason_code: "decision_provider_failed",
   reason: "Decision provider failed closed",
-  evidence_refs: ["evidence://track1/monitor/provider-failure"]
+  evidence_refs: _failClosedEvidenceRefs
 });
 
 // -- metadata --------------------------------------------------------------

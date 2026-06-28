@@ -104,10 +104,6 @@ export class MonitoredSession {
   #lastModelOutputRef: string | null = null;
   #lastModelOutputSha256: string | null = null;
 
-  // Latest model call info for tool context
-  #latestModelInput: MonitorModelRequest | null = null;
-  #latestModelOutput: MonitorModelResponse | null = null;
-
   // Counters
   #modelCallCount = 0;
   #toolCallCount = 0;
@@ -213,7 +209,6 @@ export class MonitoredSession {
       // Store safe references (no raw content)
       this.#lastModelInputRef = normalizedRequest.content_ref;
       this.#lastModelInputSha256 = inputSha256;
-      this.#latestModelInput = normalizedRequest;
 
       // Call next
       let rawResponse: MonitorModelResponse;
@@ -229,6 +224,7 @@ export class MonitoredSession {
       const normalizedResponse = normalizeMonitorModelResponse(rawResponse);
       if (!normalizedResponse) {
         this.#lifecycle = "sealed";
+        this.#failed = true;
         throw new Track1MonitorError("monitor_model_response_invalid");
       }
 
@@ -262,7 +258,6 @@ export class MonitoredSession {
       // Store safe references
       this.#lastModelOutputRef = normalizedResponse.content_ref;
       this.#lastModelOutputSha256 = outputSha256;
-      this.#latestModelOutput = normalizedResponse;
 
       // Ask provider to decide
       const decision = await this.#obtainDecision(
@@ -282,15 +277,11 @@ export class MonitoredSession {
         this.#lifecycle = "sealed";
       }
 
-      // Clear raw references before returning
+      // Clear raw references before returning — only safe refs/sha256 persist
       const responseCopy: MonitorModelResponse = {
         content: normalizedResponse.content,
         content_ref: normalizedResponse.content_ref
       };
-
-      // Clear latest model input/output (raw content)
-      this.#latestModelInput = null;
-      this.#latestModelOutput = null;
 
       return {
         response: responseCopy,
@@ -362,10 +353,14 @@ export class MonitoredSession {
         throw new Track1MonitorError("monitor_tool_request_invalid");
       }
 
-      // Verify model context refs match latest safe model state
+      // Verify model context refs AND SHA-256 match latest safe model state
+      const modelInputSha = sha256MonitorValue(normalizedModelInput.content);
+      const modelOutputSha = sha256MonitorValue(normalizedModelOutput.content);
       if (
         normalizedModelInput.content_ref !== this.#lastModelInputRef ||
-        normalizedModelOutput.content_ref !== this.#lastModelOutputRef
+        normalizedModelOutput.content_ref !== this.#lastModelOutputRef ||
+        modelInputSha !== this.#lastModelInputSha256 ||
+        modelOutputSha !== this.#lastModelOutputSha256
       ) {
         throw new Track1MonitorError("monitor_tool_request_invalid");
       }
@@ -375,8 +370,7 @@ export class MonitoredSession {
         createToolTargetRef,
         createToolResultRef,
         normalizeMonitorToolResult,
-        normalizeMonitorToolResultPayload,
-        sha256MonitorValue
+        normalizeMonitorToolResultPayload
       } = await import("./content-boundary.ts");
 
       const argumentsRef = createToolArgumentsRef(normalizedRequest);
@@ -425,6 +419,7 @@ export class MonitoredSession {
       if (action === "allow" || action === "alert") {
         // Execute tool callback
         if (typeof next !== "function") {
+          this.#failed = true;
           throw new Track1MonitorError("monitor_tool_failed");
         }
 
@@ -432,7 +427,14 @@ export class MonitoredSession {
 
         let rawResult: SimulatedToolResult;
         try {
-          rawResult = await next(normalizedRequest);
+          // Defensive copy: prevent callback from mutating correlation fields
+          const callbackRequest = JSON.parse(JSON.stringify(normalizedRequest));
+          rawResult = await next(callbackRequest);
+          // Override any mutated call_id/session_id in result with original values
+          (rawResult as Record<string, unknown>).call_id = normalizedRequest.call_id;
+          (rawResult as Record<string, unknown>).session_id = normalizedRequest.session_id;
+          (rawResult as Record<string, unknown>).scenario_id = normalizedRequest.scenario_id;
+          (rawResult as Record<string, unknown>).case_id = normalizedRequest.case_id;
         } catch {
           // Emit safe tool_result (failed) and seal
           const safeResultRef = `simulated-result://${normalizedRequest.call_id}/${sha256MonitorValue(normalizedRequest.call_id + "-failed")}`;
@@ -467,6 +469,7 @@ export class MonitoredSession {
         // Normalize and correlation-check result
         const normalizedResult = normalizeMonitorToolResult(rawResult, normalizedRequest);
         if (!normalizedResult) {
+          this.#failed = true;
           throw new Track1MonitorError("monitor_tool_failed");
         }
 
@@ -642,13 +645,13 @@ export class MonitoredSession {
     });
 
     // Build frozen input snapshot
-    const decisionInput: MonitorDecisionInput = {
+    const decisionInput: MonitorDecisionInput = Object.freeze({
       stage,
       session: createFrozenMonitorSnapshot(this.#context),
       subject_event_id: subjectEventId,
       model_input: createFrozenMonitorSnapshot(modelInput),
       model_output: createFrozenMonitorSnapshot(modelOutput)
-    };
+    });
 
     let rawProposal: unknown;
     try {
@@ -717,14 +720,14 @@ export class MonitoredSession {
     });
 
     // Build frozen input snapshot with tool_request
-    const decisionInput: MonitorDecisionInput = {
+    const decisionInput: MonitorDecisionInput = Object.freeze({
       stage: "tool_request",
       session: createFrozenMonitorSnapshot(this.#context),
       subject_event_id: subjectEventId,
       model_input: createFrozenMonitorSnapshot(modelInput),
       model_output: createFrozenMonitorSnapshot(modelOutput),
       tool_request: createFrozenMonitorSnapshot(toolRequest)
-    };
+    });
 
     let rawProposal: unknown;
     try {
@@ -742,11 +745,26 @@ export class MonitoredSession {
       return { materializedDecision: failClosed(), action: "deny" };
     }
 
-    // Check for sensitive values in proposal
-    const { containsMonitorSensitiveValue } = await import("./content-boundary.ts");
+    // Check for sensitive values in proposal — including tool arguments
+    const { containsMonitorSensitiveValue, canonicalizeMonitorValue } = await import("./content-boundary.ts");
+    const sensitiveValues = [modelInput.content, modelOutput.content];
+    // Also collect all tool argument string values
+    const toolArgValues: string[] = [];
+    const toolArgs = toolRequest.arguments as Record<string, unknown>;
+    if (typeof toolArgs === "object" && toolArgs !== null && !Array.isArray(toolArgs)) {
+      for (const v of Object.values(toolArgs)) {
+        if (typeof v === "string") toolArgValues.push(v);
+        else if (typeof v === "object" && v !== null && !Array.isArray(v)) {
+          for (const sv of Object.values(v as Record<string, unknown>)) {
+            if (typeof sv === "string") toolArgValues.push(sv);
+          }
+        }
+      }
+    }
+    const allSensitive = [...sensitiveValues, ...toolArgValues];
     if (
-      containsMonitorSensitiveValue(normalizedProposal.reason, [modelInput.content, modelOutput.content]) ||
-      containsMonitorSensitiveValue(normalizedProposal, [modelInput.content, modelOutput.content])
+      containsMonitorSensitiveValue(normalizedProposal.reason, allSensitive) ||
+      containsMonitorSensitiveValue(normalizedProposal, allSensitive)
     ) {
       this.#providerFailureCount += 1;
       this.#lifecycle = "sealed";

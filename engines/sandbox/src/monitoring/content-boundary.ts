@@ -103,7 +103,8 @@ export function createFrozenMonitorSnapshot<T>(value: T): Readonly<T> {
       return v as Readonly<T>;
     }
     if (Array.isArray(v)) {
-      return v.map((item) => deepFreezeCopy(item)) as unknown as Readonly<T>;
+      const frozenArr = v.map((item) => deepFreezeCopy(item));
+      return Object.freeze(frozenArr) as unknown as Readonly<T>;
     }
     const copy: Record<string, unknown> = {};
     for (const key of Object.keys(v as Record<string, unknown>)) {

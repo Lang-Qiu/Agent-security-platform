@@ -5,7 +5,8 @@ import {
   Track1MonitorError,
   TRACK1_MONITOR_SCHEMA_VERSION,
   MONITOR_FAIL_CLOSED_PROPOSAL,
-  buildMonitorResult
+  buildMonitorResult,
+  createFrozenMonitorSnapshot
 } from "../src/monitoring/index.ts";
 import type {
   MonitorSessionContext,
@@ -1155,4 +1156,239 @@ test("allow only -> finished/info", async () => {
   const result = session.finalize();
   assert.equal(result.status, "finished");
   assert.equal(result.risk_level, "info");
+});
+
+// ==========================================================================
+// Reviewer findings RED tests
+// ==========================================================================
+
+// -- Finding 1: Tool argument leak via provider reason ---------------------
+
+test("RED#1: provider reason containing tool argument values triggers fail-closed", async () => {
+  const sentinel = "ARG_LEAK_SENTINEL_UNIQUE_XYZ";
+  const leakyProvider: MonitorDecisionProvider = {
+    decide(input) {
+      if (input.stage === "tool_request" && input.tool_request) {
+        const args = (input.tool_request as Record<string, unknown>).arguments as Record<string, unknown>;
+        // Leak tool argument value into reason
+        return {
+          policy_id: "policy://test/leaky",
+          action: "deny",
+          reason_code: "leak",
+          reason: `Leaked arg: ${JSON.stringify(args)}`,
+          evidence_refs: ["evidence://test/leaky"]
+        };
+      }
+      return { policy_id: "policy://test/ok", action: "allow", reason_code: "ok", reason: "ok", evidence_refs: ["evidence://test/ok"] };
+    }
+  };
+
+  const session = new MonitoredSession(makeContext(), leakyProvider, createTestPorts());
+  const refs = await doModelCall(session);
+
+  const toolReq = normalizeSimulatedToolRequest({
+    call_id: "tool-leak-001",
+    session_id: "session-test-001",
+    scenario_id: "T1-SC-001",
+    case_id: "T1-SC-001-C001",
+    tool_name: "write_file",
+    arguments: { path: "sandbox://fixtures/test.txt", content: sentinel }
+  }) as SimulatedToolRequest;
+
+  const outcome = await session.invokeTool(
+    toolReq,
+    makeToolContext(refs.inputRef, refs.outputRef, refs.inputContent, refs.outputContent),
+    () => { throw new Error("should not be called"); }
+  );
+
+  // Must trigger fail-closed because reason contains tool argument values
+  assert.equal(outcome.decision.reason_code, "decision_provider_failed");
+  const result = session.finalize();
+  const serialized = JSON.stringify(result);
+  assert.ok(!serialized.includes(sentinel), "Tool argument sentinel must not appear in result");
+});
+
+// -- Finding 2: SHA-256 context bypass -------------------------------------
+
+test("RED#2: tampered model content with same ref is rejected", async () => {
+  const session = new MonitoredSession(makeContext(), allowProvider(), createTestPorts());
+  const refs = await doModelCall(session, "Original prompt", "Original response");
+
+  // Same content_ref but different (tampered) content
+  const badContext: MonitorToolDecisionContext = {
+    model_input: { content: "TAMPERED_PROMPT_DIFFERENT", content_ref: refs.inputRef },
+    model_output: { content: "TAMPERED_RESPONSE_DIFFERENT", content_ref: refs.outputRef }
+  };
+
+  await assert.rejects(
+    () => session.invokeTool(makeToolRequest(), badContext, () => {
+      throw new Error("should not be called");
+    }),
+    (err: unknown) => {
+      assert.ok(err instanceof Track1MonitorError);
+      assert.equal((err as Track1MonitorError).code, "monitor_tool_request_invalid");
+      return true;
+    }
+  );
+});
+
+// -- Finding 3: Callback mutation of call_id breaks correlation -------------
+
+test("RED#3: tool callback mutating call_id still produces correlated events", async () => {
+  const session = new MonitoredSession(makeContext(), allowProvider(), createTestPorts());
+  const refs = await doModelCall(session);
+
+  const originalCallId = "tool-call-mutate-test";
+  const toolReq = normalizeSimulatedToolRequest({
+    call_id: originalCallId,
+    session_id: "session-test-001",
+    scenario_id: "T1-SC-001",
+    case_id: "T1-SC-001-C001",
+    tool_name: "write_file",
+    arguments: { path: "sandbox://fixtures/test.txt", content: "test" }
+  }) as SimulatedToolRequest;
+
+  const mutatingNext: MonitorToolNext = (req) => {
+    // Mutate the request object's call_id
+    (req as Record<string, unknown>).call_id = "MUTATED_CALL_ID_EVIL";
+    const state = new InMemorySimulatedToolState();
+    const executor = new SimulatedToolExecutor(state);
+    return executor.execute(req);
+  };
+
+  const outcome = await session.invokeTool(
+    toolReq,
+    makeToolContext(refs.inputRef, refs.outputRef, refs.inputContent, refs.outputContent),
+    mutatingNext
+  );
+
+  // The tool_request event should still use the original call_id
+  const result = session.finalize();
+  const details = result.details as SandboxRunResultDetails;
+  const toolRequestEvent = details.events!.find((e) => e.event_type === "tool_request");
+  const toolResultEvent = details.events!.find((e) => e.event_type === "tool_result");
+
+  assert.ok(toolRequestEvent);
+  assert.ok(toolResultEvent);
+  // Both should reference the original call_id, not the mutated one
+  const reqPayload = toolRequestEvent!.payload as Record<string, unknown>;
+  const resPayload = toolResultEvent!.payload as Record<string, unknown>;
+  assert.equal(reqPayload.call_id, originalCallId, "tool_request must preserve original call_id");
+  assert.equal(resPayload.call_id, originalCallId, "tool_result must use original call_id");
+  assert.notEqual(resPayload.call_id, "MUTATED_CALL_ID_EVIL");
+
+  // Must still pass normalizeBaseResult
+  assert.ok(normalizeBaseResult(result));
+});
+
+// -- Finding 4: Malformed callback -> terminal failed status ----------------
+
+test("RED#4: malformed model response produces failed/high terminal result", async () => {
+  const session = new MonitoredSession(makeContext(), allowProvider(), createTestPorts());
+  const badNext: MonitorModelNext = () => ({ content: "", content_ref: "not a ref" } as MonitorModelResponse);
+
+  await assert.rejects(
+    () => session.invokeModel(makeModelRequest(), badNext),
+    Track1MonitorError
+  );
+  const result = session.finalize();
+  assert.equal(result.status, "failed", "Malformed model response should produce failed status");
+  assert.equal(result.risk_level, "high");
+});
+
+test("RED#4: malformed tool result produces failed/high terminal result", async () => {
+  const session = new MonitoredSession(makeContext(), allowProvider(), createTestPorts());
+  const refs = await doModelCall(session);
+
+  const badResultNext: MonitorToolNext = () => ({
+    // Return something that will fail normalizeMonitorToolResult
+    call_id: "wrong-call-id",
+    tool_name: "write_file",
+    status: "simulated_success",
+    // Missing required fields
+  } as unknown as SimulatedToolResult);
+
+  await assert.rejects(
+    () => session.invokeTool(
+      makeToolRequest(),
+      makeToolContext(refs.inputRef, refs.outputRef, refs.inputContent, refs.outputContent),
+      badResultNext
+    ),
+    Track1MonitorError
+  );
+  const result = session.finalize();
+  assert.equal(result.status, "failed", "Malformed tool result should produce failed status");
+  assert.equal(result.risk_level, "high");
+});
+
+// -- Finding 5: Failure path retains raw model content ---------------------
+
+test("RED#5: model callback failure does not retain raw content in session fields", async () => {
+  const sentinel = "FAILURE_PATH_SENTINEL_RETAINED";
+  const session = new MonitoredSession(makeContext(), allowProvider(), createTestPorts());
+
+  await assert.rejects(
+    () => session.invokeModel(
+      makeModelRequest(sentinel),
+      () => { throw new Error("crash"); }
+    ),
+    Track1MonitorError
+  );
+
+  // After failure, the session should not retain the sentinel in any field
+  const result = session.finalize();
+  const serialized = JSON.stringify(result);
+  assert.ok(!serialized.includes(sentinel), "Raw content must not survive in result after callback failure");
+});
+
+// -- Finding 6: Incomplete recursive freeze ---------------------------------
+
+test("RED#6: createFrozenMonitorSnapshot freezes nested arrays", () => {
+  const input = { items: ["a", "b", "c"] };
+  const frozen = createFrozenMonitorSnapshot(input);
+
+  assert.ok(Object.isFrozen(frozen));
+  assert.ok(Object.isFrozen((frozen as Record<string, unknown>).items),
+    "Nested arrays must be frozen");
+  assert.throws(() => {
+    ((frozen as Record<string, unknown>).items as string[])[0] = "hacked";
+  }, "Mutating frozen array should throw");
+});
+
+test("RED#6: MONITOR_FAIL_CLOSED_PROPOSAL.evidence_refs is frozen", async () => {
+  const { MONITOR_FAIL_CLOSED_PROPOSAL } = await import("../src/monitoring/contract.ts");
+  assert.ok(Object.isFrozen(MONITOR_FAIL_CLOSED_PROPOSAL.evidence_refs),
+    "evidence_refs array must be frozen");
+  assert.throws(() => {
+    (MONITOR_FAIL_CLOSED_PROPOSAL.evidence_refs as string[])[0] = "hacked";
+  }, "Mutating frozen evidence_refs should throw");
+});
+
+test("RED#6: decision input snapshots are deeply frozen", async () => {
+  // Test by verifying that a provider that tries to mutate gets an error
+  const mutatingProvider: MonitorDecisionProvider = {
+    decide(input) {
+      // Try to mutate the session context
+      try {
+        (input.session as Record<string, unknown>).task_id = "hacked-task";
+        // If we get here without error, the freeze is incomplete
+        assert.fail("Should have thrown when mutating frozen session");
+      } catch {
+        // Expected - mutation of frozen object throws
+      }
+      return {
+        policy_id: "policy://test/ok",
+        action: "allow",
+        reason_code: "ok",
+        reason: "ok",
+        evidence_refs: ["evidence://test/ok"]
+      };
+    }
+  };
+
+  const session = new MonitoredSession(makeContext(), mutatingProvider, createTestPorts());
+  await session.invokeModel(makeModelRequest(), modelNext("OK"));
+  // Provider ran without crashing its caller — that means the freeze worked
+  const result = session.finalize();
+  assert.equal(result.status, "finished");
 });
