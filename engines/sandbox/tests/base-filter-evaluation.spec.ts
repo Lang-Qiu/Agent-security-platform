@@ -256,9 +256,13 @@ test("provider source files never import or encode fixture answers", async () =>
 
 import {
   buildTrack1BaseFilterDemoReport,
-  normalizeTrack1BaseFilterDemoReport
+  normalizeTrack1BaseFilterDemoReport,
+  executeTrack1BaseFilterDemo
 } from "../src/base-filter/evaluation.ts";
-import { TRACK1_BASE_FILTER_EVALUATION_SCHEMA_VERSION } from "../src/base-filter/contract.ts";
+import {
+  TRACK1_BASE_FILTER_EVALUATION_SCHEMA_VERSION,
+  Track1BaseFilterError
+} from "../src/base-filter/contract.ts";
 
 test("normalizer rejects non-plain-object", () => {
   assert.equal(normalizeTrack1BaseFilterDemoReport(null), null);
@@ -407,4 +411,143 @@ test("all case evaluations have correct test_category", async () => {
   assert.ok(negativeControls.every((c) => c.expected_action === "allow"));
   // Verify negative_control_count in summary matches test_category-based count
   assert.equal(report.summary.negative_control_count, 2);
+});
+
+// ============================================================================
+// P2: demo exception-path regression tests
+// ============================================================================
+
+test("executeTrack1BaseFilterDemo: Track1BaseFilterError writes code:message to stderr", async () => {
+  let stderrOut = "";
+  let exitCode = 0;
+  await executeTrack1BaseFilterDemo({
+    run: async () => {
+      throw new Track1BaseFilterError("base_filter_evaluation_invalid");
+    },
+    writeStdout: () => {},
+    writeStderr: (value: string) => { stderrOut += value; },
+    setExitCode: (value: number) => { exitCode = value; }
+  });
+  assert.equal(exitCode, 1);
+  assert.ok(stderrOut.includes("base_filter_evaluation_invalid"));
+  assert.ok(stderrOut.includes("Base-filter evaluation is invalid"));
+});
+
+test("executeTrack1BaseFilterDemo: unknown error emits fixed safe stderr", async () => {
+  let stderrOut = "";
+  let exitCode = 0;
+  const sentinel = "RAW_SENTINEL_008_LEAK";
+  await executeTrack1BaseFilterDemo({
+    run: async () => {
+      // Simulate an unknown object with code/message that must NOT leak
+      throw { code: "evil_code", message: sentinel };
+    },
+    writeStdout: () => {},
+    writeStderr: (value: string) => { stderrOut += value; },
+    setExitCode: (value: number) => { exitCode = value; }
+  });
+  assert.equal(exitCode, 1);
+  // Unknown errors must emit the fixed safe message, not the injected sentinel
+  assert.ok(
+    stderrOut.includes("base_filter_evaluation_invalid: Unexpected base-filter demo failure"),
+    `stderr must contain fixed safe message, got: ${stderrOut}`
+  );
+  assert.ok(
+    !stderrOut.includes(sentinel),
+    `stderr must NOT leak sentinel, got: ${stderrOut}`
+  );
+});
+
+test("executeTrack1BaseFilterDemo: success writes validated stdout", async () => {
+  let stdoutOut = "";
+  let exitCode = 0;
+  await executeTrack1BaseFilterDemo({
+    run: async () => buildTrack1BaseFilterDemoReport(await runAllTrack1BaseFilterCases()),
+    writeStdout: (value: string) => { stdoutOut += value; },
+    writeStderr: () => {},
+    setExitCode: (value: number) => { exitCode = value; }
+  });
+  assert.equal(exitCode, 0);
+  const parsed = JSON.parse(stdoutOut);
+  assert.equal(parsed.schema_version, "track1-base-filter-evaluation.v1");
+  assert.equal(parsed.summary.total_cases, 9);
+});
+
+// ============================================================================
+// P1: matched_rule_ids must be safe and derived from results
+// ============================================================================
+
+test("normalizer rejects matched_rule_ids that fail safe rule ID pattern", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badCases = report.cases.map((c) => ({
+    ...c,
+    matched_rule_ids: ["RAW_SENTINEL_008"]
+  }));
+  // RAW_SENTINEL_008 contains uppercase and underscores — fails safe rule ID pattern
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, cases: badCases }),
+    null
+  );
+});
+
+test("normalizer rejects matched_rule_ids that don't match result evidence", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  // Inject a rule ID that passes the safe pattern but isn't actually in the result
+  const c0 = report.cases[0];
+  const badCases = report.cases.map((c, i) =>
+    i === 0
+      ? { ...c, matched_rule_ids: [...c.matched_rule_ids, "fake-rule-id"] }
+      : c
+  );
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, cases: badCases }),
+    null
+  );
+});
+
+test("normalizer rejects mismatched actual_action between cases and results", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  // Claim a different action than what the result actually contains
+  const c0 = report.cases[0];
+  const badCases = report.cases.map((c, i) =>
+    i === 0 ? { ...c, actual_action: "allow" } : c // C001 is actually "deny"
+  );
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, cases: badCases }),
+    null
+  );
+});
+
+test("normalizer rejects wrong expected_action for canonical case", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const c0 = report.cases[0];
+  const badCases = report.cases.map((c, i) =>
+    i === 0 ? { ...c, expected_action: "allow" } : c // C001 must be "deny"
+  );
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, cases: badCases }),
+    null
+  );
+});
+
+test("normalizer rejects wrong test_category for canonical case", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const c0 = report.cases[0];
+  const badCases = report.cases.map((c, i) =>
+    i === 0 ? { ...c, test_category: "negative_control" } : c // C001 is jailbreak
+  );
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, cases: badCases }),
+    null
+  );
 });

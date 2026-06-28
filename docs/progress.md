@@ -36,7 +36,7 @@ Recommended fields:
 - requirement: Track 1 base-model detection and filtering prototype — deterministic rule-based MonitorDecisionProvider, source-aware context envelope, frozen rule catalog, nine-case exact-action evaluation, and fixed demo
 - scope:
   - added `engines/sandbox/src/base-filter/` with contract, context-envelope, rule-catalog, evaluator, provider, replay-adapter, evaluation, and index
-  - added `engines/sandbox/tests/base-filter-contract.spec.ts` — 87 focused tests (existence, error taxonomy, context/rule/catalog normalizers, serialization/parsing, content boundary, rule ID safety)
+  - added `engines/sandbox/tests/base-filter-contract.spec.ts` — 92 focused tests (existence, error taxonomy, context/rule/catalog normalizers, serialization/parsing, content boundary, rule ID safety)
   - added `engines/sandbox/tests/base-filter-evaluator.spec.ts` — 33 focused tests (text normalization, source extraction, operators, conjunction, action reduction, built-in catalog, robustness)
   - added `engines/sandbox/tests/base-filter-provider.spec.ts` — 22 focused tests (provider construction, no-match, model/tool stage integration, all four actions, content boundary, mutation)
   - added `engines/sandbox/tests/base-filter-evaluation.spec.ts` — 27 focused tests (nine-case execution, exact-action matrix, anti-oracle, stage correlation, normalizer validation, test_category coverage)
@@ -69,7 +69,7 @@ Recommended fields:
   - provider: 22 pass
   - evaluation: 27 pass
   - repository: 18 pass
-  - test:engine:sandbox: 338 pass (all 14 engine test files)
+  - test:engine:sandbox: 344 pass (all 14 engine test files)
   - test:repo: 61 pass
   - test:shared: 26 pass
   - test:backend: pre-existing baseline only
