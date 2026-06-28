@@ -52,13 +52,13 @@ Recommended fields:
   - [P1] `BaseResult<{ __brand: ... }>` branded type did not satisfy `ResultDetails` constraint (TS2344)
   - [P2] manifest validator only checked surface-level strings; `tool_result` hardcoded to SC-002 instead of reading `required_events`
   - [P1] duplicate `prohibited_model_behaviors` still accepted; [P1] manifest test was fake (exercised case scenario_mismatch, not manifest validator); [P2] progress.md stale
-  - all fixed across `959bb30` and `6609a32`
-- second review fixes (`6609a32`, 2026-06-28):
-  - [P1] added `uniqueItems` enforcement on `prohibited_model_behaviors` with focused regression test
-  - [P1] rewrote manifest entrypoint test to call exported `validateScenarioDefinition` directly; confirmed `manifest_mismatch` for mismatched entrypoint
-  - [P2] synced progress entry to current commit and counts
-- GREEN counts (post second review):
-  - `test:engine:sandbox`: 51 pass, 0 fail (7 tool + 44 replay incl. 10 schema/manifest regression tests)
+  - all fixed across `959bb30`, `6609a32`, and `2bb6b1e`
+- final review fixes (`2bb6b1e`, 2026-06-28):
+  - [P1] added `uniqueItems` enforcement on `prohibited_model_behaviors` with a focused regression test
+  - [P1] rewrote the manifest entrypoint test to call exported `validateScenarioDefinition` directly and confirm `manifest_mismatch`
+  - [P2] synchronized this progress entry with the final review commit and verification counts
+- GREEN counts (post final review):
+  - `test:engine:sandbox`: 52 pass, 0 fail (7 simulated-tool + 45 replay)
   - `test:repo`: 38 pass, 0 fail
   - `test:shared`: 26 pass, 0 fail
   - `test:backend`: 39 pass, 1 fail (unrelated pre-existing asset-scan drift)
