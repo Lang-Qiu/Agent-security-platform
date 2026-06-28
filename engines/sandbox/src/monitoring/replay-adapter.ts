@@ -4,6 +4,7 @@ import {
   TRACK1_SCENARIO_IDS,
   Track1ReplayError
 } from "../replay/contract.ts";
+import { Track1MonitorError } from "./contract.ts";
 import type {
   Track1CaseFixture,
   Track1ScenarioId
@@ -223,4 +224,40 @@ export async function runAllTrack1MonitorCases(): Promise<BaseResult<SandboxRunR
 export async function serializeTrack1MonitorDemo(): Promise<string> {
   const results = await runAllTrack1MonitorCases();
   return JSON.stringify(results);
+}
+
+// -- demo ports ------------------------------------------------------------
+
+export interface Track1MonitorDemoPorts {
+  run(): Promise<BaseResult<SandboxRunResultDetails>[]>;
+  writeStdout(value: string): void;
+  writeStderr(value: string): void;
+  setExitCode(value: number): void;
+}
+
+// -- demo executor ---------------------------------------------------------
+
+export async function executeTrack1MonitorDemo(
+  ports: Track1MonitorDemoPorts
+): Promise<void> {
+  try {
+    const results = await ports.run();
+    // Validate all results before serializing
+    for (const result of results) {
+      if (!normalizeBaseResult(result)) {
+        throw new Track1ReplayError("replay_result_invalid", "Demo result failed normalization");
+      }
+    }
+    const serialized = JSON.stringify(results);
+    ports.writeStdout(serialized);
+  } catch (err: unknown) {
+    if (err instanceof Track1ReplayError || err instanceof Track1MonitorError) {
+      const code = err instanceof Track1ReplayError ? err.code : (err as import("./contract.ts").Track1MonitorError).code;
+      ports.writeStderr(`${code}: ${err.message}\n`);
+      ports.setExitCode(1);
+    } else {
+      ports.writeStderr("monitor_result_invalid: Unexpected monitor demo failure\n");
+      ports.setExitCode(1);
+    }
+  }
 }
