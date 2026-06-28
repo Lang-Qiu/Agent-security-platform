@@ -15,3 +15,10 @@ export {
   runTrack1BaseFilterScenario,
   runAllTrack1BaseFilterCases
 } from "./replay-adapter.ts";
+export {
+  buildTrack1BaseFilterDemoReport,
+  normalizeTrack1BaseFilterDemoReport,
+  serializeTrack1BaseFilterDemo,
+  executeTrack1BaseFilterDemo
+} from "./evaluation.ts";
+export type { Track1BaseFilterDemoPorts } from "./evaluation.ts";
