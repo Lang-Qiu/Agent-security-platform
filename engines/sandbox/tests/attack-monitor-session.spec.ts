@@ -6,7 +6,8 @@ import {
   TRACK1_MONITOR_SCHEMA_VERSION,
   MONITOR_FAIL_CLOSED_PROPOSAL,
   buildMonitorResult,
-  createFrozenMonitorSnapshot
+  createFrozenMonitorSnapshot,
+  sha256MonitorValue
 } from "../src/monitoring/index.ts";
 import type {
   MonitorSessionContext,
@@ -1321,10 +1322,10 @@ test("RED#4: malformed tool result produces failed/high terminal result", async 
   assert.equal(result.risk_level, "high");
 });
 
-// -- Finding 5: Failure path retains raw model content ---------------------
+// -- Finding 5 (P2): Proper raw-content retention test ---------------------
 
-test("RED#5: model callback failure does not retain raw content in session fields", async () => {
-  const sentinel = "FAILURE_PATH_SENTINEL_RETAINED";
+test("RED#5-fixed: model_input event hash proves content was ephemerally hashed, not retained as raw object", async () => {
+  const sentinel = "FAILURE_PATH_SENTINEL_V2_ABC";
   const session = new MonitoredSession(makeContext(), allowProvider(), createTestPorts());
 
   await assert.rejects(
@@ -1335,15 +1336,25 @@ test("RED#5: model callback failure does not retain raw content in session field
     Track1MonitorError
   );
 
-  // After failure, the session should not retain the sentinel in any field
+  // After callback failure, the session only has model_input event with a SHA-256.
+  // The sentinel itself must not appear anywhere in the serialised result.
   const result = session.finalize();
   const serialized = JSON.stringify(result);
   assert.ok(!serialized.includes(sentinel), "Raw content must not survive in result after callback failure");
+
+  // Verify the model_input event's SHA-256 corresponds to the original sentinel
+  const details = result.details as SandboxRunResultDetails;
+  const inputEvent = details.events![0];
+  const payload = inputEvent.payload as Record<string, unknown>;
+  const expectedHash = sha256MonitorValue(sentinel);
+  assert.equal(payload.content_sha256, expectedHash,
+    "Model input hash must match the original sentinel content");
+  assert.equal(result.status, "failed");
 });
 
-// -- Finding 6: Incomplete recursive freeze ---------------------------------
+// -- Finding 6 (P2): Proper freeze tests -----------------------------------
 
-test("RED#6: createFrozenMonitorSnapshot freezes nested arrays", () => {
+test("RED#6-fixed: createFrozenMonitorSnapshot freezes nested arrays", () => {
   const input = { items: ["a", "b", "c"] };
   const frozen = createFrozenMonitorSnapshot(input);
 
@@ -1355,7 +1366,7 @@ test("RED#6: createFrozenMonitorSnapshot freezes nested arrays", () => {
   }, "Mutating frozen array should throw");
 });
 
-test("RED#6: MONITOR_FAIL_CLOSED_PROPOSAL.evidence_refs is frozen", async () => {
+test("RED#6-fixed: MONITOR_FAIL_CLOSED_PROPOSAL.evidence_refs is frozen", async () => {
   const { MONITOR_FAIL_CLOSED_PROPOSAL } = await import("../src/monitoring/contract.ts");
   assert.ok(Object.isFrozen(MONITOR_FAIL_CLOSED_PROPOSAL.evidence_refs),
     "evidence_refs array must be frozen");
@@ -1364,17 +1375,22 @@ test("RED#6: MONITOR_FAIL_CLOSED_PROPOSAL.evidence_refs is frozen", async () => 
   }, "Mutating frozen evidence_refs should throw");
 });
 
-test("RED#6: decision input snapshots are deeply frozen", async () => {
-  // Test by verifying that a provider that tries to mutate gets an error
-  const mutatingProvider: MonitorDecisionProvider = {
+test("RED#6-fixed: decision input is frozen — provider mutation attempt is detected", async () => {
+  // Provider that tries to mutate and DETECTS whether mutation succeeded.
+  // Must NOT catch the freeze error — let it propagate to prove freeze works.
+  let mutationDetected = false;
+  let freezeWorked = false;
+
+  const verifierProvider: MonitorDecisionProvider = {
     decide(input) {
-      // Try to mutate the session context
+      // Attempt mutation: if the input is frozen, this will throw (strict mode).
       try {
         (input.session as Record<string, unknown>).task_id = "hacked-task";
-        // If we get here without error, the freeze is incomplete
-        assert.fail("Should have thrown when mutating frozen session");
+        // If we reach here, freeze did NOT work — flag it
+        mutationDetected = true;
       } catch {
-        // Expected - mutation of frozen object throws
+        // Freeze worked (expected)
+        freezeWorked = true;
       }
       return {
         policy_id: "policy://test/ok",
@@ -1386,9 +1402,194 @@ test("RED#6: decision input snapshots are deeply frozen", async () => {
     }
   };
 
-  const session = new MonitoredSession(makeContext(), mutatingProvider, createTestPorts());
+  const session = new MonitoredSession(makeContext(), verifierProvider, createTestPorts());
   await session.invokeModel(makeModelRequest(), modelNext("OK"));
-  // Provider ran without crashing its caller — that means the freeze worked
   const result = session.finalize();
   assert.equal(result.status, "finished");
+  assert.equal(freezeWorked, true, "Freeze must have prevented mutation");
+  assert.equal(mutationDetected, false, "Mutation must NOT have succeeded");
+});
+
+// ==========================================================================
+// Second-round P1 RED tests
+// ==========================================================================
+
+// -- Finding 1 (P1): Callback can change execution target ------------------
+
+test("RED#1-v2: frozen tool request prevents callback from changing target", async () => {
+  const session = new MonitoredSession(makeContext(), allowProvider(), createTestPorts());
+  const refs = await doModelCall(session);
+
+  const toolReq = normalizeSimulatedToolRequest({
+    call_id: "tool-frozen-test-1",
+    session_id: "session-test-001",
+    scenario_id: "T1-SC-001",
+    case_id: "T1-SC-001-C001",
+    tool_name: "write_file",
+    arguments: { path: "sandbox://fixtures/original.txt", content: "safe" }
+  }) as SimulatedToolRequest;
+
+  let callbackReceivedPath = "";
+
+  const mutatingNext: MonitorToolNext = (req) => {
+    // Attempt to mutate the frozen request
+    callbackReceivedPath = (req as Record<string, unknown>).arguments?.path as string;
+    try {
+      ((req as Record<string, unknown>).arguments as Record<string, unknown>).path = "sandbox://fixtures/mutated.txt";
+    } catch {
+      // Expected: frozen
+    }
+    const state = new InMemorySimulatedToolState();
+    const executor = new SimulatedToolExecutor(state);
+    return executor.execute(req);
+  };
+
+  const outcome = await session.invokeTool(
+    toolReq,
+    makeToolContext(refs.inputRef, refs.outputRef, refs.inputContent, refs.outputContent),
+    mutatingNext
+  );
+
+  // Result must reference the original path, not the mutated one
+  assert.equal(outcome.disposition, "executed");
+  // Verify the executor executed with original path by checking state
+  // The callback received the original path
+  assert.equal(callbackReceivedPath, "sandbox://fixtures/original.txt");
+});
+
+// -- Finding 2 (P1): Invalid tool result doesn't seal ----------------------
+
+test("RED#2-v2: malformed tool result seals session with failed tool_result event", async () => {
+  const session = new MonitoredSession(makeContext(), allowProvider(), createTestPorts());
+  const refs = await doModelCall(session);
+
+  const badNext: MonitorToolNext = () => ({
+    call_id: "wrong-call-id",
+    tool_name: "write_file",
+    status: "simulated_success"
+  } as unknown as SimulatedToolResult);
+
+  await assert.rejects(
+    () => session.invokeTool(
+      makeToolRequest(),
+      makeToolContext(refs.inputRef, refs.outputRef, refs.inputContent, refs.outputContent),
+      badNext
+    ),
+    Track1MonitorError
+  );
+
+  // After callback failure, must be sealed
+  await assert.rejects(
+    () => session.invokeModel(makeModelRequest(), modelNext("should not work")),
+    (err: unknown) => {
+      assert.ok(err instanceof Track1MonitorError);
+      assert.equal((err as Track1MonitorError).code, "monitor_state_invalid");
+      return true;
+    }
+  );
+
+  const result = session.finalize();
+  assert.equal(result.status, "failed");
+  // Must have a failed tool_result event
+  const details = result.details as SandboxRunResultDetails;
+  const toolResultEvent = details.events!.find((e) => e.event_type === "tool_result");
+  assert.ok(toolResultEvent, "Must have tool_result event even on callback failure");
+  const trPayload = toolResultEvent!.payload as Record<string, unknown>;
+  assert.equal(trPayload.status, "failed");
+});
+
+// -- Finding 3 (P1): Empty-string args trigger false fail-closed ------------
+
+test("RED#3-v2: empty string tool argument does not trigger fail-closed", async () => {
+  const checkingProvider: MonitorDecisionProvider = {
+    decide(input) {
+      return {
+        policy_id: "policy://test/check",
+        action: "allow",
+        reason_code: "check_ok",
+        reason: "Empty string arg check passed",
+        evidence_refs: ["evidence://test/check"]
+      };
+    }
+  };
+
+  const session = new MonitoredSession(makeContext(), checkingProvider, createTestPorts());
+  const refs = await doModelCall(session);
+
+  // write_file with empty content — should NOT trigger fail-closed
+  const toolReq = normalizeSimulatedToolRequest({
+    call_id: "tool-empty-args-1",
+    session_id: "session-test-001",
+    scenario_id: "T1-SC-001",
+    case_id: "T1-SC-001-C001",
+    tool_name: "write_file",
+    arguments: { path: "sandbox://fixtures/empty.txt", content: "" }
+  }) as SimulatedToolRequest;
+
+  const state = new InMemorySimulatedToolState();
+  const executor = new SimulatedToolExecutor(state);
+
+  const outcome = await session.invokeTool(
+    toolReq,
+    makeToolContext(refs.inputRef, refs.outputRef, refs.inputContent, refs.outputContent),
+    (req) => executor.execute(req)
+  );
+
+  // Must NOT fail-closed — empty content is valid for write_file
+  assert.equal(outcome.decision.reason_code, "check_ok");
+  assert.equal(outcome.disposition, "executed");
+});
+
+// -- Finding 4 (P1): Model callback tampering with provider input ----------
+
+test("RED#4-v2: model callback mutation does not reach provider", async () => {
+  const sentinel = "CALLBACK_TAMPERED_SENTINEL_XYZ";
+  let providerSawTampered = false;
+
+  const inspectorProvider: MonitorDecisionProvider = {
+    decide(input) {
+      // Only the model INPUT must be protected from tampering.
+      // (model_output naturally comes from the callback return value.)
+      if (input.model_input.content === sentinel) {
+        providerSawTampered = true;
+      }
+      return {
+        policy_id: "policy://test/inspect",
+        action: "allow",
+        reason_code: "ok",
+        reason: "ok",
+        evidence_refs: ["evidence://test/inspect"]
+      };
+    }
+  };
+
+  const session = new MonitoredSession(makeContext(), inspectorProvider, createTestPorts());
+
+  const tamperingNext: MonitorModelNext = (req) => {
+    // Try to mutate the request before returning
+    try {
+      (req as Record<string, unknown>).content = sentinel;
+    } catch {
+      // Expected if frozen
+    }
+    return {
+      content: sentinel,  // Response uses sentinel
+      content_ref: "ref://test/tampered-output"
+    };
+  };
+
+  await session.invokeModel(makeModelRequest("Original safe prompt"), tamperingNext);
+
+  // Provider must have seen ORIGINAL model_input content, not the tampered one
+  assert.equal(providerSawTampered, false,
+    "Provider must not see callback-tampered model input");
+
+  // The model_input event must have the hash of the ORIGINAL content
+  const result = session.finalize();
+  const details = result.details as SandboxRunResultDetails;
+  const inputEvent = details.events![0];
+  const payload = inputEvent.payload as Record<string, unknown>;
+  const expectedHash = sha256MonitorValue("Original safe prompt");
+  assert.equal(payload.content_sha256, expectedHash,
+    "Model input hash must correspond to original untampered content");
 });

@@ -210,10 +210,11 @@ export class MonitoredSession {
       this.#lastModelInputRef = normalizedRequest.content_ref;
       this.#lastModelInputSha256 = inputSha256;
 
-      // Call next
+      // Call next with frozen copy — callback cannot mutate request seen by provider
       let rawResponse: MonitorModelResponse;
       try {
-        rawResponse = await next(normalizedRequest);
+        const frozenRequest = createFrozenMonitorSnapshot(normalizedRequest);
+        rawResponse = await next(frozenRequest as unknown as MonitorModelRequest);
       } catch {
         this.#lifecycle = "sealed";
         this.#failed = true;
@@ -427,14 +428,19 @@ export class MonitoredSession {
 
         let rawResult: SimulatedToolResult;
         try {
-          // Defensive copy: prevent callback from mutating correlation fields
-          const callbackRequest = JSON.parse(JSON.stringify(normalizedRequest));
-          rawResult = await next(callbackRequest);
-          // Override any mutated call_id/session_id in result with original values
-          (rawResult as Record<string, unknown>).call_id = normalizedRequest.call_id;
-          (rawResult as Record<string, unknown>).session_id = normalizedRequest.session_id;
-          (rawResult as Record<string, unknown>).scenario_id = normalizedRequest.scenario_id;
-          (rawResult as Record<string, unknown>).case_id = normalizedRequest.case_id;
+          // Pass recursively frozen copy: callback cannot mutate fields
+          const callbackRequest = createFrozenMonitorSnapshot(normalizedRequest);
+          rawResult = await next(callbackRequest as unknown as SimulatedToolRequest);
+          // Detect callback-result correlation mismatch rather than silently fixing it
+          if (
+            (rawResult as Record<string, unknown>).call_id !== normalizedRequest.call_id ||
+            (rawResult as Record<string, unknown>).session_id !== normalizedRequest.session_id ||
+            (rawResult as Record<string, unknown>).scenario_id !== normalizedRequest.scenario_id ||
+            (rawResult as Record<string, unknown>).case_id !== normalizedRequest.case_id
+          ) {
+            this.#failed = true;
+            throw new Track1MonitorError("monitor_tool_failed");
+          }
         } catch {
           // Emit safe tool_result (failed) and seal
           const safeResultRef = `simulated-result://${normalizedRequest.call_id}/${sha256MonitorValue(normalizedRequest.call_id + "-failed")}`;
@@ -470,6 +476,32 @@ export class MonitoredSession {
         const normalizedResult = normalizeMonitorToolResult(rawResult, normalizedRequest);
         if (!normalizedResult) {
           this.#failed = true;
+          this.#lifecycle = "sealed";
+          // Emit failed tool_result event before throwing
+          const failRef = `simulated-result://${normalizedRequest.call_id}/${sha256MonitorValue(normalizedRequest.call_id + "-invalid")}`;
+          const failPayload: SandboxToolResultPayload = {
+            call_id: normalizedRequest.call_id,
+            tool_name: normalizedRequest.tool_name,
+            status: "failed",
+            result_ref: failRef,
+            state_change: "none"
+          };
+          const normalizedFailPayload = normalizeMonitorToolResultPayload(failPayload);
+          if (normalizedFailPayload) {
+            const failEvent: SandboxEventEnvelope<"tool_result", SandboxToolResultPayload> = {
+              event_id: this.#nextId("tool-result"),
+              session_id: this.#context.session_id,
+              sequence: this.#nextSequence(),
+              event_type: "tool_result",
+              occurred_at: this.#nextTimestamp(),
+              source: "tool",
+              scenario_id: this.#context.scenario_id,
+              case_id: this.#context.case_id,
+              evidence_refs: [EVIDENCE_TOOL_RESULT],
+              payload: normalizedFailPayload
+            };
+            this.#events.push(failEvent);
+          }
           throw new Track1MonitorError("monitor_tool_failed");
         }
 
@@ -761,7 +793,8 @@ export class MonitoredSession {
         }
       }
     }
-    const allSensitive = [...sensitiveValues, ...toolArgValues];
+    // Filter out empty strings — ".includes('')" is always true
+    const allSensitive = [...sensitiveValues, ...toolArgValues].filter((v) => v.length > 0);
     if (
       containsMonitorSensitiveValue(normalizedProposal.reason, allSensitive) ||
       containsMonitorSensitiveValue(normalizedProposal, allSensitive)
