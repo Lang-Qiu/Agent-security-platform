@@ -1,70 +1,66 @@
 # Sprint Current
 
 ## Requirement ID
-REQ-T1-ATTACK-REPLAY-006
+REQ-T1-MONITOR-PLUGIN-007
 
 ## Requirement Name
-Track 1 deterministic controlled attack replay
+Track 1 model call-chain monitoring plugin
 
 ## Background
 
-`REQ-T1-CASESET-003` provides nine controlled adversarial and negative-control cases. `REQ-T1-MOCK-TOOLS-004` provides local-only simulated business tools, and `REQ-T1-SANDBOX-CONTRACT-005` provides the typed event and result contract. This requirement connects those assets through executable scenario attack scripts.
+`REQ-T1-ATTACK-REPLAY-006` provides deterministic scenario results and a nine-case replay source. `REQ-T1-MOCK-TOOLS-004` provides local-only simulated business tools, and `REQ-T1-SANDBOX-CONTRACT-005` provides the typed supervision contract. This requirement adds the runtime middleware that observes model calls, obtains injected policy decisions, and intercepts simulated tools before execution.
 
 The approved detailed design is:
 
-- `docs/superpowers/specs/2026-06-28-track1-attack-replay-design.md`
-
-The approved implementation task DAG is:
-
-- `docs/superpowers/plans/2026-06-28-track1-attack-replay.md`
+- `docs/superpowers/specs/2026-06-28-track1-monitor-plugin-design.md`
 
 ## Goal
 
-- Provide one executable `replay.ts` entrypoint for each Track 1 scenario.
-- Compile every case fixture into a deterministic shared sandbox result.
-- Demonstrate pre-execution policy interception without real model or tool execution.
-- Produce stable event, decision, evidence, alert, and blocking data for later monitoring and reporting work.
+- Provide a reusable session-level model and tool monitoring middleware.
+- Obtain allow, deny, ask, and alert actions through an injected decision provider.
+- Intercept deny, ask, and provider-failure paths before simulated-tool execution.
+- Produce complete normalized sandbox supervision results without retaining raw content.
+- Exercise the plugin with all nine existing Track 1 cases and a fixed controlled demo.
 
 ## In Scope
 
-- Engine-private replay contracts, loader, deterministic utilities, compiler, and scenario runner.
-- Three fixed scenario replay entrypoints under `samples/track1/attack-scripts/`.
-- Runtime validation of repository case fixtures.
-- Fixture-driven model and policy events.
-- Present/absent evidence-check observations.
-- Shared result normalization before output.
-- Focused replay, sandbox-engine, and repository tests.
+- Engine-private monitoring contracts, content boundary, session middleware, result builder, and replay adapter.
+- Model-output and tool-request decision-provider stages.
+- Simulated-tool allow/alert execution and deny/ask interception.
+- Fail-closed provider behavior.
+- Multi-round sequential session support.
+- Fixed nine-case monitor demo.
+- Focused monitor, sandbox-engine, repository, and shared-contract compatibility tests.
 - Sandbox README, architecture, sprint, and progress documentation after verification.
 
 ## Out Of Scope
 
-- No real model or OpenClaw execution.
-- No policy evaluator or anomaly-detection model.
-- No monitor plugin.
-- No backend route or frontend behavior.
-- No persistence or result files.
-- No network, email, real filesystem write, or external process.
-- No case-schema, fixture, or shared-contract changes.
-- No simulated-tool state mutation for the current nine cases.
+- No detection rules or base-model filter implementation.
+- No OpenClaw adapter.
+- No backend route, persistence, or frontend behavior.
+- No cluster aggregation or shared trace fields.
+- No approval resume workflow.
+- No real model, network, email, host filesystem, or external process.
+- No case, scenario, replay-script, or shared-contract changes.
 
 ## Acceptance Criteria
 
-- The three manifest-declared `replay.ts` entrypoints exist and execute.
-- Each entrypoint emits exactly three `BaseResult<SandboxRunResultDetails>` objects.
-- All nine cases are replayed exactly once.
-- Repeated execution produces byte-identical stdout.
-- Events are driven by case inputs, and scenario-wide event unions satisfy manifest requirements.
-- `deny`, `ask`, `allow`, and `alert` map to the approved REQ-005 result semantics.
-- Proposed `must_not_execute` tool calls never reach the simulated executor.
-- Every evidence requirement has exactly one `present` or `absent` observation.
-- Every emitted result passes `normalizeBaseResult`.
-- Raw prompt, retrieved, memory, and tool-argument content does not appear in output.
-- A failure emits no partial JSON and exits nonzero.
+- Model and tool callbacks are wrapped by one session-level monitor.
+- The injected provider is called at model-output and tool-request stages.
+- Allow and alert execute validated simulated tools; deny and ask never call the executor.
+- Provider failure produces a fail-closed deny and blocking record.
+- Ask, deny, and failures seal the session.
+- Multiple sequential calls preserve event order and correlation.
+- Finalization emits a complete `BaseResult<SandboxRunResultDetails>` accepted by `normalizeBaseResult`.
+- Raw prompt, model output, tool arguments, tool output, and exceptions do not enter serialized results.
+- All nine cases pass through the monitor adapter exactly once.
+- The fixed demo emits nine byte-identical normalized results.
+- Existing REQ-006 scripts remain unchanged and deterministic.
 - Tests demonstrate RED before implementation and GREEN afterward.
 
 ## Design Decision
 
-Replay behavior lives in the sandbox engine, while the three contest-facing scripts remain thin scenario bindings. Case expectations act as deterministic replay oracles. Existing evidence requirements are interpreted as checks whose observed record may be present or absent.
+The monitor is a sandbox-engine session middleware. Detection is injected through `MonitorDecisionProvider`, allowing REQ-008 to add filtering without changing orchestration. Raw content is visible only to the current callback/provider invocation and is never retained by the monitor.
 
 ## Constraints / Notes
 
