@@ -421,6 +421,32 @@ export class MonitoredSession {
         // Execute tool callback
         if (typeof next !== "function") {
           this.#failed = true;
+          this.#lifecycle = "sealed";
+          // Emit failed tool_result event
+          const failRef = `simulated-result://${normalizedRequest.call_id}/${sha256MonitorValue(normalizedRequest.call_id + "-noncallable")}`;
+          const failPayload: SandboxToolResultPayload = {
+            call_id: normalizedRequest.call_id,
+            tool_name: normalizedRequest.tool_name,
+            status: "failed",
+            result_ref: failRef,
+            state_change: "none"
+          };
+          const normalizedFailPayload = normalizeMonitorToolResultPayload(failPayload);
+          if (normalizedFailPayload) {
+            const failEvent: SandboxEventEnvelope<"tool_result", SandboxToolResultPayload> = {
+              event_id: this.#nextId("tool-result"),
+              session_id: this.#context.session_id,
+              sequence: this.#nextSequence(),
+              event_type: "tool_result",
+              occurred_at: this.#nextTimestamp(),
+              source: "tool",
+              scenario_id: this.#context.scenario_id,
+              case_id: this.#context.case_id,
+              evidence_refs: [EVIDENCE_TOOL_RESULT],
+              payload: normalizedFailPayload
+            };
+            this.#events.push(failEvent);
+          }
           throw new Track1MonitorError("monitor_tool_failed");
         }
 

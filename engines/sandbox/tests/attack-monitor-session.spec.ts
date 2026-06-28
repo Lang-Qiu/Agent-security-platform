@@ -1324,8 +1324,8 @@ test("RED#4: malformed tool result produces failed/high terminal result", async 
 
 // -- Finding 5 (P2): Proper raw-content retention test ---------------------
 
-test("RED#5-fixed: model_input event hash proves content was ephemerally hashed, not retained as raw object", async () => {
-  const sentinel = "FAILURE_PATH_SENTINEL_V2_ABC";
+test("RED#5-fixed: after callback failure, only SHA-256 proves content identity; raw content neither serialised nor usable for further calls", async () => {
+  const sentinel = "FAILURE_PATH_SENTINEL_V3_DEF";
   const session = new MonitoredSession(makeContext(), allowProvider(), createTestPorts());
 
   await assert.rejects(
@@ -1336,20 +1336,31 @@ test("RED#5-fixed: model_input event hash proves content was ephemerally hashed,
     Track1MonitorError
   );
 
-  // After callback failure, the session only has model_input event with a SHA-256.
-  // The sentinel itself must not appear anywhere in the serialised result.
+  // 1) Serialised result must not contain the sentinel
   const result = session.finalize();
   const serialized = JSON.stringify(result);
-  assert.ok(!serialized.includes(sentinel), "Raw content must not survive in result after callback failure");
+  assert.ok(!serialized.includes(sentinel), "Raw content must not appear in serialised result");
 
-  // Verify the model_input event's SHA-256 corresponds to the original sentinel
+  // 2) model_input event hash must match the original sentinel
   const details = result.details as SandboxRunResultDetails;
   const inputEvent = details.events![0];
   const payload = inputEvent.payload as Record<string, unknown>;
   const expectedHash = sha256MonitorValue(sentinel);
   assert.equal(payload.content_sha256, expectedHash,
-    "Model input hash must match the original sentinel content");
+    "Model input hash must correspond to the original sentinel content");
   assert.equal(result.status, "failed");
+
+  // 3) Session is sealed after callback failure — no further model calls possible.
+  //    If raw content were retained in session fields, a subsequent tool call
+  //    might accidentally succeed; sealing prevents this class of leak.
+  await assert.rejects(
+    () => session.invokeModel(makeModelRequest("attempt 2"), modelNext("should fail")),
+    (err: unknown) => {
+      assert.ok(err instanceof Track1MonitorError);
+      assert.equal((err as Track1MonitorError).code, "monitor_state_invalid");
+      return true;
+    }
+  );
 });
 
 // -- Finding 6 (P2): Proper freeze tests -----------------------------------
@@ -1375,23 +1386,28 @@ test("RED#6-fixed: MONITOR_FAIL_CLOSED_PROPOSAL.evidence_refs is frozen", async 
   }, "Mutating frozen evidence_refs should throw");
 });
 
-test("RED#6-fixed: decision input is frozen — provider mutation attempt is detected", async () => {
-  // Provider that tries to mutate and DETECTS whether mutation succeeded.
-  // Must NOT catch the freeze error — let it propagate to prove freeze works.
-  let mutationDetected = false;
-  let freezeWorked = false;
+test("RED#6-fixed: decision input outer object AND nested fields are frozen", async () => {
+  let sessionFrozen = false;
+  let outerFrozen = false;
+  let modelInputFrozen = false;
 
   const verifierProvider: MonitorDecisionProvider = {
     decide(input) {
-      // Attempt mutation: if the input is frozen, this will throw (strict mode).
+      // 1) verify nested session is frozen
       try {
-        (input.session as Record<string, unknown>).task_id = "hacked-task";
-        // If we reach here, freeze did NOT work — flag it
-        mutationDetected = true;
-      } catch {
-        // Freeze worked (expected)
-        freezeWorked = true;
-      }
+        (input.session as Record<string, unknown>).task_id = "hacked";
+      } catch { sessionFrozen = true; }
+
+      // 2) verify the outer decision input itself is frozen
+      try {
+        (input as Record<string, unknown>).subject_event_id = "hacked-event";
+      } catch { outerFrozen = true; }
+
+      // 3) verify nested model_input is frozen
+      try {
+        (input.model_input as Record<string, unknown>).content = "hacked-content";
+      } catch { modelInputFrozen = true; }
+
       return {
         policy_id: "policy://test/ok",
         action: "allow",
@@ -1406,8 +1422,9 @@ test("RED#6-fixed: decision input is frozen — provider mutation attempt is det
   await session.invokeModel(makeModelRequest(), modelNext("OK"));
   const result = session.finalize();
   assert.equal(result.status, "finished");
-  assert.equal(freezeWorked, true, "Freeze must have prevented mutation");
-  assert.equal(mutationDetected, false, "Mutation must NOT have succeeded");
+  assert.equal(sessionFrozen, true, "Nested input.session must be frozen");
+  assert.equal(outerFrozen, true, "Outer decision input must be frozen");
+  assert.equal(modelInputFrozen, true, "Nested input.model_input must be frozen");
 });
 
 // ==========================================================================
@@ -1420,27 +1437,31 @@ test("RED#1-v2: frozen tool request prevents callback from changing target", asy
   const session = new MonitoredSession(makeContext(), allowProvider(), createTestPorts());
   const refs = await doModelCall(session);
 
+  const ORIGINAL_PATH = "sandbox://fixtures/original.txt";
+  const MUTATED_PATH = "sandbox://fixtures/mutated.txt";
+
   const toolReq = normalizeSimulatedToolRequest({
     call_id: "tool-frozen-test-1",
     session_id: "session-test-001",
     scenario_id: "T1-SC-001",
     case_id: "T1-SC-001-C001",
     tool_name: "write_file",
-    arguments: { path: "sandbox://fixtures/original.txt", content: "safe" }
+    arguments: { path: ORIGINAL_PATH, content: "safe" }
   }) as SimulatedToolRequest;
 
-  let callbackReceivedPath = "";
+  // Single shared state so we can inspect it after execution
+  const sharedState = new InMemorySimulatedToolState();
+  const executor = new SimulatedToolExecutor(sharedState);
+
+  let mutationSucceeded = false;
 
   const mutatingNext: MonitorToolNext = (req) => {
-    // Attempt to mutate the frozen request
-    callbackReceivedPath = (req as Record<string, unknown>).arguments?.path as string;
     try {
-      ((req as Record<string, unknown>).arguments as Record<string, unknown>).path = "sandbox://fixtures/mutated.txt";
+      ((req as Record<string, unknown>).arguments as Record<string, unknown>).path = MUTATED_PATH;
+      mutationSucceeded = true; // freeze failed
     } catch {
-      // Expected: frozen
+      // Expected: frozen request prevents mutation
     }
-    const state = new InMemorySimulatedToolState();
-    const executor = new SimulatedToolExecutor(state);
     return executor.execute(req);
   };
 
@@ -1450,11 +1471,50 @@ test("RED#1-v2: frozen tool request prevents callback from changing target", asy
     mutatingNext
   );
 
-  // Result must reference the original path, not the mutated one
   assert.equal(outcome.disposition, "executed");
-  // Verify the executor executed with original path by checking state
-  // The callback received the original path
-  assert.equal(callbackReceivedPath, "sandbox://fixtures/original.txt");
+  assert.equal(mutationSucceeded, false, "Frozen request must prevent path mutation");
+
+  // Verify executor state: the file was written to the ORIGINAL path, not the mutated one.
+  // readFile returns undefined for non-existent paths.
+  const originalWritten = sharedState.readFile(ORIGINAL_PATH);
+  const mutatedWritten = sharedState.readFile(MUTATED_PATH);
+  assert.ok(originalWritten !== undefined, `Executor must have written to ${ORIGINAL_PATH}`);
+  assert.equal(mutatedWritten, undefined, `Executor must NOT have written to ${MUTATED_PATH}`);
+  assert.equal(originalWritten, "safe");
+});
+
+// -- Finding R3#1 (P1): Non-function tool callback must seal ---------------
+
+test("RED#R3-1: non-function tool callback seals session with failed tool_result", async () => {
+  const session = new MonitoredSession(makeContext(), allowProvider(), createTestPorts());
+  const refs = await doModelCall(session);
+
+  await assert.rejects(
+    () => session.invokeTool(
+      makeToolRequest(),
+      makeToolContext(refs.inputRef, refs.outputRef, refs.inputContent, refs.outputContent),
+      null as unknown as MonitorToolNext
+    ),
+    Track1MonitorError
+  );
+
+  // Must be sealed — subsequent model call must fail
+  await assert.rejects(
+    () => session.invokeModel(makeModelRequest(), modelNext("must fail")),
+    (err: unknown) => {
+      assert.ok(err instanceof Track1MonitorError);
+      assert.equal((err as Track1MonitorError).code, "monitor_state_invalid");
+      return true;
+    }
+  );
+
+  const result = session.finalize();
+  assert.equal(result.status, "failed");
+  const details = result.details as SandboxRunResultDetails;
+  const toolResultEvent = details.events!.find((e) => e.event_type === "tool_result");
+  assert.ok(toolResultEvent, "Must emit failed tool_result event");
+  const trPayload = toolResultEvent!.payload as Record<string, unknown>;
+  assert.equal(trPayload.status, "failed");
 });
 
 // -- Finding 2 (P1): Invalid tool result doesn't seal ----------------------
