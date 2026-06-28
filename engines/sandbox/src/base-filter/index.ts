@@ -10,3 +10,4 @@ export {
 } from "./context-envelope.ts";
 export { evaluateTrack1FilterRules } from "./evaluator.ts";
 export { TRACK1_BASE_FILTER_RULES } from "./rule-catalog.ts";
+export { RuleBasedDecisionProvider } from "./provider.ts";
