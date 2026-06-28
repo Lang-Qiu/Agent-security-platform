@@ -10,6 +10,70 @@ Recommended fields:
 - docs updated
 - current conclusion and next blocker
 
+## 2026-06-28 - REQ-T1-MONITOR-PLUGIN-007 Model call-chain monitoring plugin
+
+- requirement: Track 1 model call-chain monitoring plugin — reusable session middleware, injected decision provider, tool interception, and deterministic nine-case demo
+- scope:
+  - added `engines/sandbox/src/monitoring/` with contract, content-boundary, session, result-builder, replay-adapter, and barrel exports
+  - added `engines/sandbox/tests/attack-monitor-*.spec.ts` (contract, session, replay-adapter, demo) — four focused test suites
+  - added `samples/track1/monitor-plugin/demo.ts` fixed byte-identical demo entrypoint with README
+  - added `tests/repository/track1-monitor-plugin.spec.ts` — safety scan and behavioral assertion
+  - registered all new tests in `test:engine:sandbox` and `test:repo` package scripts
+  - added permanent quality gate assertions in `tests/repository/root-test-entry.spec.ts`
+- commits (7):
+  - `7c18865` feat(sandbox): add monitor contracts and content boundary
+  - `cbe6adc` feat(sandbox): monitor model call lifecycle
+  - `20e0921` feat(sandbox): gate monitored tool execution
+  - `9d1c96c` feat(track1): adapt attack cases to monitor sessions
+  - `bdcc675` feat(track1): add controlled monitor demo
+  - `6cc8feb` test(track1): gate model call-chain monitor
+  - (T7 docs commit to follow)
+- files added (14):
+  - `engines/sandbox/src/monitoring/contract.ts`
+  - `engines/sandbox/src/monitoring/content-boundary.ts`
+  - `engines/sandbox/src/monitoring/session.ts`
+  - `engines/sandbox/src/monitoring/result-builder.ts`
+  - `engines/sandbox/src/monitoring/replay-adapter.ts`
+  - `engines/sandbox/src/monitoring/index.ts`
+  - `engines/sandbox/tests/attack-monitor-contract.spec.ts`
+  - `engines/sandbox/tests/attack-monitor-session.spec.ts`
+  - `engines/sandbox/tests/attack-monitor-replay-adapter.spec.ts`
+  - `engines/sandbox/tests/attack-monitor-demo.spec.ts`
+  - `samples/track1/monitor-plugin/demo.ts`
+  - `samples/track1/monitor-plugin/README.md`
+  - `tests/repository/track1-monitor-plugin.spec.ts`
+- files modified (4):
+  - `package.json`
+  - `tests/repository/root-test-entry.spec.ts`
+  - `engines/sandbox/README.md`
+  - `docs/architecture.md`
+- RED evidence:
+  - T1: `node --test engines/sandbox/tests/attack-monitor-contract.spec.ts` → "contract.ts should exist" (module not yet created)
+  - T2: `node --test engines/sandbox/tests/attack-monitor-session.spec.ts` → "does not provide an export named 'MonitoredSession'"
+  - T3: `node --test engines/sandbox/tests/attack-monitor-session.spec.ts` → tool tests (40-46, 48-50, 52-53) fail with "invokeTool is absent" / stub errors
+  - T4: `node --test engines/sandbox/tests/attack-monitor-replay-adapter.spec.ts` → "does not provide an export named 'runAllTrack1MonitorCases'"
+  - T5: `node --test engines/sandbox/tests/attack-monitor-demo.spec.ts` → `executeTrack1MonitorDemo` export absent
+  - T6: `node --test tests/repository/root-test-entry.spec.ts tests/repository/track1-monitor-plugin.spec.ts` → registration assertions fail (gate not yet updated)
+- final gate counts:
+  - `test:engine:sandbox`: 174 pass, 0 fail
+  - `test:repo`: 44 pass, 0 fail
+  - `test:shared`: 26 pass, 0 fail
+  - `test:backend`: 39 pass, 1 fail (pre-existing baseline, unrelated to REQ-007)
+  - `test:frontend`: 36 pass (7 test files), 0 fail
+- acceptance evidence:
+  - four action semantics: session tests cover allow/alert/ask/deny at both model and tool stages
+  - provider fail-closed: sync throw, rejected promise, non-object, blank/unsupported/leaky fields → all fail-closed
+  - tool interception before execution: deny/ask/fail-closed → callback count remains 0
+  - multi-round ordering and lifecycle: sequential model→tool→model→tool events ordered and correlated
+  - shared result normalization: all 9 case results pass `normalizeBaseResult`
+  - nine cases exactly once: adapter union test verifies 9 unique case IDs
+  - byte-identical demo: two spawns produce identical stdout
+  - no raw content or exception leakage: sentinel tests for model input/output, tool content, and fixture raw values
+  - REQ-006 unchanged: `serializeTrack1ScenarioReplay` output identical; `git diff` of replay/case/scenario paths is empty
+- inspection: `README.md` and `docs/api-contract.md` remain accurate; no changes needed
+- explicit statement: shared, API, backend, and frontend behavior did not change
+- status: COMPLETE
+
 ## 2026-06-28 - REQ-T1-ATTACK-REPLAY-006 Controlled attack replay
 
 - requirement: Track 1 controlled attack replay — deterministic compilation of nine repository fixtures into normalized sandbox supervision results

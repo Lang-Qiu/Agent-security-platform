@@ -102,3 +102,82 @@ node --experimental-strip-types samples/track1/attack-scripts/T1-SC-003/replay.t
 ### 引用/哈希替代原始内容
 
 所有原始 fixture 内容（提示词、检索文本、记忆内容、工具参数值）在输出中均替换为 SHA-256 哈希和稳定引用 URI。
+
+## 模型调用链监控插件 (Model Call-Chain Monitor Plugin)
+
+`src/monitoring/` 提供 REQ-T1-MONITOR-PLUGIN-007 的会话说中间件。它包裹模型调用和模拟工具调用，通过注入的 `MonitorDecisionProvider` 获取策略决定，并在 deny/ask/fail-closed 路径上拦截工具执行。
+
+### 所有权
+
+- **模块路径：** `engines/sandbox/src/monitoring/`
+- **测试路径：** `engines/sandbox/tests/attack-monitor-*.spec.ts`
+- **仓库质量门禁：** `tests/repository/track1-monitor-plugin.spec.ts`
+- **需求编号：** `REQ-T1-MONITOR-PLUGIN-007`
+- **导出表面：** `engines/sandbox/src/monitoring/index.ts`
+
+### 核心调用流
+
+```text
+controlled caller / future adapter
+  -> MonitoredSession.invokeModel(request, next)
+       -> 归一化请求
+       -> safe model_input 事件
+       -> 调用 model callback (next)
+       -> safe model_output 事件
+       -> MonitorDecisionProvider.decide(stage=model_output)
+       -> 物化决策、告警或阻断记录
+  -> MonitoredSession.invokeTool(request, context, next)
+       -> 归一化工具请求
+       -> 验证模型上下文哈希
+       -> MonitorDecisionProvider.decide(stage=tool_request)
+       -> allow/alert: 执行 simulated-tool callback
+       -> deny/ask/fail-closed: 拦截，不调用 callback
+       -> safe tool_result 事件
+  -> MonitoredSession.finalize()
+       -> 聚合 terminal status/risk
+       -> normalizeBaseResult()
+       -> BaseResult<SandboxRunResultDetails>
+```
+
+### 策略动作语义
+
+| 阶段 | 动作 | 工具回调 | 会话 | 告警 | 阻断记录 |
+| --- | --- | --- | --- | --- | --- |
+| model_output | allow | N/A | open | 0 | 0 |
+| model_output | alert | N/A | open | 1 | 0 |
+| model_output | ask | N/A | sealed | 0 | 0 |
+| model_output | deny | N/A | sealed | 0 | 1 |
+| tool_request | allow | 执行一次 | open | 0 | 0 |
+| tool_request | alert | 执行一次 | open | 1 | 0 |
+| tool_request | ask | 不执行 | sealed | 0 | 0 |
+| tool_request | deny | 不执行 | sealed | 0 | 1 |
+
+### Provider 行为
+
+- Provider 在 model_output 和 tool_request 两个阶段被调用。
+- Provider 失败（抛出、reject、非对象输出、不支持的动作、空字段、敏感值泄露）全部 fail-closed 为合成 deny。
+- Fail-closed 决定使用固定 `MONITOR_FAIL_CLOSED_PROPOSAL`，包含 `policy_id: "policy://track1/monitor-fail-closed"`。
+
+### 原始内容边界
+
+- Monitor 只在 callback/provider 调用的方法局部变量中持有原始模型/工具内容。
+- 方法返回后，仅保留 SHA-256 哈希、安全引用 URI 和固定摘要。
+- 会话状态字段、事件负载、元数据、错误对象中不出现原始 prompt、模型输出、工具参数、工具输出或异常信息。
+
+### 固定受控 Demo
+
+```powershell
+node --experimental-strip-types samples/track1/monitor-plugin/demo.ts
+```
+
+Demo 通过 replay-to-monitor adapter 运行全部 9 个 Track 1 案例，输出一个包含 9 个归一化结果的 JSON 数组。不接受 CLI 参数、环境变量或配置。不调用真实模型或网络服务。
+
+### REQ-008 扩展点
+
+检测规则在 REQ-008 中实现。`MonitorDecisionProvider` 接口允许 REQ-008 替换为真实检测逻辑，无需改动会话编排代码。
+
+### 验证命令
+
+```powershell
+npm.cmd run test:engine:sandbox
+```

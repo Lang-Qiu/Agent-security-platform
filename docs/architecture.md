@@ -444,3 +444,56 @@ fixed case fixtures
 - Raw fixture content (prompts, retrieved text, memory content, tool argument values) is never present in serialized output.
 - No model, network, or simulated-tool execution occurs.
 - The shared `BaseResult<SandboxRunResultDetails>` contract and `normalizeBaseResult` remain unchanged.
+
+## REQ-T1-MONITOR-PLUGIN-007 Track 1 Model Call-Chain Monitor Plugin
+
+`engines/sandbox/src/monitoring/` adds a reusable session-level middleware that wraps model and simulated-tool calls, obtains policy decisions through an injected `MonitorDecisionProvider`, intercepts unsafe execution, and produces complete normalized sandbox supervision results.
+
+### Verified Flow
+
+```text
+controlled caller / future adapter
+  -> MonitoredSession model boundary
+  -> injected MonitorDecisionProvider
+  -> MonitoredSession simulated-tool gate
+  -> normalized shared sandbox result
+  -> later backend/UI integration
+```
+
+### Module Structure
+
+```text
+engines/sandbox/src/monitoring/
+  contract.ts        — engine-private types, normalizers, stable errors
+  content-boundary.ts — SHA-256, canonical hashing, safe references, frozen snapshots
+  session.ts         — MonitoredSession with invokeModel / invokeTool / finalize
+  result-builder.ts  — terminal status/risk aggregation and normalizeBaseResult pass-through
+  replay-adapter.ts  — deterministic fixture-to-monitor adapter for 9 Track 1 cases
+  index.ts           — minimal supported export surface
+```
+
+### Key Boundary Decisions
+
+- Monitor contracts remain engine-private. Shared REQ-005 contracts (`shared/types/sandbox.ts`, `shared/contracts/sandbox.ts`) are unchanged.
+- REQ-006 replay remains a separate deterministic fixture compiler; the REQ-007 adapter runs the same fixtures through real monitor orchestration.
+- Detection logic is injected through `MonitorDecisionProvider`. The REQ-007 monitor exercises the boundary; REQ-008 will provide the first real detection provider.
+- Platform persistence, UI rendering, cluster trace aggregation, and OpenClaw integration remain deferred.
+- Raw model content, tool arguments, tool output, and provider exceptions never appear in serialized results or session state.
+
+### Controlled Demo
+
+```powershell
+node --experimental-strip-types samples/track1/monitor-plugin/demo.ts
+```
+
+Fixed entrypoint emits 9 byte-identical normalized results through the replay-to-monitor adapter. No arguments, no network, simulated only.
+
+### Quality Gates
+
+- `engines/sandbox/tests/attack-monitor-contract.spec.ts`
+- `engines/sandbox/tests/attack-monitor-session.spec.ts`
+- `engines/sandbox/tests/attack-monitor-replay-adapter.spec.ts`
+- `engines/sandbox/tests/attack-monitor-demo.spec.ts`
+- `tests/repository/track1-monitor-plugin.spec.ts` (safety scan + behavioral assertion)
+
+All registered in `test:engine:sandbox` and `test:repo` package scripts.
