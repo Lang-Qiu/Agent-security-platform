@@ -351,11 +351,32 @@ function isSafeRuleId(value: string): boolean {
 // Strict REQ-008 demo-result boundary validator
 // ==============================================================================
 
-const ISO_8601_PATTERN =
-  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/;
+const ISO_8601_REGEX =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/;
 
 const SAFE_REF_PATTERN =
   /^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s<>"{}|\\^`\x00-\x1f\x7f?&#]+$/;
+
+function isValidCalendarDate(isoString: string): boolean {
+  const m = ISO_8601_REGEX.exec(isoString);
+  if (!m) return false;
+  const year = parseInt(m[1], 10);
+  const month = parseInt(m[2], 10);
+  const day = parseInt(m[3], 10);
+  const hour = parseInt(m[4], 10);
+  const min = parseInt(m[5], 10);
+  const sec = parseInt(m[6], 10);
+  if (month < 1 || month > 12) return false;
+  if (day < 1) return false;
+  if (hour > 23 || min > 59 || sec > 59) return false;
+  const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (month === 2) {
+    const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+    const maxDay = leap ? 29 : 28;
+    return day <= maxDay;
+  }
+  return day <= daysInMonth[month - 1];
+}
 
 const FIXED_RESULT_SUMMARIES = new Set([
   "Monitored sandbox session failed",
@@ -433,12 +454,64 @@ function validateDemoResult(
     if (evt.scenario_id !== scenarioId) return false;
   }
 
-  // -- 5. ISO-8601 timestamps --
-  if (!ISO_8601_PATTERN.test(nr.created_at)) return false;
-  if (!ISO_8601_PATTERN.test(nr.updated_at)) return false;
-  if (typeof nr.finished_at === "string" && !ISO_8601_PATTERN.test(nr.finished_at)) return false;
+  // -- 5. ISO-8601 timestamps with real calendar validation --
+  if (!ISO_8601_REGEX.test(nr.created_at) || !isValidCalendarDate(nr.created_at)) return false;
+  if (!ISO_8601_REGEX.test(nr.updated_at) || !isValidCalendarDate(nr.updated_at)) return false;
+  if (typeof nr.finished_at === "string") {
+    if (!ISO_8601_REGEX.test(nr.finished_at) || !isValidCalendarDate(nr.finished_at)) return false;
+  }
 
-  // -- 6. Metadata shape --
+  // -- 6. Result status semantics cross-validation --
+  const decisions = details.policy_decisions ?? [];
+  const hasDeny = decisions.some((d) => d.action === "deny");
+  const hasAsk = decisions.some((d) => d.action === "ask");
+  const hasAlert = decisions.some((d) => d.action === "alert");
+  const blockedRecords = details.blocked_records ?? [];
+  const alerts = details.alerts ?? [];
+
+  let expectedStatus: string;
+  let expectedRisk: string;
+  let expectedSummary: string;
+  let expectedBlocked: boolean;
+
+  if (hasDeny || blockedRecords.length > 0) {
+    expectedStatus = "blocked";
+    expectedRisk = "high";
+    expectedSummary = "Monitored sandbox session blocked";
+    expectedBlocked = true;
+  } else if (hasAsk) {
+    expectedStatus = "finished";
+    expectedRisk = "medium";
+    expectedSummary = "Monitored sandbox session completed";
+    expectedBlocked = false;
+  } else if (hasAlert) {
+    expectedStatus = "finished";
+    expectedRisk = "high";
+    expectedSummary = "Monitored sandbox session completed";
+    expectedBlocked = false;
+  } else {
+    expectedStatus = "finished";
+    expectedRisk = "info";
+    expectedSummary = "Monitored sandbox session completed";
+    expectedBlocked = false;
+  }
+
+  if (nr.status !== expectedStatus) return false;
+  if (nr.risk_level !== expectedRisk) return false;
+  if (nr.summary !== expectedSummary) return false;
+  if (details.blocked !== expectedBlocked) return false;
+  // Cross-consistency: blocked === (blocked_records.length > 0)
+  if (details.blocked !== (blockedRecords.length > 0)) return false;
+  // Alert decisions must produce alert records
+  for (const d of decisions) {
+    if (d.action === "alert" && !alerts.some((a) => a.decision_id === d.decision_id)) return false;
+  }
+  // Deny decisions must produce blocked records
+  for (const d of decisions) {
+    if (d.action === "deny" && !blockedRecords.some((b) => b.decision_id === d.decision_id)) return false;
+  }
+
+  // ---- 7. Metadata shape and counter validation ----
   if (hasMetadata) {
     const meta = nr.metadata as Record<string, unknown>;
     if (!isPlainObject(meta)) return false;
@@ -447,37 +520,75 @@ function validateDemoResult(
     const mon = meta.monitor as Record<string, unknown>;
     if (!isPlainObject(mon)) return false;
     const monKeys = Object.keys(mon).sort();
-    if (monKeys.length !== MONITOR_METADATA_KEYS.length) return false;
-    if (!MONITOR_METADATA_KEYS.every((k, i) => [...MONITOR_METADATA_KEYS].sort()[i] === monKeys[i])) { return false; }
-    // Validate fixed schema version and counters
-    const expectedMonKeys = [...MONITOR_METADATA_KEYS].sort();
-    for (let i = 0; i < expectedMonKeys.length; i++) {
-      if (monKeys[i] !== expectedMonKeys[i]) return false;
+    const sortedMonKeys = [...MONITOR_METADATA_KEYS].sort();
+    if (monKeys.length !== sortedMonKeys.length) return false;
+    for (let i = 0; i < sortedMonKeys.length; i++) {
+      if (monKeys[i] !== sortedMonKeys[i]) return false;
     }
     if (mon.schema_version !== "track1-monitor.v1") return false;
-    const counterKeys = ["model_call_count", "tool_call_count", "decision_count",
-      "executed_tool_count", "intercepted_tool_count", "provider_failure_count"];
-    for (const ck of counterKeys) {
-      const v = mon[ck];
-      if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || !Number.isFinite(v)) return false;
-    }
+    // Counters must match actual event/decision counts
+    const modelInputCount = (details.events ?? []).filter((e) => e.event_type === "model_input").length;
+    const toolRequestCount = (details.events ?? []).filter((e) => e.event_type === "tool_request").length;
+    const decisionCount = decisions.length;
+    const executedCount = (details.events ?? []).filter(
+      (e) => e.event_type === "tool_result" && (e.payload as any)?.status === "success"
+    ).length;
+    const interceptedCount = (details.events ?? []).filter(
+      (e) => e.event_type === "tool_result" && (e.payload as any)?.status === "rejected"
+    ).length;
+    if (mon.model_call_count !== modelInputCount) return false;
+    if (mon.tool_call_count !== toolRequestCount) return false;
+    if (mon.decision_count !== decisionCount) return false;
+    if (mon.executed_tool_count !== executedCount) return false;
+    if (mon.intercepted_tool_count !== interceptedCount) return false;
+    // provider_failure_count: finite non-negative integer (cannot cross-validate without provider state)
+    if (typeof mon.provider_failure_count !== "number" || !Number.isInteger(mon.provider_failure_count)
+        || mon.provider_failure_count < 0 || !Number.isFinite(mon.provider_failure_count)) return false;
   }
 
-  // -- 7. Model/tool payload content_ref --
+  // -- 8. Closed payload reference validation --
+  const FIXED_MODEL_REF = "fixture-model://track1/deterministic";
+  const CANONICAL_ID_PREFIXES = ["task:", "session:", "model-input:", "model-output:",
+    "tool-request:", "tool-result:", "policy-decision:", "decision:",
+    "blocked-record:", "alert:", "call:", "memory-write:", "memory-read:"];
   for (const evt of details.events) {
     const p = evt.payload as Record<string, unknown>;
-    if (p?.content_ref && typeof p.content_ref === "string") {
-      if (!SAFE_REF_PATTERN.test(p.content_ref)) return false;
+    // model_ref must be the fixed value
+    if (typeof (p as any)?.model_ref === "string" && (p as any).model_ref !== FIXED_MODEL_REF) return false;
+    // content_ref must use safe-ref grammar
+    if (typeof p?.content_ref === "string" && !SAFE_REF_PATTERN.test(p.content_ref)) return false;
+    // Tool refs: target_ref, arguments_ref, result_ref, call_id
+    if (typeof (p as any)?.target_ref === "string" && !SAFE_REF_PATTERN.test((p as any).target_ref)) return false;
+    if (typeof (p as any)?.arguments_ref === "string" && !SAFE_REF_PATTERN.test((p as any).arguments_ref)) return false;
+    if (typeof (p as any)?.result_ref === "string" && !SAFE_REF_PATTERN.test((p as any).result_ref)) return false;
+    // All *_id fields must use canonical prefixes or safe refs
+    for (const [key, val] of Object.entries(p as Record<string, unknown>)) {
+      if (key.endsWith("_id") && typeof val === "string") {
+        const hasCanonicalPrefix = CANONICAL_ID_PREFIXES.some((pfx) => val.startsWith(pfx));
+        const isSafeRef = SAFE_REF_PATTERN.test(val);
+        if (!hasCanonicalPrefix && !isSafeRef) return false;
+      }
     }
   }
+  // All decision/alert/blocked-record IDs must be canonical or safe refs
+  for (const d of decisions) {
+    if (!CANONICAL_ID_PREFIXES.some((pfx) => d.decision_id.startsWith(pfx))) return false;
+    if (!SAFE_REF_PATTERN.test(d.policy_id)) return false;
+  }
+  for (const a of alerts) {
+    if (!CANONICAL_ID_PREFIXES.some((pfx) => a.alert_id.startsWith(pfx))) return false;
+  }
+  for (const b of blockedRecords) {
+    if (!CANONICAL_ID_PREFIXES.some((pfx) => b.blocked_record_id.startsWith(pfx))) return false;
+  }
 
-  // -- 8. Decision reason/reason_code/action must match catalog --
-  const decisions = details.policy_decisions ?? [];
+  // -- 9. Decision reason/reason_code/action must match catalog --
   for (const d of decisions) {
     if (d.policy_id !== BASE_FILTER_POLICY_ID) return false;
 
-    // No-match decisions
-    if (d.action === "allow" && d.reason_code === "base_filter_no_match") {
+    // The ONLY valid allow form is the exact no-match contract
+    if (d.action === "allow") {
+      if (d.reason_code !== "base_filter_no_match") return false;
       if (d.evidence_refs.length !== 1) return false;
       if (d.evidence_refs[0] !== NO_MATCH_EVIDENCE_REF) return false;
       if (d.reason !== "No Track 1 base-filter rule matched") return false;
@@ -485,58 +596,52 @@ function validateDemoResult(
     }
 
     // Non-allow decisions: must reference catalog rules
-    if (d.action !== "allow") {
-      // Must not contain no-match evidence
-      if (d.evidence_refs.includes(NO_MATCH_EVIDENCE_REF)) return false;
-      // Must have at least one catalog rule reference
-      let hasRuleRef = false;
-      for (const ref of d.evidence_refs) {
-        const m = RULE_EVIDENCE_PATTERN.exec(ref);
-        if (m) {
-          const ruleId = m[1];
-          const ruleMeta = catalogRuleMap.get(ruleId);
-          if (!ruleMeta) return false; // unknown rule ID
-          hasRuleRef = true;
-        } else {
-          return false; // unparseable evidence ref in base-filter decision
-        }
+    // Must not contain no-match evidence
+    if (d.evidence_refs.includes(NO_MATCH_EVIDENCE_REF)) return false;
+    // Must have at least one catalog rule reference
+    let hasRuleRef = false;
+    for (const ref of d.evidence_refs) {
+      const m = RULE_EVIDENCE_PATTERN.exec(ref);
+      if (m) {
+        const ruleId = m[1];
+        const ruleMeta = catalogRuleMap.get(ruleId);
+        if (!ruleMeta) return false; // unknown rule ID
+        hasRuleRef = true;
+      } else {
+        return false; // unparseable evidence ref in base-filter decision
       }
-      if (!hasRuleRef) return false;
+    }
+    if (!hasRuleRef) return false;
 
-      // reason and reason_code must match the winning rule
-      // Find the highest-ranked rule among referenced rules
-      const referencedRules = [];
-      for (const ref of d.evidence_refs) {
-        const m = RULE_EVIDENCE_PATTERN.exec(ref);
-        if (m) {
-          const meta = catalogRuleMap.get(m[1]);
-          if (meta) referencedRules.push(meta);
-        }
+    // reason and reason_code must match the winning rule
+    const referencedRules: { reason: string; reason_code: string; action: string; rule_id: string }[] = [];
+    for (const ref of d.evidence_refs) {
+      const m = RULE_EVIDENCE_PATTERN.exec(ref);
+      if (m) {
+        const meta = catalogRuleMap.get(m[1]);
+        if (meta) referencedRules.push(meta);
       }
-      // Sort by action rank desc, then rule_id asc
-      referencedRules.sort((a, b) => {
-        const r = ACTION_RANK[b.action] - ACTION_RANK[a.action];
-        if (r !== 0) return r;
-        return a.rule_id.localeCompare(b.rule_id);
-      });
-      const winner = referencedRules[0];
-      if (d.reason_code !== winner.reason_code) return false;
-      if (d.reason !== winner.reason) return false;
-      if (d.action !== winner.action) {
-        // The decision action should be the highest action from matched rules
-        const highestAction = referencedRules.reduce(
-          (best, r) => ACTION_RANK[r.action] > ACTION_RANK[best] ? r.action : best,
-          "allow" as string
-        );
-        if (d.action !== highestAction) return false;
-      }
+    }
+    referencedRules.sort((a, b) => {
+      const r = ACTION_RANK[b.action] - ACTION_RANK[a.action];
+      if (r !== 0) return r;
+      return a.rule_id.localeCompare(b.rule_id);
+    });
+    const winner = referencedRules[0];
+    if (d.reason_code !== winner.reason_code) return false;
+    if (d.reason !== winner.reason) return false;
+    if (d.action !== winner.action) {
+      const highestAction = referencedRules.reduce(
+        (best, r) => ACTION_RANK[r.action] > ACTION_RANK[best] ? r.action : best,
+        "allow" as string
+      );
+      if (d.action !== highestAction) return false;
     }
   }
 
-  // -- 9. Event evidence_refs --
+  // -- 10. Event evidence_refs --
   for (const evt of details.events) {
     const et = evt.event_type;
-    // memory_write and memory_read use replay evidence refs
     if (et === "memory_write" || et === "memory_read") {
       for (const ref of evt.evidence_refs) {
         if (!ref.startsWith(REPLAY_EVIDENCE_PREFIX)) return false;
@@ -553,19 +658,18 @@ function validateDemoResult(
     }
   }
 
-  // -- 10. Alert/blocked record correlation --
-  for (const alert of details.alerts ?? []) {
+  // -- 11. Alert/blocked record correlation --
+  for (const alert of alerts) {
     const dec = decisions.find((d: any) => d.decision_id === alert.decision_id);
     if (!dec) return false;
     if (alert.subject_event_id !== dec.subject_event_id) return false;
     if (alert.reason !== dec.reason) return false;
-    // Alert evidence_refs must match decision evidence_refs
     if (alert.evidence_refs.length !== dec.evidence_refs.length) return false;
     for (let i = 0; i < dec.evidence_refs.length; i++) {
       if (alert.evidence_refs[i] !== dec.evidence_refs[i]) return false;
     }
   }
-  for (const br of details.blocked_records ?? []) {
+  for (const br of blockedRecords) {
     const dec = decisions.find((d: any) => d.decision_id === br.decision_id);
     if (!dec) return false;
     if (br.subject_event_id !== dec.subject_event_id) return false;

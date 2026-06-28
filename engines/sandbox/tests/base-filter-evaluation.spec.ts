@@ -263,6 +263,36 @@ import {
   TRACK1_BASE_FILTER_EVALUATION_SCHEMA_VERSION,
   Track1BaseFilterError
 } from "../src/base-filter/contract.ts";
+import { normalizeBaseResult as normalizeSharedBaseResult } from "../../../shared/contracts/result.ts";
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function requireDecisionMirror(result: any, decisionIndex = 0): {
+  decision: any;
+  policyEvent: any;
+} {
+  const decision = result.details?.policy_decisions?.[decisionIndex];
+  assert.ok(decision, "test setup requires a policy decision");
+
+  const policyEvent = result.details.events?.find(
+    (event: any) =>
+      event.event_type === "policy_decision" &&
+      event.payload?.decision_id === decision.decision_id
+  );
+  assert.ok(policyEvent, "test setup requires the mirrored policy event");
+
+  return { decision, policyEvent };
+}
+
+function assertSharedResultValid(result: unknown): void {
+  assert.notEqual(
+    normalizeSharedBaseResult(result),
+    null,
+    "mutation must remain valid at the shared contract boundary"
+  );
+}
 
 test("normalizer rejects non-plain-object", () => {
   assert.equal(normalizeTrack1BaseFilterDemoReport(null), null);
@@ -582,14 +612,12 @@ test("normalizer rejects foreign policy ID in result decisions", async () => {
   const report = buildTrack1BaseFilterDemoReport(
     await runAllTrack1BaseFilterCases()
   );
-  const badResults = JSON.parse(JSON.stringify(report.results));
-  const firstDetail = badResults[0].details;
-  if (firstDetail?.policy_decisions?.length > 0) {
-    firstDetail.policy_decisions[0] = {
-      ...firstDetail.policy_decisions[0],
-      policy_id: "policy://foreign/v1"
-    };
-  }
+  const badResults = cloneJson(report.results);
+  const { decision, policyEvent } = requireDecisionMirror(badResults[0]);
+  decision.policy_id = "policy://foreign/v1";
+  policyEvent.payload.policy_id = "policy://foreign/v1";
+  assertSharedResultValid(badResults[0]);
+
   assert.equal(
     normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
     null
@@ -617,14 +645,12 @@ test("normalizer rejects unparseable evidence_ref in base-filter decision", asyn
   const report = buildTrack1BaseFilterDemoReport(
     await runAllTrack1BaseFilterCases()
   );
-  const badResults = JSON.parse(JSON.stringify(report.results));
-  const firstDetail = badResults[0].details;
-  if (firstDetail?.policy_decisions?.length > 0) {
-    const pd = firstDetail.policy_decisions[0];
-    if (pd.policy_id === "policy://track1/base-filter/v1") {
-      pd.evidence_refs = [...pd.evidence_refs, "RAW_SENTINEL_IN_EVIDENCE"];
-    }
-  }
+  const badResults = cloneJson(report.results);
+  const { decision, policyEvent } = requireDecisionMirror(badResults[0]);
+  decision.evidence_refs = [...decision.evidence_refs, "RAW_SENTINEL_IN_EVIDENCE"];
+  policyEvent.payload.evidence_refs = [...decision.evidence_refs];
+  assertSharedResultValid(badResults[0]);
+
   assert.equal(
     normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
     null
@@ -650,18 +676,270 @@ test("normalizer rejects invalid subject event type", async () => {
   const report = buildTrack1BaseFilterDemoReport(
     await runAllTrack1BaseFilterCases()
   );
-  const badResults = JSON.parse(JSON.stringify(report.results));
+  const badResults = cloneJson(report.results);
   const firstDetail = badResults[0].details;
-  if (firstDetail?.policy_decisions?.length > 0 && firstDetail?.events?.length > 0) {
-    const policyEvent = firstDetail.events.find(
-      (e: any) => e.event_type === "policy_decision"
-    );
-    if (policyEvent) {
-      firstDetail.policy_decisions[0].subject_event_id = policyEvent.event_id;
+  const { decision, policyEvent } = requireDecisionMirror(badResults[0]);
+  const unsupportedSubjectId = policyEvent.event_id;
+
+  decision.subject_event_id = unsupportedSubjectId;
+  policyEvent.payload.subject_event_id = unsupportedSubjectId;
+  for (const record of [...firstDetail.alerts, ...firstDetail.blocked_records]) {
+    if (record.decision_id === decision.decision_id) {
+      record.subject_event_id = unsupportedSubjectId;
     }
   }
+  assertSharedResultValid(badResults[0]);
+
   assert.equal(
     normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
     null
   );
+});
+
+// ============================================================================
+// Round 4 RED: strict content-free result boundary
+// ============================================================================
+
+test("normalizer rejects shared-valid sentinel in result task_id", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  badResults[0].task_id = "RAW_SENTINEL_008_TASK_ID";
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects shared-valid sentinel in session correlation", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  const details = badResults[0].details;
+  details.session_id = "RAW_SENTINEL_008_SESSION";
+  for (const event of details.events) {
+    event.session_id = details.session_id;
+  }
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects shared-valid sentinel in scenario correlation", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  for (const event of badResults[0].details.events) {
+    event.scenario_id = "RAW_SENTINEL_008_SCENARIO";
+  }
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects shared-valid non-timestamp result dates", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  badResults[0].created_at = "RAW_SENTINEL_008_CREATED_AT";
+  badResults[0].updated_at = "RAW_SENTINEL_008_UPDATED_AT";
+  badResults[0].finished_at = "RAW_SENTINEL_008_FINISHED_AT";
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects shared-valid arbitrary result metadata", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  badResults[0].metadata.raw_content = "RAW_SENTINEL_008_METADATA";
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects shared-valid unexpected optional result fields", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  badResults[0].result_id = "RAW_SENTINEL_008_RESULT_ID";
+  badResults[0].started_at = "RAW_SENTINEL_008_STARTED_AT";
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects shared-valid sentinel in model content_ref", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  const modelEvent = badResults[0].details.events.find(
+    (event: any) => event.event_type === "model_input"
+  );
+  assert.ok(modelEvent, "test setup requires a model_input event");
+  modelEvent.payload.content_ref = "RAW_SENTINEL_008_CONTENT_REF";
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects shared-valid sentinel in decision reason", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  const { decision, policyEvent } = requireDecisionMirror(badResults[0]);
+  decision.reason = "RAW_SENTINEL_008_REASON";
+  policyEvent.payload.reason = decision.reason;
+  for (const record of [
+    ...badResults[0].details.alerts,
+    ...badResults[0].details.blocked_records
+  ]) {
+    if (record.decision_id === decision.decision_id) {
+      record.reason = decision.reason;
+    }
+  }
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects shared-valid sentinel in event evidence_refs", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  const modelEvent = badResults[0].details.events.find(
+    (event: any) => event.event_type === "model_input"
+  );
+  assert.ok(modelEvent, "test setup requires a model_input event");
+  modelEvent.evidence_refs = [
+    ...modelEvent.evidence_refs,
+    "RAW_SENTINEL_008_EVENT_EVIDENCE"
+  ];
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects shared-valid unknown safe rule ID", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  const badCases = cloneJson(report.cases);
+  const { decision, policyEvent } = requireDecisionMirror(badResults[0]);
+  const unknownRuleId = "rawsentinelsecret";
+  const unknownRuleRef =
+    `evidence://track1/base-filter/rule/${unknownRuleId}`;
+
+  decision.evidence_refs = [...decision.evidence_refs, unknownRuleRef];
+  policyEvent.payload.evidence_refs = [...decision.evidence_refs];
+  for (const record of [
+    ...badResults[0].details.alerts,
+    ...badResults[0].details.blocked_records
+  ]) {
+    if (record.decision_id === decision.decision_id) {
+      record.evidence_refs = [...decision.evidence_refs];
+    }
+  }
+  badCases[0].matched_rule_ids = [
+    ...badCases[0].matched_rule_ids,
+    unknownRuleId
+  ].sort();
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({
+      ...report,
+      cases: badCases,
+      results: badResults
+    }),
+    null
+  );
+});
+
+test("normalizer rejects no-match evidence on a non-allow decision", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  const badCases = cloneJson(report.cases);
+  const { decision, policyEvent } = requireDecisionMirror(badResults[0]);
+  assert.notEqual(decision.action, "allow", "test setup requires a non-allow decision");
+
+  const noMatchRef = "evidence://track1/base-filter/no-match";
+  decision.evidence_refs = [noMatchRef];
+  policyEvent.payload.evidence_refs = [noMatchRef];
+  for (const record of [
+    ...badResults[0].details.alerts,
+    ...badResults[0].details.blocked_records
+  ]) {
+    if (record.decision_id === decision.decision_id) {
+      record.evidence_refs = [noMatchRef];
+    }
+  }
+  badCases[0].matched_rule_ids = [];
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({
+      ...report,
+      cases: badCases,
+      results: badResults
+    }),
+    null
+  );
+});
+
+test("normalizer returns null instead of throwing for null case rows", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badCases = cloneJson(report.cases) as Array<unknown>;
+  badCases[0] = null;
+
+  assert.doesNotThrow(() => {
+    assert.equal(
+      normalizeTrack1BaseFilterDemoReport({
+        ...report,
+        cases: badCases
+      }),
+      null
+    );
+  });
 });
