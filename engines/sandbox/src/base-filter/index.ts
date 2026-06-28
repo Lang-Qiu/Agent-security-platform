@@ -11,3 +11,7 @@ export {
 export { evaluateTrack1FilterRules } from "./evaluator.ts";
 export { TRACK1_BASE_FILTER_RULES } from "./rule-catalog.ts";
 export { RuleBasedDecisionProvider } from "./provider.ts";
+export {
+  runTrack1BaseFilterScenario,
+  runAllTrack1BaseFilterCases
+} from "./replay-adapter.ts";
