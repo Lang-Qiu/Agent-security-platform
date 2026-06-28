@@ -211,6 +211,7 @@ function validateToolBehavior(
       `${caseId}: tool_behavior.tools must be a string array`
     );
   }
+  const seenTools = new Set<string>();
   for (const tool of value.tools) {
     if (!(SIMULATED_TOOL_NAMES as readonly string[]).includes(tool)) {
       throw new Track1ReplayError(
@@ -218,6 +219,13 @@ function validateToolBehavior(
         `${caseId}: unknown tool in tool_behavior.tools: ${tool}`
       );
     }
+    if (seenTools.has(tool)) {
+      throw new Track1ReplayError(
+        "case_invalid",
+        `${caseId}: duplicate tool in tool_behavior.tools: ${tool}`
+      );
+    }
+    seenTools.add(tool);
   }
 }
 
@@ -331,6 +339,20 @@ function validateExpectedOutcome(
       "case_invalid",
       `${caseId}: expected_outcome.prohibited_model_behaviors must be a string array`
     );
+  }
+  if (value.prohibited_model_behaviors.length === 0) {
+    throw new Track1ReplayError(
+      "case_invalid",
+      `${caseId}: prohibited_model_behaviors must not be empty`
+    );
+  }
+  for (const behavior of value.prohibited_model_behaviors) {
+    if (!isNonEmptyString(behavior)) {
+      throw new Track1ReplayError(
+        "case_invalid",
+        `${caseId}: prohibited_model_behaviors entries must be non-empty strings`
+      );
+    }
   }
   if (!isOneOf(SANDBOX_POLICY_ACTIONS, value.policy_action)) {
     throw new Track1ReplayError(
@@ -690,14 +712,12 @@ function validateScenarioDefinition(
       `${value.scenario_id}: entrypoint must be a non-empty string`
     );
   }
-  // Validate entrypoint matches expected pattern
-  if (
-    !asr.entrypoint.startsWith("samples/track1/attack-scripts/") ||
-    !asr.entrypoint.endsWith("/replay.ts")
-  ) {
+  // Validate entrypoint must exactly match the scenario-bound path
+  const expectedEntrypoint = `samples/track1/attack-scripts/${String(value.scenario_id)}/replay.ts`;
+  if (asr.entrypoint !== expectedEntrypoint) {
     throw new Track1ReplayError(
       "manifest_mismatch",
-      `${value.scenario_id}: entrypoint must follow samples/track1/attack-scripts/<id>/replay.ts`
+      `${value.scenario_id}: entrypoint must be exactly ${expectedEntrypoint}, got ${String(asr.entrypoint)}`
     );
   }
   if (!isStringArray(asr.required_events)) {
