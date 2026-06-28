@@ -176,8 +176,124 @@ Demo 通过 replay-to-monitor adapter 运行全部 9 个 Track 1 案例，输出
 
 检测规则在 REQ-008 中实现。`MonitorDecisionProvider` 接口允许 REQ-008 替换为真实检测逻辑，无需改动会话编排代码。
 
+### REQ-008 扩展点
+
+检测规则在 REQ-008 中实现。`MonitorDecisionProvider` 接口允许 REQ-008 替换为真实检测逻辑，无需改动会话编排代码。
+
 ### 验证命令
 
 ```powershell
 npm.cmd run test:engine:sandbox
+```
+
+## 基础模型检测与过滤原型 (Base-Model Detection And Filtering Prototype)
+
+`src/base-filter/` 提供 REQ-T1-BASE-FILTER-008 首个真实检测提供者 —— 一个确定性、基于规则的过滤器，围绕模型和模拟工具调用。
+
+### 所有权
+
+- **模块路径：** `engines/sandbox/src/base-filter/`
+- **测试路径：** `engines/sandbox/tests/base-filter-*.spec.ts`
+- **仓库质量门禁：** `tests/repository/track1-base-filter.spec.ts`
+- **需求编号：** `REQ-T1-BASE-FILTER-008`
+- **导出表面：** `engines/sandbox/src/base-filter/index.ts`
+
+### 核心架构
+
+```text
+controlled context
+  -> RuleBasedDecisionProvider
+  -> MonitoredSession
+  -> normalized sandbox result
+  -> deterministic evaluation report
+```
+
+### 模块组成
+
+- `contract.ts`：过滤器规则、谓词、匹配、评估、报告和稳定错误类型，附带运行时归一化。
+- `context-envelope.ts`：严格区分来源的上下文组合与解析，带 SHA-256 内容引用。
+- `rule-catalog.ts`：内置声明式不可变规则集（9 条规则）。
+- `evaluator.ts`：内容归一化、谓词评估、完整匹配收集和确定性动作归约。
+- `provider.ts`：`MonitorDecisionProvider` 实现，实现到 REQ-007 监控端口的提案映射。
+- `replay-adapter.ts`：通过 `MonitoredSession` 执行九条受控案例。
+- `evaluation.ts`：精确动作对比、指标计算、报告归一化和序列化。
+- `index.ts`：最小化支持导出表面。
+
+### 来源感知上下文信封
+
+上下文信封保证用户、检索和记忆来源边界不发生跨源混淆：
+
+- `track1-filter-context.v1`：包含 `user_prompt`、`retrieved_content`、`memory_entries`。
+- 由 `composeTrack1FilterModelRequest` 组合为 `MonitorModelRequest`。
+- Provider 从 SHA-256 内容引用 `filter-context://track1/sha256/...` 进行解析。
+- 非过滤上下文方案将模型输入作为一个 `user_prompt` 处理。
+
+### 声明式冻结规则目录
+
+九条规则涵盖以下语义系列：
+
+- 显式策略绕过或越狱 → `deny` at `model_output`
+- 不安全模型披露 → `deny` at `model_output`
+- 提示驱动的窃取 → `deny` at `tool_request`
+- 邮件参数劫持 → `deny` at `tool_request`
+- 受保护文件读取 → `ask` at `tool_request`
+- 管理 API 提权 → `deny` at `tool_request`
+- 中毒检索指示 → `ask` at `tool_request`
+- 中毒持久化存储 → `deny` at `tool_request`
+- 敏感能力观测 → `alert` at `tool_request`
+
+规则目录在 provider 创建时进行递归冻结，不可被调用方修改。
+
+### 模型阶段 vs 工具阶段执行
+
+- 直接越狱在 `model_output` 阶段进行决策。
+- 工具携带的攻击延迟到 `tool_request` 阶段进行最终决策，利用模型上下文和被请求工具。
+- 动作优先级：`deny > ask > alert > allow`。
+- 所有适用规则在进行结果归约之前全部评估。
+
+### 九条案例指标
+
+所有九条受控 Track 1 案例均通过真实 provider 执行：
+
+| 指标 | 值 |
+|---|---|
+| 总案例数 | 9 |
+| 精确匹配 | 9 |
+| 精确动作准确率 | 1 |
+| 不安全案例数 | 7 |
+| 不安全案例召回率 | 1 |
+| 负面对照数 | 2 |
+| 负面对照假阳性率 | 0 |
+
+指标仅适用于受控数据集，不表达生产环境下的模型准确率。
+
+### 固定 Demo
+
+```powershell
+node --experimental-strip-types samples/track1/base-filter/demo.ts
+```
+
+Demo 运行全部九条案例，输出一个 `Track1BaseFilterDemoReport` JSON 对象至 stdout。不接受参数、网络、真实模型、外部工具或动态规则。两次连续运行输出按字节相同。
+
+### 反神谕与内容边界
+
+- Provider、目录、评估器不接收 `expected_action` 或 fixture 身份映射。
+- 决策、结果、指标、错误和 demo 输出中不出现原始 prompt、模型输出、工具参数或匹配片段。
+- 与 REQ-007 的故障安全行为一致。
+
+### 下一步：REQ-009
+
+REQ-009 (`REQ-T1-SUPERVISION-UI-009`) 将监控结果暴露给平台 UI。
+
+### 验证命令
+
+```powershell
+node --experimental-strip-types --test engines/sandbox/tests/base-filter-contract.spec.ts
+node --experimental-strip-types --test engines/sandbox/tests/base-filter-evaluator.spec.ts
+node --experimental-strip-types --test engines/sandbox/tests/base-filter-provider.spec.ts
+node --experimental-strip-types --test engines/sandbox/tests/base-filter-evaluation.spec.ts
+node --experimental-strip-types samples/track1/base-filter/demo.ts
+npm.cmd run test:engine:sandbox
+npm.cmd run test:repo
+npm.cmd run test:shared
 ```

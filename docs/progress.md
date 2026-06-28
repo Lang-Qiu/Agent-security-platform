@@ -28,6 +28,60 @@ Recommended fields:
   - `bdcc675` feat(track1): add controlled monitor demo
   - `6cc8feb` test(track1): gate model call-chain monitor
   - (T7 docs commit to follow)
+
+## 2026-06-28 - REQ-T1-BASE-FILTER-008 Track 1 base-model detection and filtering prototype
+
+- requirement: Track 1 base-model detection and filtering prototype — deterministic rule-based MonitorDecisionProvider, source-aware context envelope, frozen rule catalog, nine-case exact-action evaluation, and fixed demo
+- scope:
+  - added `engines/sandbox/src/base-filter/` with contract, context-envelope, rule-catalog, evaluator, provider, replay-adapter, evaluation, and index
+  - added `engines/sandbox/tests/base-filter-contract.spec.ts` — 68 focused tests (existence, error taxonomy, context/rule/catalog normalizers, serialization/parsing, content boundary)
+  - added `engines/sandbox/tests/base-filter-evaluator.spec.ts` — 33 focused tests (text normalization, source extraction, operators, conjunction, action reduction, built-in catalog, robustness)
+  - added `engines/sandbox/tests/base-filter-provider.spec.ts` — 22 focused tests (provider construction, no-match, model/tool stage integration, all four actions, content boundary, mutation)
+  - added `engines/sandbox/tests/base-filter-evaluation.spec.ts` — 15 focused tests (nine-case execution, exact-action matrix, anti-oracle, stage correlation, content-free serialization)
+  - added `samples/track1/base-filter/demo.ts` fixed byte-identical demo entrypoint with README
+  - added `tests/repository/track1-base-filter.spec.ts` — anti-oracle static/runtime safety scans and behavioral assertion
+  - registered all new tests in `test:engine:sandbox` and `test:repo` package scripts
+  - added permanent quality gate assertions in `tests/repository/root-test-entry.spec.ts`
+  - updated `engines/sandbox/README.md` with full base-filter module documentation
+  - updated `docs/architecture.md` with REQ-T1-BASE-FILTER-008 section
+- commits (7):
+  - `dfa4575` feat(sandbox): add base filter contracts and context envelope
+  - `095f926` feat(sandbox): evaluate Track 1 base filter rules
+  - `e9e06fe` feat(sandbox): connect rule provider to monitor
+  - `f846f38` feat(track1): replay cases through base filter
+  - `7f841d9` feat(track1): add base filter evaluation demo
+  - `674baec` test(track1): gate base filter prototype
+  - (T7 docs commit below)
+- RED evidence per task:
+  - T1: 3 existence failures + 3 export-absent failures (intentional assertion errors)
+  - T2: 2 existence failures + 4 export/catalog-absent failures
+  - T3: 1 existence failure + 12 construction/export failures
+  - T4: 1 existence failure + 2 export-absent failures
+  - T5: 1 export-absent failure (demo entrypoint)
+  - T6: 4 registration-absent failures (root entry)
+- focused and final gate counts:
+  - contract: 68 pass
+  - evaluator: 33 pass
+  - provider: 22 pass
+  - evaluation: 15 pass
+  - repository: 18 pass
+  - test:engine:sandbox: 188 pass
+  - test:repo: all pass
+  - test:shared: 26 pass
+  - test:backend: pre-existing baseline only
+  - test:frontend: pre-existing baseline only
+- exact metrics:
+  - total_cases: 9, exact_matches: 9, exact_action_accuracy: 1
+  - unsafe_case_count: 7, unsafe_case_recall: 1
+  - negative_control_count: 2, negative_control_false_positive_rate: 0
+- anti-oracle and no-raw-content evidence:
+  - provider/catalog/evaluator source scan: no case IDs, scenario IDs, expected_outcome, expected_action, policy_action in decision logic
+  - runtime scan: no model SDK, network, child_process, host write, dynamic rule, process.argv, or console.log paths
+  - nine-case execution: provider never receives expected_action or fixture identity
+  - serialized results/demo: no raw fixture content or sensitive markers
+- inspected unchanged docs: `README.md`, `docs/api-contract.md`, `docs/sprint-current.md`
+- status: COMPLETE
+- next blocker: REQ-T1-SUPERVISION-UI-009
 - files added (14):
   - `engines/sandbox/src/monitoring/contract.ts`
   - `engines/sandbox/src/monitoring/content-boundary.ts`

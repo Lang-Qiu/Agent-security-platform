@@ -497,3 +497,63 @@ Fixed entrypoint emits 9 byte-identical normalized results through the replay-to
 - `tests/repository/track1-monitor-plugin.spec.ts` (safety scan + behavioral assertion)
 
 All registered in `test:engine:sandbox` and `test:repo` package scripts.
+
+## REQ-T1-BASE-FILTER-008 Track 1 Base-Model Detection And Filtering Prototype
+
+`engines/sandbox/src/base-filter/` implements the first real `MonitorDecisionProvider` — a deterministic, rule-based filter around model and simulated-tool calls that evaluates a frozen declarative rule catalog and reduces all matches with `deny > ask > alert > allow`.
+
+### Verified Flow
+
+```text
+controlled context
+  -> RuleBasedDecisionProvider
+  -> MonitoredSession
+  -> normalized sandbox result
+  -> deterministic evaluation report
+```
+
+### Module Structure
+
+```text
+engines/sandbox/src/base-filter/
+  contract.ts           — filter rule, match, evaluation, report, and error contracts
+  context-envelope.ts   — source-aware context composition, serialization, and parsing
+  rule-catalog.ts       — frozen built-in rule catalog (9 rules)
+  evaluator.ts          — text normalization, source extraction, complete rule evaluation
+  provider.ts           — RuleBasedDecisionProvider implementing MonitorDecisionProvider
+  replay-adapter.ts     — nine-case execution through real MonitoredSession
+  evaluation.ts         — exact-action comparison, metrics, report normalization, demo
+  index.ts              — minimal supported export surface
+```
+
+### Key Boundary Decisions
+
+- The filter is engine-private and implements the unchanged `MonitorDecisionProvider` port from REQ-007.
+- The context envelope preserves user, retrieval, and memory source boundaries without changing `MonitorDecisionInput`.
+- The provider, catalog, and evaluator receive no `case_id`, `scenario_id`, `expected_action`, or fixture-path mapping.
+- Direct jailbreaks decide at `model_output`; tool-bearing attacks decide at `tool_request`.
+- All applicable rules are evaluated before reduction with `deny > ask > alert > allow`.
+- Decisions, results, metrics, errors, and demo output contain no raw content or matched snippets.
+- Existing REQ-007 monitor demo output remains byte-identical; shared, replay, and monitoring source are unchanged.
+
+### Fixed Demo
+
+```powershell
+node --experimental-strip-types samples/track1/base-filter/demo.ts
+```
+
+Fixed entrypoint runs all nine cases through the real rule provider and emits one `Track1BaseFilterDemoReport` JSON object with exact metrics: total_cases=9, exact_action_accuracy=1, unsafe_case_recall=1, negative_control_false_positive_rate=0.
+
+### Quality Gates
+
+- `engines/sandbox/tests/base-filter-contract.spec.ts`
+- `engines/sandbox/tests/base-filter-evaluator.spec.ts`
+- `engines/sandbox/tests/base-filter-provider.spec.ts`
+- `engines/sandbox/tests/base-filter-evaluation.spec.ts`
+- `tests/repository/track1-base-filter.spec.ts` (anti-oracle scan + behavioral assertion)
+
+All registered in `test:engine:sandbox` and `test:repo` package scripts.
+
+### Next Consumer
+
+`REQ-T1-SUPERVISION-UI-009` will present monitoring results to the platform UI.
