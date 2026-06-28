@@ -55,8 +55,13 @@ const UNSAFE_RULE_ID_PATTERNS = [
   /[/\\]/  // path separators
 ];
 
+// Rule IDs become evidence URI path segments and must be safe:
+// evidence://track1/base-filter/rule/<rule_id>
+const SAFE_RULE_ID_PATTERN = /^[a-z][a-z0-9]*(-[a-z][a-z0-9]*)*$/;
+
 function isSafeRuleId(value: string): boolean {
   if (value.trim().length === 0) return false;
+  if (!SAFE_RULE_ID_PATTERN.test(value)) return false;
   if (CASE_ID_PATTERN.test(value)) return false;
   for (const pattern of UNSAFE_RULE_ID_PATTERNS) {
     if (pattern.test(value)) return false;

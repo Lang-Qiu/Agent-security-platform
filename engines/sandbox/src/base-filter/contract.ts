@@ -118,6 +118,7 @@ export interface Track1BaseFilterCaseEvaluation {
   actual_action: SandboxPolicyAction;
   terminal_stage: "model_output" | "tool_request";
   matched_rule_ids: string[];
+  test_category: Track1TestCategory;
   passed: boolean;
 }
 

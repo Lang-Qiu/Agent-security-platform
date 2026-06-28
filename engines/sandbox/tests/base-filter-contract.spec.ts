@@ -491,6 +491,41 @@ function ruleNormalizerTests(): void {
     );
   });
 
+  test("normalizeTrack1FilterRule rejects spaces in rule_id", () => {
+    assert.equal(
+      normalizeTrack1FilterRule({ ...validRule, rule_id: "bad id" }),
+      null
+    );
+  });
+
+  test("normalizeTrack1FilterRule rejects uppercase in rule_id", () => {
+    assert.equal(
+      normalizeTrack1FilterRule({ ...validRule, rule_id: "Bad-Rule" }),
+      null
+    );
+  });
+
+  test("normalizeTrack1FilterRule rejects leading hyphen in rule_id", () => {
+    assert.equal(
+      normalizeTrack1FilterRule({ ...validRule, rule_id: "-bad-rule" }),
+      null
+    );
+  });
+
+  test("normalizeTrack1FilterRule rejects trailing hyphen in rule_id", () => {
+    assert.equal(
+      normalizeTrack1FilterRule({ ...validRule, rule_id: "bad-rule-" }),
+      null
+    );
+  });
+
+  test("normalizeTrack1FilterRule rejects non-ASCII chars in rule_id", () => {
+    assert.equal(
+      normalizeTrack1FilterRule({ ...validRule, rule_id: "rüle-id" }),
+      null
+    );
+  });
+
   test("normalizeTrack1FilterRule rejects expected_outcome in rule_id", () => {
     assert.equal(
       normalizeTrack1FilterRule({ ...validRule, rule_id: "expected_outcome_rule" }),
