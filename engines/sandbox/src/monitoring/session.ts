@@ -36,6 +36,7 @@ import type {
   MonitorLifecycleState,
   Track1MonitorMetadata
 } from "./contract.ts";
+import type { SimulatedToolRequest, SimulatedToolResult } from "../simulated-tools/contract.ts";
 import { buildMonitorResult } from "./result-builder.ts";
 
 // -- default runtime ports -------------------------------------------------
@@ -310,14 +311,257 @@ export class MonitoredSession {
     }
   }
 
-  // -- tool invocation (stub for Task 2, full implementation in Task 3) ----
+  // -- tool invocation ------------------------------------------------------
 
   async invokeTool(
-    _request: unknown,
-    _context: MonitorToolDecisionContext,
-    _next: MonitorToolNext
+    request: unknown,
+    context: MonitorToolDecisionContext,
+    next: MonitorToolNext
   ): Promise<MonitoredToolOutcome> {
-    throw new Track1MonitorError("monitor_state_invalid");
+    // Lifecycle check
+    if (this.#lifecycle !== "open") {
+      throw new Track1MonitorError("monitor_state_invalid");
+    }
+    if (this.#pending) {
+      throw new Track1MonitorError("monitor_state_invalid");
+    }
+
+    // Require a previous model call
+    if (this.#lastModelInputRef === null) {
+      throw new Track1MonitorError("monitor_state_invalid");
+    }
+
+    this.#pending = true;
+
+    try {
+      // Normalize tool request
+      const { normalizeSimulatedToolRequest } = await import("../simulated-tools/contract.ts");
+      const normalizedRequest = normalizeSimulatedToolRequest(request);
+      if (!normalizedRequest) {
+        throw new Track1MonitorError("monitor_tool_request_invalid");
+      }
+
+      // Session context must have scenario/case for tool requests
+      if (!this.#context.scenario_id || !this.#context.case_id) {
+        throw new Track1MonitorError("monitor_tool_request_invalid");
+      }
+
+      // Validate request correlation with monitor context
+      if (
+        normalizedRequest.session_id !== this.#context.session_id ||
+        normalizedRequest.scenario_id !== this.#context.scenario_id ||
+        normalizedRequest.case_id !== this.#context.case_id
+      ) {
+        throw new Track1MonitorError("monitor_tool_request_invalid");
+      }
+
+      // Normalize model context
+      const normalizedModelInput = normalizeMonitorModelRequest(context.model_input);
+      const normalizedModelOutput = normalizeMonitorModelResponse(context.model_output);
+      if (!normalizedModelInput || !normalizedModelOutput) {
+        throw new Track1MonitorError("monitor_tool_request_invalid");
+      }
+
+      // Verify model context refs match latest safe model state
+      if (
+        normalizedModelInput.content_ref !== this.#lastModelInputRef ||
+        normalizedModelOutput.content_ref !== this.#lastModelOutputRef
+      ) {
+        throw new Track1MonitorError("monitor_tool_request_invalid");
+      }
+
+      const {
+        createToolArgumentsRef,
+        createToolTargetRef,
+        createToolResultRef,
+        normalizeMonitorToolResult,
+        normalizeMonitorToolResultPayload,
+        sha256MonitorValue
+      } = await import("./content-boundary.ts");
+
+      const argumentsRef = createToolArgumentsRef(normalizedRequest);
+      const targetRef = createToolTargetRef(normalizedRequest);
+
+      // Emit tool_request event
+      const toolRequestEventId = this.#nextId("tool-request");
+      const toolRequestTimestamp = this.#nextTimestamp();
+      const toolRequestSequence = this.#nextSequence();
+
+      const toolRequestPayload: SandboxToolRequestPayload = {
+        call_id: normalizedRequest.call_id,
+        tool_name: normalizedRequest.tool_name,
+        target_ref: targetRef,
+        arguments_ref: argumentsRef
+      };
+
+      const toolRequestEvent: SandboxEventEnvelope<"tool_request", SandboxToolRequestPayload> = {
+        event_id: toolRequestEventId,
+        session_id: this.#context.session_id,
+        sequence: toolRequestSequence,
+        event_type: "tool_request",
+        occurred_at: toolRequestTimestamp,
+        source: "agent",
+        scenario_id: this.#context.scenario_id,
+        case_id: this.#context.case_id,
+        evidence_refs: [EVIDENCE_TOOL_REQUEST],
+        payload: toolRequestPayload
+      };
+      this.#events.push(toolRequestEvent);
+      this.#toolCallCount += 1;
+
+      // Obtain decision from provider at tool-request stage
+      const decision = await this.#obtainToolDecision(
+        toolRequestEventId,
+        normalizedModelInput,
+        normalizedModelOutput,
+        normalizedRequest
+      );
+
+      // Materialize decision
+      this.#materializeDecision(toolRequestEventId, decision);
+
+      const { action, materializedDecision } = decision;
+
+      if (action === "allow" || action === "alert") {
+        // Execute tool callback
+        if (typeof next !== "function") {
+          throw new Track1MonitorError("monitor_tool_failed");
+        }
+
+        this.#executedToolCount += 1;
+
+        let rawResult: SimulatedToolResult;
+        try {
+          rawResult = await next(normalizedRequest);
+        } catch {
+          // Emit safe tool_result (failed) and seal
+          const safeResultRef = `simulated-result://${normalizedRequest.call_id}/${sha256MonitorValue(normalizedRequest.call_id + "-failed")}`;
+          const failResultPayload: SandboxToolResultPayload = {
+            call_id: normalizedRequest.call_id,
+            tool_name: normalizedRequest.tool_name,
+            status: "failed",
+            result_ref: safeResultRef,
+            state_change: "none"
+          };
+          const normalizedPayload = normalizeMonitorToolResultPayload(failResultPayload);
+          if (normalizedPayload) {
+            const failEvent: SandboxEventEnvelope<"tool_result", SandboxToolResultPayload> = {
+              event_id: this.#nextId("tool-result"),
+              session_id: this.#context.session_id,
+              sequence: this.#nextSequence(),
+              event_type: "tool_result",
+              occurred_at: this.#nextTimestamp(),
+              source: "tool",
+              scenario_id: this.#context.scenario_id,
+              case_id: this.#context.case_id,
+              evidence_refs: [EVIDENCE_TOOL_RESULT],
+              payload: normalizedPayload
+            };
+            this.#events.push(failEvent);
+          }
+          this.#lifecycle = "sealed";
+          this.#failed = true;
+          throw new Track1MonitorError("monitor_tool_failed");
+        }
+
+        // Normalize and correlation-check result
+        const normalizedResult = normalizeMonitorToolResult(rawResult, normalizedRequest);
+        if (!normalizedResult) {
+          throw new Track1MonitorError("monitor_tool_failed");
+        }
+
+        // Emit safe tool_result (from executor-derived evidence)
+        const resultRef = createToolResultRef(normalizedResult);
+        const executorStateChange = normalizedResult.evidence.state_change;
+
+        const toolResultPayload: SandboxToolResultPayload = {
+          call_id: normalizedResult.call_id,
+          tool_name: normalizedResult.tool_name,
+          status: normalizedResult.status === "simulated_success" ? "success" : "rejected",
+          result_ref: resultRef,
+          state_change: executorStateChange
+        };
+
+        const toolResultEvent: SandboxEventEnvelope<"tool_result", SandboxToolResultPayload> = {
+          event_id: this.#nextId("tool-result"),
+          session_id: this.#context.session_id,
+          sequence: this.#nextSequence(),
+          event_type: "tool_result",
+          occurred_at: this.#nextTimestamp(),
+          source: "tool",
+          scenario_id: this.#context.scenario_id,
+          case_id: this.#context.case_id,
+          evidence_refs: [EVIDENCE_TOOL_RESULT],
+          payload: toolResultPayload
+        };
+        this.#events.push(toolResultEvent);
+
+        return {
+          disposition: "executed",
+          action: action as "allow" | "alert",
+          decision: {
+            decision_id: materializedDecision.decision_id,
+            subject_event_id: materializedDecision.subject_event_id,
+            policy_id: materializedDecision.policy_id,
+            action: materializedDecision.action,
+            reason_code: materializedDecision.reason_code,
+            reason: materializedDecision.reason,
+            evidence_refs: [...materializedDecision.evidence_refs],
+            decided_at: materializedDecision.decided_at
+          },
+          result: normalizedResult
+        };
+      } else {
+        // deny or ask: intercept
+        this.#interceptedToolCount += 1;
+        this.#lifecycle = "sealed";
+
+        const safeInterceptedRef = `simulated-result://${normalizedRequest.call_id}/${sha256MonitorValue(normalizedRequest.call_id + "-intercepted")}`;
+        const interceptedResultPayload: SandboxToolResultPayload = {
+          call_id: normalizedRequest.call_id,
+          tool_name: normalizedRequest.tool_name,
+          status: "rejected",
+          result_ref: safeInterceptedRef,
+          state_change: "none"
+        };
+
+        // Emit tool_result event for intercepted
+        const toolResultPayload = normalizeMonitorToolResultPayload(interceptedResultPayload);
+        if (toolResultPayload) {
+          const toolResultEvent: SandboxEventEnvelope<"tool_result", SandboxToolResultPayload> = {
+            event_id: this.#nextId("tool-result"),
+            session_id: this.#context.session_id,
+            sequence: this.#nextSequence(),
+            event_type: "tool_result",
+            occurred_at: this.#nextTimestamp(),
+            source: "tool",
+            scenario_id: this.#context.scenario_id,
+            case_id: this.#context.case_id,
+            evidence_refs: [EVIDENCE_TOOL_RESULT],
+            payload: toolResultPayload
+          };
+          this.#events.push(toolResultEvent);
+        }
+
+        return {
+          disposition: "intercepted",
+          action: action as "deny" | "ask",
+          decision: {
+            decision_id: materializedDecision.decision_id,
+            subject_event_id: materializedDecision.subject_event_id,
+            policy_id: materializedDecision.policy_id,
+            action: materializedDecision.action,
+            reason_code: materializedDecision.reason_code,
+            reason: materializedDecision.reason,
+            evidence_refs: [...materializedDecision.evidence_refs],
+            decided_at: materializedDecision.decided_at
+          },
+          result: toolResultPayload ?? interceptedResultPayload
+        };
+      }
+    } finally {
+      this.#pending = false;
+    }
   }
 
   // -- finalization --------------------------------------------------------
@@ -427,6 +671,78 @@ export class MonitoredSession {
     }
 
     // Check for provider mutation (sensitive values in proposal)
+    const { containsMonitorSensitiveValue } = await import("./content-boundary.ts");
+    if (
+      containsMonitorSensitiveValue(normalizedProposal.reason, [modelInput.content, modelOutput.content]) ||
+      containsMonitorSensitiveValue(normalizedProposal, [modelInput.content, modelOutput.content])
+    ) {
+      this.#providerFailureCount += 1;
+      this.#lifecycle = "sealed";
+      return { materializedDecision: failClosed(), action: "deny" };
+    }
+
+    const decisionId = this.#nextId("decision");
+    const decidedAt = this.#nextTimestamp();
+
+    const materializedDecision: SandboxPolicyDecision = {
+      decision_id: decisionId,
+      subject_event_id: subjectEventId,
+      policy_id: normalizedProposal.policy_id,
+      action: normalizedProposal.action,
+      reason_code: normalizedProposal.reason_code,
+      reason: normalizedProposal.reason,
+      evidence_refs: [...normalizedProposal.evidence_refs],
+      decided_at: decidedAt
+    };
+
+    return { materializedDecision, action: normalizedProposal.action };
+  }
+
+  async #obtainToolDecision(
+    subjectEventId: string,
+    modelInput: MonitorModelRequest,
+    modelOutput: MonitorModelResponse,
+    toolRequest: SimulatedToolRequest
+  ): Promise<{ materializedDecision: SandboxPolicyDecision; action: MonitorDecisionProposal["action"] }> {
+    // Helper to create fail-closed decision
+    const failClosed = (): SandboxPolicyDecision => ({
+      decision_id: this.#nextId("decision"),
+      subject_event_id: subjectEventId,
+      policy_id: MONITOR_FAIL_CLOSED_PROPOSAL.policy_id,
+      action: MONITOR_FAIL_CLOSED_PROPOSAL.action,
+      reason_code: MONITOR_FAIL_CLOSED_PROPOSAL.reason_code,
+      reason: MONITOR_FAIL_CLOSED_PROPOSAL.reason,
+      evidence_refs: [...MONITOR_FAIL_CLOSED_PROPOSAL.evidence_refs],
+      decided_at: this.#nextTimestamp()
+    });
+
+    // Build frozen input snapshot with tool_request
+    const decisionInput: MonitorDecisionInput = {
+      stage: "tool_request",
+      session: createFrozenMonitorSnapshot(this.#context),
+      subject_event_id: subjectEventId,
+      model_input: createFrozenMonitorSnapshot(modelInput),
+      model_output: createFrozenMonitorSnapshot(modelOutput),
+      tool_request: createFrozenMonitorSnapshot(toolRequest)
+    };
+
+    let rawProposal: unknown;
+    try {
+      rawProposal = await this.#provider.decide(decisionInput);
+    } catch {
+      this.#providerFailureCount += 1;
+      this.#lifecycle = "sealed";
+      return { materializedDecision: failClosed(), action: "deny" };
+    }
+
+    const normalizedProposal = normalizeMonitorDecisionProposal(rawProposal);
+    if (!normalizedProposal) {
+      this.#providerFailureCount += 1;
+      this.#lifecycle = "sealed";
+      return { materializedDecision: failClosed(), action: "deny" };
+    }
+
+    // Check for sensitive values in proposal
     const { containsMonitorSensitiveValue } = await import("./content-boundary.ts");
     if (
       containsMonitorSensitiveValue(normalizedProposal.reason, [modelInput.content, modelOutput.content]) ||
