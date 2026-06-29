@@ -1,69 +1,97 @@
 # Sprint Current
 
 ## Requirement ID
-REQ-T1-MONITOR-PLUGIN-007
+
+REQ-T1-SUPERVISION-UI-009
 
 ## Requirement Name
-Track 1 model call-chain monitoring plugin
+
+Track 1 behavior supervision console
 
 ## Background
 
-`REQ-T1-ATTACK-REPLAY-006` provides deterministic scenario results and a nine-case replay source. `REQ-T1-MOCK-TOOLS-004` provides local-only simulated business tools, and `REQ-T1-SANDBOX-CONTRACT-005` provides the typed supervision contract. This requirement adds the runtime middleware that observes model calls, obtains injected policy decisions, and intercepts simulated tools before execution.
+`REQ-T1-SANDBOX-CONTRACT-005` defines typed behavior events, policy decisions,
+alerts, and blocked records. `REQ-T1-MONITOR-PLUGIN-007` produces normalized
+model/tool call-chain results, and `REQ-T1-BASE-FILTER-008` supplies the first
+real decision provider.
 
-The approved detailed design is:
+This requirement presents those normalized results through the platform API
+and the React operator console.
 
-- `docs/superpowers/specs/2026-06-28-track1-monitor-plugin-design.md`
+The approved design is:
+
+- `docs/superpowers/specs/2026-06-29-track1-supervision-ui-design.md`
 
 ## Goal
 
-- Provide a reusable session-level model and tool monitoring middleware.
-- Obtain allow, deny, ask, and alert actions through an injected decision provider.
-- Intercept deny, ask, and provider-failure paths before simulated-tool execution.
-- Produce complete normalized sandbox supervision results without retaining raw content.
-- Exercise the plugin with all nine existing Track 1 cases and a fixed controlled demo.
+- Replace the sandbox placeholder with a global supervision workbench.
+- Let operators triage recent sessions and inspect one complete event timeline.
+- Show policy decisions, alerts, blocking records, and safe evidence refs.
+- Refresh running supervision data every three seconds.
+- Provide deterministic sanitized session evidence JSON.
+- Preserve platform, shared-contract, and engine ownership boundaries.
 
 ## In Scope
 
-- Engine-private monitoring contracts, content boundary, session middleware, result builder, and replay adapter.
-- Model-output and tool-request decision-provider stages.
-- Simulated-tool allow/alert execution and deny/ask interception.
-- Fail-closed provider behavior.
-- Multi-round sequential session support.
-- Fixed nine-case monitor demo.
-- Focused monitor, sandbox-engine, repository, and shared-contract compatibility tests.
-- Sandbox README, architecture, sprint, and progress documentation after verification.
+- Shared supervision overview, summary, detail, and evidence DTOs.
+- Dedicated read-only backend supervision projection API.
+- Server-side search/filter/sort with a 100-session cap.
+- Global supervision summary, session list, and inline-expand timeline.
+- Visibility-aware polling and stale-snapshot handling.
+- Task-detail deep link to a selected supervision session.
+- Safe JSON evidence download.
+- Shared, backend, frontend, integration, repository, and visual tests.
+- API, architecture, progress, and usage documentation.
 
 ## Out Of Scope
 
-- No detection rules or base-model filter implementation.
-- No OpenClaw adapter.
-- No backend route, persistence, or frontend behavior.
-- No cluster aggregation or shared trace fields.
-- No approval resume workflow.
-- No real model, network, email, host filesystem, or external process.
-- No case, scenario, replay-script, or shared-contract changes.
+- No raw prompt, output, tool argument, tool result, or memory content.
+- No direct frontend-to-engine access.
+- No database, persistence, pagination, SSE, or WebSocket.
+- No approval/resume, alert acknowledgement, comments, or policy editing.
+- No OpenClaw adapter or agent-cluster aggregation.
+- No full risk report, PDF/CSV, archive, or bulk export.
+- No modification to attack cases, replay scripts, monitor behavior, or filter
+  behavior.
 
 ## Acceptance Criteria
 
-- Model and tool callbacks are wrapped by one session-level monitor.
-- The injected provider is called at model-output and tool-request stages.
-- Allow and alert execute validated simulated tools; deny and ask never call the executor.
-- Provider failure produces a fail-closed deny and blocking record.
-- Ask, deny, and failures seal the session.
-- Multiple sequential calls preserve event order and correlation.
-- Finalization emits a complete `BaseResult<SandboxRunResultDetails>` accepted by `normalizeBaseResult`.
-- Raw prompt, model output, tool arguments, tool output, and exceptions do not enter serialized results.
-- All nine cases pass through the monitor adapter exactly once.
-- The fixed demo emits nine byte-identical normalized results.
-- Existing REQ-006 scripts remain unchanged and deterministic.
-- Tests demonstrate RED before implementation and GREEN afterward.
+- `/results/sandbox` is a usable global supervision workbench.
+- Shared supervision read contracts are strict, runtime-validatable, and
+  content-free.
+- Backend list, detail, and evidence endpoints expose only normalized shared
+  DTOs.
+- Search and all approved filters work, and no list returns more than 100
+  sessions.
+- Global counts are independent from list filters.
+- Desktop and mobile investigation workflows are coherent and non-overlapping.
+- All seven sandbox event types have explicit safe renderers.
+- Decisions, alerts, and blocked records are correlated to subject events.
+- `ask` is visible but has no mutation command.
+- Polling obeys cadence, visibility, cancellation, and terminal-state rules.
+- Transient failures preserve the last valid snapshot and mark it stale.
+- Task detail deep-links to the corresponding session.
+- Evidence JSON is normalized, deterministic, and content-free.
+- No frontend source imports an engine module.
+- Focused and repository gates pass.
+- Implementation stops before `REQ-T1-DEMO-010`.
 
 ## Design Decision
 
-The monitor is a sandbox-engine session middleware. Detection is injected through `MonitorDecisionProvider`, allowing REQ-008 to add filtering without changing orchestration. Raw content is visible only to the current callback/provider invocation and is never retained by the monitor.
+Use a shared platform read model and dedicated supervision projection API.
+The backend derives safe summaries from normalized sandbox results. The
+frontend polls the overview and selected running detail every three seconds,
+uses a session-list/timeline split layout, and downloads only normalized
+evidence DTO data.
 
 ## Constraints / Notes
 
-- The requirement switch and design document are documentation exceptions to full TDD.
-- Implementation must follow `Design -> Test -> Implement -> Document -> Stop and report`.
-- Low-level implementation work is assigned by the user; Codex's current role is spec, task DAG, acceptance criteria, and final review.
+- The requirement switch and design document are documentation exceptions to
+  full TDD.
+- Implementation must follow:
+  `Design -> Test -> Implement -> Document -> Stop and report`.
+- No production code may be written before the relevant failing test is
+  confirmed.
+- Low-level implementation is assigned by the user. Codex produces the task
+  DAG, acceptance criteria, and final diff/report/risk review.
+- The known backend test hang must be baselined and may not be silently waived.
