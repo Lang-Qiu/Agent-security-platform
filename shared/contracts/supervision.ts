@@ -1,16 +1,31 @@
 import { RISK_LEVELS } from "../constants/risk-level.ts";
 import { TASK_STATUSES } from "../constants/task-status.ts";
 import { isOneOf, isPlainObject, isString } from "../utils/guards.ts";
-import { SANDBOX_POLICY_ACTIONS } from "../types/sandbox.ts";
 import {
+  SANDBOX_EVENT_SOURCES,
+  SANDBOX_EVENT_TYPES,
+  SANDBOX_POLICY_ACTIONS,
+  SANDBOX_TOOL_RESULT_STATUSES
+} from "../types/sandbox.ts";
+import {
+  SANDBOX_SUPERVISION_EVIDENCE_SCHEMA_VERSION,
   SANDBOX_SUPERVISION_SCHEMA_VERSION,
+  type SandboxSupervisionAlertView,
+  type SandboxSupervisionBlockedRecordView,
   type SandboxSupervisionCounts,
+  type SandboxSupervisionDecisionView,
+  type SandboxSupervisionEventView,
+  type SandboxSupervisionEvidenceExport,
   type SandboxSupervisionOverview,
+  type SandboxSupervisionSessionDetail,
   type SandboxSupervisionSessionSummary,
   type SandboxSupervisionToolName
 } from "../types/supervision.ts";
 
-export { SANDBOX_SUPERVISION_SCHEMA_VERSION } from "../types/supervision.ts";
+export {
+  SANDBOX_SUPERVISION_EVIDENCE_SCHEMA_VERSION,
+  SANDBOX_SUPERVISION_SCHEMA_VERSION
+} from "../types/supervision.ts";
 
 const SUPERVISION_TOOL_NAMES: readonly SandboxSupervisionToolName[] = [
   "send_email",
@@ -261,5 +276,414 @@ export function normalizeSandboxSupervisionOverview(
     limit: 100,
     truncated: value.truncated,
     sessions
+  };
+}
+
+// -- Task 2: content-free detail and evidence contracts -----------------------
+
+const SUPERVISION_STATE_CHANGES = [
+  "none",
+  "outbox_append",
+  "virtual_file_write"
+] as const;
+
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const SAFE_TOKEN_PATTERN = /^[a-z0-9]+(?:[a-z0-9_-]*[a-z0-9])?$/;
+const SAFE_REF_MAX_LENGTH = 512;
+const SAFE_TOKEN_MAX_LENGTH = 96;
+
+function isSha256(value: unknown): value is string {
+  return isString(value) && SHA256_PATTERN.test(value);
+}
+
+function isSafeRef(value: unknown): value is string {
+  if (!isString(value) || value.length === 0 || value.length > SAFE_REF_MAX_LENGTH) {
+    return false;
+  }
+  return !CONTROL_OR_WHITESPACE.test(value);
+}
+
+function isSafeToken(value: unknown): value is string {
+  if (!isString(value) || value.length === 0 || value.length > SAFE_TOKEN_MAX_LENGTH) {
+    return false;
+  }
+  return SAFE_TOKEN_PATTERN.test(value);
+}
+
+function isStringArrayValue(value: unknown): value is string[] {
+  if (!Array.isArray(value)) return false;
+  return value.every((item) => isSafeRef(item));
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
+const DECISION_VIEW_KEYS = [
+  "decision_id",
+  "subject_event_id",
+  "policy_id",
+  "action",
+  "reason_code",
+  "evidence_refs",
+  "decided_at"
+] as const;
+
+const ALERT_VIEW_KEYS = [
+  "alert_id",
+  "subject_event_id",
+  "decision_id",
+  "risk_level",
+  "category",
+  "evidence_refs",
+  "occurred_at"
+] as const;
+
+const BLOCKED_RECORD_VIEW_KEYS = [
+  "blocked_record_id",
+  "subject_event_id",
+  "decision_id",
+  "evidence_refs",
+  "occurred_at"
+] as const;
+
+const EVENT_ENVELOPE_KEYS = [
+  "event_id",
+  "session_id",
+  "sequence",
+  "event_type",
+  "occurred_at",
+  "source",
+  "scenario_id",
+  "case_id",
+  "evidence_refs",
+  "payload"
+] as const;
+
+const MODEL_PAYLOAD_KEYS = ["model_ref", "content_ref", "content_sha256"] as const;
+const TOOL_REQUEST_PAYLOAD_KEYS = [
+  "call_id",
+  "tool_name",
+  "target_ref",
+  "arguments_ref"
+] as const;
+const TOOL_RESULT_PAYLOAD_KEYS = [
+  "call_id",
+  "tool_name",
+  "status",
+  "result_ref",
+  "state_change"
+] as const;
+const MEMORY_PAYLOAD_KEYS = [
+  "memory_entry_id",
+  "content_ref",
+  "content_sha256"
+] as const;
+
+const DETAIL_KEYS = [
+  "schema_version",
+  "summary",
+  "events",
+  "policy_decisions",
+  "alerts",
+  "blocked_records"
+] as const;
+
+const EVIDENCE_EXPORT_KEYS = [
+  "schema_version",
+  "source_schema_version",
+  "session"
+] as const;
+
+export function normalizeSandboxSupervisionDecisionView(
+  value: unknown
+): SandboxSupervisionDecisionView | null {
+  if (!isPlainObject(value) || !hasExactKeys(value, DECISION_VIEW_KEYS)) return null;
+
+  if (!isSafeId(value.decision_id)) return null;
+  if (!isSafeId(value.subject_event_id)) return null;
+  if (!isSafeId(value.policy_id)) return null;
+  if (!isOneOf(SANDBOX_POLICY_ACTIONS, value.action)) return null;
+  if (!isSafeToken(value.reason_code)) return null;
+  if (!isStringArrayValue(value.evidence_refs)) return null;
+  if (!isStrictIso8601(value.decided_at)) return null;
+
+  return {
+    decision_id: value.decision_id,
+    subject_event_id: value.subject_event_id,
+    policy_id: value.policy_id,
+    action: value.action,
+    reason_code: value.reason_code,
+    evidence_refs: [...value.evidence_refs],
+    decided_at: value.decided_at
+  };
+}
+
+export function normalizeSandboxSupervisionAlertView(
+  value: unknown
+): SandboxSupervisionAlertView | null {
+  if (!isPlainObject(value) || !hasExactKeys(value, ALERT_VIEW_KEYS)) return null;
+
+  if (!isSafeId(value.alert_id)) return null;
+  if (!isSafeId(value.subject_event_id)) return null;
+  if (!isSafeId(value.decision_id)) return null;
+  if (!isOneOf(RISK_LEVELS, value.risk_level)) return null;
+  if (!isSafeToken(value.category)) return null;
+  if (!isStringArrayValue(value.evidence_refs)) return null;
+  if (!isStrictIso8601(value.occurred_at)) return null;
+
+  return {
+    alert_id: value.alert_id,
+    subject_event_id: value.subject_event_id,
+    decision_id: value.decision_id,
+    risk_level: value.risk_level,
+    category: value.category,
+    evidence_refs: [...value.evidence_refs],
+    occurred_at: value.occurred_at
+  };
+}
+
+export function normalizeSandboxSupervisionBlockedRecordView(
+  value: unknown
+): SandboxSupervisionBlockedRecordView | null {
+  if (!isPlainObject(value) || !hasExactKeys(value, BLOCKED_RECORD_VIEW_KEYS)) return null;
+
+  if (!isSafeId(value.blocked_record_id)) return null;
+  if (!isSafeId(value.subject_event_id)) return null;
+  if (!isSafeId(value.decision_id)) return null;
+  if (!isStringArrayValue(value.evidence_refs)) return null;
+  if (!isStrictIso8601(value.occurred_at)) return null;
+
+  return {
+    blocked_record_id: value.blocked_record_id,
+    subject_event_id: value.subject_event_id,
+    decision_id: value.decision_id,
+    evidence_refs: [...value.evidence_refs],
+    occurred_at: value.occurred_at
+  };
+}
+
+function normalizeModelPayload(value: unknown) {
+  if (!isPlainObject(value) || !hasExactKeys(value, MODEL_PAYLOAD_KEYS)) return null;
+  if (!isSafeRef(value.model_ref)) return null;
+  if (!isSafeRef(value.content_ref)) return null;
+  if (!isSha256(value.content_sha256)) return null;
+  return {
+    model_ref: value.model_ref,
+    content_ref: value.content_ref,
+    content_sha256: value.content_sha256
+  };
+}
+
+function normalizeToolRequestPayload(value: unknown) {
+  if (!isPlainObject(value) || !hasExactKeys(value, TOOL_REQUEST_PAYLOAD_KEYS)) return null;
+  if (!isSafeId(value.call_id)) return null;
+  if (!isOneOf(SUPERVISION_TOOL_NAMES, value.tool_name)) return null;
+  if (!isSafeRef(value.target_ref)) return null;
+  if (!isSafeRef(value.arguments_ref)) return null;
+  return {
+    call_id: value.call_id,
+    tool_name: value.tool_name,
+    target_ref: value.target_ref,
+    arguments_ref: value.arguments_ref
+  };
+}
+
+function normalizeToolResultPayload(value: unknown) {
+  if (!isPlainObject(value) || !hasExactKeys(value, TOOL_RESULT_PAYLOAD_KEYS)) return null;
+  if (!isSafeId(value.call_id)) return null;
+  if (!isOneOf(SUPERVISION_TOOL_NAMES, value.tool_name)) return null;
+  if (!isOneOf(SANDBOX_TOOL_RESULT_STATUSES, value.status)) return null;
+  if (!isSafeRef(value.result_ref)) return null;
+  if (!isOneOf(SUPERVISION_STATE_CHANGES, value.state_change)) return null;
+  return {
+    call_id: value.call_id,
+    tool_name: value.tool_name,
+    status: value.status,
+    result_ref: value.result_ref,
+    state_change: value.state_change
+  };
+}
+
+function normalizeMemoryPayload(value: unknown) {
+  if (!isPlainObject(value) || !hasExactKeys(value, MEMORY_PAYLOAD_KEYS)) return null;
+  if (!isSafeId(value.memory_entry_id)) return null;
+  if (!isSafeRef(value.content_ref)) return null;
+  if (!isSha256(value.content_sha256)) return null;
+  return {
+    memory_entry_id: value.memory_entry_id,
+    content_ref: value.content_ref,
+    content_sha256: value.content_sha256
+  };
+}
+
+export function normalizeSandboxSupervisionEventView(
+  value: unknown
+): SandboxSupervisionEventView | null {
+  if (!isPlainObject(value) || !hasExactKeys(value, EVENT_ENVELOPE_KEYS)) return null;
+
+  if (!isSafeId(value.event_id)) return null;
+  if (!isSafeId(value.session_id)) return null;
+  if (!isPositiveInteger(value.sequence)) return null;
+  if (!isOneOf(SANDBOX_EVENT_TYPES, value.event_type)) return null;
+  if (!isStrictIso8601(value.occurred_at)) return null;
+  if (!isOneOf(SANDBOX_EVENT_SOURCES, value.source)) return null;
+
+  if (value.scenario_id !== null && !isSafeId(value.scenario_id)) return null;
+  if (value.case_id !== null && !isSafeId(value.case_id)) return null;
+  if (!isStringArrayValue(value.evidence_refs)) return null;
+
+  const common = {
+    event_id: value.event_id,
+    session_id: value.session_id,
+    sequence: value.sequence,
+    occurred_at: value.occurred_at,
+    source: value.source,
+    scenario_id: value.scenario_id,
+    case_id: value.case_id,
+    evidence_refs: [...value.evidence_refs]
+  };
+
+  switch (value.event_type) {
+    case "model_input": {
+      const payload = normalizeModelPayload(value.payload);
+      return payload ? { ...common, event_type: "model_input", payload } : null;
+    }
+    case "model_output": {
+      const payload = normalizeModelPayload(value.payload);
+      return payload ? { ...common, event_type: "model_output", payload } : null;
+    }
+    case "tool_request": {
+      const payload = normalizeToolRequestPayload(value.payload);
+      return payload ? { ...common, event_type: "tool_request", payload } : null;
+    }
+    case "tool_result": {
+      const payload = normalizeToolResultPayload(value.payload);
+      return payload ? { ...common, event_type: "tool_result", payload } : null;
+    }
+    case "policy_decision": {
+      const payload = normalizeSandboxSupervisionDecisionView(value.payload);
+      return payload ? { ...common, event_type: "policy_decision", payload } : null;
+    }
+    case "memory_write": {
+      const payload = normalizeMemoryPayload(value.payload);
+      return payload ? { ...common, event_type: "memory_write", payload } : null;
+    }
+    case "memory_read": {
+      const payload = normalizeMemoryPayload(value.payload);
+      return payload ? { ...common, event_type: "memory_read", payload } : null;
+    }
+    default:
+      return null;
+  }
+}
+
+function isAscendingUniqueSequences(sequences: number[]): boolean {
+  const seen = new Set<number>();
+  for (let i = 0; i < sequences.length; i++) {
+    const seq = sequences[i];
+    if (seen.has(seq)) return false;
+    seen.add(seq);
+    if (i > 0 && seq <= sequences[i - 1]) return false;
+  }
+  return true;
+}
+
+export function normalizeSandboxSupervisionSessionDetail(
+  value: unknown
+): SandboxSupervisionSessionDetail | null {
+  if (!isPlainObject(value) || !hasExactKeys(value, DETAIL_KEYS)) return null;
+
+  if (value.schema_version !== SANDBOX_SUPERVISION_SCHEMA_VERSION) return null;
+
+  const summary = normalizeSandboxSupervisionSessionSummary(value.summary);
+  if (!summary) return null;
+
+  if (!Array.isArray(value.events)) return null;
+  if (!Array.isArray(value.policy_decisions)) return null;
+  if (!Array.isArray(value.alerts)) return null;
+  if (!Array.isArray(value.blocked_records)) return null;
+
+  const events: SandboxSupervisionEventView[] = [];
+  const eventIds = new Set<string>();
+  const sequences: number[] = [];
+  for (const item of value.events) {
+    const event = normalizeSandboxSupervisionEventView(item);
+    if (!event) return null;
+    if (eventIds.has(event.event_id)) return null;
+    if (event.session_id !== summary.session_id) return null;
+    eventIds.add(event.event_id);
+    sequences.push(event.sequence);
+    events.push(event);
+  }
+  if (!isAscendingUniqueSequences(sequences)) return null;
+
+  const decisions: SandboxSupervisionDecisionView[] = [];
+  const decisionIds = new Set<string>();
+  for (const item of value.policy_decisions) {
+    const decision = normalizeSandboxSupervisionDecisionView(item);
+    if (!decision) return null;
+    if (decisionIds.has(decision.decision_id)) return null;
+    if (!eventIds.has(decision.subject_event_id)) return null;
+    decisionIds.add(decision.decision_id);
+    decisions.push(decision);
+  }
+
+  const alerts: SandboxSupervisionAlertView[] = [];
+  const alertIds = new Set<string>();
+  for (const item of value.alerts) {
+    const alert = normalizeSandboxSupervisionAlertView(item);
+    if (!alert) return null;
+    if (alertIds.has(alert.alert_id)) return null;
+    if (!eventIds.has(alert.subject_event_id)) return null;
+    if (!decisionIds.has(alert.decision_id)) return null;
+    alertIds.add(alert.alert_id);
+    alerts.push(alert);
+  }
+
+  const blockedRecords: SandboxSupervisionBlockedRecordView[] = [];
+  const blockedIds = new Set<string>();
+  for (const item of value.blocked_records) {
+    const record = normalizeSandboxSupervisionBlockedRecordView(item);
+    if (!record) return null;
+    if (blockedIds.has(record.blocked_record_id)) return null;
+    if (!eventIds.has(record.subject_event_id)) return null;
+    if (!decisionIds.has(record.decision_id)) return null;
+    blockedIds.add(record.blocked_record_id);
+    blockedRecords.push(record);
+  }
+
+  if (summary.event_count !== events.length) return null;
+  if (summary.decision_count !== decisions.length) return null;
+  if (summary.alert_count !== alerts.length) return null;
+  if (summary.blocked_record_count !== blockedRecords.length) return null;
+
+  return {
+    schema_version: SANDBOX_SUPERVISION_SCHEMA_VERSION,
+    summary,
+    events,
+    policy_decisions: decisions,
+    alerts,
+    blocked_records: blockedRecords
+  };
+}
+
+export function normalizeSandboxSupervisionEvidenceExport(
+  value: unknown
+): SandboxSupervisionEvidenceExport | null {
+  if (!isPlainObject(value) || !hasExactKeys(value, EVIDENCE_EXPORT_KEYS)) return null;
+
+  if (value.schema_version !== SANDBOX_SUPERVISION_EVIDENCE_SCHEMA_VERSION) return null;
+  if (value.source_schema_version !== SANDBOX_SUPERVISION_SCHEMA_VERSION) return null;
+
+  const session = normalizeSandboxSupervisionSessionDetail(value.session);
+  if (!session) return null;
+
+  if (session.summary.evidence_available !== true) return null;
+
+  return {
+    schema_version: SANDBOX_SUPERVISION_EVIDENCE_SCHEMA_VERSION,
+    source_schema_version: SANDBOX_SUPERVISION_SCHEMA_VERSION,
+    session
   };
 }
