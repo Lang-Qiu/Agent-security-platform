@@ -6,12 +6,17 @@ import { createErrorHttpResponse, createSuccessHttpResponse, writeJsonResponse }
 import { createRequestId } from "./common/http/request-id.ts";
 import { matchRoute } from "./common/http/router.ts";
 import { createTaskCenterModule } from "./modules/task-center/task-center.module.ts";
+import { createSupervisionModule } from "./modules/supervision/supervision.module.ts";
 
 export class AppModule {
   taskCenterModule: ReturnType<typeof createTaskCenterModule>;
+  supervisionModule: ReturnType<typeof createSupervisionModule>;
 
   constructor() {
     this.taskCenterModule = createTaskCenterModule();
+    this.supervisionModule = createSupervisionModule({
+      repository: this.taskCenterModule.repository
+    });
   }
 
   async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -53,6 +58,32 @@ export class AppModule {
         case "getRiskSummary":
           writeJsonResponse(response, this.taskCenterModule.controller.getRiskSummary(route.params.taskId, requestId));
           return;
+        case "listSupervisionSessions": {
+          const httpResponse = this.supervisionModule.controller.listSessions(
+            url.searchParams,
+            requestId
+          );
+          writeJsonResponse(response, { statusCode: 200, body: httpResponse });
+          return;
+        }
+        case "getSupervisionSession": {
+          const sessionId = this.decodeSessionId(route.params.sessionId);
+          const httpResponse = this.supervisionModule.controller.getSessionDetail(
+            sessionId,
+            requestId
+          );
+          writeJsonResponse(response, { statusCode: 200, body: httpResponse });
+          return;
+        }
+        case "getSupervisionEvidence": {
+          const sessionId = this.decodeSessionId(route.params.sessionId);
+          const httpResponse = this.supervisionModule.controller.getSessionEvidence(
+            sessionId,
+            requestId
+          );
+          writeJsonResponse(response, { statusCode: 200, body: httpResponse });
+          return;
+        }
       }
     } catch (error) {
       const domainError =
@@ -66,6 +97,18 @@ export class AppModule {
           requestId,
           error: domainError
         })
+      );
+    }
+  }
+
+  private decodeSessionId(raw: string): string {
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      throw new DomainError(
+        `Malformed session id encoding: ${raw}`,
+        "INVALID_SUPERVISION_QUERY",
+        400
       );
     }
   }

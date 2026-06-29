@@ -4,7 +4,10 @@ export type RouteName =
   | "listTasks"
   | "getTask"
   | "getTaskResult"
-  | "getRiskSummary";
+  | "getRiskSummary"
+  | "listSupervisionSessions"
+  | "getSupervisionSession"
+  | "getSupervisionEvidence";
 
 export interface RouteMatch {
   name: RouteName;
@@ -36,6 +39,36 @@ export function matchRoute(method: string | undefined, pathname: string): RouteM
   }
 
   const segments = pathname.split("/").filter(Boolean);
+
+  // /api/supervision/sessions[/:sessionId[/evidence]]
+  if (
+    method === "GET" &&
+    segments[0] === "api" &&
+    segments[1] === "supervision" &&
+    segments[2] === "sessions"
+  ) {
+    if (segments.length === 3) {
+      return {
+        name: "listSupervisionSessions",
+        params: {}
+      };
+    }
+
+    const sessionId = segments[3];
+    if (segments.length === 4) {
+      return {
+        name: "getSupervisionSession",
+        params: { sessionId }
+      };
+    }
+
+    if (segments.length === 5 && segments[4] === "evidence") {
+      return {
+        name: "getSupervisionEvidence",
+        params: { sessionId }
+      };
+    }
+  }
 
   if (segments[0] !== "api" || segments[1] !== "tasks" || !segments[2]) {
     return null;
