@@ -4,6 +4,12 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { ApiResponse } from "../../../../shared/types/api-response";
 import type { BaseResult } from "../../../../shared/types/result";
 import type { RiskSummary, Task } from "../../../../shared/types/task";
+import type { SandboxSupervisionSessionDetail } from "../../../shared/types/supervision";
+import { makeSupervisionDetail } from "../mocks/supervision";
+import {
+  RAW_NARRATIVE_SENTINEL,
+  makeStoredSandboxRecord
+} from "../../../tests/fixtures/track1-supervision.fixture";
 import { renderAppAtRoute } from "../test/app-test-harness";
 
 const TASK_FIXTURES: Record<string, Task> = {
@@ -295,15 +301,45 @@ function mockTaskDetailFetch(input: {
   tasks?: Record<string, Task>;
   results?: Record<string, BaseResult | Record<string, unknown>>;
   riskSummaries?: Record<string, RiskSummary>;
+  supervisionDetails?: Record<string, SandboxSupervisionSessionDetail>;
+  supervisionUnavailable?: boolean;
 }) {
   const tasks = input.tasks ?? TASK_FIXTURES;
   const results = input.results ?? RESULT_FIXTURES;
   const riskSummaries = input.riskSummaries ?? RISK_SUMMARY_FIXTURES;
+  const supervisionDetails = input.supervisionDetails ?? {};
+  const supervisionUnavailable = input.supervisionUnavailable ?? false;
 
   vi.stubGlobal(
     "fetch",
     vi.fn().mockImplementation(async (resource: string | URL) => {
       const url = String(resource);
+
+      const supervisionMatch = url.match(
+        /^\/api\/supervision\/sessions\/([^/]+)$/
+      );
+
+      if (supervisionMatch) {
+        const sessionId = decodeURIComponent(supervisionMatch[1]);
+        if (supervisionUnavailable) {
+          return {
+            ok: false,
+            json: async () => createSuccessResponse(null)
+          };
+        }
+        const detail = supervisionDetails[sessionId];
+        if (!detail) {
+          return {
+            ok: false,
+            json: async () => createSuccessResponse(null)
+          };
+        }
+        return {
+          ok: true,
+          json: async () => createSuccessResponse(detail)
+        };
+      }
+
       const summaryMatch = url.match(/\/api\/tasks\/([^/]+)\/risk-summary$/);
 
       if (summaryMatch) {
@@ -340,6 +376,29 @@ function mockTaskDetailFetch(input: {
       };
     })
   );
+}
+
+function mockSandboxTaskDetail(input: {
+  producerNarrative?: string;
+  unavailable?: boolean;
+} = {}): void {
+  const stored = makeStoredSandboxRecord({
+    taskId: "task_sandbox_001",
+    status: "blocked",
+    producerNarrative: input.producerNarrative
+  });
+  const detail = makeSupervisionDetail();
+
+  mockTaskDetailFetch({
+    results: {
+      ...RESULT_FIXTURES,
+      task_sandbox_001: stored.result
+    },
+    supervisionDetails: {
+      [detail.summary.session_id]: detail
+    },
+    supervisionUnavailable: input.unavailable
+  });
 }
 
 describe("task detail page", () => {
@@ -394,11 +453,12 @@ describe("task detail page", () => {
   });
 
   test("renders the sandbox alert section for sandbox_run tasks", async () => {
+    mockSandboxTaskDetail();
     await renderAppAtRoute("/tasks/task_sandbox_001");
 
     expect(await screen.findByRole("heading", { level: 2, name: /sandbox alert section/i })).toBeInTheDocument();
     expect(screen.getByText(/blocked session/i)).toBeInTheDocument();
-    expect(screen.getByText(/2 alerts captured/i)).toBeInTheDocument();
+    expect(screen.getByText(/1 alerts captured/i)).toBeInTheDocument();
   });
 
   test("renders a fallback message when result details are missing", async () => {
@@ -653,5 +713,47 @@ describe("task detail page", () => {
 
     expect(await screen.findByText("command_execution")).toBeInTheDocument();
     expect(screen.getByText("network_access")).toBeInTheDocument();
+  });
+
+  test("REQ-T1-SUPERVISION-UI-009 task detail uses safe supervision projection", async () => {
+    mockSandboxTaskDetail({
+      producerNarrative: RAW_NARRATIVE_SENTINEL
+    });
+
+    await renderAppAtRoute("/tasks/task_sandbox_001");
+
+    expect(
+      await screen.findByRole("heading", { name: "Supervision summary" })
+    ).toBeInTheDocument();
+    expect(screen.queryByText(RAW_NARRATIVE_SENTINEL)).not.toBeInTheDocument();
+    expect(screen.getByText(/highest action/i)).toBeInTheDocument();
+  });
+
+  test("REQ-T1-SUPERVISION-UI-009 task detail deep-links the session", async () => {
+    mockSandboxTaskDetail();
+    await renderAppAtRoute("/tasks/task_sandbox_001");
+
+    expect(
+      await screen.findByRole("link", {
+        name: "Investigate in supervision console"
+      })
+    ).toHaveAttribute(
+      "href",
+      "/results/sandbox?session_id=session%3AT1-SC-001-C001"
+    );
+  });
+
+  test("REQ-T1-SUPERVISION-UI-009 task detail handles unavailable projection", async () => {
+    mockSandboxTaskDetail({ unavailable: true });
+    await renderAppAtRoute("/tasks/task_sandbox_001");
+
+    expect(
+      await screen.findByText("Supervision detail is unavailable")
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", {
+        name: "Investigate in supervision console"
+      })
+    ).toBeInTheDocument();
   });
 });

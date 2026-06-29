@@ -176,6 +176,32 @@ export async function getSupervisionSession(
   }
 }
 
+export async function loadTaskSupervisionDetail(
+  sessionId: string,
+  options?: SupervisionRequestOptions
+): Promise<SandboxSupervisionSessionDetail | null> {
+  const mode = options?.mode ?? "api-preferred";
+  const fetchImpl = resolveFetchImpl(options?.fetchImpl);
+
+  if (mode === "mock-only" || !fetchImpl) {
+    return null;
+  }
+
+  try {
+    const encodedId = encodeURIComponent(sessionId);
+    const path = `${SUPERVISION_SESSIONS_ENDPOINT}/${encodedId}`;
+    const result = await requestApiDataWithStatus({
+      path,
+      options,
+      normalize: normalizeSandboxSupervisionSessionDetail
+    });
+
+    return result.data;
+  } catch {
+    return null;
+  }
+}
+
 export async function getSupervisionEvidence(
   sessionId: string,
   options?: SupervisionRequestOptions

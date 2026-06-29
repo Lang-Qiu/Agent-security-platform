@@ -6,7 +6,7 @@ import type { AssetScanResultDetails, StaticAnalysisResultDetails, SandboxRunRes
 import type { Task } from "../../../../shared/types/task";
 import { DataSourceTag } from "../components/DataSourceTag";
 import { AssetScanResultSection } from "../components/task-detail/AssetScanResultSection";
-import { SandboxAlertSection } from "../components/task-detail/SandboxAlertSection";
+import { SandboxTaskSupervisionSection } from "../components/task-detail/SandboxTaskSupervisionSection";
 import { StaticAnalysisResultSection } from "../components/task-detail/StaticAnalysisResultSection";
 import { TaskOverviewSection } from "../components/task-detail/TaskOverviewSection";
 import { TaskRiskSummarySection } from "../components/task-detail/TaskRiskSummarySection";
@@ -23,7 +23,7 @@ function TaskDetailSections({ detail }: { detail: TaskDetailData }) {
     case "static_analysis":
       return <StaticAnalysisResultSection details={details as StaticAnalysisResultDetails} summary={detail.result.summary} />;
     case "sandbox_run":
-      return <SandboxAlertSection details={details as SandboxRunResultDetails} summary={detail.result.summary} />;
+      return <SandboxTaskSupervisionSection details={details as SandboxRunResultDetails} />;
   }
 }
 

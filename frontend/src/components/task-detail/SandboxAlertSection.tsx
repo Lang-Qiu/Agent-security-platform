@@ -1,27 +1,20 @@
 import { Col, Row, Statistic, Typography } from "antd";
 
-import type { SandboxRunResultDetails } from "../../../../../shared/types/result";
+import type { SandboxSupervisionSessionDetail } from "../../../shared/types/supervision";
 import { ResultDetailsFallback } from "./ResultDetailsFallback";
 
-const { Paragraph, Title } = Typography;
+const { Title } = Typography;
 
-function hasSandboxDetails(details: SandboxRunResultDetails): boolean {
-  return Boolean(
-    details.session_id ||
-      details.blocked !== undefined ||
-      details.event_count !== undefined ||
-      (Array.isArray(details.alerts) && details.alerts.length > 0)
-  );
+function formatToken(value: string): string {
+  return value.replace(/_/g, " ");
 }
 
 export function SandboxAlertSection({
-  details,
-  summary
+  supervision
 }: {
-  details: SandboxRunResultDetails;
-  summary?: string;
+  supervision: SandboxSupervisionSessionDetail | null;
 }) {
-  if (!hasSandboxDetails(details)) {
+  if (!supervision) {
     return (
       <section className="console-panel">
         <Title level={2}>Sandbox Alert Section</Title>
@@ -30,31 +23,63 @@ export function SandboxAlertSection({
     );
   }
 
-  const alertCount = Array.isArray(details.alerts) ? details.alerts.length : 0;
+  const { summary, alerts, policy_decisions } = supervision;
+  const latestAlert = alerts[0];
+  const latestDecision = policy_decisions[0];
+  const latestSignal =
+    latestAlert?.category ?? latestDecision?.reason_code ?? null;
 
   return (
     <section className="console-panel">
       <Title level={2}>Sandbox Alert Section</Title>
-      {summary ? <Paragraph className="task-detail-copy">{summary}</Paragraph> : null}
-      <Paragraph className="task-detail-copy">
-        A stable placeholder for future runtime timelines, policy hits, and sandbox alert evidence.
-      </Paragraph>
       <Row gutter={[16, 16]}>
         <Col xs={24} md={8}>
           <div className="detail-metric">
-            <Statistic title="Session state" value={details.blocked ? "Blocked session" : "Observation only"} />
+            <Statistic
+              title="Session state"
+              value={summary.blocked ? "Blocked session" : "Observation only"}
+            />
           </div>
         </Col>
         <Col xs={24} md={8}>
           <div className="detail-metric">
-            <Statistic title="Alert coverage" value={`${alertCount} alerts captured`} />
+            <Statistic
+              title="Highest action"
+              value={formatToken(summary.highest_action)}
+            />
           </div>
         </Col>
         <Col xs={24} md={8}>
           <div className="detail-metric">
-            <Statistic title="Runtime events" value={details.event_count ?? 0} />
+            <Statistic
+              title="Alert coverage"
+              value={`${summary.alert_count} alerts captured`}
+            />
           </div>
         </Col>
+        <Col xs={24} md={8}>
+          <div className="detail-metric">
+            <Statistic title="Runtime events" value={summary.event_count} />
+          </div>
+        </Col>
+        <Col xs={24} md={8}>
+          <div className="detail-metric">
+            <Statistic
+              title="Blocked records"
+              value={summary.blocked_record_count}
+            />
+          </div>
+        </Col>
+        {latestSignal ? (
+          <Col xs={24} md={8}>
+            <div className="detail-metric">
+              <Statistic
+                title="Latest signal"
+                value={formatToken(latestSignal)}
+              />
+            </div>
+          </Col>
+        ) : null}
       </Row>
     </section>
   );
