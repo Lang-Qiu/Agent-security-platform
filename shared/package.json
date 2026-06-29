@@ -6,6 +6,6 @@
     ".": "./index.ts"
   },
   "scripts": {
-    "test": "node --experimental-strip-types --experimental-test-isolation=none --test tests/task-contract.spec.ts tests/api-response.contract.spec.ts tests/result-contract.spec.ts tests/sandbox-contract.spec.ts"
+    "test": "node --experimental-strip-types --experimental-test-isolation=none --test tests/task-contract.spec.ts tests/api-response.contract.spec.ts tests/result-contract.spec.ts tests/sandbox-contract.spec.ts tests/supervision-contract.spec.ts"
   }
 }

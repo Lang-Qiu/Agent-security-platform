@@ -110,6 +110,23 @@ test("root quality gate delegates to test:all and includes frontend coverage", (
     "test:shared should include sandbox supervision contract coverage"
   );
 
+  assert.match(
+    scripts["test:shared"] ?? "",
+    /\bshared\/tests\/supervision-contract\.spec\.ts\b/,
+    "test:shared should include supervision contract coverage"
+  );
+
+  assert.ok(
+    scripts["test:repo"]?.includes("tests/repository/track1-supervision-ui.spec.ts"),
+    "repository gate should include Track 1 supervision UI coverage"
+  );
+
+  assert.match(
+    scripts["test:backend"] ?? "",
+    /\btests\/integration\/backend-supervision\.api\.spec\.ts\b/,
+    "test:backend should include supervision API integration coverage"
+  );
+
   const sharedPackageJson = JSON.parse(
     readFileSync(new URL("../../shared/package.json", import.meta.url), "utf8")
   ) as { scripts?: Record<string, string> };
@@ -118,5 +135,11 @@ test("root quality gate delegates to test:all and includes frontend coverage", (
     sharedPackageJson.scripts?.test ?? "",
     /\btests\/sandbox-contract\.spec\.ts\b/,
     "the shared package test should include sandbox supervision contract coverage"
+  );
+
+  assert.match(
+    sharedPackageJson.scripts?.test ?? "",
+    /\btests\/supervision-contract\.spec\.ts\b/,
+    "the shared package test should include supervision contract coverage"
   );
 });

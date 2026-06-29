@@ -353,6 +353,24 @@ a {
   }
 }
 
+.supervision-workbench {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.8fr) minmax(520px, 1.2fr);
+  min-height: 560px;
+}
+
+.supervision-summary-tile,
+.supervision-session-row,
+.supervision-event-row {
+  border-radius: 6px;
+}
+
+@media (max-width: 900px) {
+  .supervision-workbench {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 900px) {
   .console-shell {
     display: block;
