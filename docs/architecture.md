@@ -392,7 +392,42 @@ Boundary rules for this layer:
 - Script outputs are artifacts for evidence accumulation and replay, not frontend-facing API payloads.
 - Tool responsibilities remain explicit: naabu for open ports, nmap for hit-port service evidence.
 
-This preserves the platform architecture baseline: backend remains the only frontend entry, engines remain independent execution units, and repository scripts remain auxiliary orchestration tooling.
+## REQ-T1-SUPERVISION-UI-009 Behavior Supervision Console
+
+REQ-009 adds a read-only Track 1 behavior supervision console. The verified end-to-end flow is:
+
+```text
+normalized sandbox result
+  -> task repository
+  -> supervision projector
+  -> shared safe read DTO
+  -> supervision API
+  -> React polling workbench
+  -> sanitized evidence JSON
+```
+
+### Layer responsibilities
+
+- `shared/types/supervision.ts` and `shared/contracts/supervision.ts` define the only DTO shapes the frontend may consume. Normalizers reject unknown fields, exact-key evidence exports, and any record whose `evidence_available` flag is not strictly `true`.
+- `backend/src/modules/supervision/supervision-projector.ts` projects stored `SandboxRunResult` records field-by-field into safe view models. It never copies `BaseResult.summary`, decision `reason`, alert `title`/`reason`, blocked-record `reason`/`resource_ref`, or `metadata`. Malformed stored records raise a `DomainError` instead of returning a partial projection.
+- `backend/src/modules/supervision/supervision.service.ts` validates filters, enforces the 100-row cap, aggregates counts over all matched sessions, and looks up detail/evidence by session ID.
+- `backend/src/modules/supervision/supervision.controller.ts` exposes three GET routes wrapped in the standard `ApiResponse<T>` envelope.
+- `frontend/src/services/supervision-service.ts` is the only frontend boundary that talks to the supervision API. It tracks three source states: `api`, `integration-error`, and `mock`.
+- `frontend/src/hooks/useSupervisionPolling.ts` polls every three seconds while the page is visible and the selected session is not terminal. It aborts in-flight requests on unmount or session change, surfaces a `stale` freshness signal on failure, and keeps the last successful snapshot.
+- `frontend/src/pages/SandboxAlertsPage.tsx` composes the overview header, filters, session list, and inspector. URL query state (`session_id`, `q`, `status`, `risk_level`, `action`, `scenario_id`, `tool_name`) is the single source of truth for filter and selection state.
+- `frontend/src/components/supervision/SupervisionEventTimeline.tsx` and `SupervisionEventDetails.tsx` render the seven approved event types through an exhaustive discriminated switch. There is no generic object traversal, no `dangerouslySetInnerHTML`, and no raw content rendering.
+- `frontend/src/components/task-detail/SandboxTaskSupervisionSection.tsx` loads the supervision detail by session ID and passes a safe DTO to the presentational `SandboxAlertSection`. The task detail page renders a deep link to `/results/sandbox?session_id=...` for investigation.
+
+### Explicit non-goals
+
+The following capabilities remain outside REQ-009 scope and must not be added without a new requirement:
+
+- engine source imports from `shared/`, `backend/supervision`, or any `frontend/` module
+- persistence (the console reads only from the in-memory task repository)
+- streaming (no WebSocket, no SSE, no EventSource)
+- approval / resume / acknowledge-write actions
+- full report generation (no PDF, CSV, XLSX, or ZIP export)
+- OpenClaw integration, cluster aggregation, or pagination
 
 ## REQ-T1-SANDBOX-CONTRACT-005 Track 1 Sandbox Supervision Contract
 

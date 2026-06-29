@@ -1535,3 +1535,69 @@ Boundary notes:
 - `naabu` is limited to open-port detection.
 - `nmap` is limited to service evidence on naabu-hit ports.
 - Candidate and verified samples must stay separated; candidate records are not auto-promoted to verified without evidence.
+
+## REQ-T1-SUPERVISION-UI-009 Supervision Console Read API
+
+REQ-009 adds three read-only public GET routes that expose safe supervision projections of stored sandbox results. The routes never leak producer narrative, raw model/tool content, or engine-internal metadata.
+
+### Public GET routes
+
+- `GET /api/supervision/sessions` — overview (counts + session summaries)
+- `GET /api/supervision/sessions/:sessionId` — single-session detail (events, decisions, alerts, blocked records)
+- `GET /api/supervision/sessions/:sessionId/evidence` — deterministic sanitized evidence export
+
+All three routes are wrapped in the standard `ApiResponse<T>` envelope (`success` / `message` / `data` / `error_code` / `request_id`).
+
+### Query fields and validation
+
+`GET /api/supervision/sessions` accepts the following optional query parameters, emitted in stable URL order:
+
+- `q` (free-text fragment match against session/scenario/case IDs)
+- `status` (`TaskStatus`)
+- `risk_level` (`RiskLevel`)
+- `action` (`SandboxPolicyAction`: `allow` / `deny` / `ask` / `alert`)
+- `scenario_id`
+- `tool_name` (one of the four approved tools: `send_email`, `read_file`, `write_file`, `call_api`)
+
+Unknown or invalid filter values are removed from the URL rather than rejected. Filters are AND-combined.
+
+### 100-row cap and count semantics
+
+- `limit` is fixed at `100` and exposed in the overview payload.
+- `matched_session_count` reflects the total number of sessions matching the filters before the cap.
+- `returned_session_count` reflects the number of sessions actually returned (≤ `limit`).
+- `truncated` is `true` when `matched_session_count > returned_session_count`.
+- The `counts` object aggregates over all matched sessions (not just the returned page), so running/blocked/alert counts stay stable regardless of cap.
+
+### Shared DTO names
+
+All DTOs live in `shared/types/supervision.ts` and are normalized by `shared/contracts/supervision.ts`:
+
+- `SandboxSupervisionOverview`
+- `SandboxSupervisionCounts`
+- `SandboxSupervisionSessionSummary`
+- `SandboxSupervisionSessionDetail`
+- `SandboxSupervisionEventView` (closed discriminated union over seven event types)
+- `SandboxSupervisionDecisionView`
+- `SandboxSupervisionAlertView`
+- `SandboxSupervisionBlockedRecordView`
+- `SandboxSupervisionEvidenceExport`
+
+Schema versions are pinned via `SANDBOX_SUPERVISION_SCHEMA_VERSION` and `SANDBOX_SUPERVISION_EVIDENCE_SCHEMA_VERSION`.
+
+### Safe error codes
+
+- `404` with `error_code: "SUPERVISION_SESSION_NOT_FOUND"` when the session ID does not exist.
+- `404` with `error_code: "SUPERVISION_EVIDENCE_NOT_AVAILABLE"` when the session exists but `evidence_available` is `false`.
+- `422` with `error_code: "SUPERVISION_PROJECTION_INVALID"` when the stored record cannot be projected (the projector raises a `DomainError` instead of returning a partial projection).
+- `500` with `error_code: "INTERNAL_ERROR"` for unexpected failures.
+
+### Evidence wrapper and download behavior
+
+`GET /api/supervision/sessions/:sessionId/evidence` returns a `SandboxSupervisionEvidenceExport` with exactly three top-level keys:
+
+- `schema_version` (`SANDBOX_SUPERVISION_EVIDENCE_SCHEMA_VERSION`)
+- `source_schema_version` (`SANDBOX_SUPERVISION_SCHEMA_VERSION`)
+- `session` (the full `SandboxSupervisionSessionDetail`)
+
+The export never includes `request_id`, `metadata`, decision `reason`, alert `title`/`reason`, blocked-record `reason`/`resource_ref`, or any producer narrative field. The frontend serializes the normalized export with `JSON.stringify(value, null, 2)` plus a trailing newline, and downloads it as `supervision-<sanitized-session-id>.json` via a transient blob URL that is revoked immediately after the click. The serialized bytes are deterministic for a given session ID.

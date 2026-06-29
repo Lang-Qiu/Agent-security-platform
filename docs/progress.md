@@ -39,7 +39,7 @@ Recommended fields:
   - added `engines/sandbox/tests/base-filter-contract.spec.ts` — 92 focused tests (existence, error taxonomy, context/rule/catalog normalizers, serialization/parsing, content boundary, rule ID safety)
   - added `engines/sandbox/tests/base-filter-evaluator.spec.ts` — 33 focused tests (text normalization, source extraction, operators, conjunction, action reduction, built-in catalog, robustness)
   - added `engines/sandbox/tests/base-filter-provider.spec.ts` — 22 focused tests (provider construction, no-match, model/tool stage integration, all four actions, content boundary, mutation)
-  - added `engines/sandbox/tests/base-filter-evaluation.spec.ts` — 55 focused tests (nine-case execution, exact-action matrix, anti-oracle, stage correlation, normalizer validation, test_category coverage, evidence/policy/correlation/sort hardening, demo exception-path tests, strict content-free result boundary)
+  - added `engines/sandbox/tests/base-filter-evaluation.spec.ts` — 75 focused tests (nine-case execution, exact-action matrix, anti-oracle, stage correlation, normalizer validation, test_category coverage, evidence/policy/correlation/sort hardening, demo exception-path tests, strict content-free result boundary)
   - added `samples/track1/base-filter/demo.ts` fixed byte-identical demo entrypoint with README
   - added `tests/repository/track1-base-filter.spec.ts` — anti-oracle static/runtime safety scans and behavioral assertion
   - registered all new tests in `test:engine:sandbox` and `test:repo` package scripts
@@ -63,17 +63,18 @@ Recommended fields:
   - T5: 1 export-absent failure (demo entrypoint)
   - T6: 4 registration-absent failures (root entry)
   - Post-review: normalizer accepted injected raw_content and wrong metrics (RED); anti-oracle test did not await; rule ID accepted spaces
+  - Round 6: 7 strict-boundary RED failures, followed by 6 adjacent-field RED failures, 1 strengthened timezone-offset RED, 1 catalog-stage RED, and 1 forged tool-outcome RED
 - focused and final gate counts:
   - contract: 92 pass
   - evaluator: 33 pass
   - provider: 22 pass
-  - evaluation: 55 pass
+  - evaluation: 75 pass
   - repository: 18 pass
-  - test:engine:sandbox: 371 pass (all 13 registered engine test files)
+  - test:engine:sandbox: 391 pass (all 13 registered engine test files)
   - test:repo: 61 pass
   - test:shared: 26 pass
-  - test:backend: pre-existing baseline only
-  - test:frontend: pre-existing baseline only
+  - test:backend: timed out after 300s; direct run completed 2 asset-adapter tests before hanging (unrelated existing gate issue)
+  - test:frontend: 36 pass
 - exact metrics:
   - total_cases: 9, exact_matches: 9, exact_action_accuracy: 1
   - unsafe_case_count: 7, unsafe_case_recall: 1
@@ -2393,3 +2394,75 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - `docs/progress.md`
 - notes:
   - 当前仅完成 requirement 和设计文档收口；实现与测试将按 RED -> GREEN 继续推进
+
+## 2026-06-29 - REQ-T1-SUPERVISION-UI-009 Track 1 Behavior Supervision Console
+
+- requirement: Track 1 behavior supervision console — read-only shared read contracts, backend session projections, visibility-aware polling, safe event investigation, task-detail deep links, and deterministic sanitized JSON evidence download
+- scope:
+  - added `shared/types/supervision.ts` and `shared/contracts/supervision.ts` with closed content-free DTOs (overview, summary, counts, detail, seven event views, decision/alert/blocked-record views, evidence export) and exact-key normalizers
+  - added `shared/tests/supervision-contract.spec.ts` — shared contract suite
+  - added `tests/fixtures/track1-supervision.fixture.ts` — deterministic test-only fixture with `RAW_NARRATIVE_SENTINEL` and `makeStoredSandboxRecord`
+  - added `backend/src/modules/supervision/` with projector, service, controller, and module composition
+  - added `backend/tests/supervision-projector.spec.ts`, `supervision-service.spec.ts`, `supervision-controller.spec.ts`
+  - added `tests/integration/backend-supervision.api.spec.ts` — three public GET routes integration coverage
+  - added `frontend/src/services/supervision-service.ts` with `api` / `integration-error` / `mock` source states
+  - added `frontend/src/mocks/supervision.ts` — safe mock data
+  - added `frontend/src/hooks/useSupervisionPolling.ts` — three-second polling with visibility, stale, abort, retry behavior
+  - added `frontend/src/components/supervision/` — `SupervisionOverviewHeader`, `SupervisionFilters`, `SupervisionSessionList`, `SupervisionSessionInspector`, `SupervisionEventTimeline`, `SupervisionEventDetails`
+  - modified `frontend/src/pages/SandboxAlertsPage.tsx` — global counts, filters, list, deep-link/default selection, URL query state
+  - modified `frontend/src/pages/TaskDetailPage.tsx` and `frontend/src/components/task-detail/SandboxAlertSection.tsx`; added `SandboxTaskSupervisionSection.tsx` for safe task-detail integration with deep link
+  - added `frontend/src/services/supervision-service.spec.ts`, `frontend/src/hooks/use-supervision-polling.spec.tsx`, `frontend/src/components/supervision/supervision-event-details.spec.tsx`, `frontend/src/pages/sandbox-alerts.page.spec.tsx`, `frontend/src/pages/task-detail.page.spec.tsx` (extended)
+  - added `tests/repository/track1-supervision-ui.spec.ts` — permanent repository safety gate (no engine imports, no raw/generic rendering, read-only/polling-only, canonical registration, responsive workbench tracks)
+  - registered `supervision-contract.spec.ts` in `shared/package.json` and root `test:shared`; registered `track1-supervision-ui.spec.ts` in root `test:repo`; added root-entry assertions
+  - added responsive `supervision-workbench` CSS with 900px breakpoint
+  - updated `docs/api-contract.md`, `docs/architecture.md`, `docs/progress.md`
+- commits (14):
+  - `595bcc2` feat(shared): add supervision overview contracts
+  - `d78b9b1` feat(shared): add supervision evidence contracts
+  - `0e772b0` feat(backend): project safe supervision sessions
+  - `1d8c1c6` feat(backend): query supervision sessions
+  - `fd536d7` feat(backend): add supervision module
+  - `6133bd6` feat(api): expose supervision read endpoints
+  - `e1ab0a7` feat(frontend): add supervision data service
+  - `ae2c436` feat(frontend): poll supervision snapshots
+  - `aefff42` feat(frontend): build supervision workbench
+  - `c09a12d` feat(frontend): inspect supervision timeline
+  - `4f564d6` feat(frontend): download supervision evidence
+  - `b0c466d` feat(frontend): link task detail to supervision
+  - `617437c` test(track1): gate supervision console
+  - (Task 14 docs commit follows)
+- RED evidence per task:
+  - T1: file-existence + export-absent assertion failures
+  - T2: file-existence + export-absent assertion failures
+  - T3: projector module/existence + projection-behavior failures
+  - T4: service module/existence + filter/cap/count failures
+  - T5: controller/module composition failures
+  - T6: three-route integration coverage failures
+  - T7: frontend service source-state and normalization failures
+  - T8: polling/visibility/stale/abort hook failures
+  - T9: workbench counts/filters/list/deep-link page failures
+  - T10: seven-event timeline and inspector page failures
+  - T11: evidence serialization/filename/download service and page failures
+  - T12: task-detail safe projection, deep-link, unavailable projection failures
+  - T13: repository registration + responsive CSS assertion failures
+- focused and final gate counts:
+  - shared contract: 26 pass (`shared/tests/supervision-contract.spec.ts` contributes the supervision portion)
+  - test:shared: 52 pass (26 → 52 after adding supervision-contract.spec.ts)
+  - test:repo: 66 pass (61 → 66 after adding track1-supervision-ui.spec.ts)
+  - test:engine:sandbox: 391 pass (unchanged; no engine files touched)
+  - test:frontend: 104 pass (101 → 104 after Task 12; supervision hook/service/component/page suites added across T7–T12)
+  - frontend build: pass
+  - test:backend: 89 pass / 1 fail — the single failure is `task engine service maps tasks into initial result and risk summary shells without leaking engine internals` (`backend/tests/task-engine.service.spec.ts:318`), an asset-scan `open_ports` expectation mismatch unrelated to REQ-009; no supervision test fails
+  - git diff --check: clean
+  - protected paths (`engines/**`, `samples/track1/**`): unchanged (verified via `git diff --name-only HEAD~14..HEAD`)
+- content boundary evidence:
+  - producer narrative absent: `RAW_NARRATIVE_SENTINEL` sentinel injected into stored records via `makeStoredSandboxRecord` is never present in any frontend-rendered output (asserted in `task-detail.page.spec.tsx` and `sandbox-alerts.page.spec.tsx`)
+  - no engine frontend import: `tests/repository/track1-supervision-ui.spec.ts` asserts no supervision frontend file imports from `engines/`
+  - deterministic evidence bytes: `serializeSupervisionEvidence` produces byte-identical output ending with `\n`; `EVIDENCE_EXPORT_KEYS` exact-key check excludes `request_id`/`metadata`/`reason`; filename sanitized to `supervision-<safe-id>.json`
+  - protected paths unchanged: `git diff --name-only HEAD~14..HEAD -- engines samples/track1/cases samples/track1/scenarios samples/track1/attack-scripts samples/track1/monitor-plugin samples/track1/base-filter` returns no output
+- docs updated:
+  - `docs/api-contract.md` (REQ-T1-SUPERVISION-UI-009 section)
+  - `docs/architecture.md` (REQ-T1-SUPERVISION-UI-009 section)
+  - `docs/progress.md`
+- status: COMPLETE
+- next blocker: REQ-T1-DEMO-010
