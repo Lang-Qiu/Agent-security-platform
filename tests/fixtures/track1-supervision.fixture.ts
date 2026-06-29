@@ -1,3 +1,24 @@
+import type { StoredTaskRecord } from "../../backend/src/modules/task-center/repositories/task.repository.ts";
+import type {
+  SandboxAlert,
+  SandboxBehaviorEvent,
+  SandboxBlockedRecord,
+  SandboxPolicyAction,
+  SandboxPolicyDecision
+} from "../../shared/types/sandbox.ts";
+import type {
+  BaseResult,
+  ResultDetails,
+  SandboxRunResultDetails
+} from "../../shared/types/result.ts";
+import type {
+  EngineType,
+  RiskLevel,
+  RiskSummary,
+  Task,
+  TaskStatus,
+  TaskType
+} from "../../shared/types/task.ts";
 import type {
   SandboxSupervisionAlertView,
   SandboxSupervisionBlockedRecordView,
@@ -7,7 +28,8 @@ import type {
   SandboxSupervisionEvidenceExport,
   SandboxSupervisionOverview,
   SandboxSupervisionSessionDetail,
-  SandboxSupervisionSessionSummary
+  SandboxSupervisionSessionSummary,
+  SandboxSupervisionToolName
 } from "../../shared/types/supervision.ts";
 
 export const RAW_NARRATIVE_SENTINEL = "RAW_NARRATIVE_SENTINEL_REQ009";
@@ -287,4 +309,353 @@ export function makeSupervisionEvidence(
       overrides.source_schema_version ?? "track1-supervision-ui.v1",
     session: overrides.session ?? makeSupervisionDetail()
   };
+}
+
+// -- Task 3: source StoredTaskRecord fixture -----------------------------------
+
+const FIXTURE_TASK_TYPE: TaskType = "sandbox_run";
+const FIXTURE_ENGINE_TYPE: EngineType = "sandbox";
+const FIXTURE_CREATED_AT = "2026-06-29T00:00:00Z";
+const FIXTURE_MODEL_REF = "model://base/demo";
+const FIXTURE_CONTENT_SHA_A = "a".repeat(64);
+const FIXTURE_CONTENT_SHA_B = "b".repeat(64);
+const FIXTURE_CONTENT_SHA_C = "c".repeat(64);
+const FIXTURE_TOOL_TARGET_REF = "recipient://reviewer@local.invalid";
+
+function defaultStatusForAction(action: SandboxPolicyAction): TaskStatus {
+  if (action === "deny") return "blocked";
+  if (action === "alert") return "finished";
+  return "running";
+}
+
+function defaultRiskForAction(action: SandboxPolicyAction): RiskLevel {
+  if (action === "deny") return "high";
+  if (action === "alert") return "medium";
+  if (action === "ask") return "low";
+  return "info";
+}
+
+function buildSourceEvents(
+  sessionId: string,
+  scenarioId: string,
+  caseId: string,
+  toolName: SandboxSupervisionToolName,
+  action: SandboxPolicyAction,
+  producerNarrative: string
+): { events: SandboxBehaviorEvent[]; decisions: SandboxPolicyDecision[]; alerts: SandboxAlert[]; blockedRecords: SandboxBlockedRecord[] } {
+  const events: SandboxBehaviorEvent[] = [];
+  let sequence = 0;
+  const nextSeq = () => ++sequence;
+  const nextTimestamp = () => `2026-06-29T00:00:0${sequence}Z`;
+
+  const common = {
+    session_id: sessionId,
+    scenario_id: scenarioId,
+    case_id: caseId
+  };
+
+  events.push({
+    ...common,
+    event_id: "event:model_input",
+    sequence: nextSeq(),
+    event_type: "model_input",
+    occurred_at: nextTimestamp(),
+    source: "agent",
+    evidence_refs: ["evidence://model/input/001"],
+    payload: {
+      model_ref: FIXTURE_MODEL_REF,
+      content_ref: "fixture://cases/T1-SC-001-C001/model-input",
+      content_sha256: FIXTURE_CONTENT_SHA_A,
+      summary: producerNarrative
+    }
+  });
+
+  events.push({
+    ...common,
+    event_id: "event:model_output",
+    sequence: nextSeq(),
+    event_type: "model_output",
+    occurred_at: nextTimestamp(),
+    source: "model",
+    evidence_refs: ["evidence://model/output/001"],
+    payload: {
+      model_ref: FIXTURE_MODEL_REF,
+      content_ref: "fixture://cases/T1-SC-001-C001/model-output",
+      content_sha256: FIXTURE_CONTENT_SHA_B,
+      summary: producerNarrative
+    }
+  });
+
+  events.push({
+    ...common,
+    event_id: "event:tool_request",
+    sequence: nextSeq(),
+    event_type: "tool_request",
+    occurred_at: nextTimestamp(),
+    source: "agent",
+    evidence_refs: ["evidence://tool/request/001"],
+    payload: {
+      call_id: "call:001",
+      tool_name: toolName,
+      target_ref: FIXTURE_TOOL_TARGET_REF,
+      arguments_ref: "fixture://cases/T1-SC-001-C001/tool-request"
+    }
+  });
+
+  events.push({
+    ...common,
+    event_id: "event:tool_result",
+    sequence: nextSeq(),
+    event_type: "tool_result",
+    occurred_at: nextTimestamp(),
+    source: "tool",
+    evidence_refs: ["evidence://tool/result/001"],
+    payload: {
+      call_id: "call:001",
+      tool_name: toolName,
+      status: action === "deny" ? "rejected" : "success",
+      result_ref: "evidence://tool/result/001",
+      state_change: "none"
+    }
+  });
+
+  const decisions: SandboxPolicyDecision[] = [];
+  const alerts: SandboxAlert[] = [];
+  const blockedRecords: SandboxBlockedRecord[] = [];
+
+  if (action === "alert" || action === "deny") {
+    const alertDecisionId = "decision:alert";
+    const alertDecisionEventId = "event:policy_decision_alert";
+    const alertDecision: SandboxPolicyDecision = {
+      decision_id: alertDecisionId,
+      subject_event_id: "event:tool_request",
+      policy_id: "policy:tool_target",
+      action: "alert",
+      reason_code: "target_not_approved",
+      reason: producerNarrative,
+      evidence_refs: ["evidence://decision/alert"],
+      decided_at: nextTimestamp()
+    };
+
+    events.push({
+      ...common,
+      event_id: alertDecisionEventId,
+      sequence: nextSeq(),
+      event_type: "policy_decision",
+      occurred_at: alertDecision.decided_at,
+      source: "policy",
+      evidence_refs: alertDecision.evidence_refs,
+      payload: { ...alertDecision }
+    });
+
+    decisions.push(alertDecision);
+
+    alerts.push({
+      alert_id: "alert:001",
+      subject_event_id: "event:tool_request",
+      decision_id: alertDecisionId,
+      risk_level: "high",
+      category: "tool_target",
+      title: producerNarrative,
+      reason: producerNarrative,
+      evidence_refs: ["evidence://alert/001"],
+      occurred_at: nextTimestamp()
+    });
+  }
+
+  if (action === "deny") {
+    const denyDecisionId = "decision:deny";
+    const denyDecisionEventId = "event:policy_decision_deny";
+    const denyDecision: SandboxPolicyDecision = {
+      decision_id: denyDecisionId,
+      subject_event_id: "event:tool_request",
+      policy_id: "policy:tool_target",
+      action: "deny",
+      reason_code: "target_not_approved",
+      reason: producerNarrative,
+      evidence_refs: ["evidence://decision/deny"],
+      decided_at: nextTimestamp()
+    };
+
+    events.push({
+      ...common,
+      event_id: denyDecisionEventId,
+      sequence: nextSeq(),
+      event_type: "policy_decision",
+      occurred_at: denyDecision.decided_at,
+      source: "policy",
+      evidence_refs: denyDecision.evidence_refs,
+      payload: { ...denyDecision }
+    });
+
+    decisions.push(denyDecision);
+
+    blockedRecords.push({
+      blocked_record_id: "blocked:001",
+      subject_event_id: "event:tool_request",
+      decision_id: denyDecisionId,
+      reason: producerNarrative,
+      resource_ref: producerNarrative,
+      evidence_refs: ["evidence://blocked/001"],
+      occurred_at: nextTimestamp()
+    });
+  }
+
+  if (action === "ask") {
+    const askDecisionId = "decision:ask";
+    const askDecisionEventId = "event:policy_decision_ask";
+    const askDecision: SandboxPolicyDecision = {
+      decision_id: askDecisionId,
+      subject_event_id: "event:tool_request",
+      policy_id: "policy:tool_target",
+      action: "ask",
+      reason_code: "target_requires_confirmation",
+      reason: producerNarrative,
+      evidence_refs: ["evidence://decision/ask"],
+      decided_at: nextTimestamp()
+    };
+
+    events.push({
+      ...common,
+      event_id: askDecisionEventId,
+      sequence: nextSeq(),
+      event_type: "policy_decision",
+      occurred_at: askDecision.decided_at,
+      source: "policy",
+      evidence_refs: askDecision.evidence_refs,
+      payload: { ...askDecision }
+    });
+
+    decisions.push(askDecision);
+  }
+
+  events.push({
+    ...common,
+    event_id: "event:memory_write",
+    sequence: nextSeq(),
+    event_type: "memory_write",
+    occurred_at: nextTimestamp(),
+    source: "memory",
+    evidence_refs: ["evidence://memory/write/001"],
+    payload: {
+      memory_entry_id: "memory:001",
+      content_ref: "fixture://memory/001",
+      content_sha256: FIXTURE_CONTENT_SHA_C,
+      summary: producerNarrative
+    }
+  });
+
+  events.push({
+    ...common,
+    event_id: "event:memory_read",
+    sequence: nextSeq(),
+    event_type: "memory_read",
+    occurred_at: nextTimestamp(),
+    source: "memory",
+    evidence_refs: ["evidence://memory/read/001"],
+    payload: {
+      memory_entry_id: "memory:001",
+      content_ref: "fixture://memory/001",
+      content_sha256: FIXTURE_CONTENT_SHA_C,
+      summary: producerNarrative
+    }
+  });
+
+  return { events, decisions, alerts, blockedRecords };
+}
+
+export function makeStoredSandboxRecord(input?: {
+  taskId?: string;
+  sessionId?: string;
+  status?: TaskStatus;
+  riskLevel?: RiskLevel;
+  action?: SandboxPolicyAction;
+  scenarioId?: string;
+  caseId?: string;
+  toolName?: SandboxSupervisionToolName;
+  updatedAt?: string;
+  producerNarrative?: string;
+}): StoredTaskRecord {
+  const action = input?.action ?? "deny";
+  const taskId = input?.taskId ?? "task:T1-SC-001-C001";
+  const sessionId = input?.sessionId ?? "session:T1-SC-001-C001";
+  const status = input?.status ?? defaultStatusForAction(action);
+  const riskLevel = input?.riskLevel ?? defaultRiskForAction(action);
+  const scenarioId = input?.scenarioId ?? "T1-SC-001";
+  const caseId = input?.caseId ?? "T1-SC-001-C001";
+  const toolName = input?.toolName ?? "send_email";
+  const producerNarrative = input?.producerNarrative ?? "producer narrative";
+  const updatedAt = input?.updatedAt ?? "2026-06-29T00:00:10Z";
+
+  const { events, decisions, alerts, blockedRecords } = buildSourceEvents(
+    sessionId,
+    scenarioId,
+    caseId,
+    toolName,
+    action,
+    producerNarrative
+  );
+
+  const details: SandboxRunResultDetails = {
+    session_id: sessionId,
+    events,
+    policy_decisions: decisions,
+    alerts,
+    blocked_records: blockedRecords,
+    blocked: blockedRecords.length > 0,
+    event_count: events.length
+  };
+
+  const task: Task = {
+    task_id: taskId,
+    task_type: FIXTURE_TASK_TYPE,
+    engine_type: FIXTURE_ENGINE_TYPE,
+    status,
+    title: producerNarrative,
+    target: {
+      target_type: "scenario_case",
+      target_value: caseId
+    },
+    risk_level: riskLevel,
+    summary: producerNarrative,
+    created_at: FIXTURE_CREATED_AT,
+    updated_at: updatedAt,
+    started_at: FIXTURE_CREATED_AT,
+    finished_at: status === "running" || status === "pending" ? undefined : updatedAt,
+    metadata: { producer_narrative: producerNarrative }
+  };
+
+  const result: BaseResult<ResultDetails> = {
+    task_id: taskId,
+    task_type: FIXTURE_TASK_TYPE,
+    engine_type: FIXTURE_ENGINE_TYPE,
+    status,
+    risk_level: riskLevel,
+    summary: producerNarrative,
+    details,
+    created_at: FIXTURE_CREATED_AT,
+    updated_at: updatedAt,
+    started_at: FIXTURE_CREATED_AT,
+    finished_at: status === "running" || status === "pending" ? undefined : updatedAt,
+    metadata: { producer_narrative: producerNarrative }
+  };
+
+  const riskSummary: RiskSummary = {
+    task_id: taskId,
+    task_type: FIXTURE_TASK_TYPE,
+    status,
+    risk_level: riskLevel,
+    summary: producerNarrative,
+    total_findings: alerts.length + blockedRecords.length,
+    info_count: 0,
+    low_count: 0,
+    medium_count: 0,
+    high_count: alerts.length,
+    critical_count: 0,
+    blocked_count: blockedRecords.length,
+    top_risks: [producerNarrative],
+    updated_at: updatedAt
+  };
+
+  return { task, result, riskSummary };
 }
