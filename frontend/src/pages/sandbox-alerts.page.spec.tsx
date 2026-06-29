@@ -2,7 +2,10 @@ import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { SANDBOX_SUPERVISION_SCHEMA_VERSION } from "../../../shared/contracts/supervision";
-import type { SandboxSupervisionOverview } from "../../../shared/types/supervision";
+import type {
+  SandboxSupervisionEvidenceExport,
+  SandboxSupervisionOverview
+} from "../../../shared/types/supervision";
 import {
   makeSupervisionDetail,
   makeSupervisionEvidence,
@@ -38,13 +41,14 @@ function createOverview(
 
 function mockSupervisionApi(input: {
   overview?: SandboxSupervisionOverview;
+  evidence?: SandboxSupervisionEvidenceExport;
   overviewFilter?: (sessions: SandboxSupervisionOverview["sessions"]) => SandboxSupervisionOverview["sessions"];
   failOverviewAfter?: number;
   invalidOverviewAfter?: number;
 } = {}) {
   const overview = input.overview ?? makeSupervisionOverview();
   const detail = makeSupervisionDetail();
-  const evidence = makeSupervisionEvidence();
+  const evidence = input.evidence ?? makeSupervisionEvidence();
   let overviewCallCount = 0;
   const fetchMock = vi.fn(async (resource: string | URL) => {
     const path = String(resource);
@@ -53,7 +57,20 @@ function mockSupervisionApi(input: {
     if (path.endsWith("/evidence")) {
       data = evidence;
     } else if (/\/api\/supervision\/sessions\/[^?]+$/.test(path)) {
-      data = detail;
+      const match = path.match(/\/api\/supervision\/sessions\/([^?]+)$/);
+      const sessionId = match ? decodeURIComponent(match[1]) : "";
+      const sessionSummary = overview.sessions.find(
+        (s) => s.session_id === sessionId
+      );
+      data = sessionSummary
+        ? {
+            ...detail,
+            summary: {
+              ...detail.summary,
+              evidence_available: sessionSummary.evidence_available
+            }
+          }
+        : detail;
     } else if (path.startsWith("/api/supervision/sessions")) {
       overviewCallCount++;
       if (
@@ -476,4 +493,105 @@ describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
       ).not.toBeInTheDocument();
     });
   });
+
+  test("REQ-T1-SUPERVISION-UI-009 downloads only normalized evidence data", async () => {
+    const createObjectURL = vi
+      .spyOn(URL, "createObjectURL")
+      .mockReturnValue("blob:evidence");
+    const revokeObjectURL = vi
+      .spyOn(URL, "revokeObjectURL")
+      .mockImplementation(() => undefined);
+    mockSupervisionApi({ evidence: makeSupervisionEvidence() });
+
+    await renderAppAtRoute("/results/sandbox");
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Download evidence" })
+    );
+
+    await waitFor(() => expect(createObjectURL).toHaveBeenCalledTimes(1));
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:evidence");
+  }, 20000);
+
+  test("REQ-T1-SUPERVISION-UI-009 disables download when evidence unavailable", async () => {
+    const overview = makeSupervisionOverview();
+    const noEvidenceSessions = overview.sessions.map((session) => ({
+      ...session,
+      evidence_available: false
+    }));
+    const noEvidenceOverview: SandboxSupervisionOverview = {
+      ...overview,
+      sessions: noEvidenceSessions,
+      counts: {
+        ...overview.counts,
+        observed_session_count: noEvidenceSessions.length
+      }
+    };
+    mockSupervisionApi({ overview: noEvidenceOverview });
+
+    await renderAppAtRoute("/results/sandbox");
+
+    const downloadButton = await screen.findByRole("button", {
+      name: "Download evidence"
+    });
+    expect(downloadButton).toBeDisabled();
+  }, 20000);
+
+  test("REQ-T1-SUPERVISION-UI-009 failed download leaves page usable with safe notification", async () => {
+    const fetchMock = vi.fn(async (resource: string | URL) => {
+      const path = String(resource);
+      if (path.endsWith("/evidence")) {
+        throw new Error("evidence offline");
+      }
+      if (/\/api\/supervision\/sessions\/[^?]+$/.test(path)) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            message: "ok",
+            data: makeSupervisionDetail(),
+            error_code: null,
+            request_id: "req_supervision_page_test"
+          })
+        };
+      }
+      if (path.startsWith("/api/supervision/sessions")) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            message: "ok",
+            data: makeSupervisionOverview(),
+            error_code: null,
+            request_id: "req_supervision_page_test"
+          })
+        };
+      }
+      throw new Error(`Unexpected: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await renderAppAtRoute("/results/sandbox");
+
+    const downloadButton = await screen.findByRole("button", {
+      name: "Download evidence"
+    });
+    fireEvent.click(downloadButton);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/evidence unavailable|download failed|unable to download/i)
+      ).toBeInTheDocument();
+    });
+
+    // Page remains usable: the session list and download button are still present.
+    expect(
+      screen.getByRole("listbox", { name: "Supervision sessions" })
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Download evidence" })
+      ).toBeInTheDocument();
+    });
+  }, 20000);
 });

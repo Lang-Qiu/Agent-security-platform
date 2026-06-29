@@ -1,6 +1,8 @@
-import { Descriptions, DescriptionsProps, Tag, Typography } from "antd";
+import { useState } from "react";
+import { Button, Descriptions, DescriptionsProps, Tag, Typography } from "antd";
 
 import type { SandboxSupervisionSessionDetail } from "../../../shared/types/supervision";
+import { downloadSupervisionEvidence } from "../../services/supervision-service";
 import { RiskTag } from "../RiskTag";
 import { SupervisionEventTimeline } from "./SupervisionEventTimeline";
 
@@ -26,6 +28,25 @@ export function SupervisionSessionInspector({
   detail
 }: SupervisionSessionInspectorProps): JSX.Element {
   const { summary } = detail;
+  const [downloadMessage, setDownloadMessage] = useState<string | null>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
+
+  const handleDownload = async (): Promise<void> => {
+    setIsDownloading(true);
+    setDownloadMessage(null);
+    try {
+      const result = await downloadSupervisionEvidence(summary.session_id);
+      if (result === "downloaded") {
+        setDownloadMessage("Evidence downloaded.");
+      } else {
+        setDownloadMessage("Evidence unavailable.");
+      }
+    } catch {
+      setDownloadMessage("Evidence unavailable.");
+    } finally {
+      setIsDownloading(false);
+    }
+  };
 
   const items: DescriptionsProps["items"] = [
     {
@@ -120,6 +141,20 @@ export function SupervisionSessionInspector({
     <div className="supervision-session-inspector">
       <Title level={2}>Session Inspector</Title>
       <Descriptions column={1} size="small" items={items} />
+      <div className="supervision-inspector-actions">
+        <Button
+          type="default"
+          onClick={handleDownload}
+          disabled={!summary.evidence_available || isDownloading}
+        >
+          Download evidence
+        </Button>
+        {downloadMessage ? (
+          <Text type="secondary" className="supervision-download-message">
+            {downloadMessage}
+          </Text>
+        ) : null}
+      </div>
       <SupervisionEventTimeline detail={detail} />
     </div>
   );

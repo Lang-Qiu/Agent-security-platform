@@ -233,3 +233,61 @@ export async function getSupervisionEvidence(
     };
   }
 }
+
+export function serializeSupervisionEvidence(
+  value: SandboxSupervisionEvidenceExport
+): string {
+  const normalized = normalizeSandboxSupervisionEvidenceExport(value);
+  if (!normalized) {
+    throw new Error("invalid supervision evidence");
+  }
+  return `${JSON.stringify(normalized, null, 2)}\n`;
+}
+
+export function buildSupervisionEvidenceFilename(sessionId: string): string {
+  const sanitized = sessionId.replace(/[^a-zA-Z0-9._-]/g, "_");
+  return `supervision-${sanitized}.json`;
+}
+
+export async function downloadSupervisionEvidence(
+  sessionId: string,
+  options?: SupervisionRequestOptions
+): Promise<"downloaded" | "unavailable" | "invalid"> {
+  const mode = options?.mode ?? "api-preferred";
+  const fetchImpl = resolveFetchImpl(options?.fetchImpl);
+
+  if (mode === "mock-only" || !fetchImpl) {
+    return "unavailable";
+  }
+
+  try {
+    const encodedId = encodeURIComponent(sessionId);
+    const path = `${SUPERVISION_SESSIONS_ENDPOINT}/${encodedId}/evidence`;
+    const result = await requestApiDataWithStatus({
+      path,
+      options,
+      normalize: normalizeSandboxSupervisionEvidenceExport
+    });
+
+    if (!result.data) {
+      return result.status === "invalid" ? "invalid" : "unavailable";
+    }
+
+    const serialized = serializeSupervisionEvidence(result.data);
+    const blob = new Blob([serialized], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const filename = buildSupervisionEvidenceFilename(sessionId);
+
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+
+    return "downloaded";
+  } catch {
+    return "unavailable";
+  }
+}

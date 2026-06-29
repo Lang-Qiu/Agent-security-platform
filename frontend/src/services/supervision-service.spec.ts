@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   normalizeSandboxSupervisionSessionDetail,
@@ -17,9 +17,12 @@ import {
   makeSupervisionOverview
 } from "../mocks/supervision";
 import {
+  buildSupervisionEvidenceFilename,
+  downloadSupervisionEvidence,
   getSupervisionEvidence,
   getSupervisionSession,
-  listSupervisionSessions
+  listSupervisionSessions,
+  serializeSupervisionEvidence
 } from "./supervision-service";
 
 function makeApiResponse<T>(data: T): ApiResponse<T> {
@@ -40,6 +43,10 @@ function jsonResponse(payload: unknown): Response {
 }
 
 describe("REQ-T1-SUPERVISION-UI-009 service", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   test("service normalizes overview and detail", async () => {
     const fetchImpl = vi
       .fn()
@@ -240,5 +247,88 @@ describe("REQ-T1-SUPERVISION-UI-009 service", () => {
     });
 
     expect(result).toBeNull();
+  });
+
+  test("REQ-T1-SUPERVISION-UI-009 builds deterministic evidence bytes", () => {
+    const evidence = makeSupervisionEvidence();
+    const first = serializeSupervisionEvidence(evidence);
+    const second = serializeSupervisionEvidence(evidence);
+
+    expect(first).toBe(second);
+    expect(first.endsWith("\n")).toBe(true);
+    expect(first).not.toContain('"request_id":');
+    expect(first).not.toContain('"metadata":');
+    expect(first).not.toContain('"reason":');
+  });
+
+  test("REQ-T1-SUPERVISION-UI-009 evidence bytes exclude unnormalized input fields", () => {
+    const evidence = makeSupervisionEvidence();
+    const serialized = serializeSupervisionEvidence(evidence);
+
+    // The serializer must normalize before serializing so producer narrative
+    // and arbitrary metadata never reach the downloaded file.
+    const parsed = JSON.parse(serialized);
+    expect(Object.keys(parsed).sort()).toEqual(
+      ["schema_version", "session", "source_schema_version"].sort()
+    );
+    expect(parsed.session.summary.evidence_available).toBe(true);
+  });
+
+  test("REQ-T1-SUPERVISION-UI-009 sanitizes evidence filenames", () => {
+    expect(buildSupervisionEvidenceFilename("session:T1/unsafe?value")).toBe(
+      "supervision-session_T1_unsafe_value.json"
+    );
+  });
+
+  test("REQ-T1-SUPERVISION-UI-009 sanitizes filenames with backslashes and spaces", () => {
+    expect(buildSupervisionEvidenceFilename("session:with space\\slash")).toBe(
+      "supervision-session_with_space_slash.json"
+    );
+  });
+
+  test("REQ-T1-SUPERVISION-UI-009 download returns downloaded and revokes object url", async () => {
+    const createObjectURL = vi
+      .spyOn(URL, "createObjectURL")
+      .mockReturnValue("blob:evidence");
+    const revokeObjectURL = vi
+      .spyOn(URL, "revokeObjectURL")
+      .mockImplementation(() => undefined);
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(jsonResponse(makeApiResponse(makeSupervisionEvidence())));
+
+    const result = await downloadSupervisionEvidence("session:T1-SC-001-C001", {
+      fetchImpl
+    });
+
+    expect(result).toBe("downloaded");
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledWith("blob:evidence");
+  });
+
+  test("REQ-T1-SUPERVISION-UI-009 download returns invalid and creates no blob", async () => {
+    const createObjectURL = vi.spyOn(URL, "createObjectURL");
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue(jsonResponse(makeApiResponse({ unsafe: true })));
+
+    const result = await downloadSupervisionEvidence("session:T1-SC-001-C001", {
+      fetchImpl
+    });
+
+    expect(result).toBe("invalid");
+    expect(createObjectURL).not.toHaveBeenCalled();
+  });
+
+  test("REQ-T1-SUPERVISION-UI-009 download returns unavailable when fetch throws", async () => {
+    const createObjectURL = vi.spyOn(URL, "createObjectURL");
+    const fetchImpl = vi.fn().mockRejectedValue(new Error("offline"));
+
+    const result = await downloadSupervisionEvidence("session:T1-SC-001-C001", {
+      fetchImpl
+    });
+
+    expect(result).toBe("unavailable");
+    expect(createObjectURL).not.toHaveBeenCalled();
   });
 });
