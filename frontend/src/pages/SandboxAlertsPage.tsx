@@ -8,6 +8,7 @@ import { SANDBOX_POLICY_ACTIONS } from "../../../shared/types/sandbox";
 import type { RiskLevel, TaskStatus } from "../../../shared/types/task";
 import type {
   SandboxSupervisionOverview,
+  SandboxSupervisionSessionDetail,
   SandboxSupervisionSessionSummary,
   SandboxSupervisionToolName
 } from "../../../shared/types/supervision";
@@ -16,17 +17,18 @@ import {
   SupervisionOverviewHeader,
   type SupervisionDataSource
 } from "../components/supervision/SupervisionOverviewHeader";
+import { SupervisionSessionInspector } from "../components/supervision/SupervisionSessionInspector";
 import { SupervisionSessionList } from "../components/supervision/SupervisionSessionList";
-import { RiskTag } from "../components/RiskTag";
 import { useSupervisionPolling } from "../hooks/useSupervisionPolling";
 import {
+  getSupervisionSession,
   listSupervisionSessions,
   serializeSupervisionQuery,
   type SupervisionDataResult,
   type SupervisionQuery
 } from "../services/supervision-service";
 
-const { Text, Title, Paragraph } = Typography;
+const { Paragraph } = Typography;
 
 const SUPERVISION_TOOL_NAMES: readonly SandboxSupervisionToolName[] = [
   "send_email",
@@ -92,17 +94,6 @@ function pickDefaultSession(
   return sessions[0] ?? null;
 }
 
-function formatTimestamp(value: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: "UTC"
-  }).format(new Date(value));
-}
-
 export function SandboxAlertsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -145,8 +136,27 @@ export function SandboxAlertsPage() {
     []
   );
 
-  const { overview, retryOverview, refreshNow } = useSupervisionPolling({
-    loadOverview
+  const loadDetail = useCallback(
+    async (
+      sessionId: string,
+      signal: AbortSignal
+    ): Promise<SupervisionDataResult<SandboxSupervisionSessionDetail> | null> => {
+      return getSupervisionSession(sessionId, { signal });
+    },
+    []
+  );
+
+  // selectedTaskStatus is computed from the overview which is returned by the
+  // polling hook. Use a ref so the hook receives the previous render's value;
+  // the hook stores it in its own ref and re-runs the detail effect when it
+  // changes, so running sessions still get polled after one extra render.
+  const selectedTaskStatusRef = useRef<TaskStatus | null>(null);
+
+  const { overview, detail, retryOverview, refreshNow } = useSupervisionPolling({
+    loadOverview,
+    loadDetail,
+    selectedSessionId: sessionIdFromUrl,
+    selectedTaskStatus: selectedTaskStatusRef.current
   });
 
   const displayOverview = overview.data ?? mockFallback;
@@ -163,6 +173,8 @@ export function SandboxAlertsPage() {
       ) ?? null
     );
   }, [displayOverview, sessionIdFromUrl]);
+
+  selectedTaskStatusRef.current = selectedSession?.task_status ?? null;
 
   const scenarioOptions = useMemo(() => {
     const set = new Set<string>();
@@ -322,68 +334,17 @@ export function SandboxAlertsPage() {
 
           <aside className="supervision-inspector">
             {selectedSession ? (
-              <div className="supervision-inspector-content">
-                <Title level={2}>Session Inspector</Title>
-                <dl className="supervision-inspector-summary">
-                  <div>
-                    <dt>Session</dt>
-                    <dd>
-                      <Text code>{selectedSession.session_id}</Text>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Task</dt>
-                    <dd>
-                      <Text type="secondary">{selectedSession.task_id}</Text>
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Status</dt>
-                    <dd>{selectedSession.task_status}</dd>
-                  </div>
-                  <div>
-                    <dt>Risk</dt>
-                    <dd>
-                      <RiskTag level={selectedSession.risk_level} />
-                    </dd>
-                  </div>
-                  <div>
-                    <dt>Highest action</dt>
-                    <dd>{selectedSession.highest_action}</dd>
-                  </div>
-                  <div>
-                    <dt>Scenario</dt>
-                    <dd>{selectedSession.scenario_id ?? "—"}</dd>
-                  </div>
-                  <div>
-                    <dt>Case</dt>
-                    <dd>{selectedSession.case_id ?? "—"}</dd>
-                  </div>
-                  <div>
-                    <dt>Events</dt>
-                    <dd>{selectedSession.event_count}</dd>
-                  </div>
-                  <div>
-                    <dt>Decisions</dt>
-                    <dd>{selectedSession.decision_count}</dd>
-                  </div>
-                  <div>
-                    <dt>Alert records</dt>
-                    <dd>{selectedSession.alert_count}</dd>
-                  </div>
-                  <div>
-                    <dt>Blocked records</dt>
-                    <dd>{selectedSession.blocked_record_count}</dd>
-                  </div>
-                  <div>
-                    <dt>Updated</dt>
-                    <dd>{formatTimestamp(selectedSession.updated_at)}</dd>
-                  </div>
-                </dl>
-                <Paragraph type="secondary">
-                  Timeline and evidence download available in the next phase.
-                </Paragraph>
-              </div>
+              detail.data ? (
+                <SupervisionSessionInspector detail={detail.data} />
+              ) : detail.loading ? (
+                <div className="supervision-inspector-loading">
+                  <Paragraph>Loading session detail...</Paragraph>
+                </div>
+              ) : (
+                <div className="supervision-inspector-error">
+                  <Paragraph>Session detail unavailable.</Paragraph>
+                </div>
+              )
             ) : (
               <div className="supervision-inspector-placeholder">
                 <Paragraph>Select a session to inspect.</Paragraph>

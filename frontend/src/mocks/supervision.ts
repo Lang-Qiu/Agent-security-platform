@@ -176,7 +176,7 @@ const BASE_BLOCKED: SandboxSupervisionBlockedRecordView = {
   occurred_at: "2026-06-29T00:00:09Z"
 };
 
-function makeEventView(eventType: SandboxSupervisionEventView["event_type"]): SandboxSupervisionEventView {
+export function makeEventView(eventType: SandboxSupervisionEventView["event_type"]): SandboxSupervisionEventView {
   const common = {
     session_id: PRIMARY_SESSION_ID,
     scenario_id: PRIMARY_SCENARIO_ID,

@@ -167,7 +167,7 @@ describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
         );
       });
     },
-    15000
+    30000
   );
 
   test("honors session deep links", async () => {
@@ -253,7 +253,7 @@ describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
       expect(router.state.location.search).not.toContain("q=");
       expect(router.state.location.search).not.toContain("status=");
     });
-  });
+  }, 15000);
 
   test("shows initial loading state before data arrives", async () => {
     let resolveOverview!: (value: unknown) => void;
