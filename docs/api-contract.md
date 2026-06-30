@@ -53,7 +53,7 @@
 - 所有 ID 字段统一使用字符串，不在 API 层暴露自增整数
 - 第一版接口不引入分页、排序、筛选等复杂协议，先保证主流程稳定
 - 当前第一版共享契约以 `shared/` 中的 TypeScript 定义和运行时规范化函数为准，文档与代码应保持一致
-- 当前工程基线先冻结为 `pnpm workspace`、`Node.js 22.17.0`、`TypeScript strict`，用于支撑平台骨架阶段的契约开发与测试
+- 当前工程基线先冻结为 `pnpm workspace`、`Node.js 22.19.0`、`TypeScript strict`，用于支撑平台骨架阶段的契约开发与测试
 
 ### 3.2 TaskType
 

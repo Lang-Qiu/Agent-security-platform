@@ -527,8 +527,18 @@ function normalizeTrack1CampaignCaseDetail(
   if (input.status === "passed") {
     if (finalAttempt.actual_action === null) return null;
     if (finalAttempt.actual_action !== input.expected_action) return null;
+    // P1-1 rework 2: the final attempt status must also be "passed".
+    if (finalAttempt.status !== "passed") return null;
   } else if (input.status === "failed") {
     if (finalAttempt.actual_action === null) return null;
+    // P1-1 rework 2: the final attempt status must also be "failed".
+    if (finalAttempt.status !== "failed") return null;
+  } else if (input.status === "running") {
+    // P1-1 rework 2: a running case cannot have a terminal (passed/failed)
+    // attempt as its final attempt.
+    if (finalAttempt.status === "passed" || finalAttempt.status === "failed") {
+      return null;
+    }
   }
 
   return {
@@ -592,6 +602,18 @@ function normalizeTrack1CampaignAgentDetail(
     normalizedCases.push(normalized);
   }
 
+  // P1-1 rework 2: agent status must be consistent with its case statuses.
+  // completed -> all 3 cases must be terminal (passed or failed)
+  // running   -> at least one case must be running (not all terminal)
+  const allCasesTerminal = normalizedCases.every(
+    (c) => c.status === "passed" || c.status === "failed"
+  );
+  if (input.status === "completed") {
+    if (!allCasesTerminal) return null;
+  } else if (input.status === "running") {
+    if (allCasesTerminal) return null;
+  }
+
   return {
     campaign_id: input.campaign_id,
     agent_id: input.agent_id,
@@ -635,6 +657,18 @@ export function normalizeTrack1CampaignDetail(
     );
     if (!normalized) return null;
     normalizedAgents.push(normalized);
+  }
+
+  // P1-1 rework 2: campaign status must be consistent with agent statuses.
+  // completed -> all 3 agents must be completed
+  // running   -> at least one agent must be running (not all completed)
+  const allAgentsCompleted = normalizedAgents.every(
+    (a) => a.status === "completed"
+  );
+  if (input.status === "completed") {
+    if (!allAgentsCompleted) return null;
+  } else if (input.status === "running") {
+    if (allAgentsCompleted) return null;
   }
 
   return {

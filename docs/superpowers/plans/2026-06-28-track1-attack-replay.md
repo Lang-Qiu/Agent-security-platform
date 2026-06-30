@@ -6,7 +6,7 @@
 
 **Architecture:** Engine-private replay behavior lives under `engines/sandbox/src/replay/`; fixed repository fixtures are validated and compiled into the shared REQ-005 result contract. Three thin scenario entrypoints serialize complete scenario results atomically, while repository tests lock safety boundaries and gate registration.
 
-**Tech Stack:** Node.js 22.17+, TypeScript with native type stripping, ESM, `node:test`, existing shared sandbox contracts, Node.js `crypto` and filesystem built-ins.
+**Tech Stack:** Node.js 22.19+, TypeScript with native type stripping, ESM, `node:test`, existing shared sandbox contracts, Node.js `crypto` and filesystem built-ins.
 
 ---
 

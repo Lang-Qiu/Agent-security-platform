@@ -6,7 +6,7 @@
 
 **Architecture:** `shared/types/sandbox.ts` owns serialized cross-module types and enum constants. `shared/contracts/sandbox.ts` owns record-level normalization and supervision-collection invariants; the existing result normalizer composes those functions and `shared/contracts/result.ts` applies terminal-result requirements. No policy evaluator, backend route, engine execution, or frontend behavior is added.
 
-**Tech Stack:** Node.js 22.17+, TypeScript strict mode, `node:test`, existing shared-contract normalizer pattern, npm workspace scripts.
+**Tech Stack:** Node.js 22.19+, TypeScript strict mode, `node:test`, existing shared-contract normalizer pattern, npm workspace scripts.
 
 ---
 

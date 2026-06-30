@@ -232,7 +232,7 @@ engines/<engine-name>/
 当前工程基线暂定为：
 
 - workspace 管理：`pnpm workspace`
-- Node.js 基线：`22.17.0`
+- Node.js 基线：`22.19.0`
 - TypeScript 约束：`strict: true`
 
 以上基线用于平台骨架阶段的契约与测试落地，后续如果项目级工具链决策变化，应先更新 `metadata.md` 再统一调整。

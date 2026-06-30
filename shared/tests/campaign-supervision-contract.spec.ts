@@ -509,3 +509,63 @@ test("REQ-T1-DEMO-010 emits session_evidence_refs in campaign traversal order", 
   }
   assert.deepEqual(normalized.session_evidence_refs, expected);
 });
+
+// -- P1-1 rework 2: cascade status consistency ---------------------------------
+
+test("REQ-T1-DEMO-010 rejects case detail passed when final attempt is failed", () => {
+  const detail = makeValidCampaignDetail();
+  const c = detail.agents[0].cases[0];
+  // case is "passed" but its only attempt is "failed"
+  c.status = "passed";
+  c.attempts[0].status = "failed";
+  c.attempts[0].actual_action = c.expected_action; // satisfy action rule
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 rejects case detail failed when final attempt is passed", () => {
+  const detail = makeValidCampaignDetail();
+  const c = detail.agents[0].cases[0];
+  c.status = "failed";
+  c.attempts[0].status = "passed";
+  c.attempts[0].actual_action = c.expected_action;
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 rejects case detail running when final attempt is passed", () => {
+  const detail = makeValidCampaignDetail();
+  const c = detail.agents[0].cases[0];
+  c.status = "running";
+  c.attempts[0].status = "passed";
+  c.attempts[0].actual_action = c.expected_action;
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 rejects agent detail running when all cases are passed", () => {
+  const detail = makeValidCampaignDetail();
+  // All cases passed (default fixture) but agent status is "running"
+  detail.agents[0].status = "running";
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 rejects agent detail completed when a case is running", () => {
+  const detail = makeValidCampaignDetail();
+  detail.agents[0].status = "completed";
+  detail.agents[0].cases[0].status = "running";
+  detail.agents[0].cases[0].attempts[0].status = "running";
+  detail.agents[0].cases[0].attempts[0].actual_action = null;
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 rejects campaign completed when an agent is running", () => {
+  const detail = makeValidCampaignDetail();
+  detail.status = "completed";
+  detail.agents[0].status = "running";
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 rejects campaign running when all agents are completed", () => {
+  const detail = makeValidCampaignDetail();
+  // All agents completed (default fixture) but campaign is "running"
+  detail.status = "running";
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});

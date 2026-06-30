@@ -1,5 +1,9 @@
 import { normalizeBaseResult } from "../../contracts/result.ts";
 import type { BaseResult, SandboxRunResultDetails } from "../../types/result.ts";
+import {
+  TRACK1_MODEL_REF_CANONICAL,
+  TRACK1_OPENCLAW_PACKAGE_INTEGRITY
+} from "../../types/campaign-ingest.ts";
 import type {
   Track1CampaignEvidenceRegistration,
   Track1CampaignFinalizeEnvelope,
@@ -13,10 +17,6 @@ const SESSION_ID = "session:0123456789abcdef0123456789abcdef";
 const TASK_ID = "task:0123456789abcdef0123456789abcdef";
 const SHA256_A = "a".repeat(64);
 const SHA256_C = "c".repeat(64);
-// P1-2: openclaw_package_integrity must use SRI format (sha512-<base64>),
-// matching the actual lockfile integrity for openclaw@2026.6.10.
-const OPENCLAW_PACKAGE_INTEGRITY =
-  "sha512-LcooND2tBQw8A+kc1Ujltu3lg30bJ0w7XaeRy7eYzobb8BBdcW6DOGbwJL4vpj1vl9+gjRceOtlh5nh9OARcug==";
 
 // Build a real normalized BaseResult<SandboxRunResultDetails> using existing shared contracts.
 // Status is "finished" with an "allow" decision, blocked=false, no alerts or blocked records.
@@ -103,8 +103,8 @@ export function makeCampaignStartEnvelope(): Track1CampaignStartEnvelope {
     campaign_id: CAMPAIGN_ID,
     campaign_manifest_sha256: SHA256_A,
     openclaw_version: "2026.6.10",
-    openclaw_package_integrity: OPENCLAW_PACKAGE_INTEGRITY,
-    model_ref: "model://track1/openclaw-demo",
+    openclaw_package_integrity: TRACK1_OPENCLAW_PACKAGE_INTEGRITY,
+    model_ref: TRACK1_MODEL_REF_CANONICAL,
     started_at: "2026-06-30T00:00:00.000Z"
   };
 }

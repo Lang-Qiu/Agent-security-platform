@@ -17,7 +17,7 @@ tests use recording ports; an offline container gate starts the exact
 OpenClaw package and native plugin but never calls a cloud model. Credentialed
 campaign execution remains a Phase 7 gate.
 
-**Tech Stack:** TypeScript ESM, Node.js 22.17+, `node:test`, Docker Compose v2,
+**Tech Stack:** TypeScript ESM, Node.js 22.19+, `node:test`, Docker Compose v2,
 exact `openclaw@2026.6.10`, native `spawn` without a shell, existing Phase 1
 manifest/contracts, Phase 2 internal ingest, Phase 3 native plugin.
 

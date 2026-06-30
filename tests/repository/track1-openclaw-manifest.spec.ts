@@ -177,39 +177,6 @@ test("REQ-T1-DEMO-010 schema enforces unique agents and cases via uniqueItems", 
   );
 });
 
-// -- P1-3 rework: Node baseline in AGENTS.md and Phase plans -------------------
-
-test("REQ-T1-DEMO-010 AGENTS.md and Phase 4 plan pin Node >=22.19.0", () => {
-  // The Phase 1 review found the Node baseline bump from 22.17.0 to 22.19.0
-  // was not closed: AGENTS.md and the Phase 4 Docker plan still referenced
-  // 22.17.x. Every artifact that names the Node baseline must be aligned.
-  const agents = readText("AGENTS.md");
-  assert.doesNotMatch(
-    agents,
-    /22\.17\.0/,
-    "AGENTS.md must not reference the old 22.17.0 baseline"
-  );
-  assert.match(
-    agents,
-    /22\.19\.0/,
-    "AGENTS.md must reference the new 22.19.0 baseline"
-  );
-
-  const phase4 = readText(
-    "docs/superpowers/plans/2026-06-30-track1-demo-010-phase-4-runtime-orchestration.md"
-  );
-  assert.doesNotMatch(
-    phase4,
-    /22\.17\.0/,
-    "Phase 4 plan must not reference the old 22.17.0 baseline"
-  );
-  assert.match(
-    phase4,
-    /22\.19\.0/,
-    "Phase 4 plan must reference the new 22.19.0 baseline"
-  );
-});
-
 // -- P2-5: schema fixed mapping (agent/scenario/case constraints) --------------
 
 test("REQ-T1-DEMO-010 schema pins each agent to its fixed scenario_id", () => {
@@ -246,4 +213,113 @@ test("REQ-T1-DEMO-010 schema pins each case to its fixed (agent, scenario, case)
        casesItem.properties.agent_id.const)),
     "cases.items must constrain (agent_id, scenario_id, case_id) to a fixed triple via oneOf or const"
   );
+});
+
+// -- P1-2 rework 2: Node baseline across ALL artifacts -------------------------
+
+test("REQ-T1-DEMO-010 no artifact references the old 22.17 Node baseline", () => {
+  // The first rework test only checked AGENTS.md and the Phase 4 plan for the
+  // exact string "22.17.0", missing "22.17" (without patch version) in the
+  // Tech Stack lines of every phase plan, plus architecture.md, api-contract.md,
+  // README.md, and design specs. Every artifact must be aligned to 22.19.
+  // docs/progress.md is excluded because it legitimately records the migration
+  // history (referencing the old baseline in changelog entries).
+  const artifacts = [
+    "AGENTS.md",
+    "README.md",
+    "docs/architecture.md",
+    "docs/api-contract.md",
+    "docs/superpowers/plans/2026-06-30-track1-demo-010-master.md",
+    "docs/superpowers/plans/2026-06-30-track1-demo-010-phase-1-contracts.md",
+    "docs/superpowers/plans/2026-06-30-track1-demo-010-phase-2-backend.md",
+    "docs/superpowers/plans/2026-06-30-track1-demo-010-phase-3-openclaw-plugin.md",
+    "docs/superpowers/plans/2026-06-30-track1-demo-010-phase-4-runtime-orchestration.md",
+    "docs/superpowers/plans/2026-06-30-track1-demo-010-phase-5-campaign-ui.md",
+    "docs/superpowers/plans/2026-06-30-track1-demo-010-phase-6-report-evidence.md",
+    "docs/superpowers/plans/2026-06-30-track1-demo-010-phase-7-credentialed-e2e.md",
+    "docs/superpowers/specs/2026-06-30-track1-openclaw-demo-design.md"
+  ];
+  for (const path of artifacts) {
+    const text = readText(path);
+    assert.doesNotMatch(
+      text,
+      /22\.17/,
+      `${path} must not reference the old 22.17 Node baseline`
+    );
+  }
+});
+
+// -- P1-3 rework: schema pins case_sha256 + ajv validator test -----------------
+
+test("REQ-T1-DEMO-010 schema pins case_sha256 as const per case branch", () => {
+  // uniqueItems treats objects with different case_sha256 as distinct, so an
+  // attacker can repeat the same case_id branch nine times with different
+  // hashes and pass schema validation. Each branch must pin case_sha256 to a
+  // fixed const so that duplicate case_id entries are truly identical objects
+  // and uniqueItems rejects them.
+  const schema = JSON.parse(
+    readText("samples/track1/openclaw/campaign.schema.json")
+  );
+  const branches = schema.properties.cases.items.oneOf;
+  assert.ok(Array.isArray(branches) && branches.length === 9);
+  for (const branch of branches) {
+    const shaProp = branch.properties.case_sha256;
+    assert.ok(
+      shaProp && typeof shaProp.const === "string" && /^[0-9a-f]{64}$/.test(shaProp.const),
+      "each case branch must pin case_sha256 to a fixed const hex string"
+    );
+  }
+});
+
+test("REQ-T1-DEMO-010 schema rejects a manifest with duplicate case_id but different hashes", () => {
+  // Build a malicious manifest: repeat T1-SC-001-C001 nine times, each with a
+  // different (valid-pattern) case_sha256 so the objects are distinct and
+  // uniqueItems would not catch them. Schema validation must reject this
+  // because each oneOf branch pins case_sha256 as a const, so a duplicate
+  // case_id with a different hash matches no branch.
+  const manifest = JSON.parse(
+    readText("samples/track1/openclaw/campaign.v1.json")
+  );
+  const baseCase = manifest.cases[0];
+  const maliciousCases = [];
+  for (let i = 0; i < 9; i++) {
+    maliciousCases.push({
+      ...baseCase,
+      case_sha256: "a".repeat(63) + i.toString(16)
+    });
+  }
+  const malicious = {
+    ...manifest,
+    cases: maliciousCases
+  };
+  const schema = JSON.parse(
+    readText("samples/track1/openclaw/campaign.schema.json")
+  );
+  // Inline minimal JSON Schema validator for the oneOf + const subset.
+  // This is sufficient to prove the schema rejects the malicious manifest
+  // without adding a new production dependency.
+  const casesSchema = schema.properties.cases;
+  const branches = casesSchema.items.oneOf;
+  const validCase = malicious.cases.every((caseObj: Record<string, unknown>) => {
+    return branches.some((branch: {
+      properties: Record<string, { const?: unknown; pattern?: string; type?: string }>;
+      required: string[];
+    }) => {
+      const props = branch.properties;
+      for (const key of Object.keys(props)) {
+        const propSchema = props[key];
+        if (propSchema.const !== undefined) {
+          if (caseObj[key] !== propSchema.const) return false;
+        } else if (propSchema.pattern) {
+          const re = new RegExp(propSchema.pattern);
+          if (typeof caseObj[key] !== "string" || !re.test(caseObj[key])) return false;
+        }
+      }
+      for (const req of branch.required) {
+        if (!(req in caseObj)) return false;
+      }
+      return true;
+    });
+  });
+  assert.equal(validCase, false, "schema must reject duplicate case_id with different hashes");
 });

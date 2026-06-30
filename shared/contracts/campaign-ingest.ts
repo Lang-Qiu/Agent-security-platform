@@ -20,6 +20,8 @@ import {
   TRACK1_CAMPAIGN_SNAPSHOT_SCHEMA_VERSION,
   TRACK1_CAMPAIGN_START_SCHEMA_VERSION,
   TRACK1_LIFECYCLE_MAX_BYTES,
+  TRACK1_MODEL_REF_CANONICAL,
+  TRACK1_OPENCLAW_PACKAGE_INTEGRITY,
   TRACK1_OPENCLAW_VERSION,
   TRACK1_SNAPSHOT_MAX_BYTES,
   type Track1CampaignEvidenceRegistration,
@@ -30,17 +32,6 @@ import {
   type Track1CampaignStartEnvelope
 } from "../types/campaign-ingest.ts";
 
-export {
-  TRACK1_CAMPAIGN_EVIDENCE_REGISTRATION_SCHEMA_VERSION,
-  TRACK1_CAMPAIGN_FINALIZE_SCHEMA_VERSION,
-  TRACK1_CAMPAIGN_SNAPSHOT_ACK_SCHEMA_VERSION,
-  TRACK1_CAMPAIGN_SNAPSHOT_SCHEMA_VERSION,
-  TRACK1_CAMPAIGN_START_SCHEMA_VERSION,
-  TRACK1_LIFECYCLE_MAX_BYTES,
-  TRACK1_OPENCLAW_VERSION,
-  TRACK1_SNAPSHOT_MAX_BYTES
-} from "../types/campaign-ingest.ts";
-
 // -- shared validation helpers -------------------------------------------------
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
@@ -48,16 +39,9 @@ const ATTEMPT_ID_PATTERN = /^attempt:t1-sc-(\d{3})-c(\d{3}):([12])$/;
 const ISO_8601_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/;
 
-// P1-1 rework: openclaw_package_integrity must be the exact SRI value from
-// the pinned lockfile entry for openclaw@2026.6.10. A loose regex accepts
-// forged values like `sha512-A`; pinning the exact string closes that.
-const TRACK1_OPENCLAW_PACKAGE_INTEGRITY =
-  "sha512-LcooND2tBQw8A+kc1Ujltu3lg30bJ0w7XaeRy7eYzobb8BBdcW6DOGbwJL4vpj1vl9+gjRceOtlh5nh9OARcug==";
-
-// P1-1 rework: model_ref must be the canonical reference URI only. A loose
-// format check accepts Bearer tokens, URL userinfo, query parameters, and
-// alternative paths. Whitelist the exact URI string.
-const TRACK1_MODEL_REF_CANONICAL = "model://track1/openclaw-demo";
+// P1-1 rework: openclaw_package_integrity and model_ref are now imported as
+// public constants from types/campaign-ingest.ts (P2-4), so fixtures and
+// Phase 4 callers reference the same single source of truth.
 
 function isSha256Hex(value: unknown): value is string {
   return isString(value) && SHA256_PATTERN.test(value);

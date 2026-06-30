@@ -23,6 +23,14 @@ export const TRACK1_OPENCLAW_VERSION = "2026.6.10" as const;
 export const TRACK1_SNAPSHOT_MAX_BYTES = 2 * 1024 * 1024;
 export const TRACK1_LIFECYCLE_MAX_BYTES = 256 * 1024;
 
+// P2-4: pinned package integrity and canonical model_ref as public contract
+// constants. Exported so fixtures and Phase 4 callers reference a single
+// source of truth instead of duplicating hardcoded strings.
+export const TRACK1_OPENCLAW_PACKAGE_INTEGRITY =
+  "sha512-LcooND2tBQw8A+kc1Ujltu3lg30bJ0w7XaeRy7eYzobb8BBdcW6DOGbwJL4vpj1vl9+gjRceOtlh5nh9OARcug==" as const;
+
+export const TRACK1_MODEL_REF_CANONICAL = "model://track1/openclaw-demo" as const;
+
 export interface Track1CampaignStartEnvelope {
   schema_version: typeof TRACK1_CAMPAIGN_START_SCHEMA_VERSION;
   campaign_id: Track1CampaignId;

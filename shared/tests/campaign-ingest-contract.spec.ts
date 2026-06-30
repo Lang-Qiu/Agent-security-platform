@@ -7,10 +7,14 @@ import {
   normalizeTrack1CampaignFinalizeEnvelope,
   normalizeTrack1CampaignSnapshotAck,
   normalizeTrack1CampaignStartEnvelope,
-  normalizeTrack1CampaignSnapshotEnvelope,
-  TRACK1_LIFECYCLE_MAX_BYTES,
-  TRACK1_SNAPSHOT_MAX_BYTES
+  normalizeTrack1CampaignSnapshotEnvelope
 } from "../contracts/campaign-ingest.ts";
+import {
+  TRACK1_LIFECYCLE_MAX_BYTES,
+  TRACK1_SNAPSHOT_MAX_BYTES,
+  TRACK1_OPENCLAW_PACKAGE_INTEGRITY,
+  TRACK1_MODEL_REF_CANONICAL
+} from "../index.ts";
 import {
   makeCampaignEvidenceRegistration,
   makeCampaignFinalizeEnvelope,
@@ -372,4 +376,25 @@ test("REQ-T1-DEMO-010 finalize envelope uses track1-campaign-finalize.v1", () =>
     null,
     "normalizer must reject the drifted schema_version"
   );
+});
+
+// -- P2-4: pinned values as public contract constants --------------------------
+
+test("REQ-T1-DEMO-010 exports pinned SRI and model_ref as public constants", () => {
+  // The pinned SRI value and canonical model_ref must be exported from the
+  // shared package root so that fixtures and Phase 4 callers reference the
+  // same single source of truth, not duplicated hardcoded strings.
+  assert.equal(
+    TRACK1_OPENCLAW_PACKAGE_INTEGRITY,
+    "sha512-LcooND2tBQw8A+kc1Ujltu3lg30bJ0w7XaeRy7eYzobb8BBdcW6DOGbwJL4vpj1vl9+gjRceOtlh5nh9OARcug=="
+  );
+  assert.equal(TRACK1_MODEL_REF_CANONICAL, "model://track1/openclaw-demo");
+});
+
+test("REQ-T1-DEMO-010 fixture reuses exported pinned constants", () => {
+  // The fixture must not duplicate the SRI string; it must import and reuse
+  // the exported constant so any future pin update propagates automatically.
+  const envelope = makeCampaignStartEnvelope();
+  assert.equal(envelope.openclaw_package_integrity, TRACK1_OPENCLAW_PACKAGE_INTEGRITY);
+  assert.equal(envelope.model_ref, TRACK1_MODEL_REF_CANONICAL);
 });

@@ -163,7 +163,7 @@ The frontend should evolve from the current sandbox placeholder into an operator
 - Shared contracts: TypeScript types and runtime normalizers under `shared/`.
 - Engines: `engines/asset-scan`, `engines/skills-static`, `engines/sandbox`.
 - Package manager: `pnpm@10.0.0`.
-- Node.js baseline: `>=22.17.0`.
+- Node.js baseline: `>=22.19.0`.
 
 ## Commands
 

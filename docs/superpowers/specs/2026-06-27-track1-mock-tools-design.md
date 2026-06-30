@@ -97,7 +97,7 @@ Expected safety boundaries:
 
 ## Tech Stack
 
-- Node.js `>=22.17.0`
+- Node.js `>=22.19.0`
 - TypeScript with Node's type-stripping test runner
 - Existing `engines/sandbox` ownership boundary
 - No new runtime or test dependency

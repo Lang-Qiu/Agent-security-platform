@@ -78,7 +78,7 @@ The plugin does not import a model SDK, HTTP client, backend module, frontend mo
 
 ## Tech Stack
 
-- Node.js `>=22.17.0`.
+- Node.js `>=22.19.0`.
 - TypeScript ESM executed with Node native type stripping.
 - Existing `node:test` and `node:assert/strict` test style.
 - Existing shared sandbox/result normalizers.

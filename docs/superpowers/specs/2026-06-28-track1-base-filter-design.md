@@ -163,7 +163,7 @@ frontend-facing contract.
 
 ## Tech Stack
 
-- Node.js `>=22.17.0`.
+- Node.js `>=22.19.0`.
 - TypeScript ESM with Node native type stripping.
 - Existing `node:test` and `node:assert/strict` test style.
 - Existing sandbox monitor, replay loader, simulated tools, and shared
