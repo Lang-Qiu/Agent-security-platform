@@ -2482,7 +2482,8 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
 - rework round 3 (2026-06-30): review identified 2 remaining defects (1 P1 visual, 1 P2 concurrency); both fixed via TDD:
   - P1 390px width still 0: `.console-main { width: 100% }` was overridden by Ant Design's higher-specificity `.ant-layout-has-sider > .ant-layout { width: 0 }` rule. Replaced with `.console-shell.ant-layout-has-sider > .console-main.ant-layout { width: 100% }` selector that matches Ant's specificity. Repo test asserts the high-specificity selector pattern exists in the CSS (commit `77a1a57`)
   - P2 hasRealDetailRef cross-session race: `loadDetail` wrote `hasRealDetailRef.current = true` after `await getSupervisionSession(...)` without verifying the session was still current. A late real response from a prior session could mark the new session as having a real snapshot, causing its first mock fallback to be wrongly rejected as stale. Fixed by checking `lastDetailSessionRef.current === sessionId` after the await, before writing the ref (commit `77a1a57`)
-  - rework round 3 commits: `77a1a57`
-  - rework round 3 test additions: +1 repo CSS specificity assertion, +1 frontend cross-session race regression test
+  - P2 test validity: original race test did not manufacture a real race (resolved A before switching to B). Rewrote test to: (1) mock supervision-service so getSupervisionSession ignores abort signals, (2) keep A's promise pending across the session switch, (3) resolve A late after B's initial mock detail loads, (4) trigger B's next detail poll via refresh, (5) assert B does NOT enter stale state. Verified RED on old code (race guard removed shows "Session detail is stale") and GREEN on fixed code (commit `59b8866`)
+  - rework round 3 commits: `77a1a57`, `59b8866`
+  - rework round 3 test additions: +1 repo CSS specificity assertion, +1 frontend cross-session race regression test (rewritten to be a valid RED→GREEN)
 - status: REWORK_ROUND_3_COMPLETE_PENDING_REVIEW
 - next blocker: user browser acceptance verification, then REQ-T1-DEMO-010
