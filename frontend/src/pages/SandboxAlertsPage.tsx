@@ -113,6 +113,7 @@ export function SandboxAlertsPage() {
   const [dataSource, setDataSource] = useState<SupervisionDataSource>("mock");
   const [mockFallback, setMockFallback] =
     useState<SandboxSupervisionOverview | null>(null);
+  const [mobileView, setMobileView] = useState<"list" | "inspector">("list");
 
   const queryRef = useRef(query);
   queryRef.current = query;
@@ -247,8 +248,14 @@ export function SandboxAlertsPage() {
       const next = new URLSearchParams(searchParams);
       next.set("session_id", defaultSession.session_id);
       setSearchParams(next, { replace: true });
+      setMobileView("inspector");
     }
   }, [displayOverview, sessionIdFromUrl, searchParams, setSearchParams]);
+
+  // Sync mobile view when session_id changes from external sources (deep links).
+  useEffect(() => {
+    setMobileView(sessionIdFromUrl ? "inspector" : "list");
+  }, [sessionIdFromUrl]);
 
   // Refresh overview when filters change (skip initial render).
   const isFirstRenderRef = useRef(true);
@@ -290,9 +297,14 @@ export function SandboxAlertsPage() {
       const next = new URLSearchParams(searchParams);
       next.set("session_id", sessionId);
       setSearchParams(next);
+      setMobileView("inspector");
     },
     [searchParams, setSearchParams]
   );
+
+  const handleMobileBack = useCallback(() => {
+    setMobileView("list");
+  }, []);
 
   return (
     <section className="sandbox-alerts-page console-panel">
@@ -319,26 +331,36 @@ export function SandboxAlertsPage() {
           <Paragraph>Loading supervision data...</Paragraph>
         </div>
       ) : displayOverview ? (
-        <div className="supervision-workbench">
-          {sessions.length > 0 ? (
-            <SupervisionSessionList
-              sessions={sessions}
-              selectedSessionId={sessionIdFromUrl}
-              onSelect={selectSession}
-            />
-          ) : (
-            <div className="supervision-empty-state">
-              <Paragraph>
-                {hasFilters
-                  ? "No sessions match the current filters."
-                  : "No sessions available."}
-              </Paragraph>
-            </div>
-          )}
+        <div className={`supervision-workbench mobile-view-${mobileView}`}>
+          <div className="supervision-session-list-wrapper">
+            {sessions.length > 0 ? (
+              <SupervisionSessionList
+                sessions={sessions}
+                selectedSessionId={sessionIdFromUrl}
+                onSelect={selectSession}
+              />
+            ) : (
+              <div className="supervision-empty-state">
+                <Paragraph>
+                  {hasFilters
+                    ? "No sessions match the current filters."
+                    : "No sessions available."}
+                </Paragraph>
+              </div>
+            )}
+          </div>
 
           <aside className="supervision-inspector">
             {selectedSession || sessionIdFromUrl ? (
               <>
+                <button
+                  type="button"
+                  className="supervision-mobile-back"
+                  onClick={handleMobileBack}
+                  aria-label="Back to session list"
+                >
+                  ← Back
+                </button>
                 {sessionIdFromUrl && !selectedSession ? (
                   <div className="supervision-inspector-outside-filters">
                     <Paragraph>

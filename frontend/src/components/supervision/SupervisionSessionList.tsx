@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import {
   CheckCircleOutlined,
   ClockCircleOutlined,
@@ -66,19 +66,63 @@ export function SupervisionSessionList({
   selectedSessionId,
   onSelect
 }: SupervisionSessionListProps) {
+  const handleKeyDown = (e: KeyboardEvent<HTMLUListElement>) => {
+    const target = e.target as HTMLElement;
+    if (target.getAttribute("role") !== "option") return;
+
+    const items = Array.from(
+      e.currentTarget.querySelectorAll<HTMLElement>('[role="option"]')
+    );
+    const currentIndex = items.indexOf(target as HTMLElement);
+    if (currentIndex === -1) return;
+
+    let nextIndex: number | null = null;
+    switch (e.key) {
+      case "ArrowDown":
+        nextIndex = Math.min(currentIndex + 1, items.length - 1);
+        break;
+      case "ArrowUp":
+        nextIndex = Math.max(currentIndex - 1, 0);
+        break;
+      case "Home":
+        nextIndex = 0;
+        break;
+      case "End":
+        nextIndex = items.length - 1;
+        break;
+      case "Enter":
+      case " ":
+        e.preventDefault();
+        onSelect(sessions[currentIndex].session_id);
+        return;
+      default:
+        return;
+    }
+
+    if (nextIndex !== null && nextIndex !== currentIndex) {
+      e.preventDefault();
+      items[nextIndex].focus();
+    }
+  };
+
   return (
     <ul
       role="listbox"
       aria-label="Supervision sessions"
       className="supervision-session-list"
+      onKeyDown={handleKeyDown}
     >
-      {sessions.map((session) => {
+      {sessions.map((session, index) => {
         const isSelected = session.session_id === selectedSessionId;
+        const isFirst = index === 0;
+        // Roving tabindex: selected option (or first if none selected) is in tab order
+        const tabIndex = isSelected || (!selectedSessionId && isFirst) ? 0 : -1;
         return (
           <li
             key={session.session_id}
             role="option"
             aria-selected={isSelected}
+            tabIndex={tabIndex}
             className={
               "supervision-session-row" +
               (isSelected ? " supervision-session-row--selected" : "")

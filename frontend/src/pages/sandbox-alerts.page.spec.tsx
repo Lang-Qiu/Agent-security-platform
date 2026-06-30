@@ -739,4 +739,73 @@ describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
       screen.queryByText(/select a session/i)
     ).not.toBeInTheDocument();
   }, 20000);
+
+  test("REQ-T1-SUPERVISION-UI-009 mobile back button switches to list view keeping session in URL", async () => {
+    mockSupervisionApi();
+    const { router } = await renderAppAtRoute("/results/sandbox");
+
+    await screen.findByRole("listbox", { name: "Supervision sessions" });
+
+    // A session is auto-selected; workbench should be in inspector view on mobile
+    await waitFor(() => {
+      const workbench = document.querySelector(".supervision-workbench");
+      expect(workbench?.className).toContain("mobile-view-inspector");
+    });
+
+    // Mobile back button should be present with accessible label
+    const backButton = screen.getByRole("button", {
+      name: /back to session list/i
+    });
+    expect(backButton).toBeInTheDocument();
+
+    // Session_id is in URL
+    expect(router.state.location.search).toContain("session_id=");
+
+    // Click back button — switches to list view without clearing URL
+    fireEvent.click(backButton);
+
+    await waitFor(() => {
+      const updatedWorkbench =
+        document.querySelector(".supervision-workbench");
+      expect(updatedWorkbench?.className).toContain("mobile-view-list");
+    });
+
+    // Spec: "the selected session remains encoded in the URL"
+    expect(router.state.location.search).toContain("session_id=");
+  }, 20000);
+
+  test("REQ-T1-SUPERVISION-UI-009 session list supports keyboard navigation", async () => {
+    mockSupervisionApi();
+    await renderAppAtRoute("/results/sandbox");
+
+    await screen.findByRole("listbox", { name: "Supervision sessions" });
+
+    const selectedOption = screen.getByRole("option", { selected: true });
+    // Selected option is focusable via keyboard (roving tabindex)
+    expect(selectedOption).toHaveAttribute("tabindex", "0");
+
+    // Non-selected options are in the tab order only when focused
+    const allOptions = screen.getAllByRole("option");
+    const unselectedOption = allOptions.find(
+      (o) => o !== selectedOption
+    );
+    expect(unselectedOption).toHaveAttribute("tabindex", "-1");
+
+    // Focus the selected option and navigate with ArrowDown
+    selectedOption.focus();
+    expect(selectedOption).toHaveFocus();
+
+    const selectedIdx = allOptions.indexOf(selectedOption);
+    const nextOption = allOptions[selectedIdx + 1];
+
+    fireEvent.keyDown(selectedOption, { key: "ArrowDown" });
+    expect(nextOption).toHaveFocus();
+
+    // Enter selects the focused option
+    fireEvent.keyDown(nextOption, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(nextOption).toHaveAttribute("aria-selected", "true");
+    });
+  }, 20000);
 });
