@@ -179,6 +179,7 @@ function makeValidCampaignDetail() {
       counter += 1;
       const sessionId = `session:${hexSuffix(counter)}`;
       const taskId = `task:${hexSuffix(counter + 100)}`;
+      const expectedAction = def.expected_actions[caseIdx];
       const attempt = {
         campaign_id: CAMPAIGN_DETAIL_ID,
         agent_id: def.agent_id,
@@ -189,7 +190,7 @@ function makeValidCampaignDetail() {
         session_id: sessionId,
         task_id: taskId,
         status: "passed",
-        actual_action: "allow",
+        actual_action: expectedAction,
         started_at: "2026-06-30T00:00:00.000Z",
         updated_at: "2026-06-30T00:00:01.000Z"
       };
@@ -360,7 +361,9 @@ test("REQ-T1-DEMO-010 accepts completed summary with completed_at", () => {
   const summary = {
     ...VALID_SUMMARY,
     status: "completed",
-    completed_at: "2026-06-30T00:10:00.000Z"
+    completed_at: "2026-06-30T00:10:00.000Z",
+    passed_case_count: 8,
+    failed_case_count: 1
   };
   assert.ok(normalizeTrack1CampaignSummary(summary));
 });
@@ -400,4 +403,109 @@ test("REQ-T1-DEMO-010 rejects object with prototype-inherited field replacing re
   malicious.evidence_available = false;
   malicious.raw_prompt = "PROTO_BYPASS_SENTINEL";
   assert.equal(normalizeTrack1CampaignSummary(malicious), null);
+});
+
+// -- P1-2 rework: detail case status-action consistency + completed summary ----
+
+test("REQ-T1-DEMO-010 rejects case detail passed when actual_action != expected_action", () => {
+  const detail = makeValidCampaignDetail();
+  const c = detail.agents[0].cases[0];
+  // expected_action is "deny" for T1-SC-001-C001
+  c.status = "passed";
+  c.attempts[0].status = "passed";
+  c.attempts[0].actual_action = "allow"; // mismatch with expected "deny"
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 rejects case detail with passed status but null actual_action", () => {
+  const detail = makeValidCampaignDetail();
+  const c = detail.agents[0].cases[0];
+  c.status = "passed";
+  c.attempts[0].status = "passed";
+  c.attempts[0].actual_action = null;
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 rejects case detail with failed status but null actual_action", () => {
+  const detail = makeValidCampaignDetail();
+  const c = detail.agents[0].cases[0];
+  c.status = "failed";
+  c.attempts[0].status = "failed";
+  c.attempts[0].actual_action = null;
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 rejects completed summary when passed_case_count < 9", () => {
+  // A completed campaign requires all 9 cases resolved (passed + failed = 9),
+  // not merely 1 passed + 0 failed.
+  const summary = {
+    ...VALID_SUMMARY,
+    status: "completed",
+    completed_at: "2026-06-30T00:10:00.000Z",
+    passed_case_count: 1,
+    failed_case_count: 0
+  };
+  assert.equal(normalizeTrack1CampaignSummary(summary), null);
+});
+
+test("REQ-T1-DEMO-010 accepts completed summary when passed + failed = 9", () => {
+  const summary = {
+    ...VALID_SUMMARY,
+    status: "completed",
+    completed_at: "2026-06-30T00:10:00.000Z",
+    passed_case_count: 8,
+    failed_case_count: 1
+  };
+  assert.ok(normalizeTrack1CampaignSummary(summary));
+});
+
+test("REQ-T1-DEMO-010 rejects completed_at earlier than started_at", () => {
+  const summary = {
+    ...VALID_SUMMARY,
+    status: "completed",
+    // started_at is "2026-06-30T00:00:00.000Z"; completed_at must be >= started_at
+    completed_at: "2026-06-29T23:59:59.000Z"
+  };
+  assert.equal(normalizeTrack1CampaignSummary(summary), null);
+});
+
+test("REQ-T1-DEMO-010 accepts completed_at equal to started_at", () => {
+  const summary = {
+    ...VALID_SUMMARY,
+    status: "completed",
+    started_at: "2026-06-30T00:00:00.000Z",
+    completed_at: "2026-06-30T00:00:00.000Z",
+    passed_case_count: 8,
+    failed_case_count: 1
+  };
+  assert.ok(normalizeTrack1CampaignSummary(summary));
+});
+
+// -- P2-4: evidence ref deterministic ordering ---------------------------------
+
+test("REQ-T1-DEMO-010 rejects evidence with session_evidence_refs in reversed order", () => {
+  const evidence = makeValidCampaignEvidence();
+  // Reverse the order of refs; the campaign detail traversal order is fixed
+  // (agent 0 case 0 attempt 0, agent 0 case 0 attempt 1, ... agent 2 case 2).
+  evidence.session_evidence_refs.reverse();
+  assert.equal(normalizeTrack1CampaignEvidenceExport(evidence), null);
+});
+
+test("REQ-T1-DEMO-010 emits session_evidence_refs in campaign traversal order", () => {
+  const evidence = makeValidCampaignEvidence();
+  const normalized = normalizeTrack1CampaignEvidenceExport(evidence);
+  assert.ok(normalized);
+  // Rebuild expected order by walking the campaign detail in fixed order.
+  const expected: string[] = [];
+  for (const agent of evidence.campaign.agents) {
+    for (const c of agent.cases) {
+      for (const a of c.attempts) {
+        const hex = a.session_id.substring("session:".length);
+        expected.push(
+          `evidence://track1/campaign/${CAMPAIGN_DETAIL_HEX}/session/${hex}`
+        );
+      }
+    }
+  }
+  assert.deepEqual(normalized.session_evidence_refs, expected);
 });

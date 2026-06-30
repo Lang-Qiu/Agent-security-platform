@@ -14,7 +14,7 @@ export const TRACK1_CAMPAIGN_SNAPSHOT_SCHEMA_VERSION =
 export const TRACK1_CAMPAIGN_SNAPSHOT_ACK_SCHEMA_VERSION =
   "track1-campaign-snapshot-ack.v1" as const;
 export const TRACK1_CAMPAIGN_FINALIZE_SCHEMA_VERSION =
-  "track1-campaign-final.v1" as const;
+  "track1-campaign-finalize.v1" as const;
 export const TRACK1_CAMPAIGN_EVIDENCE_REGISTRATION_SCHEMA_VERSION =
   "track1-campaign-evidence-registration.v1" as const;
 

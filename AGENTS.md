@@ -179,7 +179,7 @@
 
 ## 仓库快速入口
 - 开始任何业务型变更前，先读取 `metadata.md`、`docs/sprint-current.md`、`docs/api-contract.md`、`docs/architecture.md`
-- 依赖与运行基线以仓库根 `package.json` 为准：Node.js `>=22.17.0`、`pnpm@10.0.0`
+- 依赖与运行基线以仓库根 `package.json` 为准：Node.js `>=22.19.0`、`pnpm@10.0.0`
 - 若本地 `node` 版本不符，先执行 `nvm use`，再运行 backend/dev/test 命令
 - 常用验证命令：
 	- 全仓：`npm run test`

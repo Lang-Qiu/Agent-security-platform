@@ -227,6 +227,18 @@ export function normalizeTrack1CampaignSummary(
     return null;
   if (input.retry_count > input.case_count) return null;
 
+  // P1-2 rework: completed campaign requires all 9 cases resolved.
+  if (isCompleted && input.passed_case_count + input.failed_case_count !== input.case_count) {
+    return null;
+  }
+
+  // P1-2 rework: completed_at must not precede started_at.
+  if (isCompleted) {
+    if (Date.parse(completedAt as string) < Date.parse(input.started_at)) {
+      return null;
+    }
+  }
+
   const result: Track1CampaignSummary = {
     schema_version: TRACK1_CAMPAIGN_READ_SCHEMA_VERSION,
     campaign_id: input.campaign_id,
@@ -505,6 +517,20 @@ function normalizeTrack1CampaignCaseDetail(
     normalizedAttempts.push(normalized);
   }
 
+  // P1-2 rework: case status/action consistency, mirroring the case summary
+  // rule. A case detail carries its own status and the attempts' statuses; the
+  // final attempt's actual_action is the case outcome.
+  // passed  -> final attempt actual_action must equal expected_action (not null)
+  // failed  -> final attempt actual_action must not be null
+  // running -> no constraint on actual_action (may be null mid-flight)
+  const finalAttempt = normalizedAttempts[normalizedAttempts.length - 1];
+  if (input.status === "passed") {
+    if (finalAttempt.actual_action === null) return null;
+    if (finalAttempt.actual_action !== input.expected_action) return null;
+  } else if (input.status === "failed") {
+    if (finalAttempt.actual_action === null) return null;
+  }
+
   return {
     campaign_id: input.campaign_id,
     agent_id: input.agent_id,
@@ -650,18 +676,31 @@ export function normalizeTrack1CampaignEvidenceExport(
   if (!artifactMatch) return null;
   if (artifactMatch[1] !== campaignHex) return null;
 
-  // Collect all session hex suffixes from the normalized campaign.
+  // Collect the ordered list of session hex suffixes by walking the campaign
+  // in its fixed traversal order (agent 0 case 0 attempt 0, ... agent 2 case 2).
+  const orderedSessionHexes: string[] = [];
   const sessionHexSet = new Set<string>();
   for (const agent of normalizedCampaign.agents) {
     for (const c of agent.cases) {
       for (const a of c.attempts) {
-        sessionHexSet.add(a.session_id.substring("session:".length));
+        const hex = a.session_id.substring("session:".length);
+        orderedSessionHexes.push(hex);
+        sessionHexSet.add(hex);
       }
     }
   }
 
   // P1-3: session_evidence_refs must be non-empty, unique, and complete.
   if (input.session_evidence_refs.length === 0) return null;
+
+  // P2-4: refs must appear in deterministic campaign traversal order.
+  // Reversed or shuffled refs are rejected even if the set is complete.
+  for (let i = 0; i < input.session_evidence_refs.length; i++) {
+    const ref = input.session_evidence_refs[i];
+    const expectedHex = orderedSessionHexes[i];
+    const expectedRef = `evidence://track1/campaign/${campaignHex}/session/${expectedHex}`;
+    if (ref !== expectedRef) return null;
+  }
 
   const seenRefs = new Set<string>();
   for (const ref of input.session_evidence_refs) {

@@ -122,7 +122,7 @@ export function makeCampaignSnapshotAck(): Track1CampaignSnapshotAck {
 
 export function makeCampaignFinalizeEnvelope(): Track1CampaignFinalizeEnvelope {
   return {
-    schema_version: "track1-campaign-final.v1",
+    schema_version: "track1-campaign-finalize.v1",
     campaign_id: CAMPAIGN_ID,
     requested_status: "completed",
     completed_at: "2026-06-30T00:10:00.000Z"

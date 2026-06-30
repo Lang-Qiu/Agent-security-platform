@@ -48,31 +48,27 @@ const ATTEMPT_ID_PATTERN = /^attempt:t1-sc-(\d{3})-c(\d{3}):([12])$/;
 const ISO_8601_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/;
 
-// P1-2: openclaw_package_integrity must use SRI format `<algo>-<base64>`.
-const SRI_INTEGRITY_PATTERN = /^(sha256|sha384|sha512)-[A-Za-z0-9+/]+={0,2}$/;
+// P1-1 rework: openclaw_package_integrity must be the exact SRI value from
+// the pinned lockfile entry for openclaw@2026.6.10. A loose regex accepts
+// forged values like `sha512-A`; pinning the exact string closes that.
+const TRACK1_OPENCLAW_PACKAGE_INTEGRITY =
+  "sha512-LcooND2tBQw8A+kc1Ujltu3lg30bJ0w7XaeRy7eYzobb8BBdcW6DOGbwJL4vpj1vl9+gjRceOtlh5nh9OARcug==";
 
-// P1-2: model_ref content boundary constants.
-const MODEL_REF_MAX_BYTES = 256;
-const CONTROL_CHAR_PATTERN = /[\x00-\x1f\x7f]/;
-const CREDENTIAL_PATTERN = /^sk-[A-Za-z0-9_-]{16,}$/;
+// P1-1 rework: model_ref must be the canonical reference URI only. A loose
+// format check accepts Bearer tokens, URL userinfo, query parameters, and
+// alternative paths. Whitelist the exact URI string.
+const TRACK1_MODEL_REF_CANONICAL = "model://track1/openclaw-demo";
 
 function isSha256Hex(value: unknown): value is string {
   return isString(value) && SHA256_PATTERN.test(value);
 }
 
-function isSriIntegrity(value: unknown): value is string {
-  return isString(value) && SRI_INTEGRITY_PATTERN.test(value);
+function isPinnedOpenclawIntegrity(value: unknown): value is string {
+  return value === TRACK1_OPENCLAW_PACKAGE_INTEGRITY;
 }
 
-// P1-2: model_ref must be a content-free reference URI, not a credential
-// channel. Reject newlines/control chars, credential-like text, and content
-// exceeding the model reference byte budget.
-function isSafeModelRef(value: unknown): value is string {
-  if (!isString(value) || value.length === 0) return false;
-  if (CONTROL_CHAR_PATTERN.test(value)) return false;
-  if (CREDENTIAL_PATTERN.test(value)) return false;
-  if (Buffer.byteLength(value, "utf8") > MODEL_REF_MAX_BYTES) return false;
-  return true;
+function isCanonicalModelRef(value: unknown): value is string {
+  return value === TRACK1_MODEL_REF_CANONICAL;
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -252,10 +248,10 @@ export function normalizeTrack1CampaignStartEnvelope(
   if (!isCampaignId(input.campaign_id)) return null;
   if (!isSha256Hex(input.campaign_manifest_sha256)) return null;
   if (input.openclaw_version !== TRACK1_OPENCLAW_VERSION) return null;
-  // P1-2: openclaw_package_integrity must be SRI format (sha512-<base64>).
-  if (!isSriIntegrity(input.openclaw_package_integrity)) return null;
-  // P1-2: model_ref must be a bounded, content-free reference URI.
-  if (!isSafeModelRef(input.model_ref)) return null;
+  // P1-1 rework: pin the exact SRI value from the openclaw@2026.6.10 lockfile.
+  if (!isPinnedOpenclawIntegrity(input.openclaw_package_integrity)) return null;
+  // P1-1 rework: whitelist the canonical model_ref URI only.
+  if (!isCanonicalModelRef(input.model_ref)) return null;
   if (!isStrictIso8601(input.started_at)) return null;
 
   if (!withinByteLimit(input, TRACK1_LIFECYCLE_MAX_BYTES)) return null;

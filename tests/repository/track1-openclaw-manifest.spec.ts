@@ -176,3 +176,74 @@ test("REQ-T1-DEMO-010 schema enforces unique agents and cases via uniqueItems", 
     "cases array must declare uniqueItems:true"
   );
 });
+
+// -- P1-3 rework: Node baseline in AGENTS.md and Phase plans -------------------
+
+test("REQ-T1-DEMO-010 AGENTS.md and Phase 4 plan pin Node >=22.19.0", () => {
+  // The Phase 1 review found the Node baseline bump from 22.17.0 to 22.19.0
+  // was not closed: AGENTS.md and the Phase 4 Docker plan still referenced
+  // 22.17.x. Every artifact that names the Node baseline must be aligned.
+  const agents = readText("AGENTS.md");
+  assert.doesNotMatch(
+    agents,
+    /22\.17\.0/,
+    "AGENTS.md must not reference the old 22.17.0 baseline"
+  );
+  assert.match(
+    agents,
+    /22\.19\.0/,
+    "AGENTS.md must reference the new 22.19.0 baseline"
+  );
+
+  const phase4 = readText(
+    "docs/superpowers/plans/2026-06-30-track1-demo-010-phase-4-runtime-orchestration.md"
+  );
+  assert.doesNotMatch(
+    phase4,
+    /22\.17\.0/,
+    "Phase 4 plan must not reference the old 22.17.0 baseline"
+  );
+  assert.match(
+    phase4,
+    /22\.19\.0/,
+    "Phase 4 plan must reference the new 22.19.0 baseline"
+  );
+});
+
+// -- P2-5: schema fixed mapping (agent/scenario/case constraints) --------------
+
+test("REQ-T1-DEMO-010 schema pins each agent to its fixed scenario_id", () => {
+  // uniqueItems alone cannot prevent wrong agent/scenario pairings. The
+  // schema must express the fixed mapping by constraining each agent entry
+  // to exactly one (agent_id, scenario_id) pair via const or a tuple of
+  // oneOf branch schemas.
+  const schema = JSON.parse(
+    readText("samples/track1/openclaw/campaign.schema.json")
+  );
+  const agentsItem = schema.properties.agents.items;
+  // The schema must constrain agent_id and scenario_id to a fixed pair, not
+  // just an open enum. We accept either a `oneOf` tuple of const objects, or
+  // per-agent branch schemas with `const` values.
+  assert.ok(
+    agentsItem.oneOf || (agentsItem.properties &&
+      (agentsItem.properties.agent_id.const ||
+       agentsItem.properties.scenario_id.const)),
+    "agents.items must constrain (agent_id, scenario_id) to a fixed pair via oneOf or const"
+  );
+});
+
+test("REQ-T1-DEMO-010 schema pins each case to its fixed (agent, scenario, case) triple", () => {
+  const schema = JSON.parse(
+    readText("samples/track1/openclaw/campaign.schema.json")
+  );
+  const casesItem = schema.properties.cases.items;
+  // As with agents, the cases must be constrained to fixed triples via oneOf
+  // or const, so that a wrong (agent_id, scenario_id, case_id) combination is
+  // rejected by JSON Schema validation, not just by runtime normalizers.
+  assert.ok(
+    casesItem.oneOf || (casesItem.properties &&
+      (casesItem.properties.case_id.const ||
+       casesItem.properties.agent_id.const)),
+    "cases.items must constrain (agent_id, scenario_id, case_id) to a fixed triple via oneOf or const"
+  );
+});

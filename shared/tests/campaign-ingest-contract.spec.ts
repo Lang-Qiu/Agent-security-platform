@@ -283,3 +283,93 @@ test("REQ-T1-DEMO-010 rejects model_ref exceeding 256 bytes", () => {
     null
   );
 });
+
+// -- P1-1 rework: strict SRI pin + model_ref URI whitelist ---------------------
+
+test("REQ-T1-DEMO-010 rejects forged SRI integrity (sha512-A)", () => {
+  const envelope = {
+    ...makeCampaignStartEnvelope(),
+    openclaw_package_integrity: "sha512-A"
+  };
+  assert.equal(
+    normalizeTrack1CampaignStartEnvelope(envelope),
+    null
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects model_ref with Bearer token", () => {
+  const envelope = {
+    ...makeCampaignStartEnvelope(),
+    model_ref: "Bearer SECRET"
+  };
+  assert.equal(
+    normalizeTrack1CampaignStartEnvelope(envelope),
+    null
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects model_ref with api_key query parameter", () => {
+  const envelope = {
+    ...makeCampaignStartEnvelope(),
+    model_ref: "model://track1/openclaw-demo?api_key=secret"
+  };
+  assert.equal(
+    normalizeTrack1CampaignStartEnvelope(envelope),
+    null
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects model_ref with URL userinfo credentials", () => {
+  const envelope = {
+    ...makeCampaignStartEnvelope(),
+    model_ref: "model://user:pass@track1/openclaw-demo"
+  };
+  assert.equal(
+    normalizeTrack1CampaignStartEnvelope(envelope),
+    null
+  );
+});
+
+test("REQ-T1-DEMO-010 accepts only the canonical model_ref URI", () => {
+  // The only allowed model_ref is the canonical reference URI, not a URL
+  // with credentials, query strings, or alternative schemes.
+  assert.ok(
+    normalizeTrack1CampaignStartEnvelope(makeCampaignStartEnvelope())
+  );
+  const envelope = {
+    ...makeCampaignStartEnvelope(),
+    model_ref: "model://track1/openclaw-demo/v2"
+  };
+  assert.equal(
+    normalizeTrack1CampaignStartEnvelope(envelope),
+    null
+  );
+});
+
+// -- P2-6: finalize schema name drift ------------------------------------------
+
+test("REQ-T1-DEMO-010 finalize envelope uses track1-campaign-finalize.v1", () => {
+  // The Phase 1 plan fixes the schema_version as "track1-campaign-finalize.v1",
+  // not the abbreviated "track1-campaign-final.v1". The normalizer must accept
+  // the plan value and reject the implementation's drift.
+  const finalize = makeCampaignFinalizeEnvelope();
+  assert.notEqual(
+    finalize.schema_version,
+    "track1-campaign-final.v1",
+    "fixture must not drift to track1-campaign-final.v1"
+  );
+  assert.equal(
+    finalize.schema_version,
+    "track1-campaign-finalize.v1",
+    "fixture must use the plan-canonical schema_version"
+  );
+  assert.ok(normalizeTrack1CampaignFinalizeEnvelope(finalize));
+  assert.equal(
+    normalizeTrack1CampaignFinalizeEnvelope({
+      ...finalize,
+      schema_version: "track1-campaign-final.v1"
+    }),
+    null,
+    "normalizer must reject the drifted schema_version"
+  );
+});
