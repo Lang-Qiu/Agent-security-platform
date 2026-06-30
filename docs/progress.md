@@ -2445,11 +2445,11 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - T11: evidence serialization/filename/download service and page failures
   - T12: task-detail safe projection, deep-link, unavailable projection failures
   - T13: repository registration + responsive CSS assertion failures
-- focused and final gate counts (after rework round 2):
+- focused and final gate counts (after rework round 3):
   - test:shared: 52 pass (unchanged)
-  - test:repo: 66 pass (unchanged; responsive breakpoint assertion updated to 1100px)
+  - test:repo: 67 pass (66 → 67 after rework round 3: +1 CSS specificity assertion for console-main width override)
   - test:engine:sandbox: 391 pass (unchanged; no engine files touched by REQ-009)
-  - test:frontend: 113 pass (110 → 113 after rework round 2: +1 narrow viewport DOM structure test, +1 outside-filter polling test, +1 initial mock fallback test; 2 existing tests updated with real DOM/viewport assertions instead of class-name-only checks)
+  - test:frontend: 114 pass (113 → 114 after rework round 3: +1 cross-session race regression test)
   - frontend build: pass
   - test:backend: 95 pass / 1 fail — the single failure is `task engine service maps tasks into initial result and risk summary shells without leaking engine internals` (`backend/tests/task-engine.service.spec.ts:318`), a pre-existing asset-scan `open_ports` expectation mismatch unrelated to REQ-009; confirmed failing on parent commit before rework; no supervision test fails
   - git diff --check: clean
@@ -2479,5 +2479,10 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - P1-3 outside-filter running not polled: `selectedTaskStatusRef` was null for outside-filter sessions (derived only from `selectedSession`). Now also derives from `detail.data.summary.task_status`. Outside-filter test fixed to use valid empty-running detail with synchronized session IDs, asserts inspector displays and polling continues (commit `2c73b1b`)
   - rework round 2 commits: `2c73b1b`
   - rework round 2 test additions: +3 new (narrow viewport DOM structure, outside-filter polling, initial mock fallback not stale); +2 updated (mobile back button uses matchMedia + DOM assertions, detail stale uses running session for real poll cycle)
-- status: REWORK_ROUND_2_COMPLETE_PENDING_REVIEW
+- rework round 3 (2026-06-30): review identified 2 remaining defects (1 P1 visual, 1 P2 concurrency); both fixed via TDD:
+  - P1 390px width still 0: `.console-main { width: 100% }` was overridden by Ant Design's higher-specificity `.ant-layout-has-sider > .ant-layout { width: 0 }` rule. Replaced with `.console-shell.ant-layout-has-sider > .console-main.ant-layout { width: 100% }` selector that matches Ant's specificity. Repo test asserts the high-specificity selector pattern exists in the CSS (commit `77a1a57`)
+  - P2 hasRealDetailRef cross-session race: `loadDetail` wrote `hasRealDetailRef.current = true` after `await getSupervisionSession(...)` without verifying the session was still current. A late real response from a prior session could mark the new session as having a real snapshot, causing its first mock fallback to be wrongly rejected as stale. Fixed by checking `lastDetailSessionRef.current === sessionId` after the await, before writing the ref (commit `77a1a57`)
+  - rework round 3 commits: `77a1a57`
+  - rework round 3 test additions: +1 repo CSS specificity assertion, +1 frontend cross-session race regression test
+- status: REWORK_ROUND_3_COMPLETE_PENDING_REVIEW
 - next blocker: user browser acceptance verification, then REQ-T1-DEMO-010
