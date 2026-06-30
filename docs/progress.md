@@ -2414,7 +2414,7 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - added `frontend/src/services/supervision-service.spec.ts`, `frontend/src/hooks/use-supervision-polling.spec.tsx`, `frontend/src/components/supervision/supervision-event-details.spec.tsx`, `frontend/src/pages/sandbox-alerts.page.spec.tsx`, `frontend/src/pages/task-detail.page.spec.tsx` (extended)
   - added `tests/repository/track1-supervision-ui.spec.ts` — permanent repository safety gate (no engine imports, no raw/generic rendering, read-only/polling-only, canonical registration, responsive workbench tracks)
   - registered `supervision-contract.spec.ts` in `shared/package.json` and root `test:shared`; registered `track1-supervision-ui.spec.ts` in root `test:repo`; added root-entry assertions
-  - added responsive `supervision-workbench` CSS with 900px breakpoint
+  - added responsive `supervision-workbench` CSS with 1100px breakpoint (revised from 900px during rework)
   - updated `docs/api-contract.md`, `docs/architecture.md`, `docs/progress.md`
 - commits (14):
   - `595bcc2` feat(shared): add supervision overview contracts
@@ -2445,16 +2445,15 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - T11: evidence serialization/filename/download service and page failures
   - T12: task-detail safe projection, deep-link, unavailable projection failures
   - T13: repository registration + responsive CSS assertion failures
-- focused and final gate counts:
-  - shared contract: 26 pass (`shared/tests/supervision-contract.spec.ts` contributes the supervision portion)
-  - test:shared: 52 pass (26 → 52 after adding supervision-contract.spec.ts)
-  - test:repo: 66 pass (61 → 66 after adding track1-supervision-ui.spec.ts)
-  - test:engine:sandbox: 391 pass (unchanged; no engine files touched)
-  - test:frontend: 104 pass (101 → 104 after Task 12; supervision hook/service/component/page suites added across T7–T12)
+- focused and final gate counts (after rework):
+  - test:shared: 52 pass (unchanged)
+  - test:repo: 66 pass (unchanged; responsive breakpoint assertion updated to 1100px)
+  - test:engine:sandbox: 391 pass (unchanged; no engine files touched by REQ-009)
+  - test:frontend: 110 pass (104 → 110 after rework: +2 hook visibility-retry tests, +1 detail stale test, +1 outside-current-filters test, +1 mobile back button test, +1 keyboard navigation test)
   - frontend build: pass
-  - test:backend: 89 pass / 1 fail — the single failure is `task engine service maps tasks into initial result and risk summary shells without leaking engine internals` (`backend/tests/task-engine.service.spec.ts:318`), an asset-scan `open_ports` expectation mismatch unrelated to REQ-009; no supervision test fails
+  - test:backend: 95 pass / 1 fail — the single failure is `task engine service maps tasks into initial result and risk summary shells without leaking engine internals` (`backend/tests/task-engine.service.spec.ts:318`), a pre-existing asset-scan `open_ports` expectation mismatch unrelated to REQ-009; confirmed failing on parent commit before rework; no supervision test fails
   - git diff --check: clean
-  - protected paths (`engines/**`, `samples/track1/**`): unchanged (verified via `git diff --name-only HEAD~14..HEAD`)
+  - protected paths (`engines/**`, `samples/track1/**`): unchanged (verified via `git diff --name-only`)
 - content boundary evidence:
   - producer narrative absent: `RAW_NARRATIVE_SENTINEL` sentinel injected into stored records via `makeStoredSandboxRecord` is never present in any frontend-rendered output (asserted in `task-detail.page.spec.tsx` and `sandbox-alerts.page.spec.tsx`)
   - no engine frontend import: `tests/repository/track1-supervision-ui.spec.ts` asserts no supervision frontend file imports from `engines/`
@@ -2464,5 +2463,15 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - `docs/api-contract.md` (REQ-T1-SUPERVISION-UI-009 section)
   - `docs/architecture.md` (REQ-T1-SUPERVISION-UI-009 section)
   - `docs/progress.md`
-- status: COMPLETE
-- next blocker: REQ-T1-DEMO-010
+- rework (2026-06-30): review identified 7 defects (4 P1, 2 P2, 1 P1 report-validity); all fixed via TDD:
+  - P1-1 non-terminal projection semantics: `supervision-projector.ts` now distinguishes complete (4 collections), empty-shell (0 collections non-terminal), and illegal partial (1-3 collections); empty `tool_names` allowed via `isToolNameArray` fix in `shared/contracts/supervision.ts` (commit `56c22d0`)
+  - P2-6 sort time source: `summary.updated_at` now uses `result.updated_at` instead of `task.updated_at` (commit `56c22d0`)
+  - P1-3 stale auto-retry on visibility: `useSupervisionPolling` visibility-resume now checks `overviewErrorPausedRef` and `detailErrorPausedRef`; page `loadDetail` throws on mock fallback; inspector shows stale state with `Retry detail` button (commit `72fff9f`)
+  - P1-4 outside-current-filters deep link: inspector shows "Session is outside current filters." when `sessionIdFromUrl` is set but not in current overview, instead of falling through to "Select a session" (commit `72fff9f`)
+  - P1-2 responsive layout: breakpoint moved from 900px to 1100px so 1024px no longer overflows; workbench uses `mobile-view-list`/`mobile-view-inspector` classes to show one panel at a time on narrow viewports; back-arrow button with accessible label returns to list while keeping `session_id` in URL; `min-width:0` and `overflow-wrap` prevent 390px text wrapping and width collapse (commit `a6a28fa`)
+  - P2-5 keyboard navigation: `SupervisionSessionList` uses roving tabindex (selected=0, others=-1) with `onKeyDown` handling ArrowUp/ArrowDown/Home/End/Enter/Space (commit `a6a28fa`)
+  - P1-7 report validity: progress.md updated with real gate counts; status changed from COMPLETE to REWORK_COMPLETE_PENDING_REVIEW
+  - rework commits: `56c22d0`, `72fff9f`, `a6a28fa`, `d812779`
+  - rework test additions: +6 frontend tests (2 hook visibility-retry, 1 detail stale, 1 outside-current-filters, 1 mobile back button, 1 keyboard navigation); +6 backend projector tests (empty-shell, empty arrays, partial rejection, terminal missing, empty tool_names, result.updated_at)
+- status: REWORK_COMPLETE_PENDING_REVIEW
+- next blocker: user browser acceptance verification, then REQ-T1-DEMO-010
