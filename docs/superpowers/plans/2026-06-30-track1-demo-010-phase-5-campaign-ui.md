@@ -547,7 +547,7 @@ git commit -m "feat(frontend): render campaign supervision groups"
 test("REQ-T1-DEMO-010 campaign URL renders three agents nine cases and existing inspector", async () => {
   mockCampaignApi({ detail: makeCampaignDetail() });
   renderAppAtRoute(
-    `/results/sandbox?campaign_id=${encodeURIComponent(CAMPAIGN_ID)}` 
+    `/results/sandbox?campaign_id=${encodeURIComponent(CAMPAIGN_ID)}`
   );
 
   expect(await screen.findByTestId("campaign-overview")).toBeInTheDocument();

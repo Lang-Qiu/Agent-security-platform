@@ -2,87 +2,81 @@
 
 ## Requirement ID
 
-REQ-T1-SUPERVISION-UI-009
+REQ-T1-DEMO-010
 
 ## Requirement Name
 
-Track 1 behavior supervision console
+OpenClaw-oriented end-to-end demo and report evidence pack
 
 ## Background
 
-`REQ-T1-SANDBOX-CONTRACT-005` defines typed behavior events, policy decisions,
-alerts, and blocked records. `REQ-T1-MONITOR-PLUGIN-007` produces normalized
-model/tool call-chain results, and `REQ-T1-BASE-FILTER-008` supplies the first
-real decision provider.
+REQ-002 through REQ-009 now provide three attack scenarios, nine controlled
+cases, attack replay scripts, simulated business tools, a typed supervision
+contract, a monitor plugin, a rule-based filter, and a read-only supervision
+console.
 
-This requirement presents those normalized results through the platform API
-and the React operator console.
+REQ-010 connects those assets to a real pinned OpenClaw runtime and cloud
+OpenAI-compatible model, supervises three OpenClaw agents as one campaign, and
+produces the final Track 1 risk report and evidence pack.
 
 The approved design is:
 
-- `docs/superpowers/specs/2026-06-29-track1-supervision-ui-design.md`
+- `docs/superpowers/specs/2026-06-30-track1-openclaw-demo-design.md`
+
+The implementation is divided into one master index and seven independently
+reviewed TDD phase plans under `docs/superpowers/plans/`.
 
 ## Goal
 
-- Replace the sandbox placeholder with a global supervision workbench.
-- Let operators triage recent sessions and inspect one complete event timeline.
-- Show policy decisions, alerts, blocking records, and safe evidence refs.
-- Refresh running supervision data every three seconds.
-- Provide deterministic sanitized session evidence JSON.
-- Preserve platform, shared-contract, and engine ownership boundaries.
+- Run all nine fixed cases through real OpenClaw and a cloud model.
+- Intercept model/tool activity with a native OpenClaw security plugin.
+- Supervise three scenario agents under one campaign.
+- Display campaign progress, agent groups, alerts, asks, blocks, and sessions.
+- Generate a Chinese risk report with bilingual abstracts, PDF, screenshots,
+  normalized JSON, and a SHA-256 artifact manifest.
+- Commit one sanitized, reproducible baseline evidence pack.
 
 ## In Scope
 
-- Shared supervision overview, summary, detail, and evidence DTOs.
-- Dedicated read-only backend supervision projection API.
-- Server-side search/filter/sort with a 100-session cap.
-- Global supervision summary, session list, and inline-expand timeline.
-- Visibility-aware polling and stale-snapshot handling.
-- Task-detail deep link to a selected supervision session.
-- Safe JSON evidence download.
-- Shared, backend, frontend, integration, repository, and visual tests.
-- API, architecture, progress, and usage documentation.
+- Pinned OpenClaw `2026.6.10` Docker runtime.
+- Native plugin using the existing monitor, filter, and simulated tools.
+- Three fixed OpenClaw agents and nine fixed cases.
+- Authenticated Docker-internal snapshot ingestion.
+- Strict campaign read contracts and read-only supervision APIs.
+- Campaign mode inside `/results/sandbox`.
+- One audited retry per case and exact 9/9 final action matching.
+- Automatic screenshot, Markdown, PDF, JSON, and manifest generation.
+- Ordinary offline gates plus credentialed real OpenClaw/cloud-model E2E.
 
 ## Out Of Scope
 
-- No raw prompt, output, tool argument, tool result, or memory content.
-- No direct frontend-to-engine access.
-- No database, persistence, pagination, SSE, or WebSocket.
-- No approval/resume, alert acknowledgement, comments, or policy editing.
-- No OpenClaw adapter or agent-cluster aggregation.
-- No full risk report, PDF/CSV, archive, or bulk export.
-- No modification to attack cases, replay scripts, monitor behavior, or filter
-  behavior.
+- No real email, host filesystem, shell, browser, MCP, or business API side
+  effects.
+- No public campaign-start API or frontend execution control.
+- No database, durable campaign persistence, SSE, WebSocket, or message queue.
+- No arbitrary cases, model-selected targets, third-party systems, or external
+  OpenClaw channels.
+- No coordinator agent, additional scenario, or OpenClaw compatibility adapter.
+- No policy editing, acknowledgement, approval, or workflow commands.
 
 ## Acceptance Criteria
 
-- `/results/sandbox` is a usable global supervision workbench.
-- Shared supervision read contracts are strict, runtime-validatable, and
-  content-free.
-- Backend list, detail, and evidence endpoints expose only normalized shared
-  DTOs.
-- Search and all approved filters work, and no list returns more than 100
-  sessions.
-- Global counts are independent from list filters.
-- Desktop and mobile investigation workflows are coherent and non-overlapping.
-- All seven sandbox event types have explicit safe renderers.
-- Decisions, alerts, and blocked records are correlated to subject events.
-- `ask` is visible but has no mutation command.
-- Polling obeys cadence, visibility, cancellation, and terminal-state rules.
-- Transient failures preserve the last valid snapshot and mark it stale.
-- Task detail deep-links to the corresponding session.
-- Evidence JSON is normalized, deterministic, and content-free.
-- No frontend source imports an engine module.
-- Focused and repository gates pass.
-- Implementation stops before `REQ-T1-DEMO-010`.
+- Real OpenClaw loads the native plugin and all required hooks.
+- Three agents execute all nine cases through the configured cloud model.
+- Final expected/actual policy actions match 9/9 with at most one retry each.
+- Every tool request is intercepted before simulated execution.
+- No real side effect or prohibited raw-content leak occurs.
+- Campaign ingestion, projection, APIs, and UI satisfy the approved spec.
+- The baseline report and evidence pack are complete and hash-consistent.
+- Offline gates and the credentialed E2E gate pass.
+- Required documentation is updated.
 
 ## Design Decision
 
-Use a shared platform read model and dedicated supervision projection API.
-The backend derives safe summaries from normalized sandbox results. The
-frontend polls the overview and selected running detail every three seconds,
-uses a session-list/timeline split layout, and downloads only normalized
-evidence DTO data.
+Run the existing sandbox security engine inside a native OpenClaw plugin. Send
+only normalized snapshots to a Docker-internal ingest listener, project
+campaign data through shared read contracts, and extend the existing
+supervision console rather than building a second investigation UI.
 
 ## Constraints / Notes
 
@@ -94,4 +88,5 @@ evidence DTO data.
   confirmed.
 - Low-level implementation is assigned by the user. Codex produces the task
   DAG, acceptance criteria, and final diff/report/risk review.
-- The known backend test hang must be baselined and may not be silently waived.
+- The specification is approved. No implementation starts until the user
+  approves the phased implementation plans and assigns the first task.

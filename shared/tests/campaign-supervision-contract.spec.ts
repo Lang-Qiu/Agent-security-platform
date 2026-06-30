@@ -569,3 +569,114 @@ test("REQ-T1-DEMO-010 rejects campaign running when all agents are completed", (
   detail.status = "running";
   assert.equal(normalizeTrack1CampaignDetail(detail), null);
 });
+
+// -- P1-1 rework 3: complete state matrix (pending case, attempt_count 0,
+//                    two-attempt predecessor failure, created/validating) ---
+
+test("REQ-T1-DEMO-010 accepts a pending case with zero attempts", () => {
+  const detail = makeValidCampaignDetail();
+  const c = detail.agents[0].cases[0];
+  c.status = "pending";
+  c.attempt_count = 0;
+  c.attempts = [];
+  // parent agent must be running (not all cases terminal)
+  detail.agents[0].status = "running";
+  detail.status = "running";
+  assert.ok(normalizeTrack1CampaignDetail(detail));
+});
+
+test("REQ-T1-DEMO-010 rejects pending case with non-zero attempt_count", () => {
+  const detail = makeValidCampaignDetail();
+  const c = detail.agents[0].cases[0];
+  c.status = "pending";
+  // attempt_count is 1 but status is pending — inconsistent
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 rejects pending case with non-empty attempts", () => {
+  const detail = makeValidCampaignDetail();
+  const c = detail.agents[0].cases[0];
+  c.status = "pending";
+  c.attempt_count = 0;
+  // attempts array still has 1 entry — inconsistent with attempt_count 0
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 rejects non-pending case with zero attempts", () => {
+  const detail = makeValidCampaignDetail();
+  const c = detail.agents[0].cases[0];
+  c.status = "running";
+  c.attempt_count = 0;
+  c.attempts = [];
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 rejects second attempt after passed first attempt", () => {
+  const detail = makeValidCampaignDetail();
+  const c = detail.agents[0].cases[0];
+  // first attempt passed, but there's a second attempt — invalid
+  c.attempt_count = 2;
+  c.attempts = [
+    { ...c.attempts[0], status: "passed", actual_action: c.expected_action },
+    { ...c.attempts[0], attempt_id: `attempt:${c.case_id.toLowerCase()}:2`, attempt_index: 2, session_id: "session:feedface0000000000000000feedface", status: "failed" }
+  ];
+  c.status = "failed";
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 accepts second attempt only after failed first attempt", () => {
+  const detail = makeValidCampaignDetail();
+  const c = detail.agents[0].cases[0];
+  // first attempt failed, second attempt passed — valid retry scenario
+  c.attempt_count = 2;
+  c.attempts = [
+    { ...c.attempts[0], status: "failed", actual_action: "deny" },
+    { ...c.attempts[0], attempt_id: `attempt:${c.case_id.toLowerCase()}:2`, attempt_index: 2, session_id: "session:feedface0000000000000000feedface", status: "passed", actual_action: c.expected_action }
+  ];
+  c.status = "passed";
+  assert.ok(normalizeTrack1CampaignDetail(detail));
+});
+
+test("REQ-T1-DEMO-010 rejects second attempt after running first attempt", () => {
+  const detail = makeValidCampaignDetail();
+  const c = detail.agents[0].cases[0];
+  // first attempt still running, but second attempt exists — invalid
+  c.attempt_count = 2;
+  c.attempts = [
+    { ...c.attempts[0], status: "running", actual_action: null },
+    { ...c.attempts[0], attempt_id: `attempt:${c.case_id.toLowerCase()}:2`, attempt_index: 2, session_id: "session:feedface0000000000000000feedface", status: "running", actual_action: null }
+  ];
+  c.status = "running";
+  detail.agents[0].status = "running";
+  detail.status = "running";
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 rejects created campaign with non-pending children", () => {
+  const detail = makeValidCampaignDetail();
+  // campaign is "created" but all cases are "passed" — invalid
+  detail.status = "created";
+  detail.agents[0].status = "created";
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 rejects validating campaign with non-pending children", () => {
+  const detail = makeValidCampaignDetail();
+  detail.status = "validating";
+  detail.agents[0].status = "validating";
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 accepts created campaign with all pending cases", () => {
+  const detail = makeValidCampaignDetail();
+  detail.status = "created";
+  for (const agent of detail.agents) {
+    agent.status = "created";
+    for (const c of agent.cases) {
+      c.status = "pending";
+      c.attempt_count = 0;
+      c.attempts = [];
+    }
+  }
+  assert.ok(normalizeTrack1CampaignDetail(detail));
+});

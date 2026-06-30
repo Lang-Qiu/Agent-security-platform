@@ -40,6 +40,7 @@ export const TRACK1_CASE_IDS = [
 ] as const;
 
 export const TRACK1_CAMPAIGN_CASE_STATUSES = [
+  "pending",
   "running",
   "passed",
   "failed"
@@ -101,7 +102,7 @@ export interface Track1CampaignCaseSummary {
   status: Track1CampaignCaseStatus;
   expected_action: SandboxPolicyAction;
   actual_action: SandboxPolicyAction | null;
-  attempt_count: 1 | 2;
+  attempt_count: 0 | 1 | 2;
   current_session_id: string;
   updated_at: string;
 }
@@ -128,7 +129,7 @@ export interface Track1CampaignCaseDetail {
   case_id: Track1CaseId;
   status: Track1CampaignCaseStatus;
   expected_action: SandboxPolicyAction;
-  attempt_count: 1 | 2;
+  attempt_count: 0 | 1 | 2;
   attempts: Track1CampaignAttemptSummary[];
   updated_at: string;
 }

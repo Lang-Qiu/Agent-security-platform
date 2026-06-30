@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import Ajv from "ajv";
 import YAML from "yaml";
 
 const ROOT = new URL("../../", import.meta.url);
@@ -251,6 +252,10 @@ test("REQ-T1-DEMO-010 no artifact references the old 22.17 Node baseline", () =>
 
 // -- P1-3 rework: schema pins case_sha256 + ajv validator test -----------------
 
+function makeAjv() {
+  return new Ajv({ allErrors: true, strict: false });
+}
+
 test("REQ-T1-DEMO-010 schema pins case_sha256 as const per case branch", () => {
   // uniqueItems treats objects with different case_sha256 as distinct, so an
   // attacker can repeat the same case_id branch nine times with different
@@ -271,12 +276,35 @@ test("REQ-T1-DEMO-010 schema pins case_sha256 as const per case branch", () => {
   }
 });
 
-test("REQ-T1-DEMO-010 schema rejects a manifest with duplicate case_id but different hashes", () => {
+test("REQ-T1-DEMO-010 schema accepts the canonical manifest via real JSON Schema validation", () => {
+  // Use ajv (a real JSON Schema Draft-07 validator) to validate the canonical
+  // manifest. This prevents false-green: if the schema were broken and
+  // rejected all inputs, the inline-check tests would still pass because they
+  // only inspect schema structure. A real validator proves the schema actually
+  // accepts the canonical manifest.
+  const schema = JSON.parse(
+    readText("samples/track1/openclaw/campaign.schema.json")
+  );
+  const manifest = JSON.parse(
+    readText("samples/track1/openclaw/campaign.v1.json")
+  );
+  const validate = makeAjv().compile(schema);
+  const valid = validate(manifest);
+  assert.equal(
+    valid,
+    true,
+    `canonical manifest must pass schema validation: ${JSON.stringify(validate.errors)}`
+  );
+});
+
+test("REQ-T1-DEMO-010 schema rejects a manifest with duplicate case_id but different hashes via real JSON Schema validation", () => {
   // Build a malicious manifest: repeat T1-SC-001-C001 nine times, each with a
   // different (valid-pattern) case_sha256 so the objects are distinct and
   // uniqueItems would not catch them. Schema validation must reject this
   // because each oneOf branch pins case_sha256 as a const, so a duplicate
   // case_id with a different hash matches no branch.
+  // Using ajv (a real JSON Schema validator) ensures full oneOf/uniqueItems
+  // semantics are enforced, not just a hand-written subset.
   const manifest = JSON.parse(
     readText("samples/track1/openclaw/campaign.v1.json")
   );
@@ -295,31 +323,11 @@ test("REQ-T1-DEMO-010 schema rejects a manifest with duplicate case_id but diffe
   const schema = JSON.parse(
     readText("samples/track1/openclaw/campaign.schema.json")
   );
-  // Inline minimal JSON Schema validator for the oneOf + const subset.
-  // This is sufficient to prove the schema rejects the malicious manifest
-  // without adding a new production dependency.
-  const casesSchema = schema.properties.cases;
-  const branches = casesSchema.items.oneOf;
-  const validCase = malicious.cases.every((caseObj: Record<string, unknown>) => {
-    return branches.some((branch: {
-      properties: Record<string, { const?: unknown; pattern?: string; type?: string }>;
-      required: string[];
-    }) => {
-      const props = branch.properties;
-      for (const key of Object.keys(props)) {
-        const propSchema = props[key];
-        if (propSchema.const !== undefined) {
-          if (caseObj[key] !== propSchema.const) return false;
-        } else if (propSchema.pattern) {
-          const re = new RegExp(propSchema.pattern);
-          if (typeof caseObj[key] !== "string" || !re.test(caseObj[key])) return false;
-        }
-      }
-      for (const req of branch.required) {
-        if (!(req in caseObj)) return false;
-      }
-      return true;
-    });
-  });
-  assert.equal(validCase, false, "schema must reject duplicate case_id with different hashes");
+  const validate = makeAjv().compile(schema);
+  const valid = validate(malicious);
+  assert.equal(
+    valid,
+    false,
+    "schema must reject duplicate case_id with different hashes via real JSON Schema validation"
+  );
 });

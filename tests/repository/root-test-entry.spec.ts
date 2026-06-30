@@ -199,7 +199,7 @@ test("shared package exports all Track 1 runtime constants", () => {
   assert.deepEqual([...TRACK1_CAMPAIGN_STATUSES], [
     "created", "validating", "running", "collecting", "completed", "failed"
   ]);
-  assert.deepEqual([...TRACK1_CAMPAIGN_CASE_STATUSES], ["running", "passed", "failed"]);
+  assert.deepEqual([...TRACK1_CAMPAIGN_CASE_STATUSES], ["pending", "running", "passed", "failed"]);
   assert.equal(TRACK1_OPENCLAW_VERSION, "2026.6.10");
   assert.equal(TRACK1_SNAPSHOT_MAX_BYTES, 2 * 1024 * 1024);
   assert.equal(TRACK1_LIFECYCLE_MAX_BYTES, 256 * 1024);

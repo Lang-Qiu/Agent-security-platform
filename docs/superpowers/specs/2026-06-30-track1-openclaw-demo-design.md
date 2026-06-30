@@ -4,10 +4,10 @@
 
 - Requirement: `REQ-T1-DEMO-010`
 - Name: OpenClaw-oriented end-to-end demo and report evidence pack
-- Status: approved; phased implementation plans pending user review
+- Status: approved; phased implementation plans tracked in git
 - Date: `2026-06-30`
 - Previous requirement: `REQ-T1-SUPERVISION-UI-009` (accepted)
-- Implementation state: not started; seven-phase task DAG prepared
+- Implementation state: Phase 1 (contracts) complete and under rework review
 - Workflow: `Design -> Test (RED) -> Implement (GREEN) -> Document -> Stop and report`
 
 ## Objective
@@ -924,28 +924,33 @@ membership. Root scripts and generated-artifact ignore rules are updated in
 ## Code Style
 
 Contracts use explicit discriminants, exact-key runtime normalizers, and
-defensive copies:
+defensive copies.
+
+> **Implementation note (Phase 1 contracts rework):** The original spec
+> referenced `Track1CampaignSessionRef` with `task_status: TaskStatus` and
+> `risk_level: RiskLevel`. These types did not exist in the shared type layer.
+> The implementation replaces `Track1CampaignSessionRef` with
+> `Track1CampaignAttemptSummary`, which carries `status:
+> Track1CampaignCaseStatus`, `task_id`, `started_at`, and `updated_at` instead.
+> This avoids introducing unused `TaskStatus`/`RiskLevel` enums and aligns the
+> session-level record with the existing case/attempt status hierarchy. The
+> normalizer is `normalizeTrack1CampaignAttempt` (private, called from
+> `normalizeTrack1CampaignCaseDetail`).
 
 ```ts
-export interface Track1CampaignSessionRef {
+export interface Track1CampaignAttemptSummary {
   campaign_id: string;
   agent_id: Track1CampaignAgentId;
   scenario_id: Track1ScenarioId;
-  case_id: string;
+  case_id: Track1CaseId;
   attempt_id: string;
   attempt_index: 1 | 2;
   session_id: string;
-  task_status: TaskStatus;
-  risk_level: RiskLevel;
-  expected_action: PolicyAction;
-  actual_action: PolicyAction | null;
-}
-
-export function normalizeTrack1CampaignSessionRef(
-  input: unknown
-): Track1CampaignSessionRef | null {
-  // Exact keys, closed enums, safe IDs, and cross-field invariants.
-  // Return a defensive copy only after all checks succeed.
+  task_id: string;
+  status: Track1CampaignCaseStatus;
+  actual_action: SandboxPolicyAction | null;
+  started_at: string;
+  updated_at: string;
 }
 ```
 

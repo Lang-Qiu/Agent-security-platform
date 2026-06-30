@@ -333,9 +333,19 @@ export function normalizeTrack1CampaignCaseSummary(
   if (input.actual_action !== null) {
     if (!isOneOf(SANDBOX_POLICY_ACTIONS, input.actual_action)) return null;
   }
-  if (input.attempt_count !== 1 && input.attempt_count !== 2) return null;
+  if (input.attempt_count !== 0 && input.attempt_count !== 1 && input.attempt_count !== 2) return null;
   if (!isSessionId(input.current_session_id)) return null;
   if (!isStrictIso8601(input.updated_at)) return null;
+
+  // P1-1 rework 3: complete state matrix.
+  // pending -> attempt_count must be 0, actual_action must be null
+  // non-pending -> attempt_count must be >= 1
+  if (input.status === "pending") {
+    if (input.attempt_count !== 0) return null;
+    if (input.actual_action !== null) return null;
+  } else {
+    if (input.attempt_count === 0) return null;
+  }
 
   // P1-3: status/action consistency.
   // passed  -> actual_action must equal expected_action (and not be null)
@@ -449,6 +459,8 @@ function normalizeTrack1CampaignAttempt(
   if (!isSessionId(input.session_id)) return null;
   if (!isTaskId(input.task_id)) return null;
   if (!isOneOf(TRACK1_CAMPAIGN_CASE_STATUSES, input.status)) return null;
+  // P1-1 rework 3: attempts cannot be "pending" — only cases can.
+  if (input.status === "pending") return null;
   if (input.actual_action !== null) {
     if (!isOneOf(SANDBOX_POLICY_ACTIONS, input.actual_action)) return null;
   }
@@ -489,11 +501,20 @@ function normalizeTrack1CampaignCaseDetail(
   if (input.case_id !== expectedCaseId) return null;
   if (!isOneOf(TRACK1_CAMPAIGN_CASE_STATUSES, input.status)) return null;
   if (!isOneOf(SANDBOX_POLICY_ACTIONS, input.expected_action)) return null;
-  if (input.attempt_count !== 1 && input.attempt_count !== 2) return null;
+  if (input.attempt_count !== 0 && input.attempt_count !== 1 && input.attempt_count !== 2) return null;
   if (!isStrictIso8601(input.updated_at)) return null;
 
   if (!Array.isArray(input.attempts)) return null;
   if (input.attempts.length !== input.attempt_count) return null;
+
+  // P1-1 rework 3: pending cases must have zero attempts.
+  if (input.status === "pending") {
+    if (input.attempt_count !== 0) return null;
+    if (input.attempts.length !== 0) return null;
+  } else {
+    // non-pending cases must have at least one attempt.
+    if (input.attempt_count === 0) return null;
+  }
 
   const normalizedAttempts: Track1CampaignAttemptSummary[] = [];
   for (let i = 0; i < input.attempts.length; i++) {
@@ -515,6 +536,27 @@ function normalizeTrack1CampaignCaseDetail(
     sessionSet.add(normalized.session_id);
 
     normalizedAttempts.push(normalized);
+  }
+
+  // P1-1 rework 3: two-attempt predecessor failure constraint.
+  // A second attempt is only valid if the first attempt failed.
+  if (normalizedAttempts.length === 2) {
+    if (normalizedAttempts[0].status !== "failed") return null;
+  }
+
+  // P1-1 rework 3: pending cases have no attempts to check.
+  if (input.status === "pending") {
+    return {
+      campaign_id: input.campaign_id,
+      agent_id: input.agent_id,
+      scenario_id: input.scenario_id,
+      case_id: input.case_id,
+      status: input.status,
+      expected_action: input.expected_action,
+      attempt_count: input.attempt_count,
+      attempts: normalizedAttempts,
+      updated_at: input.updated_at
+    };
   }
 
   // P1-2 rework: case status/action consistency, mirroring the case summary
@@ -662,6 +704,7 @@ export function normalizeTrack1CampaignDetail(
   // P1-1 rework 2: campaign status must be consistent with agent statuses.
   // completed -> all 3 agents must be completed
   // running   -> at least one agent must be running (not all completed)
+  // created/validating -> all cases must be pending (no started children)
   const allAgentsCompleted = normalizedAgents.every(
     (a) => a.status === "completed"
   );
@@ -669,6 +712,13 @@ export function normalizeTrack1CampaignDetail(
     if (!allAgentsCompleted) return null;
   } else if (input.status === "running") {
     if (allAgentsCompleted) return null;
+  } else if (input.status === "created" || input.status === "validating") {
+    // P1-1 rework 3: created/validating campaign must have all cases pending.
+    for (const agent of normalizedAgents) {
+      for (const c of agent.cases) {
+        if (c.status !== "pending") return null;
+      }
+    }
   }
 
   return {
