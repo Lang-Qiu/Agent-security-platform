@@ -85,7 +85,7 @@ function isStrictIso8601(value: unknown): value is string {
   return true;
 }
 
-function hasExactKeys(
+export function hasExactKeys(
   value: Record<string, unknown>,
   expected: readonly string[]
 ): boolean {
@@ -98,7 +98,7 @@ function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
-function isCampaignId(value: unknown): value is string {
+export function isCampaignId(value: unknown): value is string {
   return isString(value) && CAMPAIGN_ID_PATTERN.test(value);
 }
 
