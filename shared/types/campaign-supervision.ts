@@ -3,6 +3,9 @@ import type { SandboxPolicyAction } from "./sandbox.ts";
 export const TRACK1_CAMPAIGN_READ_SCHEMA_VERSION =
   "track1-campaign-read.v1" as const;
 
+export const TRACK1_CAMPAIGN_EVIDENCE_SCHEMA_VERSION =
+  "track1-campaign-evidence.v1" as const;
+
 export const TRACK1_CAMPAIGN_AGENT_IDS = [
   "agent:track1:prompt-injection",
   "agent:track1:tool-hijack",
@@ -101,4 +104,59 @@ export interface Track1CampaignCaseSummary {
   attempt_count: 1 | 2;
   current_session_id: string;
   updated_at: string;
+}
+
+export interface Track1CampaignAttemptSummary {
+  campaign_id: string;
+  agent_id: Track1CampaignAgentId;
+  scenario_id: Track1ScenarioId;
+  case_id: Track1CaseId;
+  attempt_id: string;
+  attempt_index: 1 | 2;
+  session_id: string;
+  task_id: string;
+  status: Track1CampaignCaseStatus;
+  actual_action: SandboxPolicyAction | null;
+  started_at: string;
+  updated_at: string;
+}
+
+export interface Track1CampaignCaseDetail {
+  campaign_id: string;
+  agent_id: Track1CampaignAgentId;
+  scenario_id: Track1ScenarioId;
+  case_id: Track1CaseId;
+  status: Track1CampaignCaseStatus;
+  expected_action: SandboxPolicyAction;
+  attempt_count: 1 | 2;
+  attempts: Track1CampaignAttemptSummary[];
+  updated_at: string;
+}
+
+export interface Track1CampaignAgentDetail {
+  campaign_id: string;
+  agent_id: Track1CampaignAgentId;
+  scenario_id: Track1ScenarioId;
+  status: Track1CampaignStatus;
+  case_count: 3;
+  cases: Track1CampaignCaseDetail[];
+  updated_at: string;
+}
+
+export interface Track1CampaignDetail {
+  schema_version: typeof TRACK1_CAMPAIGN_READ_SCHEMA_VERSION;
+  campaign_id: string;
+  status: Track1CampaignStatus;
+  started_at: string;
+  updated_at: string;
+  agent_count: 3;
+  case_count: 9;
+  agents: Track1CampaignAgentDetail[];
+}
+
+export interface Track1CampaignEvidenceExport {
+  schema_version: typeof TRACK1_CAMPAIGN_EVIDENCE_SCHEMA_VERSION;
+  campaign: Track1CampaignDetail;
+  session_evidence_refs: string[];
+  artifact_manifest_ref: string;
 }

@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   normalizeTrack1CampaignAgentSummary,
   normalizeTrack1CampaignCaseSummary,
+  normalizeTrack1CampaignDetail,
+  normalizeTrack1CampaignEvidenceExport,
   normalizeTrack1CampaignSummary
 } from "../contracts/campaign-supervision.ts";
 
@@ -137,5 +139,143 @@ test("REQ-T1-DEMO-010 rejects expected and actual action outside policy enum", (
   assert.equal(normalizeTrack1CampaignCaseSummary({
     ...makeValidCaseSummary(),
     expected_action: "block"
+  }), null);
+});
+
+// P1-T3: detail and evidence contracts
+
+const CAMPAIGN_DETAIL_ID = "campaign:t1:0123456789abcdef0123456789abcdef";
+const CAMPAIGN_DETAIL_HEX = "0123456789abcdef0123456789abcdef";
+
+const DETAIL_AGENT_DEFS = [
+  {
+    agent_id: "agent:track1:prompt-injection",
+    scenario_id: "T1-SC-001",
+    case_ids: ["T1-SC-001-C001", "T1-SC-001-C002", "T1-SC-001-C003"],
+    expected_actions: ["deny", "deny", "allow"]
+  },
+  {
+    agent_id: "agent:track1:tool-hijack",
+    scenario_id: "T1-SC-002",
+    case_ids: ["T1-SC-002-C001", "T1-SC-002-C002", "T1-SC-002-C003"],
+    expected_actions: ["deny", "ask", "deny"]
+  },
+  {
+    agent_id: "agent:track1:memory-poison",
+    scenario_id: "T1-SC-003",
+    case_ids: ["T1-SC-003-C001", "T1-SC-003-C002", "T1-SC-003-C003"],
+    expected_actions: ["ask", "deny", "allow"]
+  }
+];
+
+function hexSuffix(n: number): string {
+  return n.toString(16).padStart(32, "0");
+}
+
+function makeValidCampaignDetail() {
+  let counter = 0;
+  const agents = DETAIL_AGENT_DEFS.map((def) => {
+    const cases = def.case_ids.map((caseId, caseIdx) => {
+      counter += 1;
+      const sessionId = `session:${hexSuffix(counter)}`;
+      const taskId = `task:${hexSuffix(counter + 100)}`;
+      const attempt = {
+        campaign_id: CAMPAIGN_DETAIL_ID,
+        agent_id: def.agent_id,
+        scenario_id: def.scenario_id,
+        case_id: caseId,
+        attempt_id: `attempt:${caseId.toLowerCase()}:1`,
+        attempt_index: 1,
+        session_id: sessionId,
+        task_id: taskId,
+        status: "passed",
+        actual_action: "allow",
+        started_at: "2026-06-30T00:00:00.000Z",
+        updated_at: "2026-06-30T00:00:01.000Z"
+      };
+      return {
+        campaign_id: CAMPAIGN_DETAIL_ID,
+        agent_id: def.agent_id,
+        scenario_id: def.scenario_id,
+        case_id: caseId,
+        status: "passed",
+        expected_action: def.expected_actions[caseIdx],
+        attempt_count: 1,
+        attempts: [attempt],
+        updated_at: "2026-06-30T00:00:01.000Z"
+      };
+    });
+    return {
+      campaign_id: CAMPAIGN_DETAIL_ID,
+      agent_id: def.agent_id,
+      scenario_id: def.scenario_id,
+      status: "completed",
+      case_count: 3,
+      cases,
+      updated_at: "2026-06-30T00:00:01.000Z"
+    };
+  });
+  return {
+    schema_version: "track1-campaign-read.v1",
+    campaign_id: CAMPAIGN_DETAIL_ID,
+    status: "completed",
+    started_at: "2026-06-30T00:00:00.000Z",
+    updated_at: "2026-06-30T00:00:01.000Z",
+    agent_count: 3,
+    case_count: 9,
+    agents
+  };
+}
+
+function makeValidCampaignEvidence() {
+  const detail = makeValidCampaignDetail();
+  const sessionHexes: string[] = [];
+  for (const agent of detail.agents) {
+    for (const c of agent.cases) {
+      for (const a of c.attempts) {
+        sessionHexes.push(a.session_id.substring("session:".length));
+      }
+    }
+  }
+  const sessionEvidenceRefs = sessionHexes.map(
+    (h) => `evidence://track1/campaign/${CAMPAIGN_DETAIL_HEX}/session/${h}`
+  );
+  return {
+    schema_version: "track1-campaign-evidence.v1",
+    campaign: detail,
+    session_evidence_refs: sessionEvidenceRefs,
+    artifact_manifest_ref: `artifact://track1/campaign/${CAMPAIGN_DETAIL_HEX}/manifest`
+  };
+}
+
+test("REQ-T1-DEMO-010 accepts exactly three ordered agents and nine cases", () => {
+  const detail = makeValidCampaignDetail();
+  const normalized = normalizeTrack1CampaignDetail(detail);
+  assert.ok(normalized);
+  assert.equal(normalized.agents.length, 3);
+  assert.equal(
+    normalized.agents.flatMap((agent) => agent.cases).length,
+    9
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects duplicate case and session identities", () => {
+  const detail = makeValidCampaignDetail();
+  detail.agents[1].cases[0].case_id = detail.agents[0].cases[0].case_id;
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 rejects cross-agent attempt correlation", () => {
+  const detail = makeValidCampaignDetail();
+  detail.agents[1].cases[0].attempts[0].agent_id =
+    "agent:track1:prompt-injection";
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 rejects evidence with raw runtime content", () => {
+  const evidence = makeValidCampaignEvidence();
+  assert.equal(normalizeTrack1CampaignEvidenceExport({
+    ...evidence,
+    model_output: "CAMPAIGN_EVIDENCE_SENTINEL"
   }), null);
 });
