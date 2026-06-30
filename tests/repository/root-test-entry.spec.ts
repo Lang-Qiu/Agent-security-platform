@@ -2,6 +2,17 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import {
+  TRACK1_CAMPAIGN_AGENT_IDS,
+  TRACK1_CAMPAIGN_CASE_STATUSES,
+  TRACK1_CAMPAIGN_STATUSES,
+  TRACK1_CASE_IDS,
+  TRACK1_SCENARIO_IDS,
+  TRACK1_SNAPSHOT_MAX_BYTES,
+  TRACK1_LIFECYCLE_MAX_BYTES,
+  TRACK1_OPENCLAW_VERSION
+} from "../../shared/index.ts";
+
 function readRootPackageJson() {
   return JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as {
     scripts?: Record<string, string>;
@@ -116,6 +127,23 @@ test("root quality gate delegates to test:all and includes frontend coverage", (
     "test:shared should include supervision contract coverage"
   );
 
+  assert.match(
+    scripts["test:shared"] ?? "",
+    /\bshared\/tests\/campaign-supervision-contract\.spec\.ts\b/,
+    "test:shared should include Track 1 campaign supervision contract coverage"
+  );
+
+  assert.match(
+    scripts["test:shared"] ?? "",
+    /\bshared\/tests\/campaign-ingest-contract\.spec\.ts\b/,
+    "test:shared should include Track 1 campaign ingest contract coverage"
+  );
+
+  assert.ok(
+    scripts["test:repo"]?.includes("tests/repository/track1-openclaw-manifest.spec.ts"),
+    "repository gate should include Track 1 OpenClaw manifest coverage"
+  );
+
   assert.ok(
     scripts["test:repo"]?.includes("tests/repository/track1-supervision-ui.spec.ts"),
     "repository gate should include Track 1 supervision UI coverage"
@@ -142,4 +170,37 @@ test("root quality gate delegates to test:all and includes frontend coverage", (
     /\btests\/supervision-contract\.spec\.ts\b/,
     "the shared package test should include supervision contract coverage"
   );
+
+  assert.match(
+    sharedPackageJson.scripts?.test ?? "",
+    /\btests\/campaign-supervision-contract\.spec\.ts\b/,
+    "the shared package test should include Track 1 campaign supervision contract coverage"
+  );
+
+  assert.match(
+    sharedPackageJson.scripts?.test ?? "",
+    /\btests\/campaign-ingest-contract\.spec\.ts\b/,
+    "the shared package test should include Track 1 campaign ingest contract coverage"
+  );
+});
+
+test("shared package exports all Track 1 runtime constants", () => {
+  assert.deepEqual([...TRACK1_CAMPAIGN_AGENT_IDS], [
+    "agent:track1:prompt-injection",
+    "agent:track1:tool-hijack",
+    "agent:track1:memory-poison"
+  ]);
+  assert.deepEqual([...TRACK1_SCENARIO_IDS], ["T1-SC-001", "T1-SC-002", "T1-SC-003"]);
+  assert.deepEqual([...TRACK1_CASE_IDS], [
+    "T1-SC-001-C001", "T1-SC-001-C002", "T1-SC-001-C003",
+    "T1-SC-002-C001", "T1-SC-002-C002", "T1-SC-002-C003",
+    "T1-SC-003-C001", "T1-SC-003-C002", "T1-SC-003-C003"
+  ]);
+  assert.deepEqual([...TRACK1_CAMPAIGN_STATUSES], [
+    "created", "validating", "running", "collecting", "completed", "failed"
+  ]);
+  assert.deepEqual([...TRACK1_CAMPAIGN_CASE_STATUSES], ["running", "passed", "failed"]);
+  assert.equal(TRACK1_OPENCLAW_VERSION, "2026.6.10");
+  assert.equal(TRACK1_SNAPSHOT_MAX_BYTES, 2 * 1024 * 1024);
+  assert.equal(TRACK1_LIFECYCLE_MAX_BYTES, 256 * 1024);
 });

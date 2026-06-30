@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 
 import { isOneOf, isPlainObject, isString } from "../utils/guards.ts";
 import { normalizeBaseResult } from "./result.ts";
-import { hasExactKeys, isCampaignId } from "./campaign-supervision.ts";
+import {
+  hasExactKeys,
+  isCampaignId,
+  isValidTrack1AgentScenarioCase
+} from "./campaign-supervision.ts";
 import {
   TRACK1_CAMPAIGN_AGENT_IDS,
   TRACK1_CASE_IDS,
@@ -44,8 +48,31 @@ const ATTEMPT_ID_PATTERN = /^attempt:t1-sc-(\d{3})-c(\d{3}):([12])$/;
 const ISO_8601_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/;
 
+// P1-2: openclaw_package_integrity must use SRI format `<algo>-<base64>`.
+const SRI_INTEGRITY_PATTERN = /^(sha256|sha384|sha512)-[A-Za-z0-9+/]+={0,2}$/;
+
+// P1-2: model_ref content boundary constants.
+const MODEL_REF_MAX_BYTES = 256;
+const CONTROL_CHAR_PATTERN = /[\x00-\x1f\x7f]/;
+const CREDENTIAL_PATTERN = /^sk-[A-Za-z0-9_-]{16,}$/;
+
 function isSha256Hex(value: unknown): value is string {
   return isString(value) && SHA256_PATTERN.test(value);
+}
+
+function isSriIntegrity(value: unknown): value is string {
+  return isString(value) && SRI_INTEGRITY_PATTERN.test(value);
+}
+
+// P1-2: model_ref must be a content-free reference URI, not a credential
+// channel. Reject newlines/control chars, credential-like text, and content
+// exceeding the model reference byte budget.
+function isSafeModelRef(value: unknown): value is string {
+  if (!isString(value) || value.length === 0) return false;
+  if (CONTROL_CHAR_PATTERN.test(value)) return false;
+  if (CREDENTIAL_PATTERN.test(value)) return false;
+  if (Buffer.byteLength(value, "utf8") > MODEL_REF_MAX_BYTES) return false;
+  return true;
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -225,8 +252,10 @@ export function normalizeTrack1CampaignStartEnvelope(
   if (!isCampaignId(input.campaign_id)) return null;
   if (!isSha256Hex(input.campaign_manifest_sha256)) return null;
   if (input.openclaw_version !== TRACK1_OPENCLAW_VERSION) return null;
-  if (!isSha256Hex(input.openclaw_package_integrity)) return null;
-  if (!isNonEmptyString(input.model_ref)) return null;
+  // P1-2: openclaw_package_integrity must be SRI format (sha512-<base64>).
+  if (!isSriIntegrity(input.openclaw_package_integrity)) return null;
+  // P1-2: model_ref must be a bounded, content-free reference URI.
+  if (!isSafeModelRef(input.model_ref)) return null;
   if (!isStrictIso8601(input.started_at)) return null;
 
   if (!withinByteLimit(input, TRACK1_LIFECYCLE_MAX_BYTES)) return null;
@@ -253,15 +282,30 @@ export function normalizeTrack1CampaignSnapshotEnvelope(
   if (!isOneOf(TRACK1_CAMPAIGN_AGENT_IDS, input.agent_id)) return null;
   if (!isOneOf(TRACK1_SCENARIO_IDS, input.scenario_id)) return null;
   if (!isOneOf(TRACK1_CASE_IDS, input.case_id)) return null;
-  if (input.attempt_index !== 1 && input.attempt_index !== 2) return null;
-  if (!isAttemptId(input.attempt_id)) return null;
-  if (!isPositiveInteger(input.sequence)) return null;
+  // P1-1: agent_id, scenario_id and case_id must come from the same fixed group.
   if (
-    input.previous_snapshot_sha256 !== null &&
-    !isSha256Hex(input.previous_snapshot_sha256)
+    !isValidTrack1AgentScenarioCase(
+      input.agent_id,
+      input.scenario_id,
+      input.case_id
+    )
   ) {
     return null;
   }
+  if (input.attempt_index !== 1 && input.attempt_index !== 2) return null;
+  if (!isAttemptId(input.attempt_id)) return null;
+  if (!isPositiveInteger(input.sequence)) return null;
+
+  // P1-1: hash chain validation.
+  // sequence 1 is the genesis snapshot: previous_snapshot_sha256 must be null.
+  // sequence > 1 must reference a valid SHA-256 predecessor.
+  if (input.sequence === 1) {
+    if (input.previous_snapshot_sha256 !== null) return null;
+  } else {
+    if (input.previous_snapshot_sha256 === null) return null;
+    if (!isSha256Hex(input.previous_snapshot_sha256)) return null;
+  }
+
   if (!isStrictIso8601(input.observed_at)) return null;
 
   // Correlation: attempt_id must match case_id (lowercased) and attempt_index.

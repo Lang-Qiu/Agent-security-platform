@@ -27,6 +27,7 @@
       "type": "array",
       "minItems": 3,
       "maxItems": 3,
+      "uniqueItems": true,
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -51,6 +52,7 @@
       "type": "array",
       "minItems": 9,
       "maxItems": 9,
+      "uniqueItems": true,
       "items": {
         "type": "object",
         "additionalProperties": false,

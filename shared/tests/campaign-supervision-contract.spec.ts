@@ -279,3 +279,125 @@ test("REQ-T1-DEMO-010 rejects evidence with raw runtime content", () => {
     model_output: "CAMPAIGN_EVIDENCE_SENTINEL"
   }), null);
 });
+
+// -- P1-3: case summary semantic consistency + evidence completeness -----------
+
+test("REQ-T1-DEMO-010 rejects case summary with agent/scenario mismatch", () => {
+  assert.equal(normalizeTrack1CampaignCaseSummary({
+    ...makeValidCaseSummary(),
+    agent_id: "agent:track1:prompt-injection",
+    scenario_id: "T1-SC-002",
+    case_id: "T1-SC-002-C001"
+  }), null);
+});
+
+test("REQ-T1-DEMO-010 rejects case summary with scenario/case mismatch", () => {
+  assert.equal(normalizeTrack1CampaignCaseSummary({
+    ...makeValidCaseSummary(),
+    scenario_id: "T1-SC-001",
+    case_id: "T1-SC-002-C001"
+  }), null);
+});
+
+test("REQ-T1-DEMO-010 rejects passed case with null actual_action", () => {
+  assert.equal(normalizeTrack1CampaignCaseSummary({
+    ...makeValidCaseSummary(),
+    status: "passed",
+    expected_action: "deny",
+    actual_action: null
+  }), null);
+});
+
+test("REQ-T1-DEMO-010 rejects passed case where actual_action != expected_action", () => {
+  assert.equal(normalizeTrack1CampaignCaseSummary({
+    ...makeValidCaseSummary(),
+    status: "passed",
+    expected_action: "ask",
+    actual_action: "deny"
+  }), null);
+});
+
+test("REQ-T1-DEMO-010 rejects failed case with null actual_action", () => {
+  assert.equal(normalizeTrack1CampaignCaseSummary({
+    ...makeValidCaseSummary(),
+    status: "failed",
+    actual_action: null
+  }), null);
+});
+
+test("REQ-T1-DEMO-010 rejects agent summary with agent/scenario mismatch", () => {
+  assert.equal(normalizeTrack1CampaignAgentSummary({
+    ...makeValidAgentSummary(),
+    agent_id: "agent:track1:prompt-injection",
+    scenario_id: "T1-SC-002"
+  }), null);
+});
+
+test("REQ-T1-DEMO-010 rejects evidence with empty session_evidence_refs", () => {
+  const evidence = makeValidCampaignEvidence();
+  assert.equal(normalizeTrack1CampaignEvidenceExport({
+    ...evidence,
+    session_evidence_refs: []
+  }), null);
+});
+
+test("REQ-T1-DEMO-010 rejects evidence with duplicate session_evidence_refs", () => {
+  const evidence = makeValidCampaignEvidence();
+  const dup = evidence.session_evidence_refs[0];
+  evidence.session_evidence_refs.push(dup);
+  assert.equal(normalizeTrack1CampaignEvidenceExport(evidence), null);
+});
+
+test("REQ-T1-DEMO-010 rejects evidence with incomplete session_evidence_refs", () => {
+  const evidence = makeValidCampaignEvidence();
+  evidence.session_evidence_refs.pop();
+  assert.equal(normalizeTrack1CampaignEvidenceExport(evidence), null);
+});
+
+// -- P1-4: completed_at optional key handling -----------------------------------
+
+test("REQ-T1-DEMO-010 accepts completed summary with completed_at", () => {
+  const summary = {
+    ...VALID_SUMMARY,
+    status: "completed",
+    completed_at: "2026-06-30T00:10:00.000Z"
+  };
+  assert.ok(normalizeTrack1CampaignSummary(summary));
+});
+
+test("REQ-T1-DEMO-010 rejects completed summary without completed_at", () => {
+  assert.equal(normalizeTrack1CampaignSummary({
+    ...VALID_SUMMARY,
+    status: "completed"
+  }), null);
+});
+
+test("REQ-T1-DEMO-010 rejects running summary with completed_at", () => {
+  assert.equal(normalizeTrack1CampaignSummary({
+    ...VALID_SUMMARY,
+    status: "running",
+    completed_at: "2026-06-30T00:10:00.000Z"
+  }), null);
+});
+
+// -- P1-6: hasExactKeys prototype inheritance bypass ----------------------------
+
+test("REQ-T1-DEMO-010 rejects object with prototype-inherited field replacing required key", () => {
+  const proto = { campaign_id: "campaign:t1:0123456789abcdef0123456789abcdef" };
+  const malicious = Object.create(proto);
+  malicious.schema_version = "track1-campaign-read.v1";
+  malicious.status = "running";
+  malicious.started_at = "2026-06-30T00:00:00.000Z";
+  malicious.updated_at = "2026-06-30T00:00:01.000Z";
+  malicious.agent_count = 3;
+  malicious.case_count = 9;
+  malicious.passed_case_count = 1;
+  malicious.failed_case_count = 0;
+  malicious.retry_count = 0;
+  malicious.alert_count = 1;
+  malicious.blocked_count = 1;
+  malicious.ask_count = 0;
+  malicious.evidence_available = false;
+  malicious.raw_prompt = "PROTO_BYPASS_SENTINEL";
+  assert.equal(normalizeTrack1CampaignSummary(malicious), null);
+});

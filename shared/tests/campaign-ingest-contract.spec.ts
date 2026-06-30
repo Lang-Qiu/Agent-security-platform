@@ -137,34 +137,149 @@ test("REQ-T1-DEMO-010 rejects a snapshot exceeding the snapshot byte boundary", 
   assert.equal(normalizeTrack1CampaignSnapshotEnvelope(envelope), null);
 });
 
-function padModelRefForTargetByteLength(target: number): string {
-  const base = makeCampaignStartEnvelope();
-  const baseLength = utf8ByteLength(JSON.stringify(base));
-  const paddingNeeded = target - baseLength;
-  if (paddingNeeded < 0) {
-    throw new Error("target byte length is smaller than the base start envelope");
-  }
-  return base.model_ref + "x".repeat(paddingNeeded);
-}
+// NOTE: The start-envelope lifecycle byte boundary tests were removed in
+// P1-2. The model_ref content boundary (max 256 bytes) now prevents a start
+// envelope from ever reaching the 256 KiB lifecycle limit. The lifecycle
+// byte limit remains as a defense-in-depth check in the normalizer, but is
+// no longer reachable via model_ref padding. The snapshot byte boundary
+// tests above cover the byte-limit enforcement for the snapshot envelope,
+// which is the envelope type where large payloads are expected.
 
-test("REQ-T1-DEMO-010 accepts a start envelope at the exact lifecycle byte boundary", () => {
-  const paddedModelRef = padModelRefForTargetByteLength(TRACK1_LIFECYCLE_MAX_BYTES);
+// -- P1-1: snapshot agent/scenario/case correlation + hash chain ----------------
+
+test("REQ-T1-DEMO-010 rejects snapshot with agent/scenario mismatch", () => {
+  const withoutHash = {
+    ...makeEnvelope(),
+    snapshot_sha256: undefined
+  };
+  delete (withoutHash as Record<string, unknown>).snapshot_sha256;
+  const mismatched = {
+    ...withoutHash,
+    agent_id: "agent:track1:prompt-injection",
+    scenario_id: "T1-SC-002",
+    case_id: "T1-SC-002-C001",
+    attempt_id: "attempt:t1-sc-002-c001:1"
+  };
+  mismatched.snapshot_sha256 = calculateTrack1SnapshotSha256(mismatched);
+  assert.equal(
+    normalizeTrack1CampaignSnapshotEnvelope(mismatched),
+    null
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects snapshot with scenario/case mismatch", () => {
+  const withoutHash = { ...makeEnvelope() };
+  delete (withoutHash as Record<string, unknown>).snapshot_sha256;
+  const mismatched = {
+    ...withoutHash,
+    scenario_id: "T1-SC-001",
+    case_id: "T1-SC-002-C001",
+    attempt_id: "attempt:t1-sc-002-c001:1"
+  };
+  mismatched.snapshot_sha256 = calculateTrack1SnapshotSha256(mismatched);
+  assert.equal(
+    normalizeTrack1CampaignSnapshotEnvelope(mismatched),
+    null
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects snapshot with agent/case mismatch", () => {
+  const withoutHash = { ...makeEnvelope() };
+  delete (withoutHash as Record<string, unknown>).snapshot_sha256;
+  const mismatched = {
+    ...withoutHash,
+    agent_id: "agent:track1:tool-hijack",
+    case_id: "T1-SC-001-C001",
+    attempt_id: "attempt:t1-sc-001-c001:1"
+  };
+  mismatched.snapshot_sha256 = calculateTrack1SnapshotSha256(mismatched);
+  assert.equal(
+    normalizeTrack1CampaignSnapshotEnvelope(mismatched),
+    null
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects sequence 1 with non-null previous hash", () => {
+  const withoutHash = { ...makeEnvelope() };
+  delete (withoutHash as Record<string, unknown>).snapshot_sha256;
+  const bad = {
+    ...withoutHash,
+    sequence: 1,
+    previous_snapshot_sha256: "a".repeat(64)
+  };
+  bad.snapshot_sha256 = calculateTrack1SnapshotSha256(bad);
+  assert.equal(
+    normalizeTrack1CampaignSnapshotEnvelope(bad),
+    null
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects sequence > 1 with null previous hash", () => {
+  const withoutHash = { ...makeEnvelope() };
+  delete (withoutHash as Record<string, unknown>).snapshot_sha256;
+  const bad = {
+    ...withoutHash,
+    sequence: 2,
+    previous_snapshot_sha256: null
+  };
+  bad.snapshot_sha256 = calculateTrack1SnapshotSha256(bad);
+  assert.equal(
+    normalizeTrack1CampaignSnapshotEnvelope(bad),
+    null
+  );
+});
+
+// -- P1-2: start envelope SRI integrity + model_ref content boundary ------------
+
+test("REQ-T1-DEMO-010 accepts start envelope with sha512 SRI package integrity", () => {
   const envelope = {
     ...makeCampaignStartEnvelope(),
-    model_ref: paddedModelRef
+    openclaw_package_integrity:
+      "sha512-LcooND2tBQw8A+kc1Ujltu3lg30bJ0w7XaeRy7eYzobb8BBdcW6DOGbwJL4vpj1vl9+gjRceOtlh5nh9OARcug=="
   };
-  const actualLength = utf8ByteLength(JSON.stringify(envelope));
-  assert.equal(actualLength, TRACK1_LIFECYCLE_MAX_BYTES);
   assert.ok(normalizeTrack1CampaignStartEnvelope(envelope));
 });
 
-test("REQ-T1-DEMO-010 rejects a start envelope exceeding the lifecycle byte boundary", () => {
-  const paddedModelRef = padModelRefForTargetByteLength(TRACK1_LIFECYCLE_MAX_BYTES + 1);
+test("REQ-T1-DEMO-010 rejects start envelope with sha256 hex integrity (wrong format)", () => {
   const envelope = {
     ...makeCampaignStartEnvelope(),
-    model_ref: paddedModelRef
+    openclaw_package_integrity: "a".repeat(64)
   };
-  const actualLength = utf8ByteLength(JSON.stringify(envelope));
-  assert.equal(actualLength, TRACK1_LIFECYCLE_MAX_BYTES + 1);
-  assert.equal(normalizeTrack1CampaignStartEnvelope(envelope), null);
+  assert.equal(
+    normalizeTrack1CampaignStartEnvelope(envelope),
+    null
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects model_ref with newline", () => {
+  const envelope = {
+    ...makeCampaignStartEnvelope(),
+    model_ref: "model://track1/openclaw-demo\nsk-secret-token"
+  };
+  assert.equal(
+    normalizeTrack1CampaignStartEnvelope(envelope),
+    null
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects model_ref with credential-like content", () => {
+  const envelope = {
+    ...makeCampaignStartEnvelope(),
+    model_ref: "sk-abcdef1234567890abcdef1234567890abcdef1234567890abcdef123456"
+  };
+  assert.equal(
+    normalizeTrack1CampaignStartEnvelope(envelope),
+    null
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects model_ref exceeding 256 bytes", () => {
+  const envelope = {
+    ...makeCampaignStartEnvelope(),
+    model_ref: "model://track1/" + "x".repeat(300)
+  };
+  assert.equal(
+    normalizeTrack1CampaignStartEnvelope(envelope),
+    null
+  );
 });

@@ -19,6 +19,46 @@ export {
   normalizeSandboxSupervisionSessionDetail,
   normalizeSandboxSupervisionEvidenceExport
 } from "./contracts/supervision.ts";
+export {
+  hasExactKeys,
+  isCampaignId,
+  isValidTrack1AgentScenarioCase,
+  normalizeTrack1CampaignSummary,
+  normalizeTrack1CampaignAgentSummary,
+  normalizeTrack1CampaignCaseSummary,
+  normalizeTrack1CampaignDetail,
+  normalizeTrack1CampaignEvidenceExport
+} from "./contracts/campaign-supervision.ts";
+export {
+  calculateTrack1SnapshotSha256,
+  normalizeTrack1CampaignStartEnvelope,
+  normalizeTrack1CampaignSnapshotEnvelope,
+  normalizeTrack1CampaignSnapshotAck,
+  normalizeTrack1CampaignFinalizeEnvelope,
+  normalizeTrack1CampaignEvidenceRegistration
+} from "./contracts/campaign-ingest.ts";
+// P2-8: export all Track 1 runtime constants as values (not just types).
+// `export type *` only exports types; runtime arrays/strings/numbers need
+// explicit value exports so consumers can read closed unions at runtime.
+export {
+  TRACK1_CAMPAIGN_AGENT_IDS,
+  TRACK1_CAMPAIGN_CASE_STATUSES,
+  TRACK1_CAMPAIGN_EVIDENCE_SCHEMA_VERSION,
+  TRACK1_CAMPAIGN_READ_SCHEMA_VERSION,
+  TRACK1_CAMPAIGN_STATUSES,
+  TRACK1_CASE_IDS,
+  TRACK1_SCENARIO_IDS
+} from "./types/campaign-supervision.ts";
+export {
+  TRACK1_CAMPAIGN_EVIDENCE_REGISTRATION_SCHEMA_VERSION,
+  TRACK1_CAMPAIGN_FINALIZE_SCHEMA_VERSION,
+  TRACK1_CAMPAIGN_SNAPSHOT_ACK_SCHEMA_VERSION,
+  TRACK1_CAMPAIGN_SNAPSHOT_SCHEMA_VERSION,
+  TRACK1_CAMPAIGN_START_SCHEMA_VERSION,
+  TRACK1_LIFECYCLE_MAX_BYTES,
+  TRACK1_OPENCLAW_VERSION,
+  TRACK1_SNAPSHOT_MAX_BYTES
+} from "./types/campaign-ingest.ts";
 export * from "./types/skills-static.ts";
 export * from "./types/sandbox.ts";
 export type {
@@ -37,3 +77,5 @@ export type {
 export type * from "./types/task.ts";
 export type * from "./types/result.ts";
 export type * from "./types/api-response.ts";
+export type * from "./types/campaign-supervision.ts";
+export type * from "./types/campaign-ingest.ts";

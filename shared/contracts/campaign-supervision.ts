@@ -23,7 +23,7 @@ export {
   TRACK1_CAMPAIGN_READ_SCHEMA_VERSION
 } from "../types/campaign-supervision.ts";
 
-const SUMMARY_KEYS = [
+const SUMMARY_BASE_KEYS = [
   "schema_version",
   "campaign_id",
   "status",
@@ -38,6 +38,13 @@ const SUMMARY_KEYS = [
   "blocked_count",
   "ask_count",
   "evidence_available"
+] as const;
+
+// When status === "completed", the summary must also carry a `completed_at`
+// timestamp. Any other status must NOT include `completed_at` (P1-4).
+const SUMMARY_COMPLETED_KEYS = [
+  ...SUMMARY_BASE_KEYS,
+  "completed_at"
 ] as const;
 
 const ISO_8601_PATTERN =
@@ -89,9 +96,20 @@ export function hasExactKeys(
   value: Record<string, unknown>,
   expected: readonly string[]
 ): boolean {
-  const keys = Object.keys(value);
-  if (keys.length !== expected.length) return false;
-  return expected.every((key) => key in value);
+  // Reject objects whose prototype is not Object.prototype or null.
+  // This prevents prototype-injected objects from bypassing the key set
+  // check via inherited fields (e.g., Object.create({ campaign_id: ... })).
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null) return false;
+
+  // Compare own-property key sets exactly. Using `hasOwnProperty` instead of
+  // `key in value` ensures prototype-inherited fields are never accepted as
+  // substitutes for required own properties.
+  const ownKeys = Object.getOwnPropertyNames(value);
+  if (ownKeys.length !== expected.length) return false;
+
+  const expectedSet = new Set(expected);
+  return ownKeys.every((key) => expectedSet.has(key));
 }
 
 function isNonNegativeInteger(value: unknown): value is number {
@@ -112,6 +130,36 @@ const TASK_ID_PATTERN = /^task:[0-9a-f]{32}$/;
 
 function isTaskId(value: unknown): value is string {
   return isString(value) && TASK_ID_PATTERN.test(value);
+}
+
+// P1-3: fixed agent/scenario/case mapping.
+// TRACK1_CASE_IDS is ordered in groups of 3, one group per agent/scenario.
+// case index 0..2  -> agent[0] / scenario[0]
+// case index 3..5  -> agent[1] / scenario[1]
+// case index 6..8  -> agent[2] / scenario[2]
+function isValidTrack1AgentScenario(
+  agentId: string,
+  scenarioId: string
+): boolean {
+  const agentIdx = TRACK1_CAMPAIGN_AGENT_IDS.indexOf(
+    agentId as Track1CampaignAgentId
+  );
+  if (agentIdx === -1) return false;
+  return TRACK1_SCENARIO_IDS[agentIdx] === scenarioId;
+}
+
+export function isValidTrack1AgentScenarioCase(
+  agentId: string,
+  scenarioId: string,
+  caseId: string
+): boolean {
+  const caseIdx = TRACK1_CASE_IDS.indexOf(caseId as Track1CaseId);
+  if (caseIdx === -1) return false;
+  const groupIdx = Math.floor(caseIdx / 3);
+  return (
+    TRACK1_CAMPAIGN_AGENT_IDS[groupIdx] === agentId &&
+    TRACK1_SCENARIO_IDS[groupIdx] === scenarioId
+  );
 }
 
 const AGENT_SUMMARY_KEYS = [
@@ -145,7 +193,13 @@ const CASE_SUMMARY_KEYS = [
 export function normalizeTrack1CampaignSummary(
   input: unknown
 ): Track1CampaignSummary | null {
-  if (!isPlainObject(input) || !hasExactKeys(input, SUMMARY_KEYS)) return null;
+  if (!isPlainObject(input)) return null;
+
+  // P1-4: completed_at is required when status === "completed" and forbidden
+  // otherwise. The expected key set is therefore conditional on status.
+  const isCompleted = input.status === "completed";
+  const expectedKeys = isCompleted ? SUMMARY_COMPLETED_KEYS : SUMMARY_BASE_KEYS;
+  if (!hasExactKeys(input, expectedKeys)) return null;
 
   if (input.schema_version !== TRACK1_CAMPAIGN_READ_SCHEMA_VERSION) return null;
   if (!isCampaignId(input.campaign_id)) return null;
@@ -162,6 +216,10 @@ export function normalizeTrack1CampaignSummary(
   if (!isNonNegativeInteger(input.ask_count)) return null;
   if (typeof input.evidence_available !== "boolean") return null;
 
+  // Validate completed_at when present (status === "completed").
+  const completedAt = (input as Record<string, unknown>).completed_at;
+  if (isCompleted && !isStrictIso8601(completedAt)) return null;
+
   // Counter invariants against fixed 3-agent/9-case totals.
   if (input.passed_case_count > input.case_count) return null;
   if (input.failed_case_count > input.case_count) return null;
@@ -169,7 +227,7 @@ export function normalizeTrack1CampaignSummary(
     return null;
   if (input.retry_count > input.case_count) return null;
 
-  return {
+  const result: Track1CampaignSummary = {
     schema_version: TRACK1_CAMPAIGN_READ_SCHEMA_VERSION,
     campaign_id: input.campaign_id,
     status: input.status,
@@ -185,6 +243,10 @@ export function normalizeTrack1CampaignSummary(
     ask_count: input.ask_count,
     evidence_available: input.evidence_available
   };
+  if (isCompleted) {
+    result.completed_at = completedAt as string;
+  }
+  return result;
 }
 
 export function normalizeTrack1CampaignAgentSummary(
@@ -197,6 +259,8 @@ export function normalizeTrack1CampaignAgentSummary(
   if (!isCampaignId(input.campaign_id)) return null;
   if (!isOneOf(TRACK1_CAMPAIGN_AGENT_IDS, input.agent_id)) return null;
   if (!isOneOf(TRACK1_SCENARIO_IDS, input.scenario_id)) return null;
+  // P1-3: agent_id and scenario_id must come from the same fixed group.
+  if (!isValidTrack1AgentScenario(input.agent_id, input.scenario_id)) return null;
   if (!isOneOf(TRACK1_CAMPAIGN_STATUSES, input.status)) return null;
   if (input.case_count !== 3) return null;
   if (!isNonNegativeInteger(input.passed_case_count)) return null;
@@ -242,6 +306,16 @@ export function normalizeTrack1CampaignCaseSummary(
   if (!isOneOf(TRACK1_CAMPAIGN_AGENT_IDS, input.agent_id)) return null;
   if (!isOneOf(TRACK1_SCENARIO_IDS, input.scenario_id)) return null;
   if (!isOneOf(TRACK1_CASE_IDS, input.case_id)) return null;
+  // P1-3: agent_id, scenario_id and case_id must come from the same fixed group.
+  if (
+    !isValidTrack1AgentScenarioCase(
+      input.agent_id,
+      input.scenario_id,
+      input.case_id
+    )
+  ) {
+    return null;
+  }
   if (!isOneOf(TRACK1_CAMPAIGN_CASE_STATUSES, input.status)) return null;
   if (!isOneOf(SANDBOX_POLICY_ACTIONS, input.expected_action)) return null;
   if (input.actual_action !== null) {
@@ -250,6 +324,17 @@ export function normalizeTrack1CampaignCaseSummary(
   if (input.attempt_count !== 1 && input.attempt_count !== 2) return null;
   if (!isSessionId(input.current_session_id)) return null;
   if (!isStrictIso8601(input.updated_at)) return null;
+
+  // P1-3: status/action consistency.
+  // passed  -> actual_action must equal expected_action (and not be null)
+  // failed  -> actual_action must not be null (may differ from expected_action)
+  // running -> actual_action may be null or any valid action
+  if (input.status === "passed") {
+    if (input.actual_action === null) return null;
+    if (input.actual_action !== input.expected_action) return null;
+  } else if (input.status === "failed") {
+    if (input.actual_action === null) return null;
+  }
 
   return {
     campaign_id: input.campaign_id,
@@ -575,13 +660,23 @@ export function normalizeTrack1CampaignEvidenceExport(
     }
   }
 
-  // Validate every session_evidence_ref against format and correlation.
+  // P1-3: session_evidence_refs must be non-empty, unique, and complete.
+  if (input.session_evidence_refs.length === 0) return null;
+
+  const seenRefs = new Set<string>();
   for (const ref of input.session_evidence_refs) {
+    // Reject duplicates.
+    if (seenRefs.has(ref)) return null;
+    seenRefs.add(ref);
+
     const match = ref.match(EVIDENCE_REF_PATTERN);
     if (!match) return null;
     if (match[1] !== campaignHex) return null;
     if (!sessionHexSet.has(match[2])) return null;
   }
+
+  // Completeness: every session in the campaign must have exactly one ref.
+  if (seenRefs.size !== sessionHexSet.size) return null;
 
   return {
     schema_version: TRACK1_CAMPAIGN_EVIDENCE_SCHEMA_VERSION,
