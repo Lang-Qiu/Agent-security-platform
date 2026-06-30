@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   TRACK1_CAMPAIGN_AGENT_IDS,
+  TRACK1_CAMPAIGN_ATTEMPT_STATUSES,
   TRACK1_CAMPAIGN_CASE_STATUSES,
   TRACK1_CAMPAIGN_STATUSES,
   TRACK1_CASE_IDS,
@@ -200,6 +201,8 @@ test("shared package exports all Track 1 runtime constants", () => {
     "created", "validating", "running", "collecting", "completed", "failed"
   ]);
   assert.deepEqual([...TRACK1_CAMPAIGN_CASE_STATUSES], ["pending", "running", "passed", "failed"]);
+  // P2-3: attempt statuses exclude "pending" — only cases can be pending.
+  assert.deepEqual([...TRACK1_CAMPAIGN_ATTEMPT_STATUSES], ["running", "passed", "failed"]);
   assert.equal(TRACK1_OPENCLAW_VERSION, "2026.6.10");
   assert.equal(TRACK1_SNAPSHOT_MAX_BYTES, 2 * 1024 * 1024);
   assert.equal(TRACK1_LIFECYCLE_MAX_BYTES, 256 * 1024);

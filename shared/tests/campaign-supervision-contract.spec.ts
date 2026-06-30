@@ -680,3 +680,100 @@ test("REQ-T1-DEMO-010 accepts created campaign with all pending cases", () => {
   }
   assert.ok(normalizeTrack1CampaignDetail(detail));
 });
+
+// -- P1-2 rework 4: pending session null + parent-child status matrix ---------
+
+test("REQ-T1-DEMO-010 rejects pending case summary with non-null current_session_id", () => {
+  // pending cases have no session yet; a fake session ID is currently accepted
+  // but must be rejected. current_session_id must be null for pending cases.
+  assert.equal(
+    normalizeTrack1CampaignCaseSummary({
+      ...makeValidCaseSummary(),
+      status: "pending",
+      attempt_count: 0,
+      actual_action: null,
+      current_session_id: "session:0123456789abcdef0123456789abcdef"
+    }),
+    null
+  );
+});
+
+test("REQ-T1-DEMO-010 accepts pending case summary with null current_session_id", () => {
+  assert.ok(
+    normalizeTrack1CampaignCaseSummary({
+      ...makeValidCaseSummary(),
+      status: "pending",
+      attempt_count: 0,
+      actual_action: null,
+      current_session_id: null
+    })
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects non-pending case summary with null current_session_id", () => {
+  assert.equal(
+    normalizeTrack1CampaignCaseSummary({
+      ...makeValidCaseSummary(),
+      current_session_id: null
+    }),
+    null
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects created campaign with failed agents", () => {
+  // created campaign must have all agents in created state, not failed
+  const detail = makeValidCampaignDetail();
+  detail.status = "created";
+  for (const agent of detail.agents) {
+    agent.status = "created";
+    for (const c of agent.cases) {
+      c.status = "pending";
+      c.attempt_count = 0;
+      c.attempts = [];
+    }
+  }
+  // inject a failed agent — must be rejected
+  detail.agents[0].status = "failed";
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 rejects collecting campaign with running agents", () => {
+  // collecting campaign requires all agents completed, not running
+  const detail = makeValidCampaignDetail();
+  detail.status = "collecting";
+  detail.agents[0].status = "running";
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 accepts collecting campaign with all agents completed", () => {
+  const detail = makeValidCampaignDetail();
+  detail.status = "collecting";
+  // default fixture has all agents completed and all cases passed
+  assert.ok(normalizeTrack1CampaignDetail(detail));
+});
+
+test("REQ-T1-DEMO-010 rejects created agent with non-pending cases in detail", () => {
+  // created agent must have all cases pending
+  const detail = makeValidCampaignDetail();
+  detail.status = "created";
+  detail.agents[0].status = "created";
+  // agent 0 has a created status but its cases are passed (default fixture)
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 rejects collecting agent with non-terminal cases", () => {
+  const detail = makeValidCampaignDetail();
+  detail.status = "collecting";
+  detail.agents[0].status = "collecting";
+  // agent 0 is collecting but cases are passed (terminal) — that's fine
+  // but agent 1 is still completed with terminal cases — also fine
+  // Let's make agent 0 collecting but with a running case
+  detail.agents[0].cases[0].status = "running";
+  detail.agents[0].cases[0].attempt_count = 1;
+  detail.agents[0].cases[0].attempts = [{
+    ...detail.agents[0].cases[0].attempts[0],
+    status: "running",
+    actual_action: null
+  }];
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});

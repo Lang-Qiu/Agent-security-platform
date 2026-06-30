@@ -46,6 +46,15 @@ export const TRACK1_CAMPAIGN_CASE_STATUSES = [
   "failed"
 ] as const;
 
+// P2-3: Attempts cannot be "pending" — only cases can. A separate status set
+// keeps the runtime contract type-tight and prevents the normalizer from
+// needing a runtime guard for a value the type system already forbids.
+export const TRACK1_CAMPAIGN_ATTEMPT_STATUSES = [
+  "running",
+  "passed",
+  "failed"
+] as const;
+
 export type Track1CampaignAgentId =
   (typeof TRACK1_CAMPAIGN_AGENT_IDS)[number];
 export type Track1CampaignStatus =
@@ -54,6 +63,8 @@ export type Track1ScenarioId = (typeof TRACK1_SCENARIO_IDS)[number];
 export type Track1CaseId = (typeof TRACK1_CASE_IDS)[number];
 export type Track1CampaignCaseStatus =
   (typeof TRACK1_CAMPAIGN_CASE_STATUSES)[number];
+export type Track1CampaignAttemptStatus =
+  (typeof TRACK1_CAMPAIGN_ATTEMPT_STATUSES)[number];
 export type Track1CampaignId = `campaign:t1:${string}`;
 export type Track1AttemptId =
   `attempt:${Lowercase<Track1CaseId>}:${1 | 2}`;
@@ -103,7 +114,7 @@ export interface Track1CampaignCaseSummary {
   expected_action: SandboxPolicyAction;
   actual_action: SandboxPolicyAction | null;
   attempt_count: 0 | 1 | 2;
-  current_session_id: string;
+  current_session_id: string | null;
   updated_at: string;
 }
 
@@ -116,7 +127,7 @@ export interface Track1CampaignAttemptSummary {
   attempt_index: 1 | 2;
   session_id: string;
   task_id: string;
-  status: Track1CampaignCaseStatus;
+  status: Track1CampaignAttemptStatus;
   actual_action: SandboxPolicyAction | null;
   started_at: string;
   updated_at: string;
