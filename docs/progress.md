@@ -2483,7 +2483,87 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - P1 390px width still 0: `.console-main { width: 100% }` was overridden by Ant Design's higher-specificity `.ant-layout-has-sider > .ant-layout { width: 0 }` rule. Replaced with `.console-shell.ant-layout-has-sider > .console-main.ant-layout { width: 100% }` selector that matches Ant's specificity. Repo test asserts the high-specificity selector pattern exists in the CSS (commit `77a1a57`)
   - P2 hasRealDetailRef cross-session race: `loadDetail` wrote `hasRealDetailRef.current = true` after `await getSupervisionSession(...)` without verifying the session was still current. A late real response from a prior session could mark the new session as having a real snapshot, causing its first mock fallback to be wrongly rejected as stale. Fixed by checking `lastDetailSessionRef.current === sessionId` after the await, before writing the ref (commit `77a1a57`)
   - P2 test validity: original race test did not manufacture a real race (resolved A before switching to B). Rewrote test to: (1) mock supervision-service so getSupervisionSession ignores abort signals, (2) keep A's promise pending across the session switch, (3) resolve A late after B's initial mock detail loads, (4) trigger B's next detail poll via refresh, (5) assert B does NOT enter stale state. Verified RED on old code (race guard removed shows "Session detail is stale") and GREEN on fixed code (commit `59b8866`)
+  - review follow-up: narrowed the module mock to `getSupervisionSession` and `listSupervisionSessions`, preserving the production `serializeSupervisionQuery` and all unrelated service exports; the race fixture now returns a detail DTO whose `summary.session_id` matches session B. The fixture identity assertion was verified RED before the correction and GREEN afterward.
   - rework round 3 commits: `77a1a57`, `59b8866`
   - rework round 3 test additions: +1 repo CSS specificity assertion, +1 frontend cross-session race regression test (rewritten to be a valid RED→GREEN)
-- status: REWORK_ROUND_3_COMPLETE_PENDING_REVIEW
-- next blocker: user browser acceptance verification, then REQ-T1-DEMO-010
+- status: COMPLETE - user accepted REQ-009 on 2026-06-30
+- next requirement: `REQ-T1-DEMO-010`
+
+## 2026-06-30 - REQ-T1-DEMO-010 specification
+
+- requirement: real OpenClaw end-to-end campaign and Track 1 report evidence pack
+- approved direction:
+  - real pinned OpenClaw `2026.6.10`, native plugin, and cloud OpenAI-compatible model
+  - three scenario agents executing all nine fixed cases
+  - in-process reuse of monitor, filter, and simulated tools
+  - Docker Compose delivery, CLI campaign start, and Docker-internal authenticated result ingestion
+  - campaign mode in the existing supervision console
+  - one audited retry per case with final exact-action requirement of 9/9
+  - Chinese report, bilingual abstract, PDF, normalized JSON, automatic screenshots, and SHA-256 manifest
+  - one sanitized baseline evidence pack committed; ordinary runtime artifacts ignored
+- specification:
+  - `docs/superpowers/specs/2026-06-30-track1-openclaw-demo-design.md`
+- workflow note: requirement switch, specification, and plan documents are documentation exceptions to full TDD; no production implementation was started
+- plan:
+  - one master execution index plus seven phase-specific TDD plans, 46 assignable tasks total
+  - phases: contracts, backend, native plugin, runtime orchestration, campaign UI, report/evidence, credentialed E2E/baseline
+  - every phase contains task DAG, exact owned files, RED test cases, GREEN commands, commit boundaries, acceptance gates, and low-level LLM report format
+  - Phase 7 contains an explicit human credential/cost gate and cannot silently skip or use a fallback model
+- status: PLAN_PENDING_REVIEW
+
+## 2026-06-30 - REQ-T1-DEMO-010 Phase 1: Campaign Contracts and Fixed Manifest
+
+- phase: 1 Contracts and fixed manifest
+- scope: immutable nine-case OpenClaw campaign manifest plus strict shared campaign read and ingest contracts that every later phase must consume unchanged
+- tasks completed: P1-T1, P1-T2, P1-T3, P1-T4, P1-T5
+- manifest:
+  - agents: 3
+  - cases: 9
+  - case hashes: 9/9 verified
+  - OpenClaw: `2026.6.10` exact
+  - TypeBox: `1.1.38` exact
+  - expected actions: `deny, deny, allow, deny, ask, deny, ask, deny, allow`
+  - `max_attempts`: 2
+- contracts:
+  - `shared/types/campaign-supervision.ts` — closed campaign, agent, scenario, case, status, and action unions plus summary/agent/case/attempt/detail/evidence DTO types
+  - `shared/contracts/campaign-supervision.ts` — exact-key normalizers for summary, agent summary, case summary, detail, and evidence export; rejects unknown/content-bearing fields; enforces cross-agent correlation and deterministic ordering
+  - `shared/types/campaign-ingest.ts` — start/snapshot/ack/finalize/evidence-registration envelope types, schema version constants, byte-limit constants (`TRACK1_SNAPSHOT_MAX_BYTES` 2MB, `TRACK1_LIFECYCLE_MAX_BYTES` 256KB)
+  - `shared/contracts/campaign-ingest.ts` — canonical JSON serialization (recursive key sort, non-JSON rejection), SHA-256 hashing with trailing newline, 5 envelope normalizers with anti-forgery hash recompute and correlation-drift checks
+- anti-oracle gate: repository test asserts `engines/sandbox/src/base-filter/evaluator.ts` and `provider.ts` do not match `/campaign\.v1|expected_action/`; policy code permanently prohibited from importing the manifest oracle
+- registration:
+  - `shared/index.ts` exports every public type, constant, and normalizer from both campaign contract modules
+  - `shared/package.json` test script includes `campaign-supervision-contract.spec.ts` and `campaign-ingest-contract.spec.ts`
+  - root `package.json` `test:shared` includes both campaign contract suites
+  - root `package.json` `test:repo` includes `track1-openclaw-manifest.spec.ts`
+  - `tests/repository/root-test-entry.spec.ts` asserts all script registrations
+- contract tests:
+  - campaign supervision: 36 pass
+  - campaign ingest: 24 pass
+  - manifest + anti-oracle + root-entry: 12 pass
+- commits:
+  - P1-T1 `27b68f8` — `feat(track1): add fixed OpenClaw campaign manifest`
+  - P1-T2 `1bfb31d` — `feat(shared): add campaign supervision summaries`
+  - P1-T3 `8528fb4` — `feat(shared): add campaign supervision evidence`
+  - P1-T4 `e06d455` — `feat(shared): add campaign ingest contract`
+  - P1-T5 `197eb46` — `test(track1): gate campaign contracts and manifest` (first review pass)
+  - P1-T5 rework `<pending>` — `test(track1): pin campaign contracts and finalize schema` (second review pass)
+- phase gate (rework):
+  - `npm run test:shared` — pass (112 tests across 7 spec files)
+  - `npm run test:repo` — pass (80 tests across repository gates)
+  - `npm run test:engine:sandbox` — pass (391 tests, unchanged sandbox coverage)
+  - `git diff --cached --check` — clean
+- rework fixes (second review):
+  - P1-1: pin openclaw_package_integrity to exact lockfile SRI value; whitelist model_ref to canonical URI only (rejects Bearer tokens, URL userinfo, query parameters, forged SRI like `sha512-A`)
+  - P1-2: enforce case detail status/action consistency (passed -> actual == expected; failed -> actual not null); completed summary requires passed + failed == 9; completed_at >= started_at
+  - P1-3: bump Node baseline to 22.19.0 in AGENTS.md and Phase 4 Docker plan (closed the migration gap)
+  - P2-4: enforce deterministic evidence ref ordering (reject reversed/shuffled refs, emit in campaign traversal order)
+  - P2-5: schema now expresses fixed (agent, scenario) pairs and (agent, scenario, case) triples via oneOf const branches, not just uniqueItems
+  - P2-6: rename schema_version from `track1-campaign-final.v1` to `track1-campaign-finalize.v1` per Phase 1 plan
+- constraints honored:
+  - no backend, frontend, or engine production behavior changed
+  - exact-key normalizers reject unknown fields and content-bearing sentinels
+  - closed unions for agent/scenario/case/status/action identifiers
+  - pinned dependencies untouched
+  - canonical hashing uses UTF-8 byte length, not string length
+- status: PHASE_1_REWORK_COMPLETE_PENDING_REVIEW
+- next blocker: user review of rework before Phase 2 backend work
