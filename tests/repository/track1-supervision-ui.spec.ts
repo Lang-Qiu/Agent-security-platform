@@ -67,8 +67,10 @@ test("REQ-T1-SUPERVISION-UI-009 declares stable responsive workbench tracks", ()
     css,
     /\.supervision-workbench\s*\{[^}]*grid-template-columns:/s
   );
+  // Breakpoint at 1100px ensures 1024px (compact desktop/tablet) collapses to
+  // a single column, preventing horizontal overflow per spec visual verification.
   assert.match(
     css,
-    /@media\s*\(max-width:\s*900px\)[\s\S]*?\.supervision-workbench\s*\{[^}]*grid-template-columns:\s*1fr/s
+    /@media\s*\(max-width:\s*1100px\)[\s\S]*?\.supervision-workbench\s*\{[^}]*grid-template-columns:\s*1fr/s
   );
 });
