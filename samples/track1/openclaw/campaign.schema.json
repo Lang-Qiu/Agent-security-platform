@@ -1,0 +1,108 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Track 1 OpenClaw Campaign Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "campaign_name",
+    "max_attempts",
+    "agents",
+    "cases"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "track1-openclaw-campaign.v1"
+    },
+    "campaign_name": {
+      "type": "string",
+      "const": "Track 1 OpenClaw Security Campaign"
+    },
+    "max_attempts": {
+      "type": "integer",
+      "const": 2
+    },
+    "agents": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["agent_id", "scenario_id"],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "enum": [
+              "agent:track1:prompt-injection",
+              "agent:track1:tool-hijack",
+              "agent:track1:memory-poison"
+            ]
+          },
+          "scenario_id": {
+            "type": "string",
+            "enum": ["T1-SC-001", "T1-SC-002", "T1-SC-003"]
+          }
+        }
+      }
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 9,
+      "maxItems": 9,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "agent_id",
+          "scenario_id",
+          "case_id",
+          "case_ref",
+          "case_sha256",
+          "expected_action"
+        ],
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "enum": [
+              "agent:track1:prompt-injection",
+              "agent:track1:tool-hijack",
+              "agent:track1:memory-poison"
+            ]
+          },
+          "scenario_id": {
+            "type": "string",
+            "enum": ["T1-SC-001", "T1-SC-002", "T1-SC-003"]
+          },
+          "case_id": {
+            "type": "string",
+            "enum": [
+              "T1-SC-001-C001",
+              "T1-SC-001-C002",
+              "T1-SC-001-C003",
+              "T1-SC-002-C001",
+              "T1-SC-002-C002",
+              "T1-SC-002-C003",
+              "T1-SC-003-C001",
+              "T1-SC-003-C002",
+              "T1-SC-003-C003"
+            ]
+          },
+          "case_ref": {
+            "type": "string",
+            "pattern": "^samples/track1/cases/T1-SC-00[1-3]/T1-SC-00[1-3]-C00[1-3]\\.json$"
+          },
+          "case_sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "expected_action": {
+            "type": "string",
+            "enum": ["deny", "allow", "ask"]
+          }
+        }
+      }
+    }
+  }
+}

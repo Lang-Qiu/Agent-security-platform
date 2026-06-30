@@ -1,0 +1,10 @@
+{
+  "name": "@agent-security-platform/openclaw-integration",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "openclaw": "2026.6.10",
+    "typebox": "1.1.38"
+  }
+}
