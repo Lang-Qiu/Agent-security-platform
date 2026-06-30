@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { SANDBOX_SUPERVISION_SCHEMA_VERSION } from "../../../shared/contracts/supervision";
 import type {
@@ -13,6 +13,75 @@ import {
   makeSupervisionOverview
 } from "../mocks/supervision";
 import { renderAppAtRoute } from "../test/app-test-harness";
+
+// Controllable mock for the supervision service. By default, delegates to the
+// real implementation (which uses fetch). The cross-session race test
+// overrides getSupervisionSession to control timing.
+const supervisionServiceMock = vi.hoisted(() => {
+  let realService: {
+    getSupervisionSession: (sessionId: string, options?: unknown) => Promise<unknown>;
+    listSupervisionSessions: (query: unknown, options?: unknown) => Promise<unknown>;
+    serializeSupervisionQuery: (query: unknown) => string;
+  } | null = null;
+
+  async function ensureReal() {
+    if (!realService) {
+      const mod = await vi.importActual<
+        typeof import("../services/supervision-service")
+      >("../services/supervision-service");
+      realService = {
+        getSupervisionSession: mod.getSupervisionSession.bind(mod),
+        listSupervisionSessions: mod.listSupervisionSessions.bind(mod),
+        serializeSupervisionQuery: mod.serializeSupervisionQuery.bind(mod)
+      };
+    }
+    return realService;
+  }
+
+  return {
+    getSupervisionSession: vi.fn(async (...args: [string, unknown?]) => {
+      const real = await ensureReal();
+      return real.getSupervisionSession(args[0], args[1]);
+    }),
+    listSupervisionSessions: vi.fn(async (...args: [unknown, unknown?]) => {
+      const real = await ensureReal();
+      return real.listSupervisionSessions(args[0], args[1]);
+    }),
+    serializeSupervisionQuery: vi.fn((...args: [unknown]) => {
+      // Synchronous fallback: build query string inline
+      const query = args[0] as Record<string, unknown>;
+      const params = new URLSearchParams();
+      for (const [k, v] of Object.entries(query)) {
+        if (v !== undefined && v !== null && String(v).length > 0) {
+          params.set(k, String(v));
+        }
+      }
+      const s = params.toString();
+      return s.length === 0 ? "" : `?${s}`;
+    }),
+    downloadSupervisionEvidence: vi.fn(async (...args: [string, unknown?]) => {
+      const real = await ensureReal();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (real as any).downloadSupervisionEvidence(args[0], args[1]);
+    }),
+    loadTaskSupervisionDetail: vi.fn(async (...args: [string, unknown?]) => {
+      const real = await ensureReal();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (real as any).loadTaskSupervisionDetail(args[0], args[1]);
+    }),
+    _resetToReal: () => {
+      realService = null;
+    }
+  };
+});
+
+vi.mock("../services/supervision-service", () => ({
+  getSupervisionSession: supervisionServiceMock.getSupervisionSession,
+  listSupervisionSessions: supervisionServiceMock.listSupervisionSessions,
+  serializeSupervisionQuery: supervisionServiceMock.serializeSupervisionQuery,
+  downloadSupervisionEvidence: supervisionServiceMock.downloadSupervisionEvidence,
+  loadTaskSupervisionDetail: supervisionServiceMock.loadTaskSupervisionDetail
+}));
 
 function createOverview(
   sessions: SandboxSupervisionOverview["sessions"]
@@ -195,6 +264,24 @@ describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    // Reset service mock implementations back to delegate-to-real
+    supervisionServiceMock._resetToReal();
+    supervisionServiceMock.getSupervisionSession.mockImplementation(async (sessionId: string, options?: unknown) => {
+      const mod = await vi.importActual<typeof import("../services/supervision-service")>("../services/supervision-service");
+      return mod.getSupervisionSession(sessionId, options as never);
+    });
+    supervisionServiceMock.listSupervisionSessions.mockImplementation(async (query: unknown, options?: unknown) => {
+      const mod = await vi.importActual<typeof import("../services/supervision-service")>("../services/supervision-service");
+      return mod.listSupervisionSessions(query as never, options as never);
+    });
+    supervisionServiceMock.downloadSupervisionEvidence.mockImplementation(async (sessionId: string, options?: unknown) => {
+      const mod = await vi.importActual<typeof import("../services/supervision-service")>("../services/supervision-service");
+      return mod.downloadSupervisionEvidence(sessionId, options as never);
+    });
+    supervisionServiceMock.loadTaskSupervisionDetail.mockImplementation(async (sessionId: string, options?: unknown) => {
+      const mod = await vi.importActual<typeof import("../services/supervision-service")>("../services/supervision-service");
+      return mod.loadTaskSupervisionDetail(sessionId, options as never);
+    });
   });
 
   test("renders global counts and session list", async () => {
@@ -1029,75 +1116,47 @@ describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
   }, 20000);
 
   test("REQ-T1-SUPERVISION-UI-009 late real detail from prior session does not mark new session as stale", async () => {
-    // Cross-session race in loadDetail: session A's real detail response
+    // Cross-session race in loadDetail: session A's real detail promise
     // resolves AFTER session B's loadDetail has started. Without a session
     // identity check after the await, A's late success would set
     // hasRealDetailRef=true for B, causing B's subsequent mock fallback to be
-    // wrongly rejected as stale. The fix: check session identity before
-    // writing the ref.
+    // wrongly rejected as stale.
     //
-    // We test this via the page: render with session A, let A's real detail
-    // resolve, then switch to session B whose detail fails. B should show
-    // mock detail, not stale.
+    // We mock getSupervisionSession so A's promise stays pending across the
+    // session switch (the hook would normally abort it). This isolates the
+    // loadDetail callback's race-safety from the hook's abort protection.
     const overview = makeSupervisionOverview();
     const sessionAId = overview.sessions[0].session_id;
     const sessionBId = overview.sessions[1].session_id;
     const detailA = makeSupervisionDetail();
 
-    let resolveDetailA: ((value: unknown) => void) | null = null;
-    const detailAPromise = new Promise((resolve) => {
+    let resolveDetailA: ((value: {
+      data: typeof detailA;
+      source: "api";
+    }) => void) | null = null;
+    const detailAPromise = new Promise<{
+      data: typeof detailA;
+      source: "api";
+    }>((resolve) => {
       resolveDetailA = resolve;
     });
-    let aResolved = false;
 
-    const fetchMock = vi.fn(async (resource: string | URL) => {
-      const path = String(resource);
-      if (path.endsWith("/evidence")) {
-        return {
-          ok: true,
-          json: async () => ({
-            success: true,
-            message: "ok",
-            data: makeSupervisionEvidence(),
-            error_code: null,
-            request_id: "req_supervision_page_test"
-          })
-        };
-      }
-      if (/\/api\/supervision\/sessions\/[^?]+$/.test(path)) {
-        const match = path.match(/\/api\/supervision\/sessions\/([^?]+)$/);
-        const sid = match ? decodeURIComponent(match[1]) : "";
-        if (sid === sessionAId && !aResolved) {
-          // Session A's detail is delayed until we resolve it
-          return detailAPromise.then(() => ({
-            ok: true,
-            json: async () => ({
-              success: true,
-              message: "ok",
-              data: detailA,
-              error_code: null,
-              request_id: "req_supervision_page_test"
-            })
-          }));
+    // Override getSupervisionSession to control timing per session.
+    supervisionServiceMock.getSupervisionSession.mockImplementation(
+      async (sessionId: string) => {
+        if (sessionId === sessionAId) {
+          // A's real response stays pending — resolves late after switch
+          return detailAPromise;
         }
-        // Session B and any subsequent calls fail — service falls back to mock
-        throw new Error("detail offline");
+        // Session B: returns mock. If hasRealDetailRef is wrongly true from
+        // A's late resolve, the page loadDetail would throw, marking B stale.
+        return { data: makeSupervisionDetail(), source: "mock" };
       }
-      if (path.startsWith("/api/supervision/sessions")) {
-        return {
-          ok: true,
-          json: async () => ({
-            success: true,
-            message: "ok",
-            data: overview,
-            error_code: null,
-            request_id: "req_supervision_page_test"
-          })
-        };
-      }
-      throw new Error(`Unexpected: ${path}`);
+    );
+    supervisionServiceMock.listSupervisionSessions.mockResolvedValue({
+      data: overview,
+      source: "api"
     });
-    vi.stubGlobal("fetch", fetchMock);
 
     // Deep-link to session A (detail pending)
     await renderAppAtRoute(
@@ -1105,30 +1164,47 @@ describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
     );
     await screen.findByRole("listbox", { name: "Supervision sessions" });
 
-    // Resolve session A's late real detail
-    aResolved = true;
-    resolveDetailA!({});
-
-    // Wait for A's detail to load
-    await waitFor(() => {
-      expect(
-        screen.getByRole("heading", { name: /Session Inspector/i })
-      ).toBeInTheDocument();
-    });
-
-    // Switch to session B
+    // Switch to session B while A's detail is still pending
     fireEvent.click(
       screen.getByRole("option", { name: new RegExp(sessionBId, "i") })
     );
 
-    // Session B's detail fails and falls back to mock — should show mock detail, NOT stale
+    // Wait for B's initial mock detail to load
     await waitFor(() => {
       expect(
         screen.getByRole("heading", { name: /Session Inspector/i })
       ).toBeInTheDocument();
     });
+    const bCallCountAfterInitial =
+      supervisionServiceMock.getSupervisionSession.mock.calls.filter(
+        (call) => call[0] === sessionBId
+      ).length;
+
+    // Now resolve A's late real detail — without the fix, this sets
+    // hasRealDetailRef.current = true for B
+    resolveDetailA!({ data: detailA, source: "api" });
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Trigger B's next detail poll via refresh. If hasRealDetailRef is wrongly
+    // true (from A's late resolve), loadDetail throws on B's mock result,
+    // marking B stale.
+    fireEvent.click(
+      screen.getByRole("button", { name: "Refresh supervision data" })
+    );
+
+    await waitFor(() => {
+      const bCalls = supervisionServiceMock.getSupervisionSession.mock.calls.filter(
+        (call) => call[0] === sessionBId
+      ).length;
+      expect(bCalls).toBeGreaterThan(bCallCountAfterInitial);
+    });
+
+    // B must NOT be stale — no real snapshot exists for B
     expect(
       screen.queryByText(/session detail is stale/i)
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /Session Inspector/i })
+    ).toBeInTheDocument();
   }, 30000);
 });
