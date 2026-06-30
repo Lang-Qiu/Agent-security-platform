@@ -348,3 +348,190 @@ test("REQ-T1-SUPERVISION-UI-009 terminal complete data produces normalized evide
     false
   );
 });
+
+test("REQ-T1-SUPERVISION-UI-009 projector projects non-terminal empty-shell with all collections missing", async () => {
+  const module = await loadProjector();
+  const record = makeStoredSandboxRecord({ action: "allow", status: "running" });
+  const details = getSandboxDetails(record);
+  const emptyShellDetails = {
+    session_id: details.session_id,
+    event_count: 0,
+    blocked: false
+  };
+
+  const projected = module?.projectSupervisionRecord?.({
+    ...record,
+    result: {
+      ...record.result,
+      details: emptyShellDetails
+    }
+  }) as {
+    summary: {
+      event_count: number;
+      decision_count: number;
+      alert_count: number;
+      blocked_record_count: number;
+      highest_action: string;
+      tool_names: string[];
+      last_event_at: string | null;
+      scenario_id: string | null;
+      case_id: string | null;
+      evidence_available: boolean;
+    };
+    detail: {
+      events: unknown[];
+      policy_decisions: unknown[];
+      alerts: unknown[];
+      blocked_records: unknown[];
+    };
+    evidence: unknown;
+  } | null;
+
+  assert.notEqual(projected, null);
+  assert.equal(projected!.summary.event_count, 0);
+  assert.equal(projected!.summary.decision_count, 0);
+  assert.equal(projected!.summary.alert_count, 0);
+  assert.equal(projected!.summary.blocked_record_count, 0);
+  assert.equal(projected!.summary.highest_action, "allow");
+  assert.deepEqual(projected!.summary.tool_names, []);
+  assert.equal(projected!.summary.last_event_at, null);
+  assert.equal(projected!.summary.scenario_id, null);
+  assert.equal(projected!.summary.case_id, null);
+  assert.equal(projected!.summary.evidence_available, false);
+  assert.equal(projected!.detail.events.length, 0);
+  assert.equal(projected!.detail.policy_decisions.length, 0);
+  assert.equal(projected!.detail.alerts.length, 0);
+  assert.equal(projected!.detail.blocked_records.length, 0);
+  assert.equal(projected!.evidence, null);
+});
+
+test("REQ-T1-SUPERVISION-UI-009 projector projects non-terminal session with empty arrays for all collections", async () => {
+  const module = await loadProjector();
+  const record = makeStoredSandboxRecord({ action: "allow", status: "running" });
+  const details = getSandboxDetails(record);
+
+  const projected = module?.projectSupervisionRecord?.({
+    ...record,
+    result: {
+      ...record.result,
+      details: {
+        ...details,
+        events: [],
+        policy_decisions: [],
+        alerts: [],
+        blocked_records: [],
+        blocked: false,
+        event_count: 0
+      }
+    }
+  }) as {
+    summary: {
+      event_count: number;
+      highest_action: string;
+      tool_names: string[];
+      evidence_available: boolean;
+    };
+    evidence: unknown;
+  } | null;
+
+  assert.notEqual(projected, null);
+  assert.equal(projected!.summary.event_count, 0);
+  assert.equal(projected!.summary.highest_action, "allow");
+  assert.deepEqual(projected!.summary.tool_names, []);
+  assert.equal(projected!.summary.evidence_available, false);
+  assert.equal(projected!.evidence, null);
+});
+
+test("REQ-T1-SUPERVISION-UI-009 projector rejects non-terminal partial collections (events present, decisions missing)", async () => {
+  const module = await loadProjector();
+  const record = makeStoredSandboxRecord({ action: "ask", status: "running" });
+  const details = getSandboxDetails(record);
+  const { policy_decisions, alerts, blocked_records, ...restDetails } = details;
+
+  const projected = module?.projectSupervisionRecord?.({
+    ...record,
+    result: {
+      ...record.result,
+      details: restDetails
+    }
+  });
+
+  assert.equal(projected, null);
+});
+
+test("REQ-T1-SUPERVISION-UI-009 projector rejects terminal session with missing collections", async () => {
+  const module = await loadProjector();
+  const record = makeStoredSandboxRecord({ action: "deny", status: "blocked" });
+  const details = getSandboxDetails(record);
+  const { policy_decisions, alerts, blocked_records, ...restDetails } = details;
+
+  const projected = module?.projectSupervisionRecord?.({
+    ...record,
+    result: {
+      ...record.result,
+      details: restDetails
+    }
+  });
+
+  assert.equal(projected, null);
+});
+
+test("REQ-T1-SUPERVISION-UI-009 projector allows empty tool_names for running session with no tool events", async () => {
+  const module = await loadProjector();
+  const record = makeStoredSandboxRecord({ action: "allow", status: "running" });
+  const details = getSandboxDetails(record);
+  const firstEvent = details.events![0];
+  const modelOnlyEvent: SandboxBehaviorEvent = {
+    event_id: "event:model-only-001",
+    session_id: details.session_id,
+    sequence: 1,
+    occurred_at: firstEvent.occurred_at,
+    source: firstEvent.source,
+    scenario_id: firstEvent.scenario_id ?? null,
+    case_id: firstEvent.case_id ?? null,
+    evidence_refs: [...firstEvent.evidence_refs],
+    event_type: "model_input",
+    payload: {
+      model_ref: "model:fixture",
+      content_ref: "ref:fixture-content",
+      content_sha256: "a".repeat(64)
+    }
+  };
+
+  const projected = module?.projectSupervisionRecord?.({
+    ...record,
+    result: {
+      ...record.result,
+      details: {
+        ...details,
+        events: [modelOnlyEvent],
+        policy_decisions: [],
+        alerts: [],
+        blocked_records: [],
+        blocked: false,
+        event_count: 1
+      }
+    }
+  }) as {
+    summary: { tool_names: string[] };
+  } | null;
+
+  assert.notEqual(projected, null);
+  assert.deepEqual(projected!.summary.tool_names, []);
+});
+
+test("REQ-T1-SUPERVISION-UI-009 projector uses result.updated_at (not task.updated_at) for summary ordering", async () => {
+  const module = await loadProjector();
+  const record = makeStoredSandboxRecord({ action: "deny" });
+
+  const projected = module?.projectSupervisionRecord?.({
+    ...record,
+    task: { ...record.task, updated_at: "2026-06-29T00:00:01Z" },
+    result: { ...record.result, updated_at: "2026-06-29T00:00:10Z" }
+  }) as {
+    summary: { updated_at: string };
+  } | null;
+
+  assert.notEqual(projected, null);
+  assert.equal(projected!.summary.updated_at, "2026-06-29T00:00:10Z");
+});

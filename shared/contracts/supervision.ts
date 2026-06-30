@@ -135,7 +135,7 @@ function isNonNegativeInteger(value: unknown): value is number {
 function isToolNameArray(
   value: unknown
 ): value is SandboxSupervisionToolName[] {
-  if (!Array.isArray(value) || value.length === 0) return false;
+  if (!Array.isArray(value)) return false;
 
   const seen = new Set<string>();
   for (const item of value) {

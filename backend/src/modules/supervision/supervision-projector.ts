@@ -259,39 +259,64 @@ export function projectSupervisionRecord(
   const details = result.details as SandboxRunResultDetails;
   if (!details.session_id || details.session_id.length === 0) return null;
 
-  const events = details.events ?? [];
-  const decisions = details.policy_decisions ?? [];
-  const alerts = details.alerts ?? [];
-  const blockedRecords = details.blocked_records ?? [];
+  const events = details.events;
+  const decisions = details.policy_decisions;
+  const alerts = details.alerts;
+  const blockedRecords = details.blocked_records;
 
-  if (events.length === 0) return null;
+  const eventsPresent = Array.isArray(events);
+  const decisionsPresent = Array.isArray(decisions);
+  const alertsPresent = Array.isArray(alerts);
+  const blockedRecordsPresent = Array.isArray(blockedRecords);
+  const presentCount =
+    (eventsPresent ? 1 : 0) +
+    (decisionsPresent ? 1 : 0) +
+    (alertsPresent ? 1 : 0) +
+    (blockedRecordsPresent ? 1 : 0);
 
-  const firstEvent = events[0];
-  const scenarioId = firstEvent.scenario_id ?? null;
-  const caseId = firstEvent.case_id ?? null;
-
-  for (const event of events) {
-    const eventScenario = event.scenario_id ?? null;
-    const eventCase = event.case_id ?? null;
-    if (eventScenario !== scenarioId || eventCase !== caseId) return null;
+  const terminal = isTerminalStatus(task.status);
+  if (terminal) {
+    if (presentCount !== 4) return null;
+  } else {
+    if (presentCount !== 0 && presentCount !== 4) return null;
   }
 
-  const safeEvents = events.map(projectEvent);
-  const safeDecisions = sortByDecidedAtThenId(decisions.map(projectDecision));
+  const safeEvents = (eventsPresent ? events : []).map(projectEvent);
+  const safeDecisions = sortByDecidedAtThenId(
+    (decisionsPresent ? decisions : []).map(projectDecision)
+  );
   const safeAlerts = sortByTimestampThenId(
-    alerts.map(projectAlert),
+    (alertsPresent ? alerts : []).map(projectAlert),
     (a) => a.alert_id
   );
   const safeBlockedRecords = sortByTimestampThenId(
-    blockedRecords.map(projectBlockedRecord),
+    (blockedRecordsPresent ? blockedRecords : []).map(projectBlockedRecord),
     (b) => b.blocked_record_id
   );
 
-  const highestAction = deriveHighestAction(decisions);
-  const toolNames = deriveToolNames(events);
-  const lastEventAt = deriveLastEventAt(events);
+  const sourceEvents = eventsPresent ? events : [];
+  const sourceDecisions = decisionsPresent ? decisions : [];
+  const sourceAlerts = alertsPresent ? alerts : [];
+  const sourceBlockedRecords = blockedRecordsPresent ? blockedRecords : [];
+
+  let scenarioId: string | null = null;
+  let caseId: string | null = null;
+  if (sourceEvents.length > 0) {
+    const firstEvent = sourceEvents[0];
+    scenarioId = firstEvent.scenario_id ?? null;
+    caseId = firstEvent.case_id ?? null;
+    for (const event of sourceEvents) {
+      const eventScenario = event.scenario_id ?? null;
+      const eventCase = event.case_id ?? null;
+      if (eventScenario !== scenarioId || eventCase !== caseId) return null;
+    }
+  }
+
+  const highestAction = deriveHighestAction(sourceDecisions);
+  const toolNames = deriveToolNames(sourceEvents);
+  const lastEventAt = deriveLastEventAt(sourceEvents);
   const blocked = details.blocked === true;
-  const evidenceAvailable = isTerminalStatus(task.status);
+  const evidenceAvailable = terminal;
 
   const summary: SandboxSupervisionSessionSummary = {
     task_id: task.task_id,
@@ -302,13 +327,13 @@ export function projectSupervisionRecord(
     scenario_id: scenarioId,
     case_id: caseId,
     tool_names: toolNames,
-    event_count: events.length,
-    decision_count: decisions.length,
-    alert_count: alerts.length,
-    blocked_record_count: blockedRecords.length,
+    event_count: sourceEvents.length,
+    decision_count: sourceDecisions.length,
+    alert_count: sourceAlerts.length,
+    blocked_record_count: sourceBlockedRecords.length,
     blocked,
     evidence_available: evidenceAvailable,
-    updated_at: task.updated_at,
+    updated_at: result.updated_at,
     last_event_at: lastEventAt
   };
 
