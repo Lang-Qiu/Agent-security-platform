@@ -74,3 +74,25 @@ test("REQ-T1-SUPERVISION-UI-009 declares stable responsive workbench tracks", ()
     /@media\s*\(max-width:\s*1100px\)[\s\S]*?\.supervision-workbench\s*\{[^}]*grid-template-columns:\s*1fr/s
   );
 });
+
+test("REQ-T1-SUPERVISION-UI-009 console-main width override uses high specificity to beat Ant Layout", () => {
+  // Ant Design Layout applies `width: 0` to the main content area when the
+  // sider is collapsed via flexbox. A plain `.console-main { width: 100% }`
+  // is overridden. The CSS must use a higher-specificity selector that
+  // includes the ant-layout structure classes.
+  const css = readFileSync(
+    resolve(repoRoot, "frontend/src/styles/app.css"),
+    "utf8"
+  );
+  // Match selectors like `.console-shell.ant-layout-has-sider > .console-main.ant-layout`
+  // or equivalent specificity that includes both `.ant-layout` and a structural
+  // combinator. A bare `.console-main { width: 100% }` is NOT sufficient.
+  const widthOverrideRegex =
+    /\.console-shell[^\s{]*\.ant-layout[^\s{]*\s*>\s*\.console-main[^\s{]*\.ant-layout[^\s{]*\s*\{[^}]*width:\s*100%/s;
+  assert.match(
+    css,
+    widthOverrideRegex,
+    "console-main width override must use a high-specificity selector that includes " +
+      ".ant-layout structure classes to beat Ant Design's width:0"
+  );
+});

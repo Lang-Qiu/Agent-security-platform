@@ -1027,4 +1027,108 @@ describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
       expect(nextOption).toHaveAttribute("aria-selected", "true");
     });
   }, 20000);
+
+  test("REQ-T1-SUPERVISION-UI-009 late real detail from prior session does not mark new session as stale", async () => {
+    // Cross-session race in loadDetail: session A's real detail response
+    // resolves AFTER session B's loadDetail has started. Without a session
+    // identity check after the await, A's late success would set
+    // hasRealDetailRef=true for B, causing B's subsequent mock fallback to be
+    // wrongly rejected as stale. The fix: check session identity before
+    // writing the ref.
+    //
+    // We test this via the page: render with session A, let A's real detail
+    // resolve, then switch to session B whose detail fails. B should show
+    // mock detail, not stale.
+    const overview = makeSupervisionOverview();
+    const sessionAId = overview.sessions[0].session_id;
+    const sessionBId = overview.sessions[1].session_id;
+    const detailA = makeSupervisionDetail();
+
+    let resolveDetailA: ((value: unknown) => void) | null = null;
+    const detailAPromise = new Promise((resolve) => {
+      resolveDetailA = resolve;
+    });
+    let aResolved = false;
+
+    const fetchMock = vi.fn(async (resource: string | URL) => {
+      const path = String(resource);
+      if (path.endsWith("/evidence")) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            message: "ok",
+            data: makeSupervisionEvidence(),
+            error_code: null,
+            request_id: "req_supervision_page_test"
+          })
+        };
+      }
+      if (/\/api\/supervision\/sessions\/[^?]+$/.test(path)) {
+        const match = path.match(/\/api\/supervision\/sessions\/([^?]+)$/);
+        const sid = match ? decodeURIComponent(match[1]) : "";
+        if (sid === sessionAId && !aResolved) {
+          // Session A's detail is delayed until we resolve it
+          return detailAPromise.then(() => ({
+            ok: true,
+            json: async () => ({
+              success: true,
+              message: "ok",
+              data: detailA,
+              error_code: null,
+              request_id: "req_supervision_page_test"
+            })
+          }));
+        }
+        // Session B and any subsequent calls fail — service falls back to mock
+        throw new Error("detail offline");
+      }
+      if (path.startsWith("/api/supervision/sessions")) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            message: "ok",
+            data: overview,
+            error_code: null,
+            request_id: "req_supervision_page_test"
+          })
+        };
+      }
+      throw new Error(`Unexpected: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    // Deep-link to session A (detail pending)
+    await renderAppAtRoute(
+      `/results/sandbox?session_id=${encodeURIComponent(sessionAId)}`
+    );
+    await screen.findByRole("listbox", { name: "Supervision sessions" });
+
+    // Resolve session A's late real detail
+    aResolved = true;
+    resolveDetailA!({});
+
+    // Wait for A's detail to load
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: /Session Inspector/i })
+      ).toBeInTheDocument();
+    });
+
+    // Switch to session B
+    fireEvent.click(
+      screen.getByRole("option", { name: new RegExp(sessionBId, "i") })
+    );
+
+    // Session B's detail fails and falls back to mock — should show mock detail, NOT stale
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: /Session Inspector/i })
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByText(/session detail is stale/i)
+    ).not.toBeInTheDocument();
+  }, 30000);
 });

@@ -413,7 +413,11 @@ a {
     display: block;
   }
 
-  .console-main {
+  /* High-specificity selector to override Ant Design Layout's width:0
+     applied to the main content when the sider is present. A bare
+     `.console-main { width: 100% }` is overridden by Ant's
+     `.ant-layout-has-sider > .ant-layout` rule. */
+  .console-shell.ant-layout-has-sider > .console-main.ant-layout {
     width: 100%;
   }
 

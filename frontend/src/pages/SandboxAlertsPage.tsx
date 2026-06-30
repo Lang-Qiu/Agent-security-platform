@@ -175,6 +175,12 @@ export function SandboxAlertsPage() {
       }
 
       const result = await getSupervisionSession(sessionId, { signal });
+      // Guard against cross-session race: if the session changed while this
+      // request was in flight, don't write to the ref — it belongs to a
+      // different session now.
+      if (lastDetailSessionRef.current !== sessionId) {
+        return result;
+      }
       if (result && result.source === "mock" && hasRealDetailRef.current) {
         throw new Error("supervision detail unavailable");
       }
