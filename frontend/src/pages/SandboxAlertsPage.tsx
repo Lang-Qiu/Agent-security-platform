@@ -28,6 +28,25 @@ import {
   type SupervisionQuery
 } from "../services/supervision-service";
 
+const NARROW_VIEWPORT_QUERY = "(max-width: 1100px)";
+
+function useNarrowViewport(): boolean {
+  const [narrow, setNarrow] = useState(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return false;
+    return window.matchMedia(NARROW_VIEWPORT_QUERY).matches;
+  });
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mql = window.matchMedia(NARROW_VIEWPORT_QUERY);
+    const handler = (e: MediaQueryListEvent) => setNarrow(e.matches);
+    mql.addEventListener("change", handler);
+    return () => mql.removeEventListener("change", handler);
+  }, []);
+
+  return narrow;
+}
+
 const { Paragraph } = Typography;
 
 const SUPERVISION_TOOL_NAMES: readonly SandboxSupervisionToolName[] = [
@@ -114,9 +133,16 @@ export function SandboxAlertsPage() {
   const [mockFallback, setMockFallback] =
     useState<SandboxSupervisionOverview | null>(null);
   const [mobileView, setMobileView] = useState<"list" | "inspector">("list");
+  const isNarrow = useNarrowViewport();
 
   const queryRef = useRef(query);
   queryRef.current = query;
+
+  // Track whether we've ever received a real (non-mock) detail for the current
+  // session. Only reject mock fallback after a real snapshot exists (stale
+  // case); initial unavailability should still show the safe mock detail.
+  const hasRealDetailRef = useRef(false);
+  const lastDetailSessionRef = useRef<string | null>(null);
 
   const loadOverview = useCallback(
     async (
@@ -142,9 +168,18 @@ export function SandboxAlertsPage() {
       sessionId: string,
       signal: AbortSignal
     ): Promise<SupervisionDataResult<SandboxSupervisionSessionDetail> | null> => {
+      // Reset real-detail tracking when session changes
+      if (lastDetailSessionRef.current !== sessionId) {
+        hasRealDetailRef.current = false;
+        lastDetailSessionRef.current = sessionId;
+      }
+
       const result = await getSupervisionSession(sessionId, { signal });
-      if (result && result.source === "mock") {
+      if (result && result.source === "mock" && hasRealDetailRef.current) {
         throw new Error("supervision detail unavailable");
+      }
+      if (result && result.source !== "mock") {
+        hasRealDetailRef.current = true;
       }
       return result;
     },
@@ -179,7 +214,10 @@ export function SandboxAlertsPage() {
     );
   }, [displayOverview, sessionIdFromUrl]);
 
-  selectedTaskStatusRef.current = selectedSession?.task_status ?? null;
+  // Derive task status from the selected overview session, or from the loaded
+  // detail when the session is outside current filters (no overview match).
+  selectedTaskStatusRef.current =
+    selectedSession?.task_status ?? detail.data?.summary.task_status ?? null;
 
   const scenarioOptions = useMemo(() => {
     const set = new Set<string>();
@@ -331,36 +369,44 @@ export function SandboxAlertsPage() {
           <Paragraph>Loading supervision data...</Paragraph>
         </div>
       ) : displayOverview ? (
-        <div className={`supervision-workbench mobile-view-${mobileView}`}>
-          <div className="supervision-session-list-wrapper">
-            {sessions.length > 0 ? (
-              <SupervisionSessionList
-                sessions={sessions}
-                selectedSessionId={sessionIdFromUrl}
-                onSelect={selectSession}
-              />
-            ) : (
-              <div className="supervision-empty-state">
-                <Paragraph>
-                  {hasFilters
-                    ? "No sessions match the current filters."
-                    : "No sessions available."}
-                </Paragraph>
-              </div>
-            )}
-          </div>
+        <div
+          className={`supervision-workbench mobile-view-${mobileView}`}
+          data-narrow={isNarrow ? "true" : "false"}
+        >
+          {(!isNarrow || mobileView === "list") && (
+            <div className="supervision-session-list-wrapper">
+              {sessions.length > 0 ? (
+                <SupervisionSessionList
+                  sessions={sessions}
+                  selectedSessionId={sessionIdFromUrl}
+                  onSelect={selectSession}
+                />
+              ) : (
+                <div className="supervision-empty-state">
+                  <Paragraph>
+                    {hasFilters
+                      ? "No sessions match the current filters."
+                      : "No sessions available."}
+                  </Paragraph>
+                </div>
+              )}
+            </div>
+          )}
 
-          <aside className="supervision-inspector">
-            {selectedSession || sessionIdFromUrl ? (
-              <>
-                <button
-                  type="button"
-                  className="supervision-mobile-back"
-                  onClick={handleMobileBack}
-                  aria-label="Back to session list"
-                >
-                  ← Back
-                </button>
+          {(!isNarrow || mobileView === "inspector") && (
+            <aside className="supervision-inspector">
+              {selectedSession || sessionIdFromUrl ? (
+                <>
+                  {isNarrow && (
+                    <button
+                      type="button"
+                      className="supervision-mobile-back"
+                      onClick={handleMobileBack}
+                      aria-label="Back to session list"
+                    >
+                      ← Back
+                    </button>
+                  )}
                 {sessionIdFromUrl && !selectedSession ? (
                   <div className="supervision-inspector-outside-filters">
                     <Paragraph>
@@ -401,7 +447,8 @@ export function SandboxAlertsPage() {
                 <Paragraph>Select a session to inspect.</Paragraph>
               </div>
             )}
-          </aside>
+            </aside>
+          )}
         </div>
       ) : null}
     </section>

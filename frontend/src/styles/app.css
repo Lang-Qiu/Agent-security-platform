@@ -413,6 +413,10 @@ a {
     display: block;
   }
 
+  .console-main {
+    width: 100%;
+  }
+
   .console-sider.ant-layout-sider {
     width: auto !important;
     max-width: none !important;

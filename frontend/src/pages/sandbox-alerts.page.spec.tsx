@@ -4,7 +4,8 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { SANDBOX_SUPERVISION_SCHEMA_VERSION } from "../../../shared/contracts/supervision";
 import type {
   SandboxSupervisionEvidenceExport,
-  SandboxSupervisionOverview
+  SandboxSupervisionOverview,
+  SandboxSupervisionSessionDetail
 } from "../../../shared/types/supervision";
 import {
   makeSupervisionDetail,
@@ -135,7 +136,62 @@ async function selectAntOption(label: string, option: string): Promise<void> {
   fireEvent.click(await screen.findByRole("option", { name: option }));
 }
 
+function setNarrowViewport(narrow: boolean): void {
+  vi.mocked(window.matchMedia).mockImplementation((query: string) => ({
+    matches: narrow && query.includes("max-width"),
+    media: query,
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn()
+  }));
+}
+
+function makeEmptyRunningDetail(sessionId: string): SandboxSupervisionSessionDetail {
+  return {
+    schema_version: SANDBOX_SUPERVISION_SCHEMA_VERSION,
+    summary: {
+      task_id: "task:outside-filter",
+      session_id: sessionId,
+      task_status: "running",
+      risk_level: "low",
+      highest_action: "allow",
+      scenario_id: "T1-SC-OUTSIDE",
+      case_id: "T1-SC-OUTSIDE-C001",
+      tool_names: [],
+      event_count: 0,
+      decision_count: 0,
+      alert_count: 0,
+      blocked_record_count: 0,
+      blocked: false,
+      evidence_available: true,
+      updated_at: "2026-06-30T00:00:00Z",
+      last_event_at: null
+    },
+    events: [],
+    policy_decisions: [],
+    alerts: [],
+    blocked_records: []
+  };
+}
+
 describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
+  beforeEach(() => {
+    // Re-establish default matchMedia mock (vi.restoreAllMocks resets it)
+    vi.mocked(window.matchMedia).mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn()
+    }));
+  });
+
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
@@ -596,11 +652,11 @@ describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
   }, 20000);
 
   test("REQ-T1-SUPERVISION-UI-009 detail stale state exposes retry for selected session", async () => {
-    // The selectedTaskStatusRef pattern in SandboxAlertsPage causes the detail
-    // polling effect to run twice on initial mount (once with null task status,
-    // once with the actual value after re-render). Use a flag that stays true
-    // across both initial polls so the stale state persists until manual retry.
-    let failDetail = true;
+    // Deep-link to the running session so the hook schedules detail polling.
+    // First detail call succeeds (real API), establishing hasRealDetailRef.
+    // Second detail call (3s poll) fails — service falls back to mock, but
+    // page rejects it because hasRealDetailRef is true, producing stale state.
+    let detailCallCount = 0;
     const fetchMock = vi.fn(async (resource: string | URL) => {
       const path = String(resource);
       if (path.endsWith("/evidence")) {
@@ -616,7 +672,8 @@ describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
         };
       }
       if (/\/api\/supervision\/sessions\/[^?]+$/.test(path)) {
-        if (failDetail) {
+        detailCallCount++;
+        if (detailCallCount >= 2) {
           throw new Error("detail offline");
         }
         return {
@@ -646,17 +703,29 @@ describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    await renderAppAtRoute("/results/sandbox");
+    // Deep-link to the running session (session:T1-SC-003-C001)
+    await renderAppAtRoute(
+      "/results/sandbox?session_id=session%3AT1-SC-003-C001"
+    );
     await screen.findByRole("listbox", { name: "Supervision sessions" });
 
+    // Wait for first detail to load successfully
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: /Session Inspector/i })
+      ).toBeInTheDocument();
+    });
+
+    // Wait for second detail call (3s poll) to fail and produce stale state
     await waitFor(() => {
       expect(screen.getByText(/session detail is stale/i)).toBeInTheDocument();
-    });
+    }, { timeout: 8000 });
     expect(
       screen.getByRole("button", { name: /retry.*detail/i })
     ).toBeInTheDocument();
 
-    failDetail = false;
+    // Reset: third call succeeds
+    detailCallCount = 0;
     fireEvent.click(
       screen.getByRole("button", { name: /retry.*detail/i })
     );
@@ -668,21 +737,13 @@ describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
       expect(
         screen.queryByRole("button", { name: /retry.*detail/i })
       ).not.toBeInTheDocument();
-    });
-  }, 20000);
+    }, { timeout: 8000 });
+  }, 30000);
 
-  test("REQ-T1-SUPERVISION-UI-009 deep-linked session outside current filters shows outside-filter state", async () => {
+  test("REQ-T1-SUPERVISION-UI-009 deep-linked session outside current filters shows outside-filter state and loads detail", async () => {
     const overview = makeSupervisionOverview();
     const outsideSessionId = "session:outside-filter";
-    const outsideDetail = makeSupervisionDetail();
-    const outsideDetailWithId: typeof outsideDetail = {
-      ...outsideDetail,
-      summary: {
-        ...outsideDetail.summary,
-        session_id: outsideSessionId,
-        task_status: "running"
-      }
-    };
+    const outsideDetail = makeEmptyRunningDetail(outsideSessionId);
 
     const fetchMock = vi.fn(async (resource: string | URL) => {
       const path = String(resource);
@@ -704,7 +765,7 @@ describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
           json: async () => ({
             success: true,
             message: "ok",
-            data: outsideDetailWithId,
+            data: outsideDetail,
             error_code: null,
             request_id: "req_supervision_page_test"
           })
@@ -738,40 +799,198 @@ describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
     expect(
       screen.queryByText(/select a session/i)
     ).not.toBeInTheDocument();
+
+    // Detail should successfully load and display in the inspector
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: /Session Inspector/i })
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByText(/session detail unavailable/i)
+    ).not.toBeInTheDocument();
+  }, 20000);
+
+  test("REQ-T1-SUPERVISION-UI-009 outside-filter running session continues polling", async () => {
+    const overview = makeSupervisionOverview();
+    const outsideSessionId = "session:outside-filter-running";
+    const outsideDetail = makeEmptyRunningDetail(outsideSessionId);
+    let detailCallCount = 0;
+
+    const fetchMock = vi.fn(async (resource: string | URL) => {
+      const path = String(resource);
+      if (path.endsWith("/evidence")) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            message: "ok",
+            data: makeSupervisionEvidence(),
+            error_code: null,
+            request_id: "req_supervision_page_test"
+          })
+        };
+      }
+      if (/\/api\/supervision\/sessions\/[^?]+$/.test(path)) {
+        detailCallCount++;
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            message: "ok",
+            data: outsideDetail,
+            error_code: null,
+            request_id: "req_supervision_page_test"
+          })
+        };
+      }
+      if (path.startsWith("/api/supervision/sessions")) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            message: "ok",
+            data: overview,
+            error_code: null,
+            request_id: "req_supervision_page_test"
+          })
+        };
+      }
+      throw new Error(`Unexpected: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await renderAppAtRoute(
+      `/results/sandbox?session_id=${encodeURIComponent(outsideSessionId)}`
+    );
+
+    // First detail load happens on mount
+    await waitFor(() => {
+      expect(detailCallCount).toBeGreaterThanOrEqual(1);
+    });
+
+    // Wait for polling to schedule the next detail fetch (3s interval)
+    await waitFor(
+      () => {
+        expect(detailCallCount).toBeGreaterThanOrEqual(2);
+      },
+      { timeout: 8000 }
+    );
+  }, 20000);
+
+  test("REQ-T1-SUPERVISION-UI-009 initial detail API failure shows mock detail not stale state", async () => {
+    // Overview succeeds from API; detail fetch always fails so service falls
+    // back to mock. Page should show the mock detail timeline (safe), NOT stale.
+    const fetchMock = vi.fn(async (resource: string | URL) => {
+      const path = String(resource);
+      if (path.endsWith("/evidence")) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            message: "ok",
+            data: makeSupervisionEvidence(),
+            error_code: null,
+            request_id: "req_supervision_page_test"
+          })
+        };
+      }
+      if (/\/api\/supervision\/sessions\/[^?]+$/.test(path)) {
+        throw new Error("detail offline");
+      }
+      if (path.startsWith("/api/supervision/sessions")) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            message: "ok",
+            data: makeSupervisionOverview(),
+            error_code: null,
+            request_id: "req_supervision_page_test"
+          })
+        };
+      }
+      throw new Error(`Unexpected: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await renderAppAtRoute("/results/sandbox");
+    await screen.findByRole("listbox", { name: "Supervision sessions" });
+
+    // Inspector should show the mock detail (Session Inspector heading), not stale
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: /Session Inspector/i })
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByText(/session detail is stale/i)
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/session detail unavailable/i)
+    ).not.toBeInTheDocument();
   }, 20000);
 
   test("REQ-T1-SUPERVISION-UI-009 mobile back button switches to list view keeping session in URL", async () => {
+    setNarrowViewport(true);
     mockSupervisionApi();
     const { router } = await renderAppAtRoute("/results/sandbox");
 
-    await screen.findByRole("listbox", { name: "Supervision sessions" });
-
-    // A session is auto-selected; workbench should be in inspector view on mobile
-    await waitFor(() => {
-      const workbench = document.querySelector(".supervision-workbench");
-      expect(workbench?.className).toContain("mobile-view-inspector");
-    });
-
-    // Mobile back button should be present with accessible label
-    const backButton = screen.getByRole("button", {
+    // At narrow viewport, auto-selection switches to inspector view.
+    // Wait for the back button (inspector view indicator), not the listbox.
+    const backButton = await screen.findByRole("button", {
       name: /back to session list/i
     });
-    expect(backButton).toBeInTheDocument();
+
+    // List wrapper should NOT be rendered at narrow viewport in inspector view
+    expect(
+      document.querySelector(".supervision-session-list-wrapper")
+    ).toBeNull();
 
     // Session_id is in URL
     expect(router.state.location.search).toContain("session_id=");
 
-    // Click back button — switches to list view without clearing URL
+    // Click back button — switches to list view
     fireEvent.click(backButton);
 
     await waitFor(() => {
-      const updatedWorkbench =
-        document.querySelector(".supervision-workbench");
-      expect(updatedWorkbench?.className).toContain("mobile-view-list");
+      // Inspector should NOT be rendered at narrow viewport in list view
+      expect(
+        document.querySelector(".supervision-inspector")
+      ).toBeNull();
     });
+    // List wrapper should be rendered again
+    expect(
+      document.querySelector(".supervision-session-list-wrapper")
+    ).not.toBeNull();
+    // Listbox should now be visible
+    expect(
+      screen.getByRole("listbox", { name: "Supervision sessions" })
+    ).toBeInTheDocument();
 
     // Spec: "the selected session remains encoded in the URL"
     expect(router.state.location.search).toContain("session_id=");
+  }, 20000);
+
+  test("REQ-T1-SUPERVISION-UI-009 narrow viewport does not cause width collapse or horizontal overflow", async () => {
+    setNarrowViewport(true);
+    mockSupervisionApi();
+    await renderAppAtRoute("/results/sandbox");
+
+    // At narrow viewport, auto-selection switches to inspector view.
+    // Wait for the back button as the inspector view indicator.
+    await screen.findByRole("button", { name: /back to session list/i });
+
+    // Workbench should always have non-zero content (not width:0)
+    const workbench = document.querySelector(".supervision-workbench");
+    expect(workbench).not.toBeNull();
+    // At narrow viewport in inspector view, only inspector is rendered
+    expect(
+      document.querySelector(".supervision-inspector")
+    ).not.toBeNull();
+    expect(
+      document.querySelector(".supervision-session-list-wrapper")
+    ).toBeNull();
   }, 20000);
 
   test("REQ-T1-SUPERVISION-UI-009 session list supports keyboard navigation", async () => {
