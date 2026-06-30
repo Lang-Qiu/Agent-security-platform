@@ -2537,7 +2537,7 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - root `package.json` `test:repo` includes `track1-openclaw-manifest.spec.ts`
   - `tests/repository/root-test-entry.spec.ts` asserts all script registrations
 - contract tests:
-  - campaign supervision: 53 pass
+  - campaign supervision: 61 pass
   - campaign ingest: 26 pass
   - manifest + anti-oracle + root-entry: 15 pass
 - commits:
@@ -2549,22 +2549,21 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - P1-T5 rework `3cb997e` — `test(track1): pin campaign contracts and finalize schema` (second review pass)
   - P1-T5 rework 3 `7a8b63c` — `test(track1): cascade status consistency and pin case hashes` (third review pass)
   - P1-T5 rework 4 `0c38280` — `test(track1): complete state matrix and real JSON Schema validation` (fourth review pass)
-- phase gate (rework 4):
-  - `npm run test:shared` — pass
-  - `npm run test:repo` — pass
-  - `npm run test:engine:sandbox` — pass
-  - `git diff 44bb496..HEAD --check` — clean
-- rework fixes (fourth review):
-  - P1-1: complete state matrix — added `pending` case status, `attempt_count: 0|1|2`, two-attempt predecessor failure constraint (second attempt only if first failed), `created`/`validating` campaign requires all cases pending, attempts cannot be pending
-  - P1-2: committed `docs/sprint-current.md` requirement switch to REQ-T1-DEMO-010 (was unstaged, clean checkout would read wrong requirement)
-  - P2-3: fixed spec drift — documented replacement of `Track1CampaignSessionRef` (which referenced non-existent `TaskStatus`/`RiskLevel`) with `Track1CampaignAttemptSummary`; updated spec header status
-  - P2-4: replaced hand-written inline JSON Schema validator with ajv (real Draft-07 validator); added canonical-manifest-passes test to prevent false-green if schema rejects all inputs
-  - P2-5: fixed trailing whitespace in Phase 5 plan line 550; verified `git diff 44bb496..HEAD --check` is clean
+  - P1-T5 rework 5 `4be56ae` — `test(track1): pending session nullable and attempt status type` (fifth review pass)
+- phase gate (rework 5):
+  - `npm run test:shared` — pass (139/139)
+  - `npm run test:repo` — pass (83/83)
+  - `npm run test:engine:sandbox` — pass (391/391)
+  - `pnpm install --frozen-lockfile` — success
+- rework fixes (fifth review):
+  - P1-1: synced `pnpm-lock.yaml` with ajv devDependency via `pnpm install --no-frozen-lockfile`; frozen install now succeeds
+  - P1-2: `current_session_id` changed to `string | null` in `Track1CampaignCaseSummary`; pending cases must have null session (rejects fake sessions), non-pending must have valid session; added parent-child status matrix for `created`/`validating`/`collecting` campaign→agent and agent→case (8 new RED tests)
+  - P2-3: new `TRACK1_CAMPAIGN_ATTEMPT_STATUSES = ["running","passed","failed"]` and `Track1CampaignAttemptStatus` type; `Track1CampaignAttemptSummary.status` now uses the attempt-specific type instead of `Track1CampaignCaseStatus`; removed runtime `pending` guard from attempt normalizer; exported from shared/index.ts
 - constraints honored:
   - no backend, frontend, or engine production behavior changed
   - exact-key normalizers reject unknown fields and content-bearing sentinels
   - closed unions for agent/scenario/case/status/action identifiers
-  - pinned dependencies untouched (ajv added as devDependency for test-only use)
+  - pinned dependencies untouched (ajv added as devDependency for test-only use; pnpm-lock.yaml synced)
   - canonical hashing uses UTF-8 byte length, not string length
-- status: PHASE_1_REWORK_4_COMPLETE_PENDING_REVIEW
-- next blocker: user review of rework 4 before Phase 2 backend work
+- status: PHASE_1_REWORK_5_COMPLETE_PENDING_REVIEW
+- next blocker: user review of rework 5 before Phase 2 backend work
