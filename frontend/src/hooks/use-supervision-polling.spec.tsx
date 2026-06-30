@@ -336,4 +336,76 @@ describe("REQ-T1-SUPERVISION-UI-009 polling", () => {
     await act(async () => vi.advanceTimersByTimeAsync(3000));
     expect(loadOverview).toHaveBeenCalledTimes(2);
   });
+
+  test("visibility resume does not auto-retry stale overview (waits for manual retry)", async () => {
+    const loadOverview = vi
+      .fn()
+      .mockResolvedValueOnce(makeOverviewResult())
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce(makeOverviewResult());
+    const { result } = renderHook(() =>
+      useSupervisionPolling({ loadOverview })
+    );
+
+    await act(async () => Promise.resolve());
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(result.current.overview.freshness).toBe("stale");
+    expect(result.current.overview.error).toBe("unavailable");
+    const staleCallCount = loadOverview.mock.calls.length;
+
+    await act(async () => {
+      setDocumentVisibility("hidden");
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await act(async () => {
+      setDocumentVisibility("visible");
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(6000));
+
+    expect(loadOverview.mock.calls.length).toBe(staleCallCount);
+    expect(result.current.overview.freshness).toBe("stale");
+
+    await act(async () => result.current.retryOverview());
+    expect(result.current.overview.freshness).toBe("fresh");
+  });
+
+  test("visibility resume does not auto-retry stale detail (waits for manual retry)", async () => {
+    const loadOverview = vi.fn().mockResolvedValue(makeOverviewResult());
+    const loadDetail = vi
+      .fn()
+      .mockResolvedValueOnce(makeDetailResult("session:A"))
+      .mockRejectedValueOnce(new Error("detail offline"))
+      .mockResolvedValueOnce(makeDetailResult("session:A"));
+    const { result } = renderHook(() =>
+      useSupervisionPolling({
+        loadOverview,
+        loadDetail,
+        selectedSessionId: "session:A",
+        selectedTaskStatus: "running"
+      })
+    );
+
+    await act(async () => Promise.resolve());
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(result.current.detail.freshness).toBe("stale");
+    expect(result.current.detail.error).toBe("unavailable");
+    const staleDetailCallCount = loadDetail.mock.calls.length;
+
+    await act(async () => {
+      setDocumentVisibility("hidden");
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await act(async () => {
+      setDocumentVisibility("visible");
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(6000));
+
+    expect(loadDetail.mock.calls.length).toBe(staleDetailCallCount);
+    expect(result.current.detail.freshness).toBe("stale");
+
+    await act(async () => result.current.retryDetail());
+    expect(result.current.detail.freshness).toBe("fresh");
+  });
 });

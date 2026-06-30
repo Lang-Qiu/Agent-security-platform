@@ -141,7 +141,11 @@ export function SandboxAlertsPage() {
       sessionId: string,
       signal: AbortSignal
     ): Promise<SupervisionDataResult<SandboxSupervisionSessionDetail> | null> => {
-      return getSupervisionSession(sessionId, { signal });
+      const result = await getSupervisionSession(sessionId, { signal });
+      if (result && result.source === "mock") {
+        throw new Error("supervision detail unavailable");
+      }
+      return result;
     },
     []
   );
@@ -152,7 +156,7 @@ export function SandboxAlertsPage() {
   // changes, so running sessions still get polled after one extra render.
   const selectedTaskStatusRef = useRef<TaskStatus | null>(null);
 
-  const { overview, detail, retryOverview, refreshNow } = useSupervisionPolling({
+  const { overview, detail, retryOverview, retryDetail, refreshNow } = useSupervisionPolling({
     loadOverview,
     loadDetail,
     selectedSessionId: sessionIdFromUrl,
@@ -333,18 +337,43 @@ export function SandboxAlertsPage() {
           )}
 
           <aside className="supervision-inspector">
-            {selectedSession ? (
-              detail.data ? (
-                <SupervisionSessionInspector detail={detail.data} />
-              ) : detail.loading ? (
-                <div className="supervision-inspector-loading">
-                  <Paragraph>Loading session detail...</Paragraph>
-                </div>
-              ) : (
-                <div className="supervision-inspector-error">
-                  <Paragraph>Session detail unavailable.</Paragraph>
-                </div>
-              )
+            {selectedSession || sessionIdFromUrl ? (
+              <>
+                {sessionIdFromUrl && !selectedSession ? (
+                  <div className="supervision-inspector-outside-filters">
+                    <Paragraph>
+                      Session is outside current filters.
+                    </Paragraph>
+                  </div>
+                ) : null}
+                {detail.freshness === "stale" && detail.error ? (
+                  <div className="supervision-inspector-stale">
+                    <Paragraph>
+                      Session detail is stale.
+                    </Paragraph>
+                    <button
+                      type="button"
+                      className="supervision-retry-detail-button"
+                      onClick={() => {
+                        void retryDetail();
+                      }}
+                    >
+                      Retry detail
+                    </button>
+                  </div>
+                ) : null}
+                {detail.data ? (
+                  <SupervisionSessionInspector detail={detail.data} />
+                ) : detail.loading ? (
+                  <div className="supervision-inspector-loading">
+                    <Paragraph>Loading session detail...</Paragraph>
+                  </div>
+                ) : (
+                  <div className="supervision-inspector-error">
+                    <Paragraph>Session detail unavailable.</Paragraph>
+                  </div>
+                )}
+              </>
             ) : (
               <div className="supervision-inspector-placeholder">
                 <Paragraph>Select a session to inspect.</Paragraph>

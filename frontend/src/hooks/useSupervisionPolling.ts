@@ -278,8 +278,14 @@ export function useSupervisionPolling(input: {
           detailTimerRef.current = null;
         }
       } else {
-        pollOverview();
-        if (sessionIdRef.current && taskStatusRef.current === "running") {
+        if (!overviewErrorPausedRef.current) {
+          pollOverview();
+        }
+        if (
+          sessionIdRef.current &&
+          taskStatusRef.current === "running" &&
+          !detailErrorPausedRef.current
+        ) {
           pollDetail();
         }
       }

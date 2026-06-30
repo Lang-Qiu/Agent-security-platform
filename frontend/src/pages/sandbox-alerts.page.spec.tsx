@@ -594,4 +594,149 @@ describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
       ).toBeInTheDocument();
     });
   }, 20000);
+
+  test("REQ-T1-SUPERVISION-UI-009 detail stale state exposes retry for selected session", async () => {
+    // The selectedTaskStatusRef pattern in SandboxAlertsPage causes the detail
+    // polling effect to run twice on initial mount (once with null task status,
+    // once with the actual value after re-render). Use a flag that stays true
+    // across both initial polls so the stale state persists until manual retry.
+    let failDetail = true;
+    const fetchMock = vi.fn(async (resource: string | URL) => {
+      const path = String(resource);
+      if (path.endsWith("/evidence")) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            message: "ok",
+            data: makeSupervisionEvidence(),
+            error_code: null,
+            request_id: "req_supervision_page_test"
+          })
+        };
+      }
+      if (/\/api\/supervision\/sessions\/[^?]+$/.test(path)) {
+        if (failDetail) {
+          throw new Error("detail offline");
+        }
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            message: "ok",
+            data: makeSupervisionDetail(),
+            error_code: null,
+            request_id: "req_supervision_page_test"
+          })
+        };
+      }
+      if (path.startsWith("/api/supervision/sessions")) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            message: "ok",
+            data: makeSupervisionOverview(),
+            error_code: null,
+            request_id: "req_supervision_page_test"
+          })
+        };
+      }
+      throw new Error(`Unexpected: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await renderAppAtRoute("/results/sandbox");
+    await screen.findByRole("listbox", { name: "Supervision sessions" });
+
+    await waitFor(() => {
+      expect(screen.getByText(/session detail is stale/i)).toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("button", { name: /retry.*detail/i })
+    ).toBeInTheDocument();
+
+    failDetail = false;
+    fireEvent.click(
+      screen.getByRole("button", { name: /retry.*detail/i })
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.queryByText(/session detail is stale/i)
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: /retry.*detail/i })
+      ).not.toBeInTheDocument();
+    });
+  }, 20000);
+
+  test("REQ-T1-SUPERVISION-UI-009 deep-linked session outside current filters shows outside-filter state", async () => {
+    const overview = makeSupervisionOverview();
+    const outsideSessionId = "session:outside-filter";
+    const outsideDetail = makeSupervisionDetail();
+    const outsideDetailWithId: typeof outsideDetail = {
+      ...outsideDetail,
+      summary: {
+        ...outsideDetail.summary,
+        session_id: outsideSessionId,
+        task_status: "running"
+      }
+    };
+
+    const fetchMock = vi.fn(async (resource: string | URL) => {
+      const path = String(resource);
+      if (path.endsWith("/evidence")) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            message: "ok",
+            data: makeSupervisionEvidence(),
+            error_code: null,
+            request_id: "req_supervision_page_test"
+          })
+        };
+      }
+      if (/\/api\/supervision\/sessions\/[^?]+$/.test(path)) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            message: "ok",
+            data: outsideDetailWithId,
+            error_code: null,
+            request_id: "req_supervision_page_test"
+          })
+        };
+      }
+      if (path.startsWith("/api/supervision/sessions")) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            message: "ok",
+            data: overview,
+            error_code: null,
+            request_id: "req_supervision_page_test"
+          })
+        };
+      }
+      throw new Error(`Unexpected: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await renderAppAtRoute(
+      `/results/sandbox?session_id=${encodeURIComponent(outsideSessionId)}`
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/outside current filter/i)
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByText(/select a session/i)
+    ).not.toBeInTheDocument();
+  }, 20000);
 });
