@@ -2537,9 +2537,9 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - root `package.json` `test:repo` includes `track1-openclaw-manifest.spec.ts`
   - `tests/repository/root-test-entry.spec.ts` asserts all script registrations
 - contract tests:
-  - campaign supervision: 43 pass
+  - campaign supervision: 53 pass
   - campaign ingest: 26 pass
-  - manifest + anti-oracle + root-entry: 14 pass
+  - manifest + anti-oracle + root-entry: 15 pass
 - commits:
   - P1-T1 `27b68f8` — `feat(track1): add fixed OpenClaw campaign manifest`
   - P1-T2 `1bfb31d` — `feat(shared): add campaign supervision summaries`
@@ -2548,22 +2548,23 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - P1-T5 `197eb46` — `test(track1): gate campaign contracts and manifest` (first review pass)
   - P1-T5 rework `3cb997e` — `test(track1): pin campaign contracts and finalize schema` (second review pass)
   - P1-T5 rework 3 `7a8b63c` — `test(track1): cascade status consistency and pin case hashes` (third review pass)
-- phase gate (rework 3):
+  - P1-T5 rework 4 `0c38280` — `test(track1): complete state matrix and real JSON Schema validation` (fourth review pass)
+- phase gate (rework 4):
   - `npm run test:shared` — pass
   - `npm run test:repo` — pass
   - `npm run test:engine:sandbox` — pass
-  - `git diff --cached --check` — clean
-- rework fixes (third review):
-  - P1-1: cascade status consistency across attempt/case/agent/campaign levels (case passed requires final attempt passed; agent completed requires all cases terminal; campaign completed requires all agents completed; running states reject all-terminal children)
-  - P1-2: replace all `22.17` references with `22.19` across 20 artifacts (AGENTS.md, README.md, architecture.md, api-contract.md, progress.md, 7 phase plans, 4 design specs, 5 earlier plans); expanded test to check all artifacts for `22.17` pattern
-  - P1-3: pin case_sha256 as const per case branch in schema (closes uniqueItems bypass where duplicate case_id with different hashes passed); added inline validator test proving malicious manifest is rejected
-  - P2-4: export TRACK1_OPENCLAW_PACKAGE_INTEGRITY and TRACK1_MODEL_REF_CANONICAL as public constants from types; fixture imports and reuses them instead of duplicating hardcoded strings
-  - P2-5: updated progress.md PLAN_PENDING_REVIEW -> PLAN_APPROVED; tracking all approved spec and plan documents
+  - `git diff 44bb496..HEAD --check` — clean
+- rework fixes (fourth review):
+  - P1-1: complete state matrix — added `pending` case status, `attempt_count: 0|1|2`, two-attempt predecessor failure constraint (second attempt only if first failed), `created`/`validating` campaign requires all cases pending, attempts cannot be pending
+  - P1-2: committed `docs/sprint-current.md` requirement switch to REQ-T1-DEMO-010 (was unstaged, clean checkout would read wrong requirement)
+  - P2-3: fixed spec drift — documented replacement of `Track1CampaignSessionRef` (which referenced non-existent `TaskStatus`/`RiskLevel`) with `Track1CampaignAttemptSummary`; updated spec header status
+  - P2-4: replaced hand-written inline JSON Schema validator with ajv (real Draft-07 validator); added canonical-manifest-passes test to prevent false-green if schema rejects all inputs
+  - P2-5: fixed trailing whitespace in Phase 5 plan line 550; verified `git diff 44bb496..HEAD --check` is clean
 - constraints honored:
   - no backend, frontend, or engine production behavior changed
   - exact-key normalizers reject unknown fields and content-bearing sentinels
   - closed unions for agent/scenario/case/status/action identifiers
-  - pinned dependencies untouched
+  - pinned dependencies untouched (ajv added as devDependency for test-only use)
   - canonical hashing uses UTF-8 byte length, not string length
-- status: PHASE_1_REWORK_3_COMPLETE_PENDING_REVIEW
-- next blocker: user review of rework 3 before Phase 2 backend work
+- status: PHASE_1_REWORK_4_COMPLETE_PENDING_REVIEW
+- next blocker: user review of rework 4 before Phase 2 backend work
