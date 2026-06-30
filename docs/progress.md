@@ -1706,7 +1706,7 @@ Recommended fields:
   - `docs/progress.md`
 - notes:
   - shared now provides the first source of truth for `Task`, `BaseResult`, `RiskSummary`, and `ApiResponse`
-  - current skeleton baseline is frozen as `pnpm workspace`, `Node.js 22.17.0`, and `TypeScript strict`
+  - current skeleton baseline is frozen as `pnpm workspace`, `Node.js 22.19.0`, and `TypeScript strict`
   - next requirement should build on these contracts instead of redefining local DTOs in `backend` or `frontend`
 
 ## 2026-03-26 - REQ-02 minimal backend task center
@@ -2509,7 +2509,7 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - phases: contracts, backend, native plugin, runtime orchestration, campaign UI, report/evidence, credentialed E2E/baseline
   - every phase contains task DAG, exact owned files, RED test cases, GREEN commands, commit boundaries, acceptance gates, and low-level LLM report format
   - Phase 7 contains an explicit human credential/cost gate and cannot silently skip or use a fallback model
-- status: PLAN_PENDING_REVIEW
+- status: PLAN_APPROVED
 
 ## 2026-06-30 - REQ-T1-DEMO-010 Phase 1: Campaign Contracts and Fixed Manifest
 
@@ -2537,33 +2537,33 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - root `package.json` `test:repo` includes `track1-openclaw-manifest.spec.ts`
   - `tests/repository/root-test-entry.spec.ts` asserts all script registrations
 - contract tests:
-  - campaign supervision: 36 pass
-  - campaign ingest: 24 pass
-  - manifest + anti-oracle + root-entry: 12 pass
+  - campaign supervision: 43 pass
+  - campaign ingest: 26 pass
+  - manifest + anti-oracle + root-entry: 14 pass
 - commits:
   - P1-T1 `27b68f8` — `feat(track1): add fixed OpenClaw campaign manifest`
   - P1-T2 `1bfb31d` — `feat(shared): add campaign supervision summaries`
   - P1-T3 `8528fb4` — `feat(shared): add campaign supervision evidence`
   - P1-T4 `e06d455` — `feat(shared): add campaign ingest contract`
   - P1-T5 `197eb46` — `test(track1): gate campaign contracts and manifest` (first review pass)
-  - P1-T5 rework `<pending>` — `test(track1): pin campaign contracts and finalize schema` (second review pass)
-- phase gate (rework):
-  - `npm run test:shared` — pass (112 tests across 7 spec files)
-  - `npm run test:repo` — pass (80 tests across repository gates)
-  - `npm run test:engine:sandbox` — pass (391 tests, unchanged sandbox coverage)
+  - P1-T5 rework `3cb997e` — `test(track1): pin campaign contracts and finalize schema` (second review pass)
+  - P1-T5 rework 3 `7a8b63c` — `test(track1): cascade status consistency and pin case hashes` (third review pass)
+- phase gate (rework 3):
+  - `npm run test:shared` — pass
+  - `npm run test:repo` — pass
+  - `npm run test:engine:sandbox` — pass
   - `git diff --cached --check` — clean
-- rework fixes (second review):
-  - P1-1: pin openclaw_package_integrity to exact lockfile SRI value; whitelist model_ref to canonical URI only (rejects Bearer tokens, URL userinfo, query parameters, forged SRI like `sha512-A`)
-  - P1-2: enforce case detail status/action consistency (passed -> actual == expected; failed -> actual not null); completed summary requires passed + failed == 9; completed_at >= started_at
-  - P1-3: bump Node baseline to 22.19.0 in AGENTS.md and Phase 4 Docker plan (closed the migration gap)
-  - P2-4: enforce deterministic evidence ref ordering (reject reversed/shuffled refs, emit in campaign traversal order)
-  - P2-5: schema now expresses fixed (agent, scenario) pairs and (agent, scenario, case) triples via oneOf const branches, not just uniqueItems
-  - P2-6: rename schema_version from `track1-campaign-final.v1` to `track1-campaign-finalize.v1` per Phase 1 plan
+- rework fixes (third review):
+  - P1-1: cascade status consistency across attempt/case/agent/campaign levels (case passed requires final attempt passed; agent completed requires all cases terminal; campaign completed requires all agents completed; running states reject all-terminal children)
+  - P1-2: replace all `22.17` references with `22.19` across 20 artifacts (AGENTS.md, README.md, architecture.md, api-contract.md, progress.md, 7 phase plans, 4 design specs, 5 earlier plans); expanded test to check all artifacts for `22.17` pattern
+  - P1-3: pin case_sha256 as const per case branch in schema (closes uniqueItems bypass where duplicate case_id with different hashes passed); added inline validator test proving malicious manifest is rejected
+  - P2-4: export TRACK1_OPENCLAW_PACKAGE_INTEGRITY and TRACK1_MODEL_REF_CANONICAL as public constants from types; fixture imports and reuses them instead of duplicating hardcoded strings
+  - P2-5: updated progress.md PLAN_PENDING_REVIEW -> PLAN_APPROVED; tracking all approved spec and plan documents
 - constraints honored:
   - no backend, frontend, or engine production behavior changed
   - exact-key normalizers reject unknown fields and content-bearing sentinels
   - closed unions for agent/scenario/case/status/action identifiers
   - pinned dependencies untouched
   - canonical hashing uses UTF-8 byte length, not string length
-- status: PHASE_1_REWORK_COMPLETE_PENDING_REVIEW
-- next blocker: user review of rework before Phase 2 backend work
+- status: PHASE_1_REWORK_3_COMPLETE_PENDING_REVIEW
+- next blocker: user review of rework 3 before Phase 2 backend work
