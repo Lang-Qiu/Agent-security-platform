@@ -2445,11 +2445,11 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - T11: evidence serialization/filename/download service and page failures
   - T12: task-detail safe projection, deep-link, unavailable projection failures
   - T13: repository registration + responsive CSS assertion failures
-- focused and final gate counts (after rework):
+- focused and final gate counts (after rework round 2):
   - test:shared: 52 pass (unchanged)
   - test:repo: 66 pass (unchanged; responsive breakpoint assertion updated to 1100px)
   - test:engine:sandbox: 391 pass (unchanged; no engine files touched by REQ-009)
-  - test:frontend: 110 pass (104 → 110 after rework: +2 hook visibility-retry tests, +1 detail stale test, +1 outside-current-filters test, +1 mobile back button test, +1 keyboard navigation test)
+  - test:frontend: 113 pass (110 → 113 after rework round 2: +1 narrow viewport DOM structure test, +1 outside-filter polling test, +1 initial mock fallback test; 2 existing tests updated with real DOM/viewport assertions instead of class-name-only checks)
   - frontend build: pass
   - test:backend: 95 pass / 1 fail — the single failure is `task engine service maps tasks into initial result and risk summary shells without leaking engine internals` (`backend/tests/task-engine.service.spec.ts:318`), a pre-existing asset-scan `open_ports` expectation mismatch unrelated to REQ-009; confirmed failing on parent commit before rework; no supervision test fails
   - git diff --check: clean
@@ -2473,5 +2473,11 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - P1-7 report validity: progress.md updated with real gate counts; status changed from COMPLETE to REWORK_COMPLETE_PENDING_REVIEW
   - rework commits: `56c22d0`, `72fff9f`, `a6a28fa`, `d812779`
   - rework test additions: +6 frontend tests (2 hook visibility-retry, 1 detail stale, 1 outside-current-filters, 1 mobile back button, 1 keyboard navigation); +6 backend projector tests (empty-shell, empty arrays, partial rejection, terminal missing, empty tool_names, result.updated_at)
-- status: REWORK_COMPLETE_PENDING_REVIEW
+- rework round 2 (2026-06-30): review identified 3 remaining P1 defects from round 1 rework; all fixed via TDD:
+  - P1-1 390px width collapse: `.console-main` lacked `width: 100%` at 900px breakpoint causing 0px width. Added `useNarrowViewport` hook (matchMedia-based) driving conditional rendering — at narrow viewport only the active panel is in the DOM, not just CSS-hidden. Tests now assert DOM structure via matchMedia mocking, not just class names (commit `2c73b1b`)
+  - P1-2 mock fallback broken: `loadDetail` threw on ALL mock detail including initial API failure. Added `hasRealDetailRef` tracking — only rejects mock fallback after a real API snapshot exists (stale case). Initial unavailability shows safe mock detail timeline (commit `2c73b1b`)
+  - P1-3 outside-filter running not polled: `selectedTaskStatusRef` was null for outside-filter sessions (derived only from `selectedSession`). Now also derives from `detail.data.summary.task_status`. Outside-filter test fixed to use valid empty-running detail with synchronized session IDs, asserts inspector displays and polling continues (commit `2c73b1b`)
+  - rework round 2 commits: `2c73b1b`
+  - rework round 2 test additions: +3 new (narrow viewport DOM structure, outside-filter polling, initial mock fallback not stale); +2 updated (mobile back button uses matchMedia + DOM assertions, detail stale uses running session for real poll cycle)
+- status: REWORK_ROUND_2_COMPLETE_PENDING_REVIEW
 - next blocker: user browser acceptance verification, then REQ-T1-DEMO-010
