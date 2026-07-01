@@ -74,11 +74,23 @@ function isTerminalResultStatus(status: string): boolean {
   );
 }
 
+function isSuccessfulTerminalStatus(status: string): boolean {
+  // R10 (Phase 2 rework review P1 #1): only finished/blocked are "successful"
+  // terminal states eligible for action comparison. failed/partial_success
+  // represent provider/execution failures and must always produce a failed
+  // attempt regardless of any matching policy action — otherwise a crashed
+  // provider could forge a "passed" attempt and skip retry.
+  return status === "finished" || status === "blocked";
+}
+
 function determineAttemptStatus(
   result: BaseResult<SandboxRunResultDetails>,
   expectedAction: SandboxPolicyAction
 ): Track1CampaignAttemptStatus {
   if (!isTerminalResultStatus(result.status)) return "running";
+  // R10: failed/partial_success are terminal but never eligible for action
+  // comparison — they must always be "failed".
+  if (!isSuccessfulTerminalStatus(result.status)) return "failed";
   const actualAction = deriveHighestAction(result.details.policy_decisions);
   return actualAction === expectedAction ? "passed" : "failed";
 }

@@ -183,13 +183,66 @@ test("REQ-T1-DEMO-010 treats sandbox result status=partial_success as terminal",
   };
 
   const ack = service.ingestSnapshot(snapshot) as { status: string };
-  // partial_success is terminal; for case 0 expected_action="deny" but the
-  // fixture result has action "deny" too (matches), so status should be "passed".
-  assert.notEqual(ack.status, "running");
-  assert.ok(
-    ack.status === "passed" || ack.status === "failed",
-    `expected terminal attempt status, got ${ack.status}`
+  // R10: partial_success is terminal but represents a provider/execution
+  // failure, so it must always produce "failed" regardless of action match.
+  assert.equal(ack.status, "failed",
+    "status=partial_success must always produce a failed attempt");
+});
+
+// R10 (Phase 2 rework review P1 #1): a sandbox result with status="failed"
+// or status="partial_success" represents a provider/execution failure.
+// Such a result must NEVER be classified as "passed", even when the
+// observed action matches the expected action. Action comparison is only
+// meaningful for successful terminal statuses (finished/blocked). The
+// previous logic allowed a failed provider to fake a "passed" attempt,
+// skipping retry and forging campaign success.
+
+test("REQ-T1-DEMO-010 failed result with matching action stays failed", async () => {
+  const { service } = await makeStartedService();
+  // Case 0 expects "deny"; keep the default "deny" action so action matches.
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const failedResult = {
+    ...baseSnapshot.result,
+    status: "failed" as const,
+    summary: "Provider crashed after emitting the expected deny decision"
+  };
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
   );
+  const withoutHash = { ...baseSnapshot, result: failedResult };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  const ack = service.ingestSnapshot(snapshot) as { status: string };
+  assert.equal(ack.status, "failed",
+    "status=failed must always produce a failed attempt even when action matches expected");
+});
+
+test("REQ-T1-DEMO-010 partial_success result with matching action stays failed", async () => {
+  const { service } = await makeStartedService();
+  // Case 0 expects "deny"; keep the default "deny" action so action matches.
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const partialResult = {
+    ...baseSnapshot.result,
+    status: "partial_success" as const,
+    summary: "Partial success: provider emitted deny but execution did not finish cleanly"
+  };
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const withoutHash = { ...baseSnapshot, result: partialResult };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  const ack = service.ingestSnapshot(snapshot) as { status: string };
+  assert.equal(ack.status, "failed",
+    "status=partial_success must always produce a failed attempt even when action matches expected");
 });
 
 // R3 (Phase 2 rework finding 2): close the snapshot content boundary.
