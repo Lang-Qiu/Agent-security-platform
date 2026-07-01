@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   normalizeTrack1CampaignEvidenceRegistration,
   normalizeTrack1CampaignFinalizeEnvelope,
@@ -9,6 +10,10 @@ import {
   isTaskId,
   normalizeTrack1CampaignSummary
 } from "../../../../shared/contracts/campaign-supervision.ts";
+import {
+  SUPERVISION_STATE_CHANGES,
+  SUPERVISION_TOOL_NAMES
+} from "../../../../shared/contracts/supervision.ts";
 import {
   isStrictIso8601,
   parseIso8601Instant
@@ -203,91 +208,93 @@ function validateAndProjectSnapshotResult(
     }
   }
 
-  // R21+R28 (Phase 2 rework review 3 P1 #4): project nested content.
-  // Strip ALL client-provided text from the stored result:
-  //   - Narrative fields (reason, reason_code, category, title) → "projected"
-  //   - Reference fields (evidence_refs, policy_id, resource_ref, target_ref,
-  //     arguments_ref, result_ref, state_change, model_ref, content_ref,
-  //     content_sha256) → "projected"
-  //   - Correlation IDs (decision_id, subject_event_id, alert_id,
-  //     blocked_record_id, event_id, call_id) → validated against canonical
-  //     grammar ^[a-z][a-z0-9_]*$ (preserved for referential integrity)
-  // This closes every string channel that a client could use to persist
-  // arbitrary text (prompt leaks, provider errors) in the campaign record.
-  const PROJECTED = "projected";
-  const PROJECTED_EVIDENCE_REFS: string[] = [PROJECTED];
-  const CANONICAL_ID_RE = /^[a-z][a-z0-9_]*$/;
+  // R21+R28+R31+R32+R33 (Phase 2 rework review 4): deterministic content-
+  // hash projection. ALL client-provided free-form strings are hashed via
+  // SHA-256 so that:
+  //   - The original value cannot be recovered (content-safe).
+  //   - The same input always produces the same output (deterministic).
+  //   - Different inputs produce different outputs (change-detectable by R26).
+  //   - The stored value passes the shared contract normalizers.
+  //
+  // Three projection formats are used, matching the supervision contract's
+  // validators:
+  //   - projectRef: "projected:sha256:<hex>" for isSafeId/isSafeRef fields
+  //     (IDs, refs, evidence_refs). Colons are allowed by isSafeId/isSafeRef.
+  //   - projectToken: "projected-sha256-<hex>" for isSafeToken fields
+  //     (reason_code, category). isSafeToken rejects colons, so hyphens are
+  //     used. The result matches SAFE_TOKEN_PATTERN and fits within 96 chars.
+  //   - projectSha256Field: raw 64-hex for isSha256 fields (content_sha256).
+  //
+  // Correlation IDs are hashed so secret payloads embedded in IDs cannot
+  // survive projection; referential integrity is preserved because the same
+  // original ID always hashes to the same value on both sides of the reference.
+  function projectRef(value: string): string {
+    return `projected:sha256:${createHash("sha256").update(value).digest("hex")}`;
+  }
 
-  function assertCanonicalId(id: string, field: string): void {
-    if (!CANONICAL_ID_RE.test(id)) {
-      throw new DomainError(
-        `Snapshot ${field} "${id}" is not canonical (must match ${CANONICAL_ID_RE.source})`,
-        "CAMPAIGN_SNAPSHOT_INVALID",
-        400
-      );
-    }
+  function projectToken(value: string): string {
+    return `projected-sha256-${createHash("sha256").update(value).digest("hex")}`;
+  }
+
+  function projectSha256Field(value: string): string {
+    return createHash("sha256").update(value).digest("hex");
+  }
+
+  function projectEvidenceRefs(refs: string[]): string[] {
+    return refs.map(projectRef);
   }
 
   function projectPolicyDecision(d: SandboxPolicyDecision): SandboxPolicyDecision {
-    assertCanonicalId(d.decision_id, "policy_decision.decision_id");
-    assertCanonicalId(d.subject_event_id, "policy_decision.subject_event_id");
     return {
-      decision_id: d.decision_id,
-      subject_event_id: d.subject_event_id,
-      policy_id: PROJECTED,
+      decision_id: projectRef(d.decision_id),
+      subject_event_id: projectRef(d.subject_event_id),
+      policy_id: projectRef(d.policy_id),
       action: d.action,
-      reason_code: PROJECTED,
-      reason: PROJECTED,
-      evidence_refs: PROJECTED_EVIDENCE_REFS,
+      reason_code: projectToken(d.reason_code),
+      reason: projectRef(d.reason),
+      evidence_refs: projectEvidenceRefs(d.evidence_refs),
       decided_at: d.decided_at
     };
   }
 
   function projectAlert(a: SandboxAlert): SandboxAlert {
-    assertCanonicalId(a.alert_id, "alert.alert_id");
-    assertCanonicalId(a.subject_event_id, "alert.subject_event_id");
-    assertCanonicalId(a.decision_id, "alert.decision_id");
     return {
-      alert_id: a.alert_id,
-      subject_event_id: a.subject_event_id,
-      decision_id: a.decision_id,
+      alert_id: projectRef(a.alert_id),
+      subject_event_id: projectRef(a.subject_event_id),
+      decision_id: projectRef(a.decision_id),
       risk_level: a.risk_level,
-      category: PROJECTED,
-      title: PROJECTED,
-      reason: PROJECTED,
-      evidence_refs: PROJECTED_EVIDENCE_REFS,
+      category: projectToken(a.category),
+      title: projectRef(a.title),
+      reason: projectRef(a.reason),
+      evidence_refs: projectEvidenceRefs(a.evidence_refs),
       occurred_at: a.occurred_at
     };
   }
 
   function projectBlockedRecord(r: SandboxBlockedRecord): SandboxBlockedRecord {
-    assertCanonicalId(r.blocked_record_id, "blocked_record.blocked_record_id");
-    assertCanonicalId(r.subject_event_id, "blocked_record.subject_event_id");
-    assertCanonicalId(r.decision_id, "blocked_record.decision_id");
     const projected: SandboxBlockedRecord = {
-      blocked_record_id: r.blocked_record_id,
-      subject_event_id: r.subject_event_id,
-      decision_id: r.decision_id,
-      reason: PROJECTED,
-      evidence_refs: PROJECTED_EVIDENCE_REFS,
+      blocked_record_id: projectRef(r.blocked_record_id),
+      subject_event_id: projectRef(r.subject_event_id),
+      decision_id: projectRef(r.decision_id),
+      reason: projectRef(r.reason),
+      evidence_refs: projectEvidenceRefs(r.evidence_refs),
       occurred_at: r.occurred_at
     };
     if (r.resource_ref !== undefined) {
-      projected.resource_ref = PROJECTED;
+      projected.resource_ref = projectRef(r.resource_ref);
     }
     return projected;
   }
 
   function projectEvent(event: SandboxBehaviorEvent): SandboxBehaviorEvent {
-    assertCanonicalId(event.event_id, "event.event_id");
     const common = {
-      event_id: event.event_id,
+      event_id: projectRef(event.event_id),
       session_id: event.session_id,
       sequence: event.sequence,
       event_type: event.event_type,
       occurred_at: event.occurred_at,
       source: event.source,
-      evidence_refs: PROJECTED_EVIDENCE_REFS,
+      evidence_refs: projectEvidenceRefs(event.evidence_refs),
       payload: event.payload
     };
     if (event.scenario_id !== undefined) {
@@ -302,32 +309,54 @@ function validateAndProjectSnapshotResult(
         return {
           ...common,
           payload: {
-            model_ref: PROJECTED,
-            content_ref: PROJECTED,
-            content_sha256: PROJECTED
+            model_ref: projectRef(event.payload.model_ref),
+            content_ref: projectRef(event.payload.content_ref),
+            content_sha256: projectSha256Field(event.payload.content_sha256)
           }
         } as SandboxBehaviorEvent;
       case "tool_request":
-        assertCanonicalId(event.payload.call_id, "tool_request.call_id");
+        // R32: tool_name is validated against the supervision closed-set
+        // enum (SUPERVISION_TOOL_NAMES) and preserved — this closes the
+        // content channel because only 4 known tool names are accepted.
+        if (!SUPERVISION_TOOL_NAMES.includes(event.payload.tool_name as never)) {
+          throw new DomainError(
+            `Snapshot tool_request.tool_name "${event.payload.tool_name}" is not in the approved closed set`,
+            "CAMPAIGN_SNAPSHOT_INVALID",
+            400
+          );
+        }
         return {
           ...common,
           payload: {
-            call_id: event.payload.call_id,
+            call_id: projectRef(event.payload.call_id),
             tool_name: event.payload.tool_name,
-            target_ref: PROJECTED,
-            arguments_ref: PROJECTED
+            target_ref: projectRef(event.payload.target_ref),
+            arguments_ref: projectRef(event.payload.arguments_ref)
           }
         } as SandboxBehaviorEvent;
       case "tool_result":
-        assertCanonicalId(event.payload.call_id, "tool_result.call_id");
+        if (!SUPERVISION_TOOL_NAMES.includes(event.payload.tool_name as never)) {
+          throw new DomainError(
+            `Snapshot tool_result.tool_name "${event.payload.tool_name}" is not in the approved closed set`,
+            "CAMPAIGN_SNAPSHOT_INVALID",
+            400
+          );
+        }
+        if (!SUPERVISION_STATE_CHANGES.includes(event.payload.state_change as never)) {
+          throw new DomainError(
+            `Snapshot tool_result.state_change "${event.payload.state_change}" is not in the approved closed set`,
+            "CAMPAIGN_SNAPSHOT_INVALID",
+            400
+          );
+        }
         return {
           ...common,
           payload: {
-            call_id: event.payload.call_id,
+            call_id: projectRef(event.payload.call_id),
             tool_name: event.payload.tool_name,
             status: event.payload.status,
-            result_ref: PROJECTED,
-            state_change: PROJECTED
+            result_ref: projectRef(event.payload.result_ref),
+            state_change: event.payload.state_change
           }
         } as SandboxBehaviorEvent;
       case "policy_decision":
@@ -337,13 +366,12 @@ function validateAndProjectSnapshotResult(
         } as SandboxBehaviorEvent;
       case "memory_write":
       case "memory_read":
-        assertCanonicalId(event.payload.memory_entry_id, `${event.event_type}.memory_entry_id`);
         return {
           ...common,
           payload: {
-            memory_entry_id: event.payload.memory_entry_id,
-            content_ref: PROJECTED,
-            content_sha256: PROJECTED
+            memory_entry_id: projectRef(event.payload.memory_entry_id),
+            content_ref: projectRef(event.payload.content_ref),
+            content_sha256: projectSha256Field(event.payload.content_sha256)
           }
         } as SandboxBehaviorEvent;
     }

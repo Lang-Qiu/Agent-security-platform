@@ -1851,17 +1851,17 @@ test("REQ-T1-DEMO-010 does not persist sentinel in structural string fields", as
 });
 
 test("REQ-T1-DEMO-010 rejects snapshot with non-canonical correlation ID", async () => {
-  const { service } = await makeStartedService();
+  const { service, repository } = await makeStartedService();
   const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
   const { calculateTrack1SnapshotSha256 } = await import(
     "../../shared/contracts/campaign-ingest.ts"
   );
 
-  // Inject a non-canonical decision_id (uppercase + special chars). The
-  // grammar validation must reject this. Update ALL references (blocked_record,
-  // policy_decision event payload) so the supervision contract still passes —
-  // the rejection must come from the ID grammar check, not from a broken
-  // contract.
+  // R28 originally validated IDs against ^[a-z][a-z0-9_]*$ and rejected
+  // non-canonical values. R31+R32 replaced validation with deterministic
+  // hashing — the ID is no longer rejected but is hashed so the original
+  // value does not survive. This test now verifies that a secret-bearing ID
+  // is hashed, not stored as-is.
   const maliciousDecision = {
     ...baseSnapshot.result.details.policy_decisions![0],
     decision_id: "SECRET_DECISION_ID!"
@@ -1889,8 +1889,312 @@ test("REQ-T1-DEMO-010 rejects snapshot with non-canonical correlation ID", async
     snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
   };
 
+  service.ingestSnapshot(snapshot);
+
+  // R32: the secret ID must be hashed — the original value must NOT appear.
+  const stored = repository.findById(FIXED_CAMPAIGN_ID);
+  const storedJson = JSON.stringify(stored);
+  assert.ok(
+    !storedJson.includes("SECRET_DECISION_ID"),
+    "non-canonical correlation ID must be hashed — original value must not appear in stored record"
+  );
+});
+
+// R31 (Phase 2 rework review 4 P1 #1): the projected result must still pass
+// the shared contract normalizers. R28's constant "projected" token broke
+// content_sha256 (must be 64-hex SHA-256). Use deterministic content-hash
+// projection so the stored value is contract-valid but unrecoverable.
+
+test("REQ-T1-DEMO-010 projected result passes normalizeBaseResult after projection", async () => {
+  const { service, repository } = await makeStartedService();
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const { normalizeBaseResult } = await import(
+    "../../shared/contracts/result.ts"
+  );
+
+  // Add a model_input event with content_sha256 to exercise the field that
+  // R28 broke by projecting to "projected".
+  const modelInputEvent = {
+    event_id: "event_model_input_1",
+    session_id: baseSnapshot.result.details.session_id!,
+    sequence: 100,
+    event_type: "model_input" as const,
+    occurred_at: "2026-06-30T00:00:01.000Z",
+    source: "model" as const,
+    evidence_refs: ["evidence://model_input_ref"],
+    payload: {
+      model_ref: "model://gpt-test",
+      content_ref: "content://prompt-1",
+      content_sha256: "a".repeat(64)
+    }
+  };
+  const eventsWithModel = [
+    ...baseSnapshot.result.details.events!,
+    modelInputEvent
+  ];
+  const detailsWithModel = {
+    ...baseSnapshot.result.details,
+    events: eventsWithModel,
+    event_count: eventsWithModel.length
+  };
+  const resultWithModel = { ...baseSnapshot.result, details: detailsWithModel };
+  const withoutHash = { ...baseSnapshot, result: resultWithModel };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  service.ingestSnapshot(snapshot);
+
+  // R31: the stored result MUST normalize successfully. If content_sha256
+  // is projected to "projected", normalizeBaseResult returns null.
+  const stored = repository.findById(FIXED_CAMPAIGN_ID);
+  const storedAttempt = stored!.attempts[0];
+  const storedResult = storedAttempt!.result;
+  const normalized = normalizeBaseResult(storedResult);
+  assert.notEqual(normalized, null,
+    "projected stored result must pass normalizeBaseResult — content_sha256 must be valid 64-hex");
+});
+
+// R31b (Phase 2 rework review 5 P1 #1): the projected result must also pass
+// the SUPERVISION contract — not just the sandbox contract. R31 fixed
+// content_sha256, but reason_code and category are validated by isSafeToken
+// in the supervision contract, which rejects colons. The projected
+// "projected:sha256:<hex>" format contains colons and fails isSafeToken,
+// causing projectSupervisionRecord to return null → supervision API 404.
+
+test("REQ-T1-DEMO-010 projected result passes projectSupervisionRecord", async () => {
+  const { service, repository } = await makeStartedService();
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const { projectSupervisionRecord } = await import(
+    "../src/modules/supervision/supervision-projector.ts"
+  );
+
+  const withoutHash = { ...baseSnapshot };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  service.ingestSnapshot(snapshot);
+
+  // R31b: build a StoredTaskRecord from the stored attempt's projected
+  // result — this mirrors what buildSupervisionTaskRecord does internally.
+  // The stored result MUST pass projectSupervisionRecord — if reason_code
+  // or category are projected to a format that fails isSafeToken,
+  // projectSupervisionRecord returns null and the supervision API returns 404.
+  const stored = repository.findById(FIXED_CAMPAIGN_ID);
+  const storedAttempt = stored!.attempts[0];
+  const result = storedAttempt!.result;
+  const taskRecord = {
+    task: {
+      task_id: result.task_id,
+      task_type: "sandbox_run" as const,
+      engine_type: "sandbox" as const,
+      status: result.status as "running" | "finished" | "failed" | "blocked",
+      title: "test",
+      target: { target_type: "campaign_case", target_value: "T1-SC-001-C001" },
+      created_at: result.created_at,
+      updated_at: result.updated_at
+    },
+    result,
+    riskSummary: {
+      task_id: result.task_id,
+      task_type: "sandbox_run" as const,
+      status: result.status as "running" | "finished" | "failed" | "blocked",
+      risk_level: result.risk_level,
+      summary: "",
+      total_findings: 0,
+      info_count: 0,
+      low_count: 0,
+      medium_count: 0,
+      high_count: 0,
+      critical_count: 0,
+      updated_at: result.updated_at
+    }
+  };
+  const projected = projectSupervisionRecord(taskRecord);
+  assert.notEqual(projected, null,
+    "projected stored result must pass projectSupervisionRecord — reason_code and category must pass isSafeToken");
+});
+
+// R32 (Phase 2 rework review 4 P1 #2): structural string channels must be
+// truly closed. The R28 regex ^[a-z][a-z0-9_]*$ has no length limit, so
+// secret_payload_hidden_in_id passes. tool_name is preserved as-is and only
+// requires non-empty string, so secret_tool_value also passes. Hash ALL
+// free-form strings so no client content survives projection.
+
+test("REQ-T1-DEMO-010 does not persist sentinel in tool_name or long correlation ID", async () => {
+  const { service, repository } = await makeStartedService();
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+
+  // R32: tool_name is validated against the SUPERVISION_TOOL_NAMES closed
+  // set and rejected if not in it. A secret tool name must be rejected, not
+  // stored. Correlation IDs are hashed (not validated) so a secret payload
+  // embedded in an ID must be hashed away.
+  const maliciousEvents = baseSnapshot.result.details.events!.map((e) => {
+    if (e.event_type === "policy_decision") {
+      return {
+        ...e,
+        payload: {
+          ...e.payload,
+          decision_id: "secret_payload_hidden_in_id"
+        }
+      };
+    }
+    return e;
+  });
+  const maliciousDecision = {
+    ...baseSnapshot.result.details.policy_decisions![0],
+    decision_id: "secret_payload_hidden_in_id"
+  };
+  const maliciousBlockedRecord = {
+    ...baseSnapshot.result.details.blocked_records![0],
+    decision_id: "secret_payload_hidden_in_id"
+  };
+  const maliciousDetails = {
+    ...baseSnapshot.result.details,
+    events: maliciousEvents,
+    policy_decisions: [maliciousDecision],
+    blocked_records: [maliciousBlockedRecord]
+  };
+  const maliciousResult = { ...baseSnapshot.result, details: maliciousDetails };
+  const withoutHash = { ...baseSnapshot, result: maliciousResult };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  service.ingestSnapshot(snapshot);
+
+  const stored = repository.findById(FIXED_CAMPAIGN_ID);
+  const storedJson = JSON.stringify(stored);
+  assert.ok(
+    !storedJson.includes("secret_payload_hidden_in_id"),
+    "correlation IDs must be hashed — secret payload in ID must not appear in stored record"
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects tool_name not in approved closed set", async () => {
+  const { service } = await makeStartedService();
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+
+  // R32: tool_name must be one of the 4 approved names. A secret tool name
+  // must be rejected at ingest time — it must never enter storage.
+  const maliciousEvents = baseSnapshot.result.details.events!.map((e) =>
+    e.event_type === "tool_request"
+      ? {
+          ...e,
+          payload: {
+            ...e.payload,
+            tool_name: "SECRET_TOOL_VALUE"
+          }
+        }
+      : e
+  );
+  const maliciousDetails = {
+    ...baseSnapshot.result.details,
+    events: maliciousEvents
+  };
+  const maliciousResult = { ...baseSnapshot.result, details: maliciousDetails };
+  const withoutHash = { ...baseSnapshot, result: maliciousResult };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
   assert.throws(
     () => service.ingestSnapshot(snapshot),
+    { code: "CAMPAIGN_SNAPSHOT_INVALID" }
+  );
+});
+
+// R33 (Phase 2 rework review 4 P1 #3): constant projection makes R26's
+// deep-equal prefix check blind to reference field changes. Two different
+// target_ref values both become "projected", so the deep-equal check passes.
+// Use deterministic content-hash projection (projected:sha256:<hex>) so
+// different inputs produce different hashes and R26 can detect the change.
+
+test("REQ-T1-DEMO-010 rejects snapshot when target_ref is rewritten despite constant event_id", async () => {
+  const { service } = await makeStartedService();
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+
+  // Snapshot 1 (running)
+  const baseSnap1 = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const runningResult1 = {
+    ...baseSnap1.result,
+    status: "running" as const,
+    updated_at: "2026-06-30T00:01:05.000Z"
+  };
+  const withoutHash1: Track1CampaignSnapshotWithoutHash = {
+    ...baseSnap1,
+    result: runningResult1,
+    observed_at: "2026-06-30T00:01:05.000Z"
+  };
+  delete (withoutHash1 as { snapshot_sha256?: string }).snapshot_sha256;
+  const snap1 = {
+    ...withoutHash1,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash1)
+  };
+  service.ingestSnapshot(snap1);
+
+  // Snapshot 2: keep same event_id but rewrite target_ref. With constant
+  // "projected", both target_refs become "projected" and the deep-equal
+  // check passes (BUG). With deterministic hashing, different target_refs
+  // produce different hashes and the deep-equal check rejects (CORRECT).
+  const rewrittenEvents = snap1.result.details.events!.map((e) =>
+    e.event_type === "tool_request"
+      ? {
+          ...e,
+          payload: {
+            ...e.payload,
+            target_ref: "recipient://completely_different_target"
+          }
+        }
+      : e
+  );
+  const rewrittenDetails = {
+    ...snap1.result.details,
+    events: rewrittenEvents
+  };
+  const rewrittenResult = {
+    ...snap1.result,
+    details: rewrittenDetails,
+    updated_at: "2026-06-30T00:01:10.000Z"
+  };
+  const withoutHash2: Track1CampaignSnapshotWithoutHash = {
+    ...snap1,
+    result: rewrittenResult,
+    sequence: 2,
+    previous_snapshot_sha256: snap1.snapshot_sha256,
+    observed_at: "2026-06-30T00:01:10.000Z"
+  };
+  delete (withoutHash2 as { snapshot_sha256?: string }).snapshot_sha256;
+  const snap2 = {
+    ...withoutHash2,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash2)
+  };
+
+  assert.throws(
+    () => service.ingestSnapshot(snap2),
     { code: "CAMPAIGN_SNAPSHOT_INVALID" }
   );
 });
