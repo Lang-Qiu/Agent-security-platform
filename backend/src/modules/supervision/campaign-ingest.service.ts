@@ -205,18 +205,21 @@ function validateAndProjectSnapshotResult(
   // R21 (Phase 2 rework review 2 P1 #4): project nested narrative content.
   // Strip free-text fields (reason, reason_code, title, category) from
   // policy_decisions, alerts, and blocked_records by replacing them with
-  // empty strings. This prevents a client from persisting arbitrary text
-  // (e.g. prompt leaks, provider error messages) in these fields. The
-  // structural fields (IDs, action, risk_level, timestamps, evidence_refs)
-  // are preserved for supervision contract validation and campaign projection.
+  // the fixed token "projected". This prevents a client from persisting
+  // arbitrary text (e.g. prompt leaks, provider error messages) in these
+  // fields while keeping the result re-normalizable (the shared normalizers
+  // require these fields to be non-empty strings). The structural fields
+  // (IDs, action, risk_level, timestamps, evidence_refs) are preserved for
+  // supervision contract validation and campaign projection.
+  const PROJECTED_NARRATIVE = "projected";
   function projectPolicyDecision(d: SandboxPolicyDecision): SandboxPolicyDecision {
     return {
       decision_id: d.decision_id,
       subject_event_id: d.subject_event_id,
       policy_id: d.policy_id,
       action: d.action,
-      reason_code: "",
-      reason: "",
+      reason_code: PROJECTED_NARRATIVE,
+      reason: PROJECTED_NARRATIVE,
       evidence_refs: d.evidence_refs,
       decided_at: d.decided_at
     };
@@ -228,9 +231,9 @@ function validateAndProjectSnapshotResult(
       subject_event_id: a.subject_event_id,
       decision_id: a.decision_id,
       risk_level: a.risk_level,
-      category: "",
-      title: "",
-      reason: "",
+      category: PROJECTED_NARRATIVE,
+      title: PROJECTED_NARRATIVE,
+      reason: PROJECTED_NARRATIVE,
       evidence_refs: a.evidence_refs,
       occurred_at: a.occurred_at
     };
@@ -242,7 +245,7 @@ function validateAndProjectSnapshotResult(
       subject_event_id: r.subject_event_id,
       decision_id: r.decision_id,
       resource_ref: r.resource_ref,
-      reason: "",
+      reason: PROJECTED_NARRATIVE,
       evidence_refs: r.evidence_refs,
       occurred_at: r.occurred_at
     };
