@@ -74,6 +74,10 @@ function assertPathCampaignMatchesBody(
 
 export class InternalAppModule {
   campaignRepository: InMemoryCampaignRepository;
+  // R14 (Phase 2 rework review P1 #5): expose the configured ingest token so
+  // tests can verify that createProductionServers reads TRACK1_INGEST_TOKEN
+  // (not the legacy CAMPAIGN_INGEST_TOKEN) from the environment.
+  readonly ingestToken: string;
   private readonly controller: CampaignIngestController;
 
   constructor(input: {
@@ -82,6 +86,7 @@ export class InternalAppModule {
     taskRepository?: TaskRepository;
   }) {
     this.campaignRepository = input.campaignRepository;
+    this.ingestToken = input.ingestToken;
     const service = new CampaignIngestService(
       input.campaignRepository,
       input.taskRepository

@@ -43,9 +43,13 @@ export function createProductionServers(options?: {
   ingestToken?: string;
 }): ProductionServers {
   const deps = options?.deps ?? createRuntimeDependencies();
+  // R14 (Phase 2 rework review P1 #5): read TRACK1_INGEST_TOKEN (the env var
+  // mandated by the deployment contract and Phase 4/7 plans). Do NOT fall
+  // back to the legacy CAMPAIGN_INGEST_TOKEN — the drift caused production
+  // deployments to run with an empty token, silently bypassing auth.
   const ingestToken =
     options?.ingestToken ??
-    process.env.CAMPAIGN_INGEST_TOKEN ??
+    process.env.TRACK1_INGEST_TOKEN ??
     "";
 
   const appModule = createAppModule(deps);
@@ -105,12 +109,66 @@ export async function startServer(server: Server): Promise<{
   };
 }
 
+// R14 (Phase 2 rework review P1 #5): start both production servers with
+// configurable bind hosts. The internal server must NOT be hardcoded to
+// 127.0.0.1 — other containers (e.g. OpenClaw) reach the backend via
+// `backend:3001`, which requires binding to a container-reachable host
+// like 0.0.0.0. The public server bind host is also configurable for
+// symmetry, defaulting to 127.0.0.1 for backward compatibility.
+export interface ProductionServerHandles {
+  publicServer: Server;
+  internalServer: Server;
+  close: () => Promise<void>;
+}
+
+export async function startProductionServers(options: {
+  publicPort?: number;
+  internalPort?: number;
+  publicBindHost?: string;
+  internalBindHost?: string;
+  deps?: RuntimeDependencies;
+  ingestToken?: string;
+}): Promise<ProductionServerHandles> {
+  const publicPort = options.publicPort ?? Number(process.env.PORT ?? 3000);
+  const internalPort =
+    options.internalPort ?? Number(process.env.INTERNAL_PORT ?? 3001);
+  const publicBindHost = options.publicBindHost ?? "127.0.0.1";
+  // R14: default internal bind host to 127.0.0.1 for backward compat, but
+  // allow overriding to 0.0.0.0 (or env var INTERNAL_BIND_HOST) so other
+  // containers can reach the internal API.
+  const internalBindHost =
+    options.internalBindHost ?? process.env.INTERNAL_BIND_HOST ?? "127.0.0.1";
+
+  const servers = createProductionServers({
+    deps: options.deps,
+    ingestToken: options.ingestToken
+  });
+
+  // Await both listen calls so the servers are fully bound before returning.
+  await new Promise<void>((resolve, reject) => {
+    servers.publicServer.once("error", reject);
+    servers.publicServer.listen(publicPort, publicBindHost, () => {
+      servers.publicServer.removeListener("error", reject);
+      resolve();
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    servers.internalServer.once("error", reject);
+    servers.internalServer.listen(internalPort, internalBindHost, () => {
+      servers.internalServer.removeListener("error", reject);
+      resolve();
+    });
+  });
+
+  return {
+    publicServer: servers.publicServer,
+    internalServer: servers.internalServer,
+    close: servers.close
+  };
+}
+
 const entrypoint = process.argv[1];
 
 if (entrypoint && import.meta.url === pathToFileURL(entrypoint).href) {
-  const port = Number(process.env.PORT ?? 3000);
-  const internalPort = Number(process.env.INTERNAL_PORT ?? 3001);
-  const servers = createProductionServers();
-  servers.publicServer.listen(port, "127.0.0.1");
-  servers.internalServer.listen(internalPort, "127.0.0.1");
+  await startProductionServers();
 }
