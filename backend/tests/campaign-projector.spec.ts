@@ -13,6 +13,7 @@ import {
   normalizeTrack1CampaignDetail,
   normalizeTrack1CampaignEvidenceExport
 } from "../../shared/contracts/campaign-supervision.ts";
+import { satisfiesSandboxSupervisionContract } from "../../shared/contracts/sandbox.ts";
 import {
   TRACK1_CAMPAIGN_AGENT_IDS,
   TRACK1_CASE_IDS
@@ -224,6 +225,35 @@ test("REQ-T1-DEMO-010 projector ask_count counts attempts whose highest action i
     decided_at: originalAsk.decided_at
   };
   targetAttempt.result.details.policy_decisions = [allowDecision, originalAsk];
+
+  // R16 (Phase 2 rework review P2 #7): adding a policy_decision requires a
+  // matching policy_decision event in the events array. The supervision
+  // contract enforces a 1:1 relationship between policy_decisions entries
+  // and events with event_type="policy_decision". Without the matching
+  // event, the fixture violates the contract and could not have been
+  // produced by a real ingestion.
+  const details = targetAttempt.result.details;
+  const existingEvents = details.events!;
+  const sessionId = existingEvents[0].session_id;
+  const maxSequence = Math.max(...existingEvents.map((e) => e.sequence));
+  existingEvents.push({
+    event_id: "event_policy_decision_allow_mixed_4",
+    session_id: sessionId,
+    sequence: maxSequence + 1,
+    event_type: "policy_decision",
+    occurred_at: originalAsk.decided_at,
+    source: "policy",
+    evidence_refs: allowDecision.evidence_refs,
+    payload: allowDecision
+  });
+  details.event_count = existingEvents.length;
+
+  // R16: verify the modified fixture satisfies the supervision contract.
+  assert.equal(
+    satisfiesSandboxSupervisionContract(targetAttempt.result.details),
+    true,
+    "fixture must satisfy the supervision contract after adding a policy_decision"
+  );
 
   const projected = projectTrack1Campaign(stored);
   assert.equal(
