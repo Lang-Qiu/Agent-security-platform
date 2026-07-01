@@ -14,6 +14,10 @@ import type {
   Track1CampaignSnapshotWithoutHash
 } from "../../../../shared/types/campaign-ingest.ts";
 import type { BaseResult, SandboxRunResultDetails } from "../../../../shared/types/result.ts";
+import type {
+  MonitorDecisionProvider,
+  MonitorDecisionProposal
+} from "../../../../engines/sandbox/src/monitoring/contract.ts";
 
 // -- recording plugin api -------------------------------------------------
 
@@ -27,17 +31,34 @@ export interface RecordedTool {
   execute: (args: unknown, context: unknown) => Promise<unknown>;
 }
 
+export interface RecordedHook {
+  name: string;
+  handler: (event: unknown) => unknown | Promise<unknown>;
+  options?: { priority?: number; timeoutMs?: number };
+}
+
 export interface RecordingPluginApi {
   tools: RecordedTool[];
+  hooks: RecordedHook[];
   registerTool(tool: RecordedTool): void;
+  on(
+    name: string,
+    handler: (event: unknown) => unknown | Promise<unknown>,
+    options?: { priority?: number; timeoutMs?: number }
+  ): void;
 }
 
 export function makeRecordingPluginApi(): RecordingPluginApi {
   const tools: RecordedTool[] = [];
+  const hooks: RecordedHook[] = [];
   return {
     tools,
+    hooks,
     registerTool(tool) {
       tools.push(tool);
+    },
+    on(name, handler, options) {
+      hooks.push({ name, handler, options });
     }
   };
 }
@@ -312,4 +333,246 @@ export function makeIngestSnapshotAck(
     snapshot_sha256: overrides?.snapshot_sha256 ?? envelope.snapshot_sha256,
     accepted_at: "2026-06-30T00:00:04.000Z"
   };
+}
+
+// -- P3-T5: native tool event + hook harness ------------------------------
+
+export type NativeToolName = "send_email" | "read_file" | "write_file" | "call_api";
+
+export interface NativeToolEvent {
+  session_id: string;
+  call_id: string;
+  tool_name: string;
+  arguments: unknown;
+}
+
+export function makeNativeToolEvent(
+  toolName: NativeToolName,
+  overrides?: Partial<{ call_id: string; session_id: string }>
+): NativeToolEvent {
+  const base = {
+    session_id: overrides?.session_id ?? SESSION_ID,
+    call_id: overrides?.call_id ?? "call:native:001"
+  };
+  switch (toolName) {
+    case "send_email":
+      return {
+        ...base,
+        tool_name: "send_email",
+        arguments: {
+          recipient: "reviewer@local.invalid",
+          subject: "Status update",
+          body: "The portal is operating normally."
+        }
+      };
+    case "read_file":
+      return {
+        ...base,
+        tool_name: "read_file",
+        arguments: { path: "sandbox://track1/virtual/status.txt" }
+      };
+    case "write_file":
+      return {
+        ...base,
+        tool_name: "write_file",
+        arguments: {
+          path: "sandbox://track1/virtual/log.txt",
+          content: "Entry recorded by observed session"
+        }
+      };
+    case "call_api":
+      return {
+        ...base,
+        tool_name: "call_api",
+        arguments: { endpoint: "/api/status", method: "GET" }
+      };
+  }
+}
+
+// -- plugin runtime ports --------------------------------------------------
+
+export interface PluginRuntimePorts {
+  provider: MonitorDecisionProvider;
+  ingestSnapshot: (envelope: Track1CampaignSnapshotEnvelope) => Promise<Track1CampaignSnapshotAck>;
+  now: () => string;
+  nextId: (kind: string) => string;
+}
+
+export function makePluginRuntimePorts(options?: {
+  action?: MonitorDecisionProposal["action"];
+  ingest?: () => Promise<Track1CampaignSnapshotAck>;
+  ingestFails?: boolean;
+}): PluginRuntimePorts {
+  const action = options?.action ?? "allow";
+  let idCounter = 0;
+  let timeCounter = 0;
+  return {
+    provider: {
+      decide() {
+        return {
+          policy_id: `policy://track1/test-${action}`,
+          action,
+          reason_code: `test_${action}`,
+          reason: `Test ${action} action`,
+          evidence_refs: [`evidence://track1/test-${action}`]
+        };
+      }
+    },
+    async ingestSnapshot(envelope) {
+      if (options?.ingestFails) {
+        throw new Error("simulated ingest failure");
+      }
+      if (options?.ingest) {
+        await options.ingest();
+      }
+      return {
+        schema_version: "track1-campaign-snapshot-ack.v1",
+        campaign_id: envelope.campaign_id,
+        attempt_id: envelope.attempt_id,
+        sequence: envelope.sequence,
+        snapshot_sha256: envelope.snapshot_sha256,
+        accepted_at: "2026-06-30T00:00:04.000Z"
+      };
+    },
+    now() {
+      timeCounter += 1;
+      return new Date(Date.UTC(2026, 5, 30, 0, 0, 0) + timeCounter * 1000).toISOString();
+    },
+    nextId(kind: string) {
+      idCounter += 1;
+      return `${kind}:track1:${String(idCounter).padStart(3, "0")}`;
+    }
+  };
+}
+
+// -- plugin hook harness ---------------------------------------------------
+
+export interface PluginHookHarness {
+  beforeToolCall: (event: unknown) => Promise<Record<string, unknown>>;
+  afterToolCall: (event: unknown) => Promise<Record<string, unknown>>;
+  sessionStart: (event: unknown) => Promise<unknown>;
+  sessionEnd: (event: unknown) => Promise<unknown>;
+  llmInput: (event: unknown) => Promise<unknown>;
+  llmOutput: (event: unknown) => Promise<unknown>;
+  readonly toolExecutions: number;
+  readonly snapshotsIngested: number;
+  readonly snapshots: Track1CampaignSnapshotEnvelope[];
+  readonly api: RecordingPluginApi;
+}
+
+export interface PluginHookHarnessOptions {
+  register: (
+    api: RecordingPluginApi,
+    runtime: {
+      ports: PluginRuntimePorts;
+      toolRuntime: CampaignToolRuntime;
+    }
+  ) => void;
+  action?: MonitorDecisionProposal["action"];
+  ingest?: () => Promise<Track1CampaignSnapshotAck>;
+  ingestFails?: boolean;
+  skipPreArm?: boolean;
+}
+
+export async function makePluginHookHarness(
+  options: PluginHookHarnessOptions
+): Promise<PluginHookHarness> {
+  const toolExecutions = { count: 0 };
+  const snapshotsIngested = { count: 0 };
+  const snapshots: Track1CampaignSnapshotEnvelope[] = [];
+
+  const api = makeRecordingPluginApi();
+  const originalRegisterTool = api.registerTool.bind(api);
+  api.registerTool = (tool: RecordedTool) => {
+    const originalExecute = tool.execute;
+    const wrapped: RecordedTool = {
+      ...tool,
+      async execute(args: unknown, context: unknown) {
+        toolExecutions.count += 1;
+        return originalExecute(args, context);
+      }
+    };
+    originalRegisterTool(wrapped);
+  };
+
+  const toolRuntime = makeCampaignToolRuntime();
+  const basePorts = makePluginRuntimePorts({
+    action: options.action,
+    ingest: options.ingest,
+    ingestFails: options.ingestFails
+  });
+
+  const ports: PluginRuntimePorts = {
+    provider: basePorts.provider,
+    now: basePorts.now,
+    nextId: basePorts.nextId,
+    async ingestSnapshot(envelope) {
+      const ack = await basePorts.ingestSnapshot(envelope);
+      snapshots.push(envelope);
+      snapshotsIngested.count += 1;
+      return ack;
+    }
+  };
+
+  options.register(api, { ports, toolRuntime });
+
+  const getHook = (name: string) => {
+    const hook = api.hooks.find((h) => h.name === name);
+    if (!hook) throw new Error(`hook ${name} not registered`);
+    return hook.handler;
+  };
+
+  const invoke = async (name: string, event: unknown) => {
+    return await getHook(name)(event);
+  };
+
+  if (!options.skipPreArm) {
+    const ctx = makeCampaignHookContext();
+    await invoke("session_start", {
+      session_id: ctx.session_id,
+      agent_id: ctx.agent_id,
+      context: ctx
+    });
+    await invoke("llm_input", {
+      session_id: ctx.session_id,
+      envelope: makeTrack1ModelInputEnvelope()
+    });
+    await invoke("llm_output", {
+      session_id: ctx.session_id,
+      content: "The simulated customer service portal is operating normally.",
+      content_ref: "model://track1/observed/output/001"
+    });
+  }
+
+  return {
+    api,
+    beforeToolCall: (event: unknown) =>
+      invoke("before_tool_call", event) as Promise<Record<string, unknown>>,
+    afterToolCall: (event: unknown) =>
+      invoke("after_tool_call", event) as Promise<Record<string, unknown>>,
+    sessionStart: (event: unknown) => invoke("session_start", event),
+    sessionEnd: (event: unknown) => invoke("session_end", event),
+    llmInput: (event: unknown) => invoke("llm_input", event),
+    llmOutput: (event: unknown) => invoke("llm_output", event),
+    get toolExecutions() {
+      return toolExecutions.count;
+    },
+    get snapshotsIngested() {
+      return snapshotsIngested.count;
+    },
+    snapshots
+  };
+}
+
+// -- P3-T6: runtime probe ports (stubs, extended in P3-T6) ----------------
+
+export function makeCompleteRuntimeProbePorts(): PluginRuntimePorts {
+  return makePluginRuntimePorts({ action: "allow" });
+}
+
+export function makeProbePorts(
+  mutation?: Partial<PluginRuntimePorts>
+): PluginRuntimePorts {
+  const base = makePluginRuntimePorts({ action: "allow" });
+  return { ...base, ...mutation };
 }
