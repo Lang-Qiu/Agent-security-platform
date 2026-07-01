@@ -1055,7 +1055,8 @@ test("REQ-T1-DEMO-010 task save failure does not commit campaign", async () => {
   const failingTaskRepository = {
     save(): never { throw new Error("task save boom"); },
     list(): unknown[] { return []; },
-    findById(): null { return null; }
+    findById(): null { return null; },
+    delete(): boolean { return false; }
   };
   const service = new CampaignIngestService(campaignRepository, failingTaskRepository);
   service.startCampaign(makeCampaignStartEnvelope());
@@ -1116,4 +1117,76 @@ test("REQ-T1-DEMO-010 rejects new attempt with task_id already used by another a
     () => service.ingestSnapshot(duplicateSnapshot),
     { code: "CAMPAIGN_TASK_ID_DUPLICATE" }
   );
+});
+
+// R19 (Phase 2 rework review 2 P1 #2): if campaignRepository.save fails
+// AFTER the task has been saved, the task mirror must be rolled back
+// (deleted) so there is no orphaned task record without a corresponding
+// campaign attempt. The previous code only reversed the write order
+// without handling the second failure direction.
+
+test("REQ-T1-DEMO-010 campaign save failure rolls back task record", async () => {
+  const { CampaignIngestService } = await loadServiceModule();
+  const taskRepository = new InMemoryTaskRepository();
+
+  // Create a campaign repository whose save() throws on the second call
+  // (the first call is create() during startCampaign).
+  const campaignRepository = makeRepository();
+  const originalSave = campaignRepository.save.bind(campaignRepository);
+  let saveCallCount = 0;
+  campaignRepository.save = (record: unknown) => {
+    saveCallCount++;
+    if (saveCallCount >= 1) {
+      throw new Error("campaign save boom");
+    }
+    return originalSave(record);
+  };
+
+  const service = new CampaignIngestService(campaignRepository, taskRepository);
+  service.startCampaign(makeCampaignStartEnvelope());
+
+  const snapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  assert.throws(
+    () => service.ingestSnapshot(snapshot),
+    /campaign save boom/
+  );
+
+  // R19: the task record must have been rolled back (deleted) because the
+  // campaign save failed. Without rollback, the task would be orphaned.
+  const taskId = snapshot.result.task_id;
+  const taskRecord = taskRepository.findById(taskId);
+  assert.equal(
+    taskRecord,
+    null,
+    "task record must be rolled back when campaign save fails"
+  );
+});
+
+test("REQ-T1-DEMO-010 task save failure does not leave campaign modified", async () => {
+  // R19: verify the FIRST failure direction too — task save failure must
+  // not commit the campaign. This is the existing R13 test, re-verified
+  // here as part of the atomic contract.
+  const { CampaignIngestService } = await loadServiceModule();
+  const campaignRepository = makeRepository();
+  const failingTaskRepository = {
+    save(): never { throw new Error("task save boom"); },
+    list(): unknown[] { return []; },
+    findById(): null { return null; },
+    delete(): boolean { return false; }
+  };
+  const service = new CampaignIngestService(campaignRepository, failingTaskRepository);
+  service.startCampaign(makeCampaignStartEnvelope());
+
+  const snapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  assert.throws(
+    () => service.ingestSnapshot(snapshot),
+    /task save boom/
+  );
+
+  const stored = campaignRepository.findById(FIXED_CAMPAIGN_ID) as {
+    snapshots: unknown[];
+    attempts: unknown[];
+  };
+  assert.equal(stored.snapshots.length, 0, "campaign must not be committed when task save fails");
+  assert.equal(stored.attempts.length, 0, "campaign must not have attempts when task save fails");
 });

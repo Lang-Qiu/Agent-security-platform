@@ -553,19 +553,27 @@ export class CampaignIngestService {
       evidence: record.evidence
     };
 
-    // R13: save the task FIRST (before the campaign) so that a task save
-    // failure does not leave a committed campaign with a missing mirror.
-    // If the task save throws, the campaign remains at its previous state.
-    // The task record is written on EVERY accepted snapshot — not just the
-    // first — so the supervision session stays fresh as the attempt
-    // progresses from "running" to a terminal status.
+    // R19 (Phase 2 rework review 2 P1 #2): atomic dual-repository write.
+    // Save the task FIRST, then save the campaign. If the campaign save
+    // fails, roll back the task deletion so there is no orphaned task
+    // record without a corresponding campaign attempt. This closes both
+    // failure directions:
+    //   - task save fails → campaign untouched (no rollback needed)
+    //   - campaign save fails → task rolled back via delete()
     if (this.taskRepository) {
       const taskRecord = buildSupervisionTaskRecord(newAttempt);
       this.taskRepository.save(taskRecord);
     }
 
-    // 7. Save campaign after the task mirror is updated.
-    this.repository.save(replacement);
+    try {
+      this.repository.save(replacement);
+    } catch (saveError) {
+      // R19: roll back the task record so it is not orphaned.
+      if (this.taskRepository) {
+        this.taskRepository.delete(newAttempt.task_id);
+      }
+      throw saveError;
+    }
 
     // 8. Return projected defensive copy.
     return this.projectAttemptSummary(newAttempt);

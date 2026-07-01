@@ -19,4 +19,9 @@ export class InMemoryTaskRepository implements TaskRepository {
   findById(taskId: string): StoredTaskRecord | null {
     return this.records.get(taskId) ?? null;
   }
+
+  // R19 (Phase 2 rework review 2 P1 #2): rollback support.
+  delete(taskId: string): boolean {
+    return this.records.delete(taskId);
+  }
 }
