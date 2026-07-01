@@ -1523,3 +1523,58 @@ test("REQ-T1-DEMO-010 rejects snapshot when event_prefix shrinks across snapshot
     { code: "CAMPAIGN_SNAPSHOT_INVALID" }
   );
 });
+
+// R25 (Phase 2 rework review 3 P1 #1): when updating an existing attempt,
+// the rollback path must RESTORE the prior task record — not delete it.
+// The previous implementation unconditionally called delete() on campaign
+// save failure, which destroyed the previously committed task mirror when
+// a running→terminal update failed. Both directions must be covered:
+//   - create + fail → delete (already covered above)
+//   - update + fail → restore prior task state
+
+test("REQ-T1-DEMO-010 campaign save failure on update restores prior task record", async () => {
+  const { CampaignIngestService } = await loadServiceModule();
+  const taskRepository = new InMemoryTaskRepository();
+
+  // Make campaign save fail on the SECOND save() call (the first save is
+  // snapshot 1 which must succeed so the prior task is committed).
+  const campaignRepository = makeRepository();
+  const originalSave = campaignRepository.save.bind(campaignRepository);
+  let saveCallCount = 0;
+  campaignRepository.save = (record: unknown) => {
+    saveCallCount++;
+    if (saveCallCount >= 2) {
+      throw new Error("campaign save boom on update");
+    }
+    return originalSave(record);
+  };
+
+  const service = new CampaignIngestService(campaignRepository, taskRepository);
+  service.startCampaign(makeCampaignStartEnvelope());
+
+  // Snapshot 1: running result for case 0, attempt 1 → creates attempt + task.
+  const baseSnap1 = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const snap1 = await makeRunningSnapshot(baseSnap1, 1, null, "2026-06-30T00:01:00.000Z");
+  service.ingestSnapshot(snap1);
+
+  const priorTask = taskRepository.findById(snap1.result.task_id);
+  assert.equal(priorTask?.task.status, "running", "prior task must exist after snapshot 1");
+
+  // Snapshot 2: terminal (finished) result for same attempt → updates task,
+  // then campaign save fails → rollback must RESTORE the prior running task.
+  const snap2 = makeCampaignSnapshotForCase(0, 1, 2, snap1.snapshot_sha256);
+  assert.throws(
+    () => service.ingestSnapshot(snap2),
+    /campaign save boom on update/
+  );
+
+  // R25: the task record must still exist and reflect the PRIOR (running)
+  // state — NOT be deleted and NOT retain the terminal update.
+  const restoredTask = taskRepository.findById(snap1.result.task_id);
+  assert.notEqual(restoredTask, null, "prior task record must be restored, not deleted");
+  assert.equal(
+    restoredTask?.task.status,
+    "running",
+    "restored task must reflect prior running state, not the failed terminal update"
+  );
+});

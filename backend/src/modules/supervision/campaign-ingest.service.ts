@@ -709,11 +709,20 @@ export class CampaignIngestService {
 
     // R19 (Phase 2 rework review 2 P1 #2): atomic dual-repository write.
     // Save the task FIRST, then save the campaign. If the campaign save
-    // fails, roll back the task deletion so there is no orphaned task
-    // record without a corresponding campaign attempt. This closes both
-    // failure directions:
-    //   - task save fails → campaign untouched (no rollback needed)
-    //   - campaign save fails → task rolled back via delete()
+    // fails, roll back the task so there is no orphaned task record
+    // without a corresponding campaign attempt.
+    // R25 (Phase 2 rework review 3 P1 #1): the rollback must distinguish
+    // the two directions:
+    //   - CREATE (no prior task) → delete the new task so it is not orphaned
+    //   - UPDATE (prior task existed) → RESTORE the prior task record so
+    //     the previously committed mirror is not destroyed. The previous
+    //     code unconditionally called delete(), which lost the prior task
+    //     state when a running→terminal update failed.
+    // Capture the prior task BEFORE overwriting it so it can be restored.
+    const priorTaskRecord = this.taskRepository
+      ? (existingAttempt ? this.taskRepository.findById(newAttempt.task_id) : null)
+      : null;
+
     if (this.taskRepository) {
       const taskRecord = buildSupervisionTaskRecord(newAttempt);
       this.taskRepository.save(taskRecord);
@@ -722,9 +731,15 @@ export class CampaignIngestService {
     try {
       this.repository.save(replacement);
     } catch (saveError) {
-      // R19: roll back the task record so it is not orphaned.
       if (this.taskRepository) {
-        this.taskRepository.delete(newAttempt.task_id);
+        if (priorTaskRecord) {
+          // R25: update path — restore the prior task record that was
+          // overwritten by the save() above.
+          this.taskRepository.save(priorTaskRecord);
+        } else {
+          // R19: create path — delete the new orphaned task record.
+          this.taskRepository.delete(newAttempt.task_id);
+        }
       }
       throw saveError;
     }
