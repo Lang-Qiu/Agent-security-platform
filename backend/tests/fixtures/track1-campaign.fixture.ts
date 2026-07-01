@@ -27,7 +27,7 @@ import {
   type Track1CaseId,
   type Track1ScenarioId
 } from "../../../shared/types/campaign-supervision.ts";
-import type { StoredCampaignAttempt, StoredCampaignRecord } from "../src/modules/supervision/repositories/campaign.repository.ts";
+import type { StoredCampaignAttempt, StoredCampaignRecord, StoredCampaignSnapshotReceipt } from "../src/modules/supervision/repositories/campaign.repository.ts";
 
 const CAMPAIGN_ID = "campaign:t1:0123456789abcdef0123456789abcdef";
 const CAMPAIGN_HEX = "0123456789abcdef0123456789abcdef";
@@ -269,7 +269,7 @@ export function makeCompletedCampaignRecord(): StoredCampaignRecord {
   const campaignId = start.campaign_id;
 
   const attempts: StoredCampaignAttempt[] = [];
-  const snapshots: Track1CampaignSnapshotEnvelope[] = [];
+  const snapshots: StoredCampaignSnapshotReceipt[] = [];
 
   for (let i = 0; i < TRACK1_CASE_IDS.length; i++) {
     const meta = getCaseMetadata(i);
@@ -293,7 +293,24 @@ export function makeCompletedCampaignRecord(): StoredCampaignRecord {
       result
     };
     const snapshotSha = calculateTrack1SnapshotSha256(snapshotWithoutHash);
-    snapshots.push({ ...snapshotWithoutHash, snapshot_sha256: snapshotSha });
+    // R11: store closed receipt, not raw snapshot envelope.
+    snapshots.push({
+      schema_version: snapshotWithoutHash.schema_version,
+      campaign_id: campaignId,
+      campaign_manifest_sha256: MANIFEST_SHA256,
+      agent_id: meta.agent_id,
+      scenario_id: meta.scenario_id,
+      case_id: meta.case_id,
+      attempt_id: attemptId,
+      attempt_index: 1,
+      sequence: 1,
+      previous_snapshot_sha256: null,
+      observed_at: snapshotWithoutHash.observed_at,
+      snapshot_sha256: snapshotSha,
+      result_task_id: taskId,
+      result_session_id: sessionId,
+      result_status: result.status
+    });
 
     attempts.push({
       campaign_id: campaignId,

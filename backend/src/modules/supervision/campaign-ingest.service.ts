@@ -32,7 +32,8 @@ import { DomainError } from "../../common/errors/domain-error.ts";
 import type {
   CampaignRepository,
   StoredCampaignAttempt,
-  StoredCampaignRecord
+  StoredCampaignRecord,
+  StoredCampaignSnapshotReceipt
 } from "./repositories/campaign.repository.ts";
 import type {
   StoredTaskRecord,
@@ -221,6 +222,35 @@ function buildSupervisionTaskRecord(
   };
 
   return { task, result, riskSummary };
+}
+
+// R11 (Phase 2 rework review P1 #2): build a closed snapshot receipt that
+// carries ONLY structural IDs, hashes, and timestamps. The raw normalized
+// snapshot (including result.summary, result.metadata, result.details.target,
+// events, policy_decisions, etc.) must NOT be persisted — otherwise
+// injected content like metadata.raw_prompt="SECRET_SENTINEL" would leak
+// into storage. The full projected result lives on StoredCampaignAttempt.
+function buildSnapshotReceipt(
+  normalized: Track1CampaignSnapshotEnvelope,
+  projectedResult: BaseResult<SandboxRunResultDetails>
+): StoredCampaignSnapshotReceipt {
+  return {
+    schema_version: normalized.schema_version,
+    campaign_id: normalized.campaign_id,
+    campaign_manifest_sha256: normalized.campaign_manifest_sha256,
+    agent_id: normalized.agent_id,
+    scenario_id: normalized.scenario_id,
+    case_id: normalized.case_id,
+    attempt_id: normalized.attempt_id,
+    attempt_index: normalized.attempt_index,
+    sequence: normalized.sequence,
+    previous_snapshot_sha256: normalized.previous_snapshot_sha256,
+    observed_at: normalized.observed_at,
+    snapshot_sha256: normalized.snapshot_sha256,
+    result_task_id: projectedResult.task_id as StoredCampaignSnapshotReceipt["result_task_id"],
+    result_session_id: projectedResult.details.session_id as StoredCampaignSnapshotReceipt["result_session_id"],
+    result_status: projectedResult.status
+  };
 }
 
 // -- CampaignIngestService ----------------------------------------------------
@@ -433,7 +463,9 @@ export class CampaignIngestService {
         )
       : [...record.attempts, newAttempt];
 
-    const updatedSnapshots = [...record.snapshots, normalized];
+    // R11: persist a closed snapshot receipt, not the raw normalized snapshot.
+    const receipt = buildSnapshotReceipt(normalized, projectedResult);
+    const updatedSnapshots = [...record.snapshots, receipt];
     const updatedStatus = record.campaign.status === "created" ? "running" : record.campaign.status;
     const updatedAt = normalized.observed_at > record.campaign.updated_at
       ? normalized.observed_at

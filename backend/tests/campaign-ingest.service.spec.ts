@@ -733,6 +733,55 @@ test("REQ-T1-DEMO-010 stored records contain no raw content sentinels", async ()
   assert.ok(!json.includes("system_prompt"));
 });
 
+// R11 (Phase 2 rework review P1 #2): the raw normalized snapshot must NOT
+// be persisted verbatim in record.snapshots. The previous implementation
+// appended the full normalized snapshot (including result.summary,
+// result.metadata, and result.details.target) to record.snapshots, so
+// injecting metadata.raw_prompt="SECRET_SENTINEL" or summary content
+// would persist that content even though attempt.result was projected.
+// The stored snapshot must be a closed receipt: structural IDs, hashes,
+// and timestamps only — never the raw result content.
+test("REQ-T1-DEMO-010 stored snapshot receipt contains no raw result content", async () => {
+  const { service, repository } = await makeStartedService();
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const resultWithSecret = {
+    ...baseSnapshot.result,
+    summary: "ARBITRARY_SECRET_IN_SUMMARY",
+    metadata: { raw_prompt: "SECRET_SENTINEL" }
+  };
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const withoutHash = { ...baseSnapshot, result: resultWithSecret };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  service.ingestSnapshot(snapshot);
+
+  const stored = repository.findById(FIXED_CAMPAIGN_ID);
+  assert.ok(stored);
+  assert.ok(stored!.snapshots.length > 0, "at least one snapshot receipt must be stored");
+  const storedSnapshotJson = JSON.stringify(stored!.snapshots);
+  assert.ok(
+    !storedSnapshotJson.includes("SECRET_SENTINEL"),
+    "stored snapshot receipt must not contain raw metadata content"
+  );
+  assert.ok(
+    !storedSnapshotJson.includes("ARBITRARY_SECRET_IN_SUMMARY"),
+    "stored snapshot receipt must not contain raw summary content"
+  );
+  // The receipt must not carry the full result object.
+  const firstSnapshot = stored!.snapshots[0] as { result?: unknown };
+  assert.equal(
+    firstSnapshot.result,
+    undefined,
+    "stored snapshot receipt must not include the result object"
+  );
+});
+
 // R7 (Phase 2 rework finding 3): campaign sessions must be written to the
 // TaskRepository on ingest so the public session inspector can query them.
 // Without this, ingest only writes to the CampaignRepository, and the

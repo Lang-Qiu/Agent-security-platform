@@ -1,8 +1,7 @@
 import type { BaseResult, SandboxRunResultDetails } from "../../../../../shared/types/result.ts";
 import type {
   Track1CampaignEvidenceRegistration,
-  Track1CampaignStartEnvelope,
-  Track1CampaignSnapshotEnvelope
+  Track1CampaignStartEnvelope
 } from "../../../../../shared/types/campaign-ingest.ts";
 import type {
   Track1CampaignAgentId,
@@ -33,6 +32,28 @@ export interface StoredCampaignAttempt {
   result: BaseResult<SandboxRunResultDetails>;
 }
 
+// R11 (Phase 2 rework review P1 #2): a closed snapshot receipt stored in the
+// campaign record. It carries ONLY structural IDs, hashes, and timestamps —
+// never the raw result content (summary, metadata, target, events, etc.).
+// The full projected result lives on StoredCampaignAttempt.result.
+export interface StoredCampaignSnapshotReceipt {
+  schema_version: string;
+  campaign_id: Track1CampaignId;
+  campaign_manifest_sha256: string;
+  agent_id: Track1CampaignAgentId;
+  scenario_id: Track1ScenarioId;
+  case_id: Track1CaseId;
+  attempt_id: Track1AttemptId;
+  attempt_index: 1 | 2;
+  sequence: number;
+  previous_snapshot_sha256: string | null;
+  observed_at: string;
+  snapshot_sha256: string;
+  result_task_id: Track1TaskId;
+  result_session_id: Track1SessionId;
+  result_status: string;
+}
+
 export interface StoredCampaignRecord {
   campaign: {
     campaign_id: Track1CampaignId;
@@ -41,7 +62,7 @@ export interface StoredCampaignRecord {
     updated_at: string;
     completed_at?: string;
   };
-  snapshots: readonly Track1CampaignSnapshotEnvelope[];
+  snapshots: readonly StoredCampaignSnapshotReceipt[];
   attempts: readonly StoredCampaignAttempt[];
   evidence: Track1CampaignEvidenceRegistration | null;
 }
