@@ -13,6 +13,7 @@ import type {
   Track1CampaignSnapshotWithoutHash,
   Track1CampaignStartEnvelope
 } from "../../../shared/types/campaign-ingest.ts";
+import { TRACK1_CAMPAIGN_MANIFEST_SHA256 } from "../../../shared/types/campaign-ingest.ts";
 import type { BaseResult, SandboxRunResultDetails } from "../../../shared/types/result.ts";
 import type { SandboxPolicyAction, SandboxPolicyDecision } from "../../../shared/types/sandbox.ts";
 import {
@@ -30,7 +31,7 @@ import type { StoredCampaignAttempt, StoredCampaignRecord } from "../src/modules
 
 const CAMPAIGN_ID = "campaign:t1:0123456789abcdef0123456789abcdef";
 const CAMPAIGN_HEX = "0123456789abcdef0123456789abcdef";
-const MANIFEST_SHA256 = "a".repeat(64);
+const MANIFEST_SHA256 = TRACK1_CAMPAIGN_MANIFEST_SHA256;
 
 // Re-export shared fixtures for backend test convenience.
 export function makeCampaignStartEnvelope(): Track1CampaignStartEnvelope {

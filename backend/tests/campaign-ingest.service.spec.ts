@@ -90,6 +90,43 @@ test("REQ-T1-DEMO-010 starts only one fixed campaign", async () => {
   );
 });
 
+// R2 (Phase 2 rework finding 5): the campaign manifest hash must be pinned
+// to the canonical SHA-256 of samples/track1/openclaw/campaign.v1.json.
+// Any other 64-hex string must be rejected at start time, not accepted and
+// persisted as a campaign.
+test("REQ-T1-DEMO-010 start rejects a non-pinned campaign manifest hash", async () => {
+  const { CampaignIngestService } = await loadServiceModule();
+  const repository = makeRepository();
+  const service = new CampaignIngestService(repository);
+
+  const malicious = {
+    ...makeCampaignStartEnvelope(),
+    campaign_manifest_sha256: "b".repeat(64)
+  };
+  assert.throws(
+    () => service.startCampaign(malicious),
+    { code: "CAMPAIGN_START_INVALID" }
+  );
+  assert.equal(repository.list().length, 0);
+});
+
+test("REQ-T1-DEMO-010 start rejects a non-pinned campaign manifest hash even with valid hex shape", async () => {
+  const { CampaignIngestService } = await loadServiceModule();
+  const repository = makeRepository();
+  const service = new CampaignIngestService(repository);
+
+  // Different 64-hex string that is NOT the canonical manifest hash.
+  const malicious = {
+    ...makeCampaignStartEnvelope(),
+    campaign_manifest_sha256: "0".repeat(64)
+  };
+  assert.throws(
+    () => service.startCampaign(malicious),
+    { code: "CAMPAIGN_START_INVALID" }
+  );
+  assert.equal(repository.list().length, 0);
+});
+
 // -- Snapshot lifecycle -------------------------------------------------------
 
 test("REQ-T1-DEMO-010 accepts byte-identical snapshot retry only", async () => {

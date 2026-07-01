@@ -16,6 +16,7 @@ import type { BaseResult, SandboxRunResultDetails } from "../types/result.ts";
 import {
   TRACK1_CAMPAIGN_EVIDENCE_REGISTRATION_SCHEMA_VERSION,
   TRACK1_CAMPAIGN_FINALIZE_SCHEMA_VERSION,
+  TRACK1_CAMPAIGN_MANIFEST_SHA256,
   TRACK1_CAMPAIGN_SNAPSHOT_ACK_SCHEMA_VERSION,
   TRACK1_CAMPAIGN_SNAPSHOT_SCHEMA_VERSION,
   TRACK1_CAMPAIGN_START_SCHEMA_VERSION,
@@ -231,6 +232,11 @@ export function normalizeTrack1CampaignStartEnvelope(
   if (input.schema_version !== TRACK1_CAMPAIGN_START_SCHEMA_VERSION) return null;
   if (!isCampaignId(input.campaign_id)) return null;
   if (!isSha256Hex(input.campaign_manifest_sha256)) return null;
+  // R2 (Phase 2 rework finding 5): pin the manifest hash to the canonical
+  // SHA-256 of samples/track1/openclaw/campaign.v1.json. Any other 64-hex
+  // value is rejected so arbitrary manifests cannot be ingested as a
+  // Track 1 campaign.
+  if (input.campaign_manifest_sha256 !== TRACK1_CAMPAIGN_MANIFEST_SHA256) return null;
   if (input.openclaw_version !== TRACK1_OPENCLAW_VERSION) return null;
   // P1-1 rework: pin the exact SRI value from the openclaw@2026.6.10 lockfile.
   if (!isPinnedOpenclawIntegrity(input.openclaw_package_integrity)) return null;

@@ -1,6 +1,7 @@
 import { normalizeBaseResult } from "../../contracts/result.ts";
 import type { BaseResult, SandboxRunResultDetails } from "../../types/result.ts";
 import {
+  TRACK1_CAMPAIGN_MANIFEST_SHA256,
   TRACK1_MODEL_REF_CANONICAL,
   TRACK1_OPENCLAW_PACKAGE_INTEGRITY
 } from "../../types/campaign-ingest.ts";
@@ -15,7 +16,7 @@ const CAMPAIGN_ID = "campaign:t1:0123456789abcdef0123456789abcdef";
 const CAMPAIGN_HEX = "0123456789abcdef0123456789abcdef";
 const SESSION_ID = "session:0123456789abcdef0123456789abcdef";
 const TASK_ID = "task:0123456789abcdef0123456789abcdef";
-const SHA256_A = "a".repeat(64);
+const SHA256_A = TRACK1_CAMPAIGN_MANIFEST_SHA256;
 const SHA256_C = "c".repeat(64);
 
 // Build a real normalized BaseResult<SandboxRunResultDetails> using existing shared contracts.

@@ -31,6 +31,15 @@ export const TRACK1_OPENCLAW_PACKAGE_INTEGRITY =
 
 export const TRACK1_MODEL_REF_CANONICAL = "model://track1/openclaw-demo" as const;
 
+// R2 (Phase 2 rework finding 5): the campaign manifest hash is pinned to the
+// SHA-256 of samples/track1/openclaw/campaign.v1.json. The start envelope
+// normalizer rejects any other 64-hex value so that arbitrary manifests
+// cannot be ingested as a Track 1 campaign. The hash is a public contract
+// constant: fixtures, the ingest service, and the gate test all reference
+// this single source of truth.
+export const TRACK1_CAMPAIGN_MANIFEST_SHA256 =
+  "3fb7887447cc0d8814a52932ad0ad26abbd7a46b372ef4d629426ead205a1408" as const;
+
 export interface Track1CampaignStartEnvelope {
   schema_version: typeof TRACK1_CAMPAIGN_START_SCHEMA_VERSION;
   campaign_id: Track1CampaignId;
