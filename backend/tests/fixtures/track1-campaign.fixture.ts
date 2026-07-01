@@ -51,8 +51,13 @@ function makeResultWithAction(
   action: SandboxPolicyAction,
   caseIndex: number
 ): BaseResult<SandboxRunResultDetails> {
-  const sessionId = `session:${CAMPAIGN_HEX}${caseIndex.toString(16).padStart(2, "0")}`;
-  const taskId = `task:${CAMPAIGN_HEX}${caseIndex.toString(16).padStart(2, "0")}`;
+  // P2-T6: Session and task IDs must be exactly 32 hex chars after the prefix
+  // to satisfy SESSION_ID_PATTERN and TASK_ID_PATTERN in the shared normalizers.
+  // Replace the last 2 chars of CAMPAIGN_HEX with the case index suffix.
+  const caseSuffix = caseIndex.toString(16).padStart(2, "0");
+  const hexBase = CAMPAIGN_HEX.slice(0, -2) + caseSuffix;
+  const sessionId = `session:${hexBase}`;
+  const taskId = `task:${hexBase}`;
   const sequence = caseIndex + 1;
   const minutePad = sequence.toString().padStart(2, "0");
   const occurredAt = `2026-06-30T00:${minutePad}:01.000Z`;
