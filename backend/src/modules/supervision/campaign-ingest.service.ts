@@ -20,6 +20,7 @@ import type {
   Track1CampaignStartEnvelope
 } from "../../../../shared/types/campaign-ingest.ts";
 import type {
+  SandboxBehaviorEvent,
   SandboxAlert,
   SandboxBlockedRecord,
   SandboxPolicyAction,
@@ -202,53 +203,150 @@ function validateAndProjectSnapshotResult(
     }
   }
 
-  // R21 (Phase 2 rework review 2 P1 #4): project nested narrative content.
-  // Strip free-text fields (reason, reason_code, title, category) from
-  // policy_decisions, alerts, and blocked_records by replacing them with
-  // the fixed token "projected". This prevents a client from persisting
-  // arbitrary text (e.g. prompt leaks, provider error messages) in these
-  // fields while keeping the result re-normalizable (the shared normalizers
-  // require these fields to be non-empty strings). The structural fields
-  // (IDs, action, risk_level, timestamps, evidence_refs) are preserved for
-  // supervision contract validation and campaign projection.
-  const PROJECTED_NARRATIVE = "projected";
+  // R21+R28 (Phase 2 rework review 3 P1 #4): project nested content.
+  // Strip ALL client-provided text from the stored result:
+  //   - Narrative fields (reason, reason_code, category, title) → "projected"
+  //   - Reference fields (evidence_refs, policy_id, resource_ref, target_ref,
+  //     arguments_ref, result_ref, state_change, model_ref, content_ref,
+  //     content_sha256) → "projected"
+  //   - Correlation IDs (decision_id, subject_event_id, alert_id,
+  //     blocked_record_id, event_id, call_id) → validated against canonical
+  //     grammar ^[a-z][a-z0-9_]*$ (preserved for referential integrity)
+  // This closes every string channel that a client could use to persist
+  // arbitrary text (prompt leaks, provider errors) in the campaign record.
+  const PROJECTED = "projected";
+  const PROJECTED_EVIDENCE_REFS: string[] = [PROJECTED];
+  const CANONICAL_ID_RE = /^[a-z][a-z0-9_]*$/;
+
+  function assertCanonicalId(id: string, field: string): void {
+    if (!CANONICAL_ID_RE.test(id)) {
+      throw new DomainError(
+        `Snapshot ${field} "${id}" is not canonical (must match ${CANONICAL_ID_RE.source})`,
+        "CAMPAIGN_SNAPSHOT_INVALID",
+        400
+      );
+    }
+  }
+
   function projectPolicyDecision(d: SandboxPolicyDecision): SandboxPolicyDecision {
+    assertCanonicalId(d.decision_id, "policy_decision.decision_id");
+    assertCanonicalId(d.subject_event_id, "policy_decision.subject_event_id");
     return {
       decision_id: d.decision_id,
       subject_event_id: d.subject_event_id,
-      policy_id: d.policy_id,
+      policy_id: PROJECTED,
       action: d.action,
-      reason_code: PROJECTED_NARRATIVE,
-      reason: PROJECTED_NARRATIVE,
-      evidence_refs: d.evidence_refs,
+      reason_code: PROJECTED,
+      reason: PROJECTED,
+      evidence_refs: PROJECTED_EVIDENCE_REFS,
       decided_at: d.decided_at
     };
   }
 
   function projectAlert(a: SandboxAlert): SandboxAlert {
+    assertCanonicalId(a.alert_id, "alert.alert_id");
+    assertCanonicalId(a.subject_event_id, "alert.subject_event_id");
+    assertCanonicalId(a.decision_id, "alert.decision_id");
     return {
       alert_id: a.alert_id,
       subject_event_id: a.subject_event_id,
       decision_id: a.decision_id,
       risk_level: a.risk_level,
-      category: PROJECTED_NARRATIVE,
-      title: PROJECTED_NARRATIVE,
-      reason: PROJECTED_NARRATIVE,
-      evidence_refs: a.evidence_refs,
+      category: PROJECTED,
+      title: PROJECTED,
+      reason: PROJECTED,
+      evidence_refs: PROJECTED_EVIDENCE_REFS,
       occurred_at: a.occurred_at
     };
   }
 
   function projectBlockedRecord(r: SandboxBlockedRecord): SandboxBlockedRecord {
-    return {
+    assertCanonicalId(r.blocked_record_id, "blocked_record.blocked_record_id");
+    assertCanonicalId(r.subject_event_id, "blocked_record.subject_event_id");
+    assertCanonicalId(r.decision_id, "blocked_record.decision_id");
+    const projected: SandboxBlockedRecord = {
       blocked_record_id: r.blocked_record_id,
       subject_event_id: r.subject_event_id,
       decision_id: r.decision_id,
-      resource_ref: r.resource_ref,
-      reason: PROJECTED_NARRATIVE,
-      evidence_refs: r.evidence_refs,
+      reason: PROJECTED,
+      evidence_refs: PROJECTED_EVIDENCE_REFS,
       occurred_at: r.occurred_at
     };
+    if (r.resource_ref !== undefined) {
+      projected.resource_ref = PROJECTED;
+    }
+    return projected;
+  }
+
+  function projectEvent(event: SandboxBehaviorEvent): SandboxBehaviorEvent {
+    assertCanonicalId(event.event_id, "event.event_id");
+    const common = {
+      event_id: event.event_id,
+      session_id: event.session_id,
+      sequence: event.sequence,
+      event_type: event.event_type,
+      occurred_at: event.occurred_at,
+      source: event.source,
+      evidence_refs: PROJECTED_EVIDENCE_REFS,
+      payload: event.payload
+    };
+    if (event.scenario_id !== undefined) {
+      (common as { scenario_id?: string }).scenario_id = event.scenario_id;
+    }
+    if (event.case_id !== undefined) {
+      (common as { case_id?: string }).case_id = event.case_id;
+    }
+    switch (event.event_type) {
+      case "model_input":
+      case "model_output":
+        return {
+          ...common,
+          payload: {
+            model_ref: PROJECTED,
+            content_ref: PROJECTED,
+            content_sha256: PROJECTED
+          }
+        } as SandboxBehaviorEvent;
+      case "tool_request":
+        assertCanonicalId(event.payload.call_id, "tool_request.call_id");
+        return {
+          ...common,
+          payload: {
+            call_id: event.payload.call_id,
+            tool_name: event.payload.tool_name,
+            target_ref: PROJECTED,
+            arguments_ref: PROJECTED
+          }
+        } as SandboxBehaviorEvent;
+      case "tool_result":
+        assertCanonicalId(event.payload.call_id, "tool_result.call_id");
+        return {
+          ...common,
+          payload: {
+            call_id: event.payload.call_id,
+            tool_name: event.payload.tool_name,
+            status: event.payload.status,
+            result_ref: PROJECTED,
+            state_change: PROJECTED
+          }
+        } as SandboxBehaviorEvent;
+      case "policy_decision":
+        return {
+          ...common,
+          payload: projectPolicyDecision(event.payload as SandboxPolicyDecision)
+        } as SandboxBehaviorEvent;
+      case "memory_write":
+      case "memory_read":
+        assertCanonicalId(event.payload.memory_entry_id, `${event.event_type}.memory_entry_id`);
+        return {
+          ...common,
+          payload: {
+            memory_entry_id: event.payload.memory_entry_id,
+            content_ref: PROJECTED,
+            content_sha256: PROJECTED
+          }
+        } as SandboxBehaviorEvent;
+    }
   }
 
   // Project to closed shape: strip summary (set to empty), metadata,
@@ -258,17 +356,7 @@ function validateAndProjectSnapshotResult(
     session_id: sessionId
   };
   if (result.details.events !== undefined) {
-    // R21: project policy_decision event payloads to match the projected
-    // policy_decisions (supervision contract requires field-equality).
-    projectedDetails.events = result.details.events.map((event) => {
-      if (event.event_type === "policy_decision") {
-        return {
-          ...event,
-          payload: projectPolicyDecision(event.payload as SandboxPolicyDecision)
-        };
-      }
-      return event;
-    });
+    projectedDetails.events = result.details.events.map(projectEvent) as NonNullable<SandboxRunResultDetails["events"]>;
   }
   if (result.details.policy_decisions !== undefined) {
     projectedDetails.policy_decisions = result.details.policy_decisions.map(projectPolicyDecision);

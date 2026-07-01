@@ -1584,8 +1584,11 @@ test("REQ-T1-DEMO-010 campaign save failure on update restores prior task record
 // R26 (Phase 2 rework review 3 P1 #2): event-prefix monotonicity must be
 // deep-equal + ordered, not just event_id set membership. Two bypasses must
 // be closed:
-//   1. Same event_id but mutated payload (e.g. target_ref rewritten) → reject
+//   1. Same event_id but mutated payload (e.g. tool_name rewritten) → reject
 //   2. Missing events collection when previous snapshot had events → reject
+// R28 note: target_ref is now projected to "projected" by the content
+// boundary, so the mutation must target a PRESERVED field (tool_name) to
+// exercise the deep-equal check rather than the projection.
 
 test("REQ-T1-DEMO-010 rejects snapshot when event payload is rewritten despite same event_id", async () => {
   const { service } = await makeStartedService();
@@ -1613,16 +1616,17 @@ test("REQ-T1-DEMO-010 rejects snapshot when event payload is rewritten despite s
   service.ingestSnapshot(snap1);
 
   // Snapshot 2: keep the same event_ids but rewrite the tool_request's
-  // target_ref. The old prefix check (set membership by event_id) would
-  // accept this because all previous event_ids are present. The deep-equal
-  // ordered prefix check must reject it.
+  // tool_name (a preserved field — target_ref is now projected, so mutating
+  // it would not be observable after projection). The old prefix check (set
+  // membership by event_id) would accept this because all previous event_ids
+  // are present. The deep-equal ordered prefix check must reject it.
   const rewrittenEvents = snap1.result.details.events!.map((e) =>
     e.event_type === "tool_request"
       ? {
           ...e,
           payload: {
             ...e.payload,
-            target_ref: "recipient://attacker@evil.invalid"
+            tool_name: "malicious_rewritten_tool"
           }
         }
       : e
@@ -1773,5 +1777,120 @@ test("REQ-T1-DEMO-010 rejects session_id already in global TaskRepository from a
     existing.task.title,
     "Pre-existing task from another campaign with same session",
     "pre-existing task record must not be overwritten"
+  );
+});
+
+// R28 (Phase 2 rework review 3 P1 #4): close structural string channels.
+// After R21 projected narrative fields (reason, reason_code, category, title),
+// evidence_refs, policy_id, resource_ref, and event payload reference fields
+// (target_ref, arguments_ref, content_ref, model_ref, result_ref, etc.) are
+// still persisted as-is. A client can inject arbitrary text into these
+// "structural" fields. Project them to fixed tokens so the stored record
+// carries NO client-provided strings except validated canonical IDs.
+
+test("REQ-T1-DEMO-010 does not persist sentinel in structural string fields", async () => {
+  const { service, repository } = await makeStartedService();
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+
+  // Inject sentinels into every structural string channel that R21 did not
+  // close: evidence_refs, policy_id, resource_ref, event evidence_refs, and
+  // event payload reference fields (target_ref, arguments_ref).
+  const maliciousDecision = {
+    ...baseSnapshot.result.details.policy_decisions![0],
+    policy_id: "policy_SECRET_POLICY_ID",
+    evidence_refs: ["evidence://SECRET_EVIDENCE_REF"]
+  };
+  const maliciousBlockedRecord = {
+    ...baseSnapshot.result.details.blocked_records![0],
+    resource_ref: "recipient://SECRET_RESOURCE_REF",
+    evidence_refs: ["evidence://SECRET_BLOCKED_EVIDENCE"]
+  };
+  const maliciousEvents = baseSnapshot.result.details.events!.map((e) => {
+    if (e.event_type === "policy_decision") {
+      return { ...e, payload: maliciousDecision };
+    }
+    if (e.event_type === "tool_request") {
+      return {
+        ...e,
+        evidence_refs: ["evidence://SECRET_EVENT_EVIDENCE"],
+        payload: {
+          ...e.payload,
+          target_ref: "recipient://SECRET_TARGET_REF",
+          arguments_ref: "fixture://SECRET_ARGUMENTS_REF"
+        }
+      };
+    }
+    return e;
+  });
+  const maliciousDetails = {
+    ...baseSnapshot.result.details,
+    events: maliciousEvents,
+    policy_decisions: [maliciousDecision],
+    blocked_records: [maliciousBlockedRecord]
+  };
+  const maliciousResult = { ...baseSnapshot.result, details: maliciousDetails };
+  const withoutHash = { ...baseSnapshot, result: maliciousResult };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  service.ingestSnapshot(snapshot);
+
+  // R28: recursively verify the stored record contains NO "SECRET" sentinel.
+  const stored = repository.findById(FIXED_CAMPAIGN_ID);
+  const storedJson = JSON.stringify(stored);
+  assert.ok(
+    !storedJson.includes("SECRET"),
+    "stored campaign record must not contain any SECRET sentinel in structural string fields"
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects snapshot with non-canonical correlation ID", async () => {
+  const { service } = await makeStartedService();
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+
+  // Inject a non-canonical decision_id (uppercase + special chars). The
+  // grammar validation must reject this. Update ALL references (blocked_record,
+  // policy_decision event payload) so the supervision contract still passes —
+  // the rejection must come from the ID grammar check, not from a broken
+  // contract.
+  const maliciousDecision = {
+    ...baseSnapshot.result.details.policy_decisions![0],
+    decision_id: "SECRET_DECISION_ID!"
+  };
+  const maliciousBlockedRecord = {
+    ...baseSnapshot.result.details.blocked_records![0],
+    decision_id: "SECRET_DECISION_ID!"
+  };
+  const maliciousEvents = baseSnapshot.result.details.events!.map((e) =>
+    e.event_type === "policy_decision"
+      ? { ...e, payload: maliciousDecision }
+      : e
+  );
+  const maliciousDetails = {
+    ...baseSnapshot.result.details,
+    events: maliciousEvents,
+    policy_decisions: [maliciousDecision],
+    blocked_records: [maliciousBlockedRecord]
+  };
+  const maliciousResult = { ...baseSnapshot.result, details: maliciousDetails };
+  const withoutHash = { ...baseSnapshot, result: maliciousResult };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  assert.throws(
+    () => service.ingestSnapshot(snapshot),
+    { code: "CAMPAIGN_SNAPSHOT_INVALID" }
   );
 });
