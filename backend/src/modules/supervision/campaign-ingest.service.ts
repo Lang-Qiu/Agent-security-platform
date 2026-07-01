@@ -700,6 +700,22 @@ export class CampaignIngestService {
       }
     }
 
+    // R27 (Phase 2 rework review 3 P1 #3): GLOBAL session_id uniqueness.
+    // The supervision API groups every TaskRepository record by session_id,
+    // so per-campaign uniqueness is insufficient. A session_id already
+    // owned by a task from ANOTHER campaign would cause
+    // SUPERVISION_SESSION_AMBIGUOUS on the public detail endpoint.
+    if (!existingAttempt && this.taskRepository) {
+      const globalSessionTask = this.taskRepository.findBySessionId(sessionId);
+      if (globalSessionTask && globalSessionTask.task.task_id !== projectedResult.task_id) {
+        throw new DomainError(
+          `Snapshot session_id already exists in the global TaskRepository: ${sessionId}`,
+          "CAMPAIGN_SESSION_ID_GLOBAL_CONFLICT",
+          409
+        );
+      }
+    }
+
     const newAttempt: StoredCampaignAttempt = {
       campaign_id: normalized.campaign_id,
       agent_id: normalized.agent_id,

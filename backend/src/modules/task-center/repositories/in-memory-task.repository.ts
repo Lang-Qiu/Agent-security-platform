@@ -24,4 +24,15 @@ export class InMemoryTaskRepository implements TaskRepository {
   delete(taskId: string): boolean {
     return this.records.delete(taskId);
   }
+
+  // R27 (Phase 2 rework review 3 P1 #3): global session_id lookup.
+  findBySessionId(sessionId: string): StoredTaskRecord | null {
+    for (const record of this.records.values()) {
+      const details = record.result.details as { session_id?: string };
+      if (details?.session_id === sessionId) {
+        return record;
+      }
+    }
+    return null;
+  }
 }

@@ -1056,7 +1056,8 @@ test("REQ-T1-DEMO-010 task save failure does not commit campaign", async () => {
     save(): never { throw new Error("task save boom"); },
     list(): unknown[] { return []; },
     findById(): null { return null; },
-    delete(): boolean { return false; }
+    delete(): boolean { return false; },
+    findBySessionId(): null { return null; }
   };
   const service = new CampaignIngestService(campaignRepository, failingTaskRepository);
   service.startCampaign(makeCampaignStartEnvelope());
@@ -1172,7 +1173,8 @@ test("REQ-T1-DEMO-010 task save failure does not leave campaign modified", async
     save(): never { throw new Error("task save boom"); },
     list(): unknown[] { return []; },
     findById(): null { return null; },
-    delete(): boolean { return false; }
+    delete(): boolean { return false; },
+    findBySessionId(): null { return null; }
   };
   const service = new CampaignIngestService(campaignRepository, failingTaskRepository);
   service.startCampaign(makeCampaignStartEnvelope());
@@ -1705,5 +1707,71 @@ test("REQ-T1-DEMO-010 rejects snapshot when events collection is missing but pre
   assert.throws(
     () => service.ingestSnapshot(snap2),
     { code: "CAMPAIGN_SNAPSHOT_INVALID" }
+  );
+});
+
+// R27 (Phase 2 rework review 3 P1 #3): session_id uniqueness must be GLOBAL,
+// not per-campaign. The supervision API groups every TaskRepository record
+// by session_id, so two campaigns reusing the same session_id causes
+// SUPERVISION_SESSION_AMBIGUOUS on the public detail endpoint.
+
+test("REQ-T1-DEMO-010 rejects session_id already in global TaskRepository from another campaign", async () => {
+  const { CampaignIngestService } = await loadServiceModule();
+  const campaignRepository = makeRepository();
+  const taskRepository = new InMemoryTaskRepository();
+
+  // Pre-populate the TaskRepository with a task that has a DIFFERENT
+  // task_id but the SAME session_id as the snapshot we are about to
+  // ingest. This simulates a session_id left over from another campaign.
+  const snapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const conflictingSessionId = snapshot.result.details.session_id!;
+  const differentTaskId = "task:abcdef0123456789abcdef0123456789";
+
+  taskRepository.save({
+    task: {
+      task_id: differentTaskId,
+      task_type: "sandbox_run",
+      engine_type: "sandbox",
+      status: "finished",
+      title: "Pre-existing task from another campaign with same session",
+      target: { target_type: "campaign_case", target_value: "T1-SC-999/C999" },
+      created_at: "2026-06-30T00:00:00.000Z",
+      updated_at: "2026-06-30T00:00:00.000Z"
+    },
+    result: {
+      ...snapshot.result,
+      task_id: differentTaskId
+    },
+    riskSummary: {
+      task_id: differentTaskId,
+      task_type: "sandbox_run",
+      status: "finished",
+      risk_level: "info",
+      summary: "",
+      total_findings: 0,
+      info_count: 0,
+      low_count: 0,
+      medium_count: 0,
+      high_count: 0,
+      critical_count: 0,
+      updated_at: "2026-06-30T00:00:00.000Z"
+    }
+  });
+
+  const service = new CampaignIngestService(campaignRepository, taskRepository);
+  service.startCampaign(makeCampaignStartEnvelope());
+
+  assert.throws(
+    () => service.ingestSnapshot(snapshot),
+    { code: "CAMPAIGN_SESSION_ID_GLOBAL_CONFLICT" }
+  );
+
+  // The pre-existing task record must NOT be overwritten.
+  const existing = taskRepository.findById(differentTaskId);
+  assert.ok(existing, "pre-existing task record must not be deleted");
+  assert.equal(
+    existing.task.title,
+    "Pre-existing task from another campaign with same session",
+    "pre-existing task record must not be overwritten"
   );
 });
