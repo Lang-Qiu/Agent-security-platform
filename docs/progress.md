@@ -2670,3 +2670,20 @@ User third review of the R10-R17 rework identified 5 remaining P1 blockers and 2
   - `npm run test:repo` — 92/92 pass
   - `npm run test:shared` — 147/147 pass
   - `npm run test:engine:sandbox` — 391/391 pass
+
+## Phase 2 Rework Review 3 (4 P1 + 1 P2 findings, R25-R29)
+
+User fourth review of the R18-R24 rework identified 4 remaining P1 blockers and 1 P2 issue. All fixed via strict RED→GREEN→commit per finding.
+
+- R25 (P1 #1): Update-rollback no longer deletes the prior task. When updating an existing attempt and `campaignRepository.save` fails, the rollback previously called `taskRepository.delete(taskId)` unconditionally, destroying the previously committed task mirror. Now the prior task record is captured BEFORE the `save()` overwrite; on campaign save failure, the update path restores the prior record (instead of deleting), while the create path still deletes the orphaned new task. Commit `cbe4017`.
+- R26 (P1 #2): Event-prefix monotonicity is now deep-equal + ordered, not just `event_id` set membership. The previous check only verified that old `event_id`s were present in the new events array — keeping the same ID but rewriting `target_ref` (or any payload field) was accepted. Now the new events array must begin with deep-equal (`JSON.stringify`) copies of every previous event, in the same order. A missing `events` collection when the previous snapshot had events is also rejected. Commit `c8db0da`. (R26 test 1 updated in R28 to mutate a preserved field `tool_name` instead of the now-projected `target_ref`.)
+- R27 (P1 #3): `session_id` uniqueness is now global, not per-campaign. The supervision API groups every `TaskRepository` record globally by `session_id`, so two campaigns reusing the same `session_id` caused `SUPERVISION_SESSION_AMBIGUOUS` on the public detail endpoint. Added `TaskRepository.findBySessionId(sessionId)` interface method; on new-attempt ingest, if any task in the global repository already owns the `session_id` with a different `task_id`, the snapshot is rejected with `CAMPAIGN_SESSION_ID_GLOBAL_CONFLICT`. Commit `0a7d200`.
+- R28 (P1 #4): All structural string channels are now closed. In addition to the R21 narrative projection, reference fields (`evidence_refs`, `policy_id`, `resource_ref`, `target_ref`, `arguments_ref`, `result_ref`, `state_change`, `model_ref`, `content_ref`, `content_sha256`) are projected to the fixed token `"projected"`. Correlation IDs (`decision_id`, `subject_event_id`, `alert_id`, `blocked_record_id`, `event_id`, `call_id`, `memory_entry_id`) are validated against the canonical grammar `^[a-z][a-z0-9_]*$` and preserved for referential integrity. Sentinel injection tests cover every string-bearing field in the stored record. Commit `3a81652`.
+- R29 (P2 #5): Dual-listener startup no longer leaks the public server. `startProductionServers` starts the public listener first, then the internal listener. If the internal listener fails (e.g. `EADDRINUSE`), the public server is now closed before rethrowing. Previously the public server leaked a listening socket with no handle for the caller to close. Regression test occupies the internal port, asserts the call rejects, and verifies the public port no longer accepts TCP connections. Commit `8db9f72`.
+- test result after rework review 3:
+  - `npm run test:backend` — 223 tests, 222 pass, 1 pre-existing failure (`task-engine.service.spec.ts`: `deepStrictEqual` on result/risk-summary mapping — unrelated to campaign ingest)
+  - `npm run test:repo` — 92/92 pass
+  - `npm run test:shared` — 147/147 pass
+  - `npm run test:engine:sandbox` — 391/391 pass
+- status: PHASE_2_REWORK_REVIEW_3_COMPLETE_PENDING_REVIEW
+- next blocker: user review of Phase 2 rework review 3 (R25-R29) before Phase 3
