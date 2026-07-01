@@ -96,3 +96,29 @@ test("REQ-T1-DEMO-010 internal router module exists at expected path", () => {
 test("REQ-T1-DEMO-010 public router module exists at expected path", () => {
   assert.equal(existsSync(publicRouterPath), true);
 });
+
+// R9 (Phase 2 rework finding 9): campaign backend source files must use LF
+// line endings only. CRLF produces trailing-whitespace noise in `git diff
+// --check` and breaks the Phase 2 gate. This gate prevents regression.
+test("REQ-T1-DEMO-010 campaign backend source files use LF line endings only", () => {
+  const campaignBackendFiles = [
+    "backend/src/modules/supervision/repositories/campaign.repository.ts",
+    "backend/src/modules/supervision/repositories/in-memory-campaign.repository.ts",
+    "backend/src/modules/supervision/campaign-ingest.service.ts",
+    "backend/src/modules/supervision/campaign-ingest.controller.ts",
+    "backend/src/modules/supervision/campaign-ingest-auth.ts",
+    "backend/src/modules/supervision/campaign-projector.ts",
+    "backend/src/modules/supervision/campaign-supervision.service.ts",
+    "backend/src/modules/supervision/campaign-supervision.controller.ts",
+    "backend/src/internal-app.module.ts",
+    "backend/src/runtime-dependencies.ts"
+  ];
+  for (const relativePath of campaignBackendFiles) {
+    const content = readText(relativePath);
+    assert.equal(
+      content.includes("\r"),
+      false,
+      `${relativePath} must not contain CR (CRLF) bytes — use LF only`
+    );
+  }
+});
