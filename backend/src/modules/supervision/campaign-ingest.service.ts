@@ -597,19 +597,51 @@ export class CampaignIngestService {
         );
       }
 
-      // R22 (Phase 2 rework review 2 P1 #5): event-prefix monotonicity.
-      // The new snapshot's events must be a superset of the previous
-      // snapshot's events (by event_id). A snapshot that drops or rewrites
-      // an event_id from the previous snapshot must be rejected — otherwise
-      // a client could silently rewrite history.
+      // R22+R26 (Phase 2 rework review 3 P1 #2): event-prefix monotonicity.
+      // The new snapshot's events must BEGIN WITH deep-equal projected
+      // copies of every previous event, in the SAME ORDER. Set membership
+      // by event_id is insufficient — a client could keep the same event_id
+      // but rewrite target_ref/payload, silently rewriting history. A
+      // missing events collection when the previous snapshot had events
+      // must also be rejected (the old check only ran when both were
+      // present, so omitting new events bypassed it).
       const previousEvents = existingAttempt.result.details.events;
       const newEvents = projectedResult.details.events;
-      if (previousEvents && newEvents) {
-        const newEventIds = new Set(newEvents.map((e) => e.event_id));
-        for (const prevEvent of previousEvents) {
-          if (!newEventIds.has(prevEvent.event_id)) {
+      if (previousEvents) {
+        if (!newEvents) {
+          throw new DomainError(
+            "Snapshot omits events collection but the previous snapshot had events",
+            "CAMPAIGN_SNAPSHOT_INVALID",
+            400
+          );
+        }
+        if (newEvents.length < previousEvents.length) {
+          throw new DomainError(
+            "Snapshot events collection is shorter than the previous snapshot's events",
+            "CAMPAIGN_SNAPSHOT_INVALID",
+            400
+          );
+        }
+        for (let i = 0; i < previousEvents.length; i++) {
+          const prev = previousEvents[i];
+          const next = newEvents[i];
+          if (prev.event_id !== next.event_id) {
             throw new DomainError(
-              `Event "${prevEvent.event_id}" from previous snapshot is missing in the new snapshot`,
+              `Event at position ${i} changed from "${prev.event_id}" to "${next.event_id}"`,
+              "CAMPAIGN_SNAPSHOT_INVALID",
+              400
+            );
+          }
+          // Deep-equal comparison on projected events. Both sides have
+          // already been through validateAndProjectSnapshotResult, so
+          // narrative fields are already normalized to "projected". Any
+          // remaining difference (e.g. target_ref, arguments_ref) means
+          // the client rewrote structural content.
+          const prevJson = JSON.stringify(prev);
+          const nextJson = JSON.stringify(next);
+          if (prevJson !== nextJson) {
+            throw new DomainError(
+              `Event "${prev.event_id}" payload changed from previous snapshot`,
               "CAMPAIGN_SNAPSHOT_INVALID",
               400
             );

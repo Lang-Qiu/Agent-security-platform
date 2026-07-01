@@ -1578,3 +1578,132 @@ test("REQ-T1-DEMO-010 campaign save failure on update restores prior task record
     "restored task must reflect prior running state, not the failed terminal update"
   );
 });
+
+// R26 (Phase 2 rework review 3 P1 #2): event-prefix monotonicity must be
+// deep-equal + ordered, not just event_id set membership. Two bypasses must
+// be closed:
+//   1. Same event_id but mutated payload (e.g. target_ref rewritten) → reject
+//   2. Missing events collection when previous snapshot had events → reject
+
+test("REQ-T1-DEMO-010 rejects snapshot when event payload is rewritten despite same event_id", async () => {
+  const { service } = await makeStartedService();
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+
+  // Snapshot 1 (running): events = [event_tool_request_1, event_policy_decision_1]
+  const baseSnap1 = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const runningResult1 = {
+    ...baseSnap1.result,
+    status: "running" as const,
+    updated_at: "2026-06-30T00:01:05.000Z"
+  };
+  const withoutHash1: Track1CampaignSnapshotWithoutHash = {
+    ...baseSnap1,
+    result: runningResult1,
+    observed_at: "2026-06-30T00:01:05.000Z"
+  };
+  delete (withoutHash1 as { snapshot_sha256?: string }).snapshot_sha256;
+  const snap1 = {
+    ...withoutHash1,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash1)
+  };
+  service.ingestSnapshot(snap1);
+
+  // Snapshot 2: keep the same event_ids but rewrite the tool_request's
+  // target_ref. The old prefix check (set membership by event_id) would
+  // accept this because all previous event_ids are present. The deep-equal
+  // ordered prefix check must reject it.
+  const rewrittenEvents = snap1.result.details.events!.map((e) =>
+    e.event_type === "tool_request"
+      ? {
+          ...e,
+          payload: {
+            ...e.payload,
+            target_ref: "recipient://attacker@evil.invalid"
+          }
+        }
+      : e
+  );
+  const rewrittenDetails = {
+    ...snap1.result.details,
+    events: rewrittenEvents
+  };
+  const rewrittenResult = {
+    ...snap1.result,
+    details: rewrittenDetails,
+    updated_at: "2026-06-30T00:01:10.000Z"
+  };
+  const withoutHash2: Track1CampaignSnapshotWithoutHash = {
+    ...snap1,
+    result: rewrittenResult,
+    sequence: 2,
+    previous_snapshot_sha256: snap1.snapshot_sha256,
+    observed_at: "2026-06-30T00:01:10.000Z"
+  };
+  delete (withoutHash2 as { snapshot_sha256?: string }).snapshot_sha256;
+  const snap2 = {
+    ...withoutHash2,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash2)
+  };
+
+  assert.throws(
+    () => service.ingestSnapshot(snap2),
+    { code: "CAMPAIGN_SNAPSHOT_INVALID" }
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects snapshot when events collection is missing but previous had events", async () => {
+  const { service } = await makeStartedService();
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+
+  // Snapshot 1 (running): events present.
+  const baseSnap1 = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const runningResult1 = {
+    ...baseSnap1.result,
+    status: "running" as const,
+    updated_at: "2026-06-30T00:01:05.000Z"
+  };
+  const withoutHash1: Track1CampaignSnapshotWithoutHash = {
+    ...baseSnap1,
+    result: runningResult1,
+    observed_at: "2026-06-30T00:01:05.000Z"
+  };
+  delete (withoutHash1 as { snapshot_sha256?: string }).snapshot_sha256;
+  const snap1 = {
+    ...withoutHash1,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash1)
+  };
+  service.ingestSnapshot(snap1);
+
+  // Snapshot 2: omit the events collection entirely. The old check only
+  // ran when BOTH previous and new events were present, so a missing new
+  // events collection would bypass the prefix check. This must be rejected.
+  const strippedDetails: SandboxRunResultDetails = {
+    session_id: snap1.result.details.session_id!
+  };
+  const strippedResult = {
+    ...snap1.result,
+    details: strippedDetails,
+    updated_at: "2026-06-30T00:01:10.000Z"
+  };
+  const withoutHash2: Track1CampaignSnapshotWithoutHash = {
+    ...snap1,
+    result: strippedResult,
+    sequence: 2,
+    previous_snapshot_sha256: snap1.snapshot_sha256,
+    observed_at: "2026-06-30T00:01:10.000Z"
+  };
+  delete (withoutHash2 as { snapshot_sha256?: string }).snapshot_sha256;
+  const snap2 = {
+    ...withoutHash2,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash2)
+  };
+
+  assert.throws(
+    () => service.ingestSnapshot(snap2),
+    { code: "CAMPAIGN_SNAPSHOT_INVALID" }
+  );
+});
