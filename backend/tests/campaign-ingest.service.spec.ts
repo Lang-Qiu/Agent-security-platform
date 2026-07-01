@@ -188,6 +188,199 @@ test("REQ-T1-DEMO-010 treats sandbox result status=partial_success as terminal",
   );
 });
 
+// R3 (Phase 2 rework finding 2): close the snapshot content boundary.
+// The ingest service must (a) validate canonical task_id and session_id
+// formats, (b) validate time ordering, and (c) strip or reject content
+// fields (summary, metadata, target) that are not needed for campaign
+// projection. Without this, arbitrary content like
+// metadata.raw_prompt="SECRET_SENTINEL" or task_id="not-a-canonical-task-id"
+// would be persisted.
+
+test("REQ-T1-DEMO-010 rejects snapshot with non-canonical task_id", async () => {
+  const { service } = await makeStartedService();
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const badResult = {
+    ...baseSnapshot.result,
+    task_id: "not-a-canonical-task-id"
+  };
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const withoutHash = { ...baseSnapshot, result: badResult };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  assert.throws(
+    () => service.ingestSnapshot(snapshot),
+    { code: "CAMPAIGN_SNAPSHOT_INVALID" }
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects snapshot with non-canonical session_id", async () => {
+  const { service } = await makeStartedService();
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  // Replace session_id everywhere it appears (details + events) so the
+  // sandbox supervision contract passes, then verify the ingest service
+  // rejects the non-canonical session_id format.
+  const badSessionId = "not-a-canonical-session-id";
+  const originalDetails = baseSnapshot.result.details as {
+    events?: Array<{ session_id: string }>;
+  };
+  const badEvents = (originalDetails.events ?? []).map((e) => ({
+    ...e,
+    session_id: badSessionId
+  }));
+  const badDetails = {
+    ...baseSnapshot.result.details,
+    session_id: badSessionId,
+    events: badEvents
+  };
+  const badResult = { ...baseSnapshot.result, details: badDetails };
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const withoutHash = { ...baseSnapshot, result: badResult };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  assert.throws(
+    () => service.ingestSnapshot(snapshot),
+    { code: "CAMPAIGN_SNAPSHOT_INVALID" }
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects snapshot with created_at > updated_at", async () => {
+  const { service } = await makeStartedService();
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const badResult = {
+    ...baseSnapshot.result,
+    created_at: "2026-06-30T00:10:00.000Z",
+    updated_at: "2026-06-30T00:01:00.000Z"
+  };
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const withoutHash = { ...baseSnapshot, result: badResult };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  assert.throws(
+    () => service.ingestSnapshot(snapshot),
+    { code: "CAMPAIGN_SNAPSHOT_INVALID" }
+  );
+});
+
+test("REQ-T1-DEMO-010 strips metadata from stored snapshot result", async () => {
+  const { service, repository } = await makeStartedService();
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const resultWithMetadata = {
+    ...baseSnapshot.result,
+    metadata: { raw_prompt: "SECRET_SENTINEL" }
+  };
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const withoutHash = { ...baseSnapshot, result: resultWithMetadata };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  service.ingestSnapshot(snapshot);
+
+  const stored = repository.findById(FIXED_CAMPAIGN_ID);
+  assert.ok(stored);
+  const attempt = stored!.attempts[0];
+  assert.equal(
+    (attempt.result as { metadata?: unknown }).metadata,
+    undefined,
+    "metadata must be stripped from the stored result"
+  );
+});
+
+test("REQ-T1-DEMO-010 strips summary content from stored snapshot result", async () => {
+  const { service, repository } = await makeStartedService();
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const resultWithSummary = {
+    ...baseSnapshot.result,
+    summary: "ARBITRARY_SECRET_CONTENT_IN_SUMMARY"
+  };
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const withoutHash = { ...baseSnapshot, result: resultWithSummary };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  service.ingestSnapshot(snapshot);
+
+  const stored = repository.findById(FIXED_CAMPAIGN_ID);
+  assert.ok(stored);
+  const attempt = stored!.attempts[0];
+  assert.equal(
+    (attempt.result as { summary: string }).summary,
+    "",
+    "summary must be empty in the stored result"
+  );
+  assert.equal(
+    (attempt.result as { summary: string }).summary.includes("SECRET"),
+    false,
+    "summary must not contain arbitrary content"
+  );
+});
+
+test("REQ-T1-DEMO-010 strips target from stored snapshot details", async () => {
+  const { service, repository } = await makeStartedService();
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  // Use a valid TaskTarget shape so normalizeTaskTarget accepts it and the
+  // snapshot hash recomputation matches. The ingest service must then strip
+  // target before storing.
+  const detailsWithTarget = {
+    ...baseSnapshot.result.details,
+    target: {
+      target_type: "url",
+      target_value: "https://evil.example.com/exfil"
+    }
+  };
+  const resultWithTarget = {
+    ...baseSnapshot.result,
+    details: detailsWithTarget
+  };
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const withoutHash = { ...baseSnapshot, result: resultWithTarget };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  service.ingestSnapshot(snapshot);
+
+  const stored = repository.findById(FIXED_CAMPAIGN_ID);
+  assert.ok(stored);
+  const attempt = stored!.attempts[0];
+  assert.equal(
+    (attempt.result.details as { target?: unknown }).target,
+    undefined,
+    "target must be stripped from the stored result details"
+  );
+});
+
 // -- Snapshot lifecycle -------------------------------------------------------
 
 test("REQ-T1-DEMO-010 accepts byte-identical snapshot retry only", async () => {

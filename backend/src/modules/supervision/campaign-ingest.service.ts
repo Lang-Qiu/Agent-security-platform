@@ -4,7 +4,11 @@ import {
   normalizeTrack1CampaignSnapshotEnvelope,
   normalizeTrack1CampaignStartEnvelope
 } from "../../../../shared/contracts/campaign-ingest.ts";
-import { normalizeTrack1CampaignSummary } from "../../../../shared/contracts/campaign-supervision.ts";
+import {
+  isSessionId,
+  isTaskId,
+  normalizeTrack1CampaignSummary
+} from "../../../../shared/contracts/campaign-supervision.ts";
 import type {
   Track1CampaignEvidenceRegistration,
   Track1CampaignFinalizeEnvelope,
@@ -76,6 +80,77 @@ function determineAttemptStatus(
 
 function cloneStoredCampaignRecord(record: StoredCampaignRecord): StoredCampaignRecord {
   return structuredClone(record);
+}
+
+// R3 (Phase 2 rework finding 2): close the snapshot content boundary.
+// Validate canonical task_id/session_id formats, time ordering, and project
+// the result to a closed shape that strips content fields (summary, metadata,
+// target) not needed for campaign projection. This prevents arbitrary content
+// like metadata.raw_prompt="SECRET_SENTINEL" from being persisted.
+function validateAndProjectSnapshotResult(
+  result: BaseResult<SandboxRunResultDetails>
+): BaseResult<SandboxRunResultDetails> {
+  if (!isTaskId(result.task_id)) {
+    throw new DomainError(
+      "Snapshot result task_id must be canonical (task:<32-hex>)",
+      "CAMPAIGN_SNAPSHOT_INVALID",
+      400
+    );
+  }
+
+  const sessionId = result.details.session_id;
+  if (!sessionId || !isSessionId(sessionId)) {
+    throw new DomainError(
+      "Snapshot result session_id must be canonical (session:<32-hex>)",
+      "CAMPAIGN_SNAPSHOT_INVALID",
+      400
+    );
+  }
+
+  if (result.created_at > result.updated_at) {
+    throw new DomainError(
+      "Snapshot result created_at must not exceed updated_at",
+      "CAMPAIGN_SNAPSHOT_INVALID",
+      400
+    );
+  }
+
+  // Project to closed shape: strip summary (set to empty), metadata,
+  // result_id, started_at, finished_at, and details.target. Keep structural
+  // fields needed for campaign projection.
+  const projectedDetails: SandboxRunResultDetails = {
+    session_id: sessionId
+  };
+  if (result.details.events !== undefined) {
+    projectedDetails.events = result.details.events;
+  }
+  if (result.details.policy_decisions !== undefined) {
+    projectedDetails.policy_decisions = result.details.policy_decisions;
+  }
+  if (result.details.alerts !== undefined) {
+    projectedDetails.alerts = result.details.alerts;
+  }
+  if (result.details.blocked_records !== undefined) {
+    projectedDetails.blocked_records = result.details.blocked_records;
+  }
+  if (result.details.blocked !== undefined) {
+    projectedDetails.blocked = result.details.blocked;
+  }
+  if (result.details.event_count !== undefined) {
+    projectedDetails.event_count = result.details.event_count;
+  }
+
+  return {
+    task_id: result.task_id,
+    task_type: result.task_type,
+    engine_type: result.engine_type,
+    status: result.status,
+    risk_level: result.risk_level,
+    summary: "",
+    details: projectedDetails,
+    created_at: result.created_at,
+    updated_at: result.updated_at
+  };
 }
 
 // -- CampaignIngestService ----------------------------------------------------
@@ -260,14 +335,11 @@ export class CampaignIngestService {
     );
     const attemptStatus = determineAttemptStatus(normalized.result, expectedAction);
 
-    const sessionId = normalized.result.details.session_id;
-    if (!sessionId) {
-      throw new DomainError(
-        "Snapshot result must contain a session_id",
-        "CAMPAIGN_SNAPSHOT_INVALID",
-        400
-      );
-    }
+    // R3: validate canonical IDs, time ordering, and project to closed shape
+    // before storing. This strips summary, metadata, target, and other
+    // content fields that should not be persisted.
+    const projectedResult = validateAndProjectSnapshotResult(normalized.result);
+    const sessionId = projectedResult.details.session_id!;
 
     const newAttempt: StoredCampaignAttempt = {
       campaign_id: normalized.campaign_id,
@@ -277,10 +349,10 @@ export class CampaignIngestService {
       attempt_id: normalized.attempt_id,
       attempt_index: normalized.attempt_index,
       session_id: sessionId as StoredCampaignAttempt["session_id"],
-      task_id: normalized.result.task_id as StoredCampaignAttempt["task_id"],
+      task_id: projectedResult.task_id as StoredCampaignAttempt["task_id"],
       status: attemptStatus,
       snapshot_head: normalized.snapshot_sha256,
-      result: normalized.result
+      result: projectedResult
     };
 
     const updatedAttempts = existingAttempt

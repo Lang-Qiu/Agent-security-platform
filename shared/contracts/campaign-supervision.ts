@@ -123,13 +123,13 @@ export function isCampaignId(value: unknown): value is string {
 
 const SESSION_ID_PATTERN = /^session:[0-9a-f]{32}$/;
 
-function isSessionId(value: unknown): value is string {
+export function isSessionId(value: unknown): value is string {
   return isString(value) && SESSION_ID_PATTERN.test(value);
 }
 
 const TASK_ID_PATTERN = /^task:[0-9a-f]{32}$/;
 
-function isTaskId(value: unknown): value is string {
+export function isTaskId(value: unknown): value is string {
   return isString(value) && TASK_ID_PATTERN.test(value);
 }
 
