@@ -7,15 +7,23 @@ import { createRequestId } from "./common/http/request-id.ts";
 import { matchRoute } from "./common/http/router.ts";
 import { createTaskCenterModule } from "./modules/task-center/task-center.module.ts";
 import { createSupervisionModule } from "./modules/supervision/supervision.module.ts";
+import {
+  createRuntimeDependencies,
+  type RuntimeDependencies
+} from "./runtime-dependencies.ts";
 
 export class AppModule {
   taskCenterModule: ReturnType<typeof createTaskCenterModule>;
   supervisionModule: ReturnType<typeof createSupervisionModule>;
 
-  constructor() {
-    this.taskCenterModule = createTaskCenterModule();
+  constructor(dependencies?: RuntimeDependencies) {
+    const runtime = dependencies ?? createRuntimeDependencies();
+    this.taskCenterModule = createTaskCenterModule({
+      repository: runtime.taskRepository
+    });
     this.supervisionModule = createSupervisionModule({
-      repository: this.taskCenterModule.repository
+      taskRepository: runtime.taskRepository,
+      campaignRepository: runtime.campaignRepository
     });
   }
 
@@ -114,6 +122,6 @@ export class AppModule {
   }
 }
 
-export function createAppModule(): AppModule {
-  return new AppModule();
+export function createAppModule(dependencies?: RuntimeDependencies): AppModule {
+  return new AppModule(dependencies);
 }

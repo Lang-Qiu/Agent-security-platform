@@ -19,7 +19,8 @@ const modulePath = resolve(
 
 type ModuleFactory = {
   createSupervisionModule?: (input: {
-    repository: unknown;
+    taskRepository: unknown;
+    campaignRepository?: unknown;
   }) => {
     controller: {
       listSessions: (
@@ -91,7 +92,7 @@ test("REQ-T1-SUPERVISION-UI-009 controller returns standard response shells", as
   const repository = createRepositoryWithRecords([
     makeStoredSandboxRecord({ sessionId: "session:001" })
   ]);
-  const module = createSupervisionModule({ repository });
+  const module = createSupervisionModule({ taskRepository: repository });
 
   const list = module.controller.listSessions(
     new URLSearchParams(),
@@ -119,7 +120,7 @@ test("REQ-T1-SUPERVISION-UI-009 module reuses the injected repository", async ()
   const moduleExports = await loadControllerModule();
   const createSupervisionModule = moduleExports.createSupervisionModule!;
   const repository = new InMemoryTaskRepository();
-  const module = createSupervisionModule({ repository });
+  const module = createSupervisionModule({ taskRepository: repository });
 
   repository.save(makeStoredSandboxRecord({ sessionId: "session:late" }));
 
@@ -135,7 +136,7 @@ test("REQ-T1-SUPERVISION-UI-009 controller lets DomainError propagate", async ()
   const repository = createRepositoryWithRecords([
     makeStoredSandboxRecord({ sessionId: "session:001" })
   ]);
-  const module = createSupervisionModule({ repository });
+  const module = createSupervisionModule({ taskRepository: repository });
 
   assert.throws(
     () =>

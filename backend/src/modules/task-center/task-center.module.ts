@@ -14,8 +14,10 @@ export interface TaskCenterModule {
   repository: InMemoryTaskRepository;
 }
 
-export function createTaskCenterModule(): TaskCenterModule {
-  const repository = new InMemoryTaskRepository();
+export function createTaskCenterModule(input?: {
+  repository?: InMemoryTaskRepository;
+}): TaskCenterModule {
+  const repository = input?.repository ?? new InMemoryTaskRepository();
   const taskEngineService = new TaskEngineService({
     adapters: [new AssetScanTaskAdapter(), new SkillsStaticTaskAdapter(), new SandboxTaskAdapter()],
     engineClients: [new SkillsStaticEngineClient()]
