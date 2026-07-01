@@ -34,6 +34,11 @@ import type {
   StoredCampaignAttempt,
   StoredCampaignRecord
 } from "./repositories/campaign.repository.ts";
+import type {
+  StoredTaskRecord,
+  TaskRepository
+} from "../task-center/repositories/task.repository.ts";
+import type { Task, RiskSummary, TaskStatus } from "../../../../shared/types/task.ts";
 
 const ACTION_PRECEDENCE: Record<SandboxPolicyAction, number> = {
   allow: 0,
@@ -153,12 +158,67 @@ function validateAndProjectSnapshotResult(
   };
 }
 
+// R7 (Phase 2 rework finding 3): build a StoredTaskRecord that the public
+// supervision session inspector can query. The record must satisfy the
+// consistency rules in supervision-projector.ts:
+//   - task.task_type === "sandbox_run"
+//   - task.engine_type === "sandbox"
+//   - task.task_id === result.task_id (and task_type/engine_type match)
+//   - task.status === result.status
+//   - details.session_id is non-empty
+//   - for terminal status (finished/blocked): all 4 arrays present
+//   - for non-terminal: all 4 arrays present OR all 4 absent
+// The projectedResult from validateAndProjectSnapshotResult already keeps
+// events/policy_decisions/alerts/blocked_records if they were present in
+// the input, so the all-4-present branch is satisfied.
+function buildSupervisionTaskRecord(
+  attempt: StoredCampaignAttempt
+): StoredTaskRecord {
+  const result = attempt.result;
+  const taskId = result.task_id;
+  const taskStatus = result.status as TaskStatus;
+  const now = result.updated_at;
+
+  const task: Task = {
+    task_id: taskId,
+    task_type: "sandbox_run",
+    engine_type: "sandbox",
+    status: taskStatus,
+    title: `Track1 Campaign ${attempt.scenario_id}/${attempt.case_id}`,
+    target: {
+      target_type: "campaign_case",
+      target_value: `${attempt.scenario_id}/${attempt.case_id}`
+    },
+    created_at: result.created_at,
+    updated_at: now
+  };
+
+  const riskSummary: RiskSummary = {
+    task_id: taskId,
+    task_type: "sandbox_run",
+    status: taskStatus,
+    risk_level: result.risk_level,
+    summary: "",
+    total_findings: 0,
+    info_count: 0,
+    low_count: 0,
+    medium_count: 0,
+    high_count: 0,
+    critical_count: 0,
+    updated_at: now
+  };
+
+  return { task, result, riskSummary };
+}
+
 // -- CampaignIngestService ----------------------------------------------------
 
 export class CampaignIngestService {
   private readonly repository: CampaignRepository;
-  constructor(repository: CampaignRepository) {
+  private readonly taskRepository: TaskRepository | null;
+  constructor(repository: CampaignRepository, taskRepository?: TaskRepository) {
     this.repository = repository;
+    this.taskRepository = taskRepository ?? null;
   }
 
   // -- Start ------------------------------------------------------------------
@@ -380,6 +440,18 @@ export class CampaignIngestService {
 
     // 7. Save once.
     this.repository.save(replacement);
+
+    // R7 (Phase 2 rework finding 3): mirror the session into the
+    // TaskRepository so the public session inspector can query it. Only
+    // write when a NEW attempt is created (not on idempotent replay or
+    // in-place update) to avoid redundant writes. The StoredTaskRecord
+    // must satisfy the supervision projector's consistency rules:
+    // task_type=sandbox_run, engine_type=sandbox, task/result fields
+    // match, and details.session_id is set.
+    if (!existingAttempt && this.taskRepository) {
+      const taskRecord = buildSupervisionTaskRecord(newAttempt);
+      this.taskRepository.save(taskRecord);
+    }
 
     // 8. Return projected defensive copy.
     return this.projectAttemptSummary(newAttempt);

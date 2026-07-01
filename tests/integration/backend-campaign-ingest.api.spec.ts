@@ -54,6 +54,7 @@ type InternalModuleExports = {
   InternalAppModule?: new (input: {
     campaignRepository: { list: () => unknown[] };
     ingestToken: string;
+    taskRepository?: unknown;
   }) => InternalAppModule;
 };
 
@@ -105,6 +106,7 @@ type DualHarness = {
   publicUrl: string;
   internalUrl: string;
   campaignRepository: { list: () => unknown[] };
+  taskRepository: { list: () => unknown[] };
   close: () => Promise<void>;
 };
 
@@ -125,7 +127,8 @@ async function startDualServerHarness(): Promise<DualHarness> {
   const appModule = mainModule!.createAppModule!(deps);
   const internalAppModule = new internalModule!.InternalAppModule!({
     campaignRepository: deps.campaignRepository as { list: () => unknown[] },
-    ingestToken: INGEST_TOKEN
+    ingestToken: INGEST_TOKEN,
+    taskRepository: deps.taskRepository
   });
 
   const publicServer = mainModule!.createAppServer!(appModule);
@@ -137,6 +140,7 @@ async function startDualServerHarness(): Promise<DualHarness> {
     publicUrl: publicHandle.baseUrl,
     internalUrl: internalHandle.baseUrl,
     campaignRepository: deps.campaignRepository as { list: () => unknown[] },
+    taskRepository: deps.taskRepository as { list: () => unknown[] },
     close: async () => {
       await publicHandle.close();
       await internalHandle.close();
@@ -417,4 +421,46 @@ test("REQ-T1-DEMO-010 snapshot path campaignId must match body campaign_id", asy
   assert.equal(response.status, 400);
   const body = await response.json() as { error_code?: string };
   assert.equal(body.error_code, "CAMPAIGN_PATH_BODY_MISMATCH");
+});
+
+// R7 (Phase 2 rework finding 3): after ingesting a snapshot via the internal
+// API, the session must be queryable via the public supervision session API.
+test("REQ-T1-DEMO-010 ingested session is queryable via public supervision API", async (t) => {
+  const harness = await startDualServerHarness();
+  t.after(() => harness.close());
+
+  await postJson(
+    harness.internalUrl,
+    "/internal/track1/campaigns",
+    makeCampaignStartEnvelope(),
+    { authorization: `Bearer ${INGEST_TOKEN}` }
+  );
+
+  const { makeCampaignSnapshot } = await import(
+    "../../backend/tests/fixtures/track1-campaign.fixture.ts"
+  );
+  const snapshot = makeCampaignSnapshot(1, null);
+  await postJson(
+    harness.internalUrl,
+    `/internal/track1/campaigns/${FIXED_CAMPAIGN_ID}/snapshots`,
+    snapshot,
+    { authorization: `Bearer ${INGEST_TOKEN}` }
+  );
+
+  // TaskRepository must now have a record.
+  assert.equal(harness.taskRepository.list().length, 1);
+
+  // The session must be queryable via the public supervision API.
+  const sessionId = (snapshot.result.details as { session_id: string }).session_id;
+  const sessionResponse = await fetch(
+    `${harness.publicUrl}/api/supervision/sessions/${encodeURIComponent(sessionId)}`
+  );
+  assert.equal(sessionResponse.status, 200);
+  const sessionBody = await sessionResponse.json() as {
+    data?: {
+      summary?: { session_id?: string; task_id?: string };
+    };
+  };
+  assert.equal(sessionBody.data?.summary?.session_id, sessionId);
+  assert.equal(sessionBody.data?.summary?.task_id, snapshot.result.task_id);
 });

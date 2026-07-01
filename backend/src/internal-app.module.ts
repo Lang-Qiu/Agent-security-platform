@@ -12,6 +12,7 @@ import { createRequestId } from "./common/http/request-id.ts";
 import { CampaignIngestController } from "./modules/supervision/campaign-ingest.controller.ts";
 import { CampaignIngestService } from "./modules/supervision/campaign-ingest.service.ts";
 import type { InMemoryCampaignRepository } from "./modules/supervision/repositories/in-memory-campaign.repository.ts";
+import type { TaskRepository } from "./modules/task-center/repositories/task.repository.ts";
 import type {
   Track1CampaignEvidenceRegistration,
   Track1CampaignFinalizeEnvelope,
@@ -78,9 +79,13 @@ export class InternalAppModule {
   constructor(input: {
     campaignRepository: InMemoryCampaignRepository;
     ingestToken: string;
+    taskRepository?: TaskRepository;
   }) {
     this.campaignRepository = input.campaignRepository;
-    const service = new CampaignIngestService(input.campaignRepository);
+    const service = new CampaignIngestService(
+      input.campaignRepository,
+      input.taskRepository
+    );
     this.controller = new CampaignIngestController(service, input.ingestToken);
   }
 

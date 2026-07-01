@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
 import { InMemoryCampaignRepository } from "../src/modules/supervision/repositories/in-memory-campaign.repository.ts";
+import { InMemoryTaskRepository } from "../src/modules/task-center/repositories/in-memory-task.repository.ts";
 import {
   makeCampaignEvidenceRegistration,
   makeCampaignFinalizeEnvelope,
@@ -21,7 +22,10 @@ const servicePath = resolve(
 );
 
 type ServiceModule = {
-  CampaignIngestService: new (repository: unknown) => {
+  CampaignIngestService: new (
+    repository: unknown,
+    taskRepository?: unknown
+  ) => {
     startCampaign(input: unknown): unknown;
     ingestSnapshot(input: unknown): unknown;
     finalizeCampaign(input: unknown): unknown;
@@ -674,4 +678,32 @@ test("REQ-T1-DEMO-010 stored records contain no raw content sentinels", async ()
   assert.ok(!json.includes("prompt_text"));
   assert.ok(!json.includes("user_message"));
   assert.ok(!json.includes("system_prompt"));
+});
+
+// R7 (Phase 2 rework finding 3): campaign sessions must be written to the
+// TaskRepository on ingest so the public session inspector can query them.
+// Without this, ingest only writes to the CampaignRepository, and the
+// session_id in campaign detail cannot be looked up via the existing
+// supervision session API.
+
+test("REQ-T1-DEMO-010 ingestSnapshot writes campaign session to TaskRepository", async () => {
+  const { CampaignIngestService } = await loadServiceModule();
+  const campaignRepository = makeRepository();
+  const taskRepository = new InMemoryTaskRepository();
+  const service = new CampaignIngestService(campaignRepository, taskRepository);
+  service.startCampaign(makeCampaignStartEnvelope());
+
+  const snapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  service.ingestSnapshot(snapshot);
+
+  const tasks = taskRepository.list();
+  assert.equal(tasks.length, 1, "TaskRepository must have exactly one record after ingest");
+
+  const record = tasks[0];
+  assert.equal(record.task.task_type, "sandbox_run");
+  assert.equal(record.task.engine_type, "sandbox");
+  assert.equal(record.task.task_id, snapshot.result.task_id);
+  assert.equal(record.result.task_id, snapshot.result.task_id);
+  assert.equal(record.result.details.session_id, snapshot.result.details.session_id);
+  assert.equal(record.task.status, record.result.status);
 });
