@@ -48,6 +48,29 @@ function requireJsonContentType(request: IncomingMessage): void {
   }
 }
 
+// R6 (Phase 2 rework finding 6): the route path campaignId must match the
+// body's campaign_id for snapshot/finalize/evidence routes. Without this
+// check an authorized client could write to a different campaign by using
+// a different path campaignId.
+function assertPathCampaignMatchesBody(
+  pathCampaignId: string,
+  body: unknown
+): void {
+  if (
+    body !== null &&
+    typeof body === "object" &&
+    "campaign_id" in body &&
+    (body as { campaign_id: unknown }).campaign_id === pathCampaignId
+  ) {
+    return;
+  }
+  throw new DomainError(
+    "Path campaignId does not match body campaign_id",
+    "CAMPAIGN_PATH_BODY_MISMATCH",
+    400
+  );
+}
+
 export class InternalAppModule {
   campaignRepository: InMemoryCampaignRepository;
   private readonly controller: CampaignIngestController;
@@ -88,6 +111,9 @@ export class InternalAppModule {
           return;
 
         case "startCampaign": {
+          // R6 (Phase 2 rework finding 6): authorize BEFORE reading the body
+          // so unauthenticated requests get 401 regardless of body shape.
+          this.controller.authorize(request.headers.authorization);
           requireJsonContentType(request);
           const body = await readLimitedJsonBody(request, LIFECYCLE_BODY_LIMIT);
           const result = this.controller.startCampaign(
@@ -107,8 +133,14 @@ export class InternalAppModule {
         }
 
         case "ingestSnapshot": {
+          // R6: authorize before body read.
+          this.controller.authorize(request.headers.authorization);
           requireJsonContentType(request);
           const body = await readLimitedJsonBody(request, SNAPSHOT_BODY_LIMIT);
+          // R6: route.params.campaignId must match body.campaign_id, otherwise
+          // an authorized client could write to a different campaign by using
+          // a different path campaignId.
+          assertPathCampaignMatchesBody(route.params.campaignId, body);
           const result = this.controller.ingestSnapshot(
             request.headers.authorization,
             body as Track1CampaignSnapshotEnvelope
@@ -125,8 +157,12 @@ export class InternalAppModule {
         }
 
         case "finalizeCampaign": {
+          // R6: authorize before body read.
+          this.controller.authorize(request.headers.authorization);
           requireJsonContentType(request);
           const body = await readLimitedJsonBody(request, LIFECYCLE_BODY_LIMIT);
+          // R6: route.params.campaignId must match body.campaign_id.
+          assertPathCampaignMatchesBody(route.params.campaignId, body);
           const result = this.controller.finalizeCampaign(
             request.headers.authorization,
             body as Track1CampaignFinalizeEnvelope
@@ -143,8 +179,12 @@ export class InternalAppModule {
         }
 
         case "registerEvidence": {
+          // R6: authorize before body read.
+          this.controller.authorize(request.headers.authorization);
           requireJsonContentType(request);
           const body = await readLimitedJsonBody(request, LIFECYCLE_BODY_LIMIT);
+          // R6: route.params.campaignId must match body.campaign_id.
+          assertPathCampaignMatchesBody(route.params.campaignId, body);
           const result = this.controller.registerEvidence(
             request.headers.authorization,
             body as Track1CampaignEvidenceRegistration

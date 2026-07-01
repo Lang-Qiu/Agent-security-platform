@@ -49,6 +49,14 @@ export class CampaignIngestController {
     this.expectedToken = expectedToken;
   }
 
+  // R6 (Phase 2 rework finding 6): expose auth check so the HTTP module can
+  // authorize BEFORE reading the request body. The controller still re-checks
+  // auth inside each delegate method; the redundancy is intentional and
+  // harmless (two SHA-256 hashes per request).
+  authorize(authorization: string | undefined): void {
+    authorizeCampaignIngest(authorization, this.expectedToken);
+  }
+
   startCampaign(
     authorization: string | undefined,
     input: Track1CampaignStartEnvelope

@@ -358,3 +358,63 @@ test("REQ-T1-DEMO-010 internal listener exposes a health endpoint", async (t) =>
   const body = await response.json();
   assert.equal((body as { success: boolean }).success, true);
 });
+
+// R6 (Phase 2 rework finding 6): auth must precede body read, and the route
+// campaignId must match body campaign_id. The previous code read the body
+// before checking auth, so an unauthenticated request with malformed JSON
+// returned 400 instead of 401. It also ignored route.params.campaignId,
+// allowing an authorized client to write to a different campaign by using
+// a different path campaignId.
+
+test("REQ-T1-DEMO-010 unauthenticated malformed JSON returns 401 not 400", async (t) => {
+  const harness = await startDualServerHarness();
+  t.after(() => harness.close());
+
+  const response = await fetch(
+    `${harness.internalUrl}/internal/track1/campaigns`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{not valid json"
+    }
+  );
+  assert.equal(response.status, 401);
+  assert.equal(harness.campaignRepository.list().length, 0);
+});
+
+test("REQ-T1-DEMO-010 snapshot path campaignId must match body campaign_id", async (t) => {
+  const harness = await startDualServerHarness();
+  t.after(() => harness.close());
+
+  // Start a campaign first.
+  await postJson(
+    harness.internalUrl,
+    "/internal/track1/campaigns",
+    makeCampaignStartEnvelope(),
+    { authorization: `Bearer ${INGEST_TOKEN}` }
+  );
+
+  // Build a valid snapshot for the started campaign.
+  const { makeCampaignSnapshot } = await import(
+    "../../backend/tests/fixtures/track1-campaign.fixture.ts"
+  );
+  const snapshot = makeCampaignSnapshot(1, null);
+
+  // Send it to a DIFFERENT campaign path. The body campaign_id is
+  // FIXED_CAMPAIGN_ID, but the path uses a different campaign ID.
+  const differentCampaignId = "campaign:t1:fedcba9876543210fedcba9876543210";
+  const response = await fetch(
+    `${harness.internalUrl}/internal/track1/campaigns/${differentCampaignId}/snapshots`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${INGEST_TOKEN}`
+      },
+      body: JSON.stringify(snapshot)
+    }
+  );
+  assert.equal(response.status, 400);
+  const body = await response.json() as { error_code?: string };
+  assert.equal(body.error_code, "CAMPAIGN_PATH_BODY_MISMATCH");
+});
