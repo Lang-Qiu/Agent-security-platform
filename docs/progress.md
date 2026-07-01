@@ -2591,8 +2591,8 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - `tests/integration/backend-supervision.api.spec.ts` — 6 new campaign public API integration tests
   - `tests/repository/track1-campaign-backend.spec.ts` — 8 permanent gate tests
 - test result:
-  - `npm run test:backend` — 192 tests, 191 pass, 1 pre-existing failure (network-dependent asset scan `task-engine.service.spec.ts`, not caused by Phase 2)
-  - `npm run test:repo` — 91 tests, 91 pass (83 existing + 8 new gate)
+  - `npm run test:backend` — 192 tests, 191 pass, 1 pre-existing failure (local Semgrep `spawn EPERM` in `task-engine.service.spec.ts`, not caused by Phase 2)
+  - `npm run test:repo` — 92 tests, 92 pass (83 existing + 8 new gate + 1 R7 integration)
   - `npm run test:shared` — 146/146 pass (unchanged)
   - `npm run test:engine:sandbox` — 391/391 pass (unchanged)
 - constraints honored:
@@ -2613,8 +2613,8 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - `67b416e` feat(backend): project campaign supervision views
   - `6a2cfb8` feat(api): expose campaign supervision reads
   - (P2-T8 docs commit integrated into the gate entry above)
-- status: PHASE_2_REWORK_COMPLETE_PENDING_REVIEW
-- next blocker: user review of Phase 2 rework (R1-R9) before Phase 3
+- status: PHASE_2_REWORK_REVIEW_COMPLETE_PENDING_REVIEW
+- next blocker: user review of Phase 2 rework review (R10-R17) before Phase 3
 
 ## Phase 2 Rework (9 findings, R1-R9)
 
@@ -2631,7 +2631,25 @@ User review of Phase 2 identified 9 issues (7 P1, 2 P2). All fixed via strict RE
 - R9a (finding 9a, P2): CRLF line endings normalized to LF; gate test enforces. Commit `519790c`.
 - R9b (finding 9b, P2): `docs/progress.md` test counts corrected (was 101/102, now 191/192).
 - test result after rework:
-  - `npm run test:backend` — 192 tests, 191 pass, 1 pre-existing failure (network-dependent `task-engine.service.spec.ts`)
-  - `npm run test:repo` — 91/91 pass
+  - `npm run test:backend` — 192 tests, 191 pass, 1 pre-existing failure (local Semgrep `spawn EPERM` in `task-engine.service.spec.ts`)
+  - `npm run test:repo` — 92/92 pass
   - `npm run test:shared` — 146/146 pass
+  - `npm run test:engine:sandbox` — 391/391 pass
+
+## Phase 2 Rework Review (5 P1 + 3 P2 findings, R10-R17)
+
+User re-review of the R1-R9 rework identified 5 remaining P1 blockers and 3 P2 issues. All fixed via strict RED→GREEN→commit per finding.
+
+- R10 (P1 #1): `failed`/`partial_success` terminal statuses now always produce a `failed` attempt — only `finished`/`blocked` are eligible for action comparison. Commit `459e75b`.
+- R11 (P1 #2): Raw normalized snapshot no longer persisted — replaced with a closed `StoredCampaignSnapshotReceipt` carrying only structural IDs, hashes, and timestamps. Commit `c1a520b`.
+- R12 (P1 #3): Timestamps validated as strict ISO-8601 with real calendar dates and parsed-instant monotonicity (not lexicographic strings). Added `isStrictIso8601`/`parseIso8601Instant` to `shared/utils/guards.ts`. Commit `e8d1a54`.
+- R13 (P1 #4): TaskRepository mirror stays fresh on every accepted snapshot (not just the first); identity continuity enforced (`CAMPAIGN_SNAPSHOT_IDENTITY_DRIFT`); duplicate `task_id` rejected (`CAMPAIGN_TASK_ID_DUPLICATE`); task saved before campaign for rollback safety. Commit `7e8d728`.
+- R14 (P1 #5): Production entrypoint reads `TRACK1_INGEST_TOKEN` (not legacy `CAMPAIGN_INGEST_TOKEN`); added async `startProductionServers` with configurable bind hosts (`publicBindHost`, `internalBindHost`, `INTERNAL_BIND_HOST` env var) so other containers can reach `backend:3001`. Commit `477ff2b`.
+- R15 (P2 #6): Added regression-guard test computing real SHA-256 of `samples/track1/openclaw/campaign.v1.json` and comparing to `TRACK1_CAMPAIGN_MANIFEST_SHA256`. Commit `1ace014`.
+- R16 (P2 #7): Fixed `ask_count` test fixture — added matching `policy_decision` event to the events array when adding a policy_decision to policy_decisions (1:1 supervision contract). Added contract satisfaction assertion. Commit `0211ca4`.
+- R17 (P2 #8): Corrected `docs/progress.md` test counts (`test:repo` 91→92) and failure cause (Semgrep `spawn EPERM`, not asset-scan network failure).
+- test result after rework review:
+  - `npm run test:backend` — 206 tests, 205 pass, 1 pre-existing failure (local Semgrep `spawn EPERM` in `task-engine.service.spec.ts`)
+  - `npm run test:repo` — 92/92 pass
+  - `npm run test:shared` — 147/147 pass (+1 R15 manifest SHA test)
   - `npm run test:engine:sandbox` — 391/391 pass
