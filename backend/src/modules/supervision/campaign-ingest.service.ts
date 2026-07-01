@@ -514,6 +514,39 @@ export class CampaignIngestService {
       }
     }
 
+    // R20 (Phase 2 rework review 2 P1 #3): global task_id uniqueness.
+    // The TaskRepository is a global store keyed by task_id. A task_id
+    // that already exists in the TaskRepository (from another campaign or
+    // a leftover from a previous run) would be silently overwritten by
+    // the save() call below. Reject it before that happens.
+    if (!existingAttempt && this.taskRepository) {
+      const globalTask = this.taskRepository.findById(projectedResult.task_id);
+      if (globalTask) {
+        throw new DomainError(
+          `Snapshot task_id already exists in the global TaskRepository: ${projectedResult.task_id}`,
+          "CAMPAIGN_TASK_ID_GLOBAL_CONFLICT",
+          409
+        );
+      }
+    }
+
+    // R20: session_id uniqueness within the campaign. Each attempt must
+    // have a distinct session_id; reusing a session_id across attempts
+    // causes the supervision session lookup to return
+    // SUPERVISION_SESSION_AMBIGUOUS.
+    if (!existingAttempt) {
+      const conflictingSession = record.attempts.find(
+        (a) => a.session_id === sessionId
+      );
+      if (conflictingSession) {
+        throw new DomainError(
+          `Snapshot session_id already used by attempt ${conflictingSession.attempt_id}`,
+          "CAMPAIGN_SESSION_ID_DUPLICATE",
+          409
+        );
+      }
+    }
+
     const newAttempt: StoredCampaignAttempt = {
       campaign_id: normalized.campaign_id,
       agent_id: normalized.agent_id,

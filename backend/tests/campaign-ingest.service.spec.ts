@@ -1190,3 +1190,114 @@ test("REQ-T1-DEMO-010 task save failure does not leave campaign modified", async
   assert.equal(stored.snapshots.length, 0, "campaign must not be committed when task save fails");
   assert.equal(stored.attempts.length, 0, "campaign must not have attempts when task save fails");
 });
+
+// R20 (Phase 2 rework review 2 P1 #3): global task_id and session_id
+// uniqueness. The previous conflict check only scanned the current
+// campaign's attempts. A task_id already in the global TaskRepository
+// (from another campaign) would be silently overwritten. A session_id
+// reused across different attempts in the same campaign would cause
+// the supervision session lookup to return SUPERVISION_SESSION_AMBIGUOUS.
+
+test("REQ-T1-DEMO-010 rejects task_id already in global TaskRepository from another campaign", async () => {
+  const { CampaignIngestService } = await loadServiceModule();
+  const campaignRepository = makeRepository();
+  const taskRepository = new InMemoryTaskRepository();
+
+  // Pre-populate the TaskRepository with a task record that uses the same
+  // task_id as the snapshot we are about to ingest. This simulates a task
+  // left over from another campaign.
+  const snapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const conflictingTaskId = snapshot.result.task_id;
+  taskRepository.save({
+    task: {
+      task_id: conflictingTaskId,
+      task_type: "sandbox_run",
+      engine_type: "sandbox",
+      status: "finished",
+      title: "Pre-existing task from another campaign",
+      target: { target_type: "campaign_case", target_value: "T1-SC-999/C999" },
+      created_at: "2026-06-30T00:00:00.000Z",
+      updated_at: "2026-06-30T00:00:00.000Z"
+    },
+    result: snapshot.result,
+    riskSummary: {
+      task_id: conflictingTaskId,
+      task_type: "sandbox_run",
+      status: "finished",
+      risk_level: "info",
+      summary: "",
+      total_findings: 0,
+      info_count: 0,
+      low_count: 0,
+      medium_count: 0,
+      high_count: 0,
+      critical_count: 0,
+      updated_at: "2026-06-30T00:00:00.000Z"
+    }
+  });
+
+  const service = new CampaignIngestService(campaignRepository, taskRepository);
+  service.startCampaign(makeCampaignStartEnvelope());
+
+  assert.throws(
+    () => service.ingestSnapshot(snapshot),
+    { code: "CAMPAIGN_TASK_ID_GLOBAL_CONFLICT" }
+  );
+
+  // The pre-existing task record must NOT be overwritten.
+  const existing = taskRepository.findById(conflictingTaskId);
+  assert.ok(existing, "pre-existing task record must not be deleted");
+  assert.equal(
+    existing.task.title,
+    "Pre-existing task from another campaign",
+    "pre-existing task record must not be overwritten"
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects session_id reused by different attempt in same campaign", async () => {
+  const { CampaignIngestService } = await loadServiceModule();
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const campaignRepository = makeRepository();
+  const taskRepository = new InMemoryTaskRepository();
+  const service = new CampaignIngestService(campaignRepository, taskRepository);
+  service.startCampaign(makeCampaignStartEnvelope());
+
+  // First attempt: case 0, attempt 1, wrong action → "failed".
+  const firstSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null, {
+    action: "allow"
+  });
+  const firstSessionId = (firstSnapshot.result.details as { session_id: string }).session_id;
+  service.ingestSnapshot(firstSnapshot);
+
+  // Second attempt: case 0, attempt 2, but reusing the same session_id.
+  const secondSnapshot = makeCampaignSnapshotForCase(0, 2, 1, null);
+  const secondResult: BaseResult<SandboxRunResultDetails> = {
+    ...secondSnapshot.result,
+    details: {
+      ...secondSnapshot.result.details,
+      session_id: firstSessionId,
+      events: [],
+      policy_decisions: [],
+      alerts: [],
+      blocked_records: [],
+      blocked: false,
+      event_count: 0
+    }
+  };
+  const withoutHash: Track1CampaignSnapshotWithoutHash = {
+    ...secondSnapshot,
+    result: secondResult
+  };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const reuseSessionSnapshot: Track1CampaignSnapshotEnvelope = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  assert.throws(
+    () => service.ingestSnapshot(reuseSessionSnapshot),
+    { code: "CAMPAIGN_SESSION_ID_DUPLICATE" }
+  );
+});
