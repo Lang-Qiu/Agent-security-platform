@@ -50,13 +50,19 @@ export function makeCampaignEvidenceRegistration(): Track1CampaignEvidenceRegist
 
 function makeResultWithAction(
   action: SandboxPolicyAction,
-  caseIndex: number
+  caseIndex: number,
+  attemptIndex: 1 | 2 = 1
 ): BaseResult<SandboxRunResultDetails> {
   // P2-T6: Session and task IDs must be exactly 32 hex chars after the prefix
   // to satisfy SESSION_ID_PATTERN and TASK_ID_PATTERN in the shared normalizers.
-  // Replace the last 2 chars of CAMPAIGN_HEX with the case index suffix.
+  // R13: include attemptIndex in the hex derivation so different attempts of
+  // the same case get distinct task_id/session_id. Without this, attempt 1
+  // and attempt 2 of the same case would share the same task_id, causing the
+  // TaskRepository (keyed by task_id) to silently overwrite the first
+  // attempt's task record.
   const caseSuffix = caseIndex.toString(16).padStart(2, "0");
-  const hexBase = CAMPAIGN_HEX.slice(0, -2) + caseSuffix;
+  const attemptSuffix = attemptIndex.toString(16).padStart(2, "0");
+  const hexBase = CAMPAIGN_HEX.slice(0, -4) + caseSuffix + attemptSuffix;
   const sessionId = `session:${hexBase}`;
   const taskId = `task:${hexBase}`;
   const sequence = caseIndex + 1;
@@ -206,7 +212,7 @@ export function makeCampaignSnapshotForCase(
 ): Track1CampaignSnapshotEnvelope {
   const meta = getCaseMetadata(caseIndex);
   const action = overrides?.action ?? meta.expected_action;
-  const result = makeResultWithAction(action, caseIndex);
+  const result = makeResultWithAction(action, caseIndex, attemptIndex);
   const attemptId = `attempt:${meta.case_id.toLowerCase()}:${attemptIndex}`;
 
   const withoutHash: Track1CampaignSnapshotWithoutHash = {

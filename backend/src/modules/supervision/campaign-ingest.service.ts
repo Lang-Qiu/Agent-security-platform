@@ -475,6 +475,45 @@ export class CampaignIngestService {
     const projectedResult = validateAndProjectSnapshotResult(normalized.result);
     const sessionId = projectedResult.details.session_id!;
 
+    // R13 (Phase 2 rework review P1 #4): enforce identity continuity — the
+    // same attempt_id must keep the same task_id and session_id across all
+    // accepted snapshots. Without this, a second snapshot could silently
+    // swap the task/session identity, orphaning the previously mirrored
+    // task record and breaking the supervision session lookup.
+    if (existingAttempt) {
+      if (projectedResult.task_id !== existingAttempt.task_id) {
+        throw new DomainError(
+          "Snapshot task_id does not match the existing attempt's task_id",
+          "CAMPAIGN_SNAPSHOT_IDENTITY_DRIFT",
+          409
+        );
+      }
+      if (sessionId !== existingAttempt.session_id) {
+        throw new DomainError(
+          "Snapshot session_id does not match the existing attempt's session_id",
+          "CAMPAIGN_SNAPSHOT_IDENTITY_DRIFT",
+          409
+        );
+      }
+    }
+
+    // R13: reject a NEW attempt whose task_id matches an existing DIFFERENT
+    // attempt's task_id. The TaskRepository is keyed by task_id, so a
+    // duplicate would silently overwrite the earlier attempt's task record
+    // while the campaign retains both attempts — an unrecoverable split.
+    if (!existingAttempt) {
+      const conflictingAttempt = record.attempts.find(
+        (a) => a.task_id === projectedResult.task_id
+      );
+      if (conflictingAttempt) {
+        throw new DomainError(
+          `Snapshot task_id already used by attempt ${conflictingAttempt.attempt_id}`,
+          "CAMPAIGN_TASK_ID_DUPLICATE",
+          409
+        );
+      }
+    }
+
     const newAttempt: StoredCampaignAttempt = {
       campaign_id: normalized.campaign_id,
       agent_id: normalized.agent_id,
@@ -514,20 +553,19 @@ export class CampaignIngestService {
       evidence: record.evidence
     };
 
-    // 7. Save once.
-    this.repository.save(replacement);
-
-    // R7 (Phase 2 rework finding 3): mirror the session into the
-    // TaskRepository so the public session inspector can query it. Only
-    // write when a NEW attempt is created (not on idempotent replay or
-    // in-place update) to avoid redundant writes. The StoredTaskRecord
-    // must satisfy the supervision projector's consistency rules:
-    // task_type=sandbox_run, engine_type=sandbox, task/result fields
-    // match, and details.session_id is set.
-    if (!existingAttempt && this.taskRepository) {
+    // R13: save the task FIRST (before the campaign) so that a task save
+    // failure does not leave a committed campaign with a missing mirror.
+    // If the task save throws, the campaign remains at its previous state.
+    // The task record is written on EVERY accepted snapshot — not just the
+    // first — so the supervision session stays fresh as the attempt
+    // progresses from "running" to a terminal status.
+    if (this.taskRepository) {
       const taskRecord = buildSupervisionTaskRecord(newAttempt);
       this.taskRepository.save(taskRecord);
     }
+
+    // 7. Save campaign after the task mirror is updated.
+    this.repository.save(replacement);
 
     // 8. Return projected defensive copy.
     return this.projectAttemptSummary(newAttempt);

@@ -15,6 +15,8 @@ import {
   makeCompletedCampaignRecord,
   FIXED_CAMPAIGN_ID
 } from "./fixtures/track1-campaign.fixture.ts";
+import type { Track1CampaignSnapshotEnvelope, Track1CampaignSnapshotWithoutHash } from "../../shared/types/campaign-ingest.ts";
+import type { BaseResult, SandboxRunResultDetails } from "../../shared/types/result.ts";
 
 const servicePath = resolve(
   import.meta.dirname,
@@ -889,4 +891,229 @@ test("REQ-T1-DEMO-010 ingestSnapshot writes campaign session to TaskRepository",
   assert.equal(record.result.task_id, snapshot.result.task_id);
   assert.equal(record.result.details.session_id, snapshot.result.details.session_id);
   assert.equal(record.task.status, record.result.status);
+});
+
+// R13 (Phase 2 rework review P1 #4): Campaign ↔ TaskRepository mirror must
+// stay fresh, enforce identity continuity, and be rollback-safe. The
+// previous implementation only wrote the task on the FIRST snapshot of an
+// attempt, leaving the session stale at "running" after a terminal update.
+// It also saved the campaign BEFORE the task (so a task failure left a
+// committed campaign), did not validate task_id/session_id stability within
+// an attempt, and allowed duplicate task_ids across attempts (silently
+// overwriting the earlier task in the TaskRepository).
+
+// Helper: build a non-terminal (running) snapshot from a finished fixture
+// snapshot, preserving task_id/session_id but stripping terminal arrays.
+async function makeRunningSnapshot(
+  baseSnap: Track1CampaignSnapshotEnvelope,
+  sequence: number,
+  previousHash: string | null,
+  observedAt?: string
+): Promise<Track1CampaignSnapshotEnvelope> {
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const runningDetails: SandboxRunResultDetails = {
+    session_id: baseSnap.result.details.session_id!
+  };
+  const runningResult: BaseResult<SandboxRunResultDetails> = {
+    ...baseSnap.result,
+    status: "running",
+    details: runningDetails
+  };
+  const withoutHash: Track1CampaignSnapshotWithoutHash = {
+    ...baseSnap,
+    sequence,
+    previous_snapshot_sha256: previousHash,
+    observed_at: observedAt ?? baseSnap.observed_at,
+    result: runningResult
+  };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  return {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+}
+
+test("REQ-T1-DEMO-010 TaskRepository task record stays fresh after second snapshot for same attempt", async () => {
+  const { CampaignIngestService } = await loadServiceModule();
+  const campaignRepository = makeRepository();
+  const taskRepository = new InMemoryTaskRepository();
+  const service = new CampaignIngestService(campaignRepository, taskRepository);
+  service.startCampaign(makeCampaignStartEnvelope());
+
+  // Snapshot 1: non-terminal (running) result for case 0, attempt 1.
+  const baseSnap1 = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const snap1 = await makeRunningSnapshot(baseSnap1, 1, null, "2026-06-30T00:01:00.000Z");
+  service.ingestSnapshot(snap1);
+
+  const taskAfter1 = taskRepository.findById(snap1.result.task_id);
+  assert.equal(taskAfter1?.task.status, "running");
+
+  // Snapshot 2: terminal (finished) result for same attempt.
+  const snap2 = makeCampaignSnapshotForCase(0, 1, 2, snap1.snapshot_sha256);
+  service.ingestSnapshot(snap2);
+
+  // R13: task record must be updated to reflect the terminal status.
+  const taskAfter2 = taskRepository.findById(snap2.result.task_id);
+  assert.equal(
+    taskAfter2?.task.status,
+    "finished",
+    "task record must be updated to reflect terminal status after second snapshot"
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects snapshot with drifted task_id for same attempt", async () => {
+  const { CampaignIngestService } = await loadServiceModule();
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const campaignRepository = makeRepository();
+  const taskRepository = new InMemoryTaskRepository();
+  const service = new CampaignIngestService(campaignRepository, taskRepository);
+  service.startCampaign(makeCampaignStartEnvelope());
+
+  const baseSnap1 = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const snap1 = await makeRunningSnapshot(baseSnap1, 1, null, "2026-06-30T00:01:00.000Z");
+  service.ingestSnapshot(snap1);
+
+  // Snapshot 2: same attempt, but a DIFFERENT canonical task_id.
+  const driftedTaskId = "task:ffffffffffffffffffffffffffffffff";
+  const driftedResult: BaseResult<SandboxRunResultDetails> = {
+    ...baseSnap1.result,
+    task_id: driftedTaskId
+  };
+  const withoutHash: Track1CampaignSnapshotWithoutHash = {
+    ...baseSnap1,
+    sequence: 2,
+    previous_snapshot_sha256: snap1.snapshot_sha256,
+    observed_at: "2026-06-30T00:02:00.000Z",
+    result: driftedResult
+  };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snap2: Track1CampaignSnapshotEnvelope = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  assert.throws(
+    () => service.ingestSnapshot(snap2),
+    { code: "CAMPAIGN_SNAPSHOT_IDENTITY_DRIFT" }
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects snapshot with drifted session_id for same attempt", async () => {
+  const { CampaignIngestService } = await loadServiceModule();
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const campaignRepository = makeRepository();
+  const taskRepository = new InMemoryTaskRepository();
+  const service = new CampaignIngestService(campaignRepository, taskRepository);
+  service.startCampaign(makeCampaignStartEnvelope());
+
+  const baseSnap1 = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const snap1 = await makeRunningSnapshot(baseSnap1, 1, null, "2026-06-30T00:01:00.000Z");
+  service.ingestSnapshot(snap1);
+
+  // Snapshot 2: same attempt, but a DIFFERENT canonical session_id. Use a
+  // running result (no events/policy_decisions arrays) so the normalizer's
+  // sandbox supervision contract check (which requires every event's
+  // session_id to match details.session_id) does not reject the snapshot
+  // before the service-level identity drift check runs.
+  const driftedSessionId = "session:ffffffffffffffffffffffffffffffff";
+  const driftedDetails: SandboxRunResultDetails = {
+    session_id: driftedSessionId
+  };
+  const driftedResult: BaseResult<SandboxRunResultDetails> = {
+    ...baseSnap1.result,
+    status: "running",
+    details: driftedDetails
+  };
+  const withoutHash: Track1CampaignSnapshotWithoutHash = {
+    ...baseSnap1,
+    sequence: 2,
+    previous_snapshot_sha256: snap1.snapshot_sha256,
+    observed_at: "2026-06-30T00:02:00.000Z",
+    result: driftedResult
+  };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snap2: Track1CampaignSnapshotEnvelope = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  assert.throws(
+    () => service.ingestSnapshot(snap2),
+    { code: "CAMPAIGN_SNAPSHOT_IDENTITY_DRIFT" }
+  );
+});
+
+test("REQ-T1-DEMO-010 task save failure does not commit campaign", async () => {
+  const { CampaignIngestService } = await loadServiceModule();
+  const campaignRepository = makeRepository();
+  const failingTaskRepository = {
+    save(): never { throw new Error("task save boom"); },
+    list(): unknown[] { return []; },
+    findById(): null { return null; }
+  };
+  const service = new CampaignIngestService(campaignRepository, failingTaskRepository);
+  service.startCampaign(makeCampaignStartEnvelope());
+
+  const snapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  assert.throws(
+    () => service.ingestSnapshot(snapshot),
+    /task save boom/
+  );
+
+  // R13: campaign must NOT be modified when the task save fails.
+  const stored = campaignRepository.findById(FIXED_CAMPAIGN_ID) as {
+    snapshots: unknown[];
+    attempts: unknown[];
+  };
+  assert.equal(stored.snapshots.length, 0, "campaign must not be committed when task save fails");
+  assert.equal(stored.attempts.length, 0, "campaign must not have attempts when task save fails");
+});
+
+test("REQ-T1-DEMO-010 rejects new attempt with task_id already used by another attempt", async () => {
+  const { CampaignIngestService } = await loadServiceModule();
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const campaignRepository = makeRepository();
+  const taskRepository = new InMemoryTaskRepository();
+  const service = new CampaignIngestService(campaignRepository, taskRepository);
+  service.startCampaign(makeCampaignStartEnvelope());
+
+  // First attempt: case 0, attempt 1, wrong action → "failed".
+  const failedSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null, {
+    action: "allow"
+  });
+  service.ingestSnapshot(failedSnapshot);
+
+  const firstTaskId = failedSnapshot.result.task_id;
+
+  // Second attempt: case 0, attempt 2, but manually overriding task_id to
+  // duplicate the first attempt's task_id. The TaskRepository is keyed by
+  // task_id, so this would silently overwrite the first attempt's task
+  // record while the campaign retains both attempts.
+  const secondSnapshot = makeCampaignSnapshotForCase(0, 2, 1, null);
+  const duplicatedResult: BaseResult<SandboxRunResultDetails> = {
+    ...secondSnapshot.result,
+    task_id: firstTaskId
+  };
+  const withoutHash: Track1CampaignSnapshotWithoutHash = {
+    ...secondSnapshot,
+    result: duplicatedResult
+  };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const duplicateSnapshot: Track1CampaignSnapshotEnvelope = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  assert.throws(
+    () => service.ingestSnapshot(duplicateSnapshot),
+    { code: "CAMPAIGN_TASK_ID_DUPLICATE" }
+  );
 });
