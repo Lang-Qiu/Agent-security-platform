@@ -229,15 +229,26 @@ export function normalizeTrack1CampaignSummary(
   if (input.retry_count > input.case_count) return null;
 
   // P1-2 rework: completed campaign requires all 9 cases resolved.
-  if (isCompleted && input.passed_case_count + input.failed_case_count !== input.case_count) {
+  // Rework 6: design spec — completed requires every case passed (oracle match).
+  // A completed campaign with any failed case must be rejected.
+  if (isCompleted) {
+    if (input.passed_case_count !== input.case_count) return null;
+    if (input.failed_case_count !== 0) return null;
+  }
+
+  // Rework 6: time monotonicity — updated_at must not precede started_at.
+  if (Date.parse(input.updated_at) < Date.parse(input.started_at)) {
     return null;
   }
 
   // P1-2 rework: completed_at must not precede started_at.
+  // Rework 6: completed_at must also not exceed updated_at.
   if (isCompleted) {
-    if (Date.parse(completedAt as string) < Date.parse(input.started_at)) {
-      return null;
-    }
+    const startedMs = Date.parse(input.started_at);
+    const updatedMs = Date.parse(input.updated_at);
+    const completedMs = Date.parse(completedAt as string);
+    if (completedMs < startedMs) return null;
+    if (completedMs > updatedMs) return null;
   }
 
   const result: Track1CampaignSummary = {
@@ -468,6 +479,9 @@ function normalizeTrack1CampaignAttempt(
   }
   if (!isStrictIso8601(input.started_at)) return null;
   if (!isStrictIso8601(input.updated_at)) return null;
+
+  // Rework 6: time monotonicity — updated_at must not precede started_at.
+  if (Date.parse(input.updated_at) < Date.parse(input.started_at)) return null;
 
   return {
     campaign_id: input.campaign_id,
@@ -713,7 +727,8 @@ export function normalizeTrack1CampaignDetail(
   }
 
   // P1-1 rework 2: campaign status must be consistent with agent statuses.
-  // completed -> all 3 agents must be completed
+  // completed -> all 3 agents must be completed AND all 9 cases must be passed
+  //   (design spec: completed requires every final attempt to match the oracle)
   // running   -> at least one agent must be running (not all completed)
   // created/validating -> all agents must be created/validating respectively,
   //                       and all cases must be pending
@@ -723,6 +738,12 @@ export function normalizeTrack1CampaignDetail(
   );
   if (input.status === "completed") {
     if (!allAgentsCompleted) return null;
+    // Rework 6: completed campaign must have all 9 cases passed (no failures).
+    for (const agent of normalizedAgents) {
+      for (const c of agent.cases) {
+        if (c.status !== "passed") return null;
+      }
+    }
   } else if (input.status === "running") {
     if (allAgentsCompleted) return null;
   } else if (input.status === "created" || input.status === "validating") {

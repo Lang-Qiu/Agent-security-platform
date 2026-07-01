@@ -361,9 +361,10 @@ test("REQ-T1-DEMO-010 accepts completed summary with completed_at", () => {
   const summary = {
     ...VALID_SUMMARY,
     status: "completed",
+    updated_at: "2026-06-30T00:10:00.000Z",
     completed_at: "2026-06-30T00:10:00.000Z",
-    passed_case_count: 8,
-    failed_case_count: 1
+    passed_case_count: 9,
+    failed_case_count: 0
   };
   assert.ok(normalizeTrack1CampaignSummary(summary));
 });
@@ -448,15 +449,17 @@ test("REQ-T1-DEMO-010 rejects completed summary when passed_case_count < 9", () 
   assert.equal(normalizeTrack1CampaignSummary(summary), null);
 });
 
-test("REQ-T1-DEMO-010 accepts completed summary when passed + failed = 9", () => {
+test("REQ-T1-DEMO-010 rejects completed summary when failed_case_count > 0", () => {
+  // Rework 6: completed requires passed=9, failed=0 (not just passed+failed=9)
   const summary = {
     ...VALID_SUMMARY,
     status: "completed",
+    updated_at: "2026-06-30T00:10:00.000Z",
     completed_at: "2026-06-30T00:10:00.000Z",
     passed_case_count: 8,
     failed_case_count: 1
   };
-  assert.ok(normalizeTrack1CampaignSummary(summary));
+  assert.equal(normalizeTrack1CampaignSummary(summary), null);
 });
 
 test("REQ-T1-DEMO-010 rejects completed_at earlier than started_at", () => {
@@ -464,7 +467,9 @@ test("REQ-T1-DEMO-010 rejects completed_at earlier than started_at", () => {
     ...VALID_SUMMARY,
     status: "completed",
     // started_at is "2026-06-30T00:00:00.000Z"; completed_at must be >= started_at
-    completed_at: "2026-06-29T23:59:59.000Z"
+    completed_at: "2026-06-29T23:59:59.000Z",
+    passed_case_count: 9,
+    failed_case_count: 0
   };
   assert.equal(normalizeTrack1CampaignSummary(summary), null);
 });
@@ -474,9 +479,10 @@ test("REQ-T1-DEMO-010 accepts completed_at equal to started_at", () => {
     ...VALID_SUMMARY,
     status: "completed",
     started_at: "2026-06-30T00:00:00.000Z",
+    updated_at: "2026-06-30T00:00:00.000Z",
     completed_at: "2026-06-30T00:00:00.000Z",
-    passed_case_count: 8,
-    failed_case_count: 1
+    passed_case_count: 9,
+    failed_case_count: 0
   };
   assert.ok(normalizeTrack1CampaignSummary(summary));
 });
@@ -775,5 +781,77 @@ test("REQ-T1-DEMO-010 rejects collecting agent with non-terminal cases", () => {
     status: "running",
     actual_action: null
   }];
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+// -- Rework 6: completed requires 9 passed + time monotonicity -----------------
+
+test("REQ-T1-DEMO-010 rejects completed summary with any failed cases", () => {
+  // Design spec: completed requires every final attempt's derived action
+  // equals the manifest oracle. A completed campaign with 8 passed + 1 failed
+  // must be rejected.
+  assert.equal(
+    normalizeTrack1CampaignSummary({
+      ...VALID_SUMMARY,
+      status: "completed",
+      completed_at: "2026-06-30T00:10:00.000Z",
+      passed_case_count: 8,
+      failed_case_count: 1
+    }),
+    null
+  );
+});
+
+test("REQ-T1-DEMO-010 accepts completed summary with 9 passed and 0 failed", () => {
+  assert.ok(
+    normalizeTrack1CampaignSummary({
+      ...VALID_SUMMARY,
+      status: "completed",
+      updated_at: "2026-06-30T00:10:00.000Z",
+      completed_at: "2026-06-30T00:10:00.000Z",
+      passed_case_count: 9,
+      failed_case_count: 0
+    })
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects completed detail with a failed case", () => {
+  const detail = makeValidCampaignDetail();
+  // Flip one case to failed — completed campaign must have all 9 passed
+  detail.agents[0].cases[0].status = "failed";
+  detail.agents[0].cases[0].attempts[0].status = "failed";
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+test("REQ-T1-DEMO-010 rejects summary with updated_at before started_at", () => {
+  assert.equal(
+    normalizeTrack1CampaignSummary({
+      ...VALID_SUMMARY,
+      started_at: "2026-06-30T00:00:01.000Z",
+      updated_at: "2026-06-30T00:00:00.000Z"
+    }),
+    null
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects completed summary with completed_at after updated_at", () => {
+  assert.equal(
+    normalizeTrack1CampaignSummary({
+      ...VALID_SUMMARY,
+      status: "completed",
+      started_at: "2026-06-30T00:00:00.000Z",
+      updated_at: "2026-06-30T00:00:01.000Z",
+      completed_at: "2026-06-30T00:00:02.000Z",
+      passed_case_count: 9,
+      failed_case_count: 0
+    }),
+    null
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects attempt with updated_at before started_at", () => {
+  const detail = makeValidCampaignDetail();
+  detail.agents[0].cases[0].attempts[0].started_at = "2026-06-30T00:00:01.000Z";
+  detail.agents[0].cases[0].attempts[0].updated_at = "2026-06-30T00:00:00.000Z";
   assert.equal(normalizeTrack1CampaignDetail(detail), null);
 });
