@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import { createConnection } from "node:net";
 import { test } from "node:test";
 
 import { createProductionServers, startServer } from "../src/main.ts";
@@ -191,5 +193,67 @@ test("REQ-T1-DEMO-010 startProductionServers accepts zero-argument call shape", 
     } else {
       process.env.TRACK1_INGEST_TOKEN = prevToken;
     }
+  }
+});
+
+// R29 (Phase 2 rework review 3 P2 #5): if the internal listener fails to
+// bind (e.g. EADDRINUSE), the already-started public server must be closed
+// before rethrowing. Otherwise the process leaks a listening socket and the
+// public port cannot be rebound without a full process restart.
+
+test("REQ-T1-DEMO-010 startProductionServers closes public server when internal listen fails", async () => {
+  const { startProductionServers } = await import("../src/main.ts");
+
+  // Find a free port for the public server by temporarily listening on 0.
+  const probe = createServer();
+  await new Promise<void>((resolve) => {
+    probe.listen(0, "127.0.0.1", () => resolve());
+  });
+  const publicPort = (probe.address() as { port: number }).port;
+  await new Promise<void>((resolve) => probe.close(() => resolve()));
+
+  // Occupy the internal port with a blocker server that stays listening.
+  const blocker = createServer();
+  await new Promise<void>((resolve) => {
+    blocker.listen(0, "127.0.0.1", () => resolve());
+  });
+  const internalPort = (blocker.address() as { port: number }).port;
+
+  try {
+    // startProductionServers must reject because the internal port is in use.
+    await assert.rejects(() =>
+      startProductionServers({
+        publicPort,
+        internalPort,
+        publicBindHost: "127.0.0.1",
+        internalBindHost: "127.0.0.1",
+        ingestToken: "a".repeat(64)
+      })
+    );
+
+    // R29: the public server that was started before the internal listen
+    // failure must have been closed. If it leaked, a TCP connection to the
+    // public port will SUCCEED (bad — server still listening). If it was
+    // closed, the connection will be REFUSED (good). Using a connection
+    // probe instead of a rebind avoids creating new server handles that
+    // would prevent the test process from exiting when the bug is present.
+    const connectionSucceeded = await new Promise<boolean>((resolve) => {
+      const conn = createConnection(
+        { host: "127.0.0.1", port: publicPort },
+        () => {
+          conn.destroy();
+          resolve(true);
+        }
+      );
+      conn.once("error", () => resolve(false));
+    });
+
+    assert.equal(
+      connectionSucceeded,
+      false,
+      "public server must be closed after internal listen failure — port is still accepting connections"
+    );
+  } finally {
+    await new Promise<void>((resolve) => blocker.close(() => resolve()));
   }
 });

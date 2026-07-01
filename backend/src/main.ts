@@ -154,13 +154,24 @@ export async function startProductionServers(options: {
       resolve();
     });
   });
-  await new Promise<void>((resolve, reject) => {
-    servers.internalServer.once("error", reject);
-    servers.internalServer.listen(internalPort, internalBindHost, () => {
-      servers.internalServer.removeListener("error", reject);
-      resolve();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      servers.internalServer.once("error", reject);
+      servers.internalServer.listen(internalPort, internalBindHost, () => {
+        servers.internalServer.removeListener("error", reject);
+        resolve();
+      });
     });
-  });
+  } catch (err) {
+    // R29 (Phase 2 rework review 3 P2 #5): close the already-started public
+    // server before rethrowing so the caller does not leak a listening
+    // socket. Without this, an EADDRINUSE on the internal port leaves the
+    // public server bound with no handle for the caller to close it.
+    await new Promise<void>((resolve) => {
+      servers.publicServer.close(() => resolve());
+    });
+    throw err;
+  }
 
   return {
     publicServer: servers.publicServer,
