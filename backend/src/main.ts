@@ -2,13 +2,21 @@ import { createServer, type Server } from "node:http";
 import { pathToFileURL } from "node:url";
 
 import { AppModule, createAppModule } from "./app.module.ts";
+import { InternalAppModule } from "./internal-app.module.ts";
 
 export { createAppModule } from "./app.module.ts";
 export type { AppModule } from "./app.module.ts";
+export { InternalAppModule } from "./internal-app.module.ts";
 
 export function createAppServer(appModule: AppModule = createAppModule()): Server {
   return createServer((request, response) => {
     void appModule.handle(request, response);
+  });
+}
+
+export function createInternalAppServer(internalAppModule: InternalAppModule): Server {
+  return createServer((request, response) => {
+    void internalAppModule.handle(request, response);
   });
 }
 
