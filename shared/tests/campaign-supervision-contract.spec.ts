@@ -790,10 +790,13 @@ test("REQ-T1-DEMO-010 rejects completed summary with any failed cases", () => {
   // Design spec: completed requires every final attempt's derived action
   // equals the manifest oracle. A completed campaign with 8 passed + 1 failed
   // must be rejected.
+  // Rework 7: sync updated_at to completed_at so the only failure reason is
+  // the failed-case counter, not time ordering.
   assert.equal(
     normalizeTrack1CampaignSummary({
       ...VALID_SUMMARY,
       status: "completed",
+      updated_at: "2026-06-30T00:10:00.000Z",
       completed_at: "2026-06-30T00:10:00.000Z",
       passed_case_count: 8,
       failed_case_count: 1
@@ -853,5 +856,18 @@ test("REQ-T1-DEMO-010 rejects attempt with updated_at before started_at", () => 
   const detail = makeValidCampaignDetail();
   detail.agents[0].cases[0].attempts[0].started_at = "2026-06-30T00:00:01.000Z";
   detail.agents[0].cases[0].attempts[0].updated_at = "2026-06-30T00:00:00.000Z";
+  assert.equal(normalizeTrack1CampaignDetail(detail), null);
+});
+
+// -- Rework 7: campaign detail parent-level time monotonicity ------------------
+
+test("REQ-T1-DEMO-010 rejects campaign detail with updated_at before started_at", () => {
+  // Rework 7: detail normalizer only validated ISO-8601 format, not ordering.
+  // Only parent-level times are flipped so the RED failure is attributable
+  // solely to the missing started_at <= updated_at check, not to any child
+  // constraint (attempt/case/agent times remain valid).
+  const detail = makeValidCampaignDetail();
+  detail.started_at = "2026-06-30T00:00:01.000Z";
+  detail.updated_at = "2026-06-30T00:00:00.000Z";
   assert.equal(normalizeTrack1CampaignDetail(detail), null);
 });

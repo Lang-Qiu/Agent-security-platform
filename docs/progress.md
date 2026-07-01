@@ -2551,19 +2551,19 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - P1-T5 rework 4 `0c38280` — `test(track1): complete state matrix and real JSON Schema validation` (fourth review pass)
   - P1-T5 rework 5 `4be56ae` — `test(track1): pending session nullable and attempt status type` (fifth review pass)
   - P1-T5 rework 6 `bc1c433` — `test(track1): completed requires all passed and time monotonicity` (sixth review pass)
-- phase gate (rework 6):
-  - `npm run test:shared` — pass (145/145)
+  - P1-T5 rework 7 — `test(track1): campaign detail time monotonicity and test purity` (seventh review pass)
+- phase gate (rework 7):
+  - `npm run test:shared` — pass (146/146)
   - `npm run test:repo` — pass (83/83)
   - `npm run test:engine:sandbox` — pass (391/391)
-  - `pnpm install --frozen-lockfile` — success
-- rework fixes (sixth review):
-  - P1: `completed` campaign now requires `passed_case_count=9, failed_case_count=0` in summary and all 9 cases `passed` in detail (previously allowed failed cases if passed+failed=9); 3 new RED tests
-  - P2: time monotonicity enforced — summary `started_at <= updated_at`, completed summary `started_at <= completed_at <= updated_at`, attempt `started_at <= updated_at`; 3 new RED tests; existing tests updated to use time-consistent fixtures
+- rework fixes (seventh review):
+  - P2-1: campaign detail normalizer now enforces `started_at <= updated_at` (previously only ISO-8601 format was checked); 1 new RED test that only flips parent-level times so failure is attributable solely to the missing check
+  - P2-2: `rejects completed summary with any failed cases` test now syncs `updated_at` to `completed_at` (00:10) so it fails for exactly one reason — the failed-case counter — not for time ordering
 - constraints honored:
   - no backend, frontend, or engine production behavior changed
   - exact-key normalizers reject unknown fields and content-bearing sentinels
   - closed unions for agent/scenario/case/status/action identifiers
   - pinned dependencies untouched (ajv added as devDependency for test-only use; pnpm-lock.yaml synced)
   - canonical hashing uses UTF-8 byte length, not string length
-- status: PHASE_1_REWORK_6_COMPLETE_PENDING_REVIEW
-- next blocker: user review of rework 6 before Phase 2 backend work
+- status: PHASE_1_REWORK_7_COMPLETE_PENDING_REVIEW
+- next blocker: user review of rework 7 before Phase 2 backend work

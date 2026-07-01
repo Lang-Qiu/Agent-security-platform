@@ -707,6 +707,10 @@ export function normalizeTrack1CampaignDetail(
   if (input.agent_count !== 3) return null;
   if (input.case_count !== 9) return null;
 
+  // Rework 7: time monotonicity — updated_at must not precede started_at.
+  // Mirrors the summary (line ~240) and attempt normalizers.
+  if (Date.parse(input.updated_at) < Date.parse(input.started_at)) return null;
+
   if (!Array.isArray(input.agents)) return null;
   if (input.agents.length !== 3) return null;
 
