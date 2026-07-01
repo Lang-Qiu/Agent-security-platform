@@ -20,6 +20,8 @@ import type {
   Track1CampaignStartEnvelope
 } from "../../../../shared/types/campaign-ingest.ts";
 import type {
+  SandboxAlert,
+  SandboxBlockedRecord,
   SandboxPolicyAction,
   SandboxPolicyDecision
 } from "../../../../shared/types/sandbox.ts";
@@ -165,6 +167,52 @@ function validateAndProjectSnapshotResult(
     );
   }
 
+  // R21 (Phase 2 rework review 2 P1 #4): project nested narrative content.
+  // Strip free-text fields (reason, reason_code, title, category) from
+  // policy_decisions, alerts, and blocked_records by replacing them with
+  // empty strings. This prevents a client from persisting arbitrary text
+  // (e.g. prompt leaks, provider error messages) in these fields. The
+  // structural fields (IDs, action, risk_level, timestamps, evidence_refs)
+  // are preserved for supervision contract validation and campaign projection.
+  function projectPolicyDecision(d: SandboxPolicyDecision): SandboxPolicyDecision {
+    return {
+      decision_id: d.decision_id,
+      subject_event_id: d.subject_event_id,
+      policy_id: d.policy_id,
+      action: d.action,
+      reason_code: "",
+      reason: "",
+      evidence_refs: d.evidence_refs,
+      decided_at: d.decided_at
+    };
+  }
+
+  function projectAlert(a: SandboxAlert): SandboxAlert {
+    return {
+      alert_id: a.alert_id,
+      subject_event_id: a.subject_event_id,
+      decision_id: a.decision_id,
+      risk_level: a.risk_level,
+      category: "",
+      title: "",
+      reason: "",
+      evidence_refs: a.evidence_refs,
+      occurred_at: a.occurred_at
+    };
+  }
+
+  function projectBlockedRecord(r: SandboxBlockedRecord): SandboxBlockedRecord {
+    return {
+      blocked_record_id: r.blocked_record_id,
+      subject_event_id: r.subject_event_id,
+      decision_id: r.decision_id,
+      resource_ref: r.resource_ref,
+      reason: "",
+      evidence_refs: r.evidence_refs,
+      occurred_at: r.occurred_at
+    };
+  }
+
   // Project to closed shape: strip summary (set to empty), metadata,
   // result_id, started_at, finished_at, and details.target. Keep structural
   // fields needed for campaign projection.
@@ -172,16 +220,26 @@ function validateAndProjectSnapshotResult(
     session_id: sessionId
   };
   if (result.details.events !== undefined) {
-    projectedDetails.events = result.details.events;
+    // R21: project policy_decision event payloads to match the projected
+    // policy_decisions (supervision contract requires field-equality).
+    projectedDetails.events = result.details.events.map((event) => {
+      if (event.event_type === "policy_decision") {
+        return {
+          ...event,
+          payload: projectPolicyDecision(event.payload as SandboxPolicyDecision)
+        };
+      }
+      return event;
+    });
   }
   if (result.details.policy_decisions !== undefined) {
-    projectedDetails.policy_decisions = result.details.policy_decisions;
+    projectedDetails.policy_decisions = result.details.policy_decisions.map(projectPolicyDecision);
   }
   if (result.details.alerts !== undefined) {
-    projectedDetails.alerts = result.details.alerts;
+    projectedDetails.alerts = result.details.alerts.map(projectAlert);
   }
   if (result.details.blocked_records !== undefined) {
-    projectedDetails.blocked_records = result.details.blocked_records;
+    projectedDetails.blocked_records = result.details.blocked_records.map(projectBlockedRecord);
   }
   if (result.details.blocked !== undefined) {
     projectedDetails.blocked = result.details.blocked;

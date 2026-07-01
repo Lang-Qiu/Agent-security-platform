@@ -1301,3 +1301,116 @@ test("REQ-T1-DEMO-010 rejects session_id reused by different attempt in same cam
     { code: "CAMPAIGN_SESSION_ID_DUPLICATE" }
   );
 });
+
+// R21 (Phase 2 rework review 2 P1 #4): nested narrative content in
+// policy_decisions, alerts, and blocked_records must not be persisted.
+// The previous projection only stripped top-level result fields (summary,
+// metadata, target) but copied the full arrays, allowing arbitrary text
+// in reason/reason_code/title/category fields to be stored. The ingest
+// must project these arrays to keep only structural fields.
+
+test("REQ-T1-DEMO-010 does not persist narrative content in policy_decision reason fields", async () => {
+  const { service, repository } = await makeStartedService();
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const SECRET_MARKER = "SECRET_SENTINEL_IN_REASON";
+  const maliciousDecision = {
+    ...baseSnapshot.result.details.policy_decisions![0],
+    reason: SECRET_MARKER,
+    reason_code: SECRET_MARKER
+  };
+  // R21: the supervision contract requires the policy_decision event payload
+  // to match the policy_decisions entry 1:1. Inject the secret into BOTH
+  // places so the contract passes — then verify BOTH are stripped by the
+  // projection.
+  const maliciousEvents = baseSnapshot.result.details.events!.map((e) =>
+    e.event_type === "policy_decision"
+      ? { ...e, payload: maliciousDecision }
+      : e
+  );
+  const maliciousDetails = {
+    ...baseSnapshot.result.details,
+    events: maliciousEvents,
+    policy_decisions: [maliciousDecision]
+  };
+  const maliciousResult = { ...baseSnapshot.result, details: maliciousDetails };
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const withoutHash = { ...baseSnapshot, result: maliciousResult };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  service.ingestSnapshot(snapshot);
+  const stored = repository.findById(FIXED_CAMPAIGN_ID) as {
+    attempts: Array<{
+      result: {
+        details: {
+          policy_decisions?: Array<{ reason?: string; reason_code?: string }>;
+          events?: Array<{
+            event_type: string;
+            payload?: { reason?: string; reason_code?: string };
+          }>;
+        };
+      };
+    }>;
+  };
+  const storedDecisions = stored.attempts[0].result.details.policy_decisions!;
+  const storedReason = storedDecisions[0].reason;
+  const storedReasonCode = storedDecisions[0].reason_code;
+  assert.ok(
+    storedReason !== SECRET_MARKER && storedReasonCode !== SECRET_MARKER,
+    "narrative content in policy_decision reason/reason_code must not be persisted"
+  );
+  // R21: the event payload must also be projected.
+  const storedEventPayload = stored.attempts[0].result.details.events!.find(
+    (e) => e.event_type === "policy_decision"
+  )!.payload!;
+  assert.ok(
+    storedEventPayload.reason !== SECRET_MARKER &&
+      storedEventPayload.reason_code !== SECRET_MARKER,
+    "narrative content in policy_decision event payload must not be persisted"
+  );
+});
+
+test("REQ-T1-DEMO-010 does not persist narrative content in blocked_record reason fields", async () => {
+  const { service, repository } = await makeStartedService();
+  // Use case 1 (index 1, deny) so blocked_records are present.
+  const baseSnapshot = makeCampaignSnapshotForCase(1, 1, 1, null);
+  const SECRET_BLOCKED = "SECRET_BLOCKED_REASON";
+  const maliciousBlocked = baseSnapshot.result.details.blocked_records!.map(
+    (r: Record<string, unknown>) => ({ ...r, reason: SECRET_BLOCKED })
+  );
+  const maliciousDetails = {
+    ...baseSnapshot.result.details,
+    blocked_records: maliciousBlocked
+  };
+  const maliciousResult = { ...baseSnapshot.result, details: maliciousDetails };
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const withoutHash = { ...baseSnapshot, result: maliciousResult };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  service.ingestSnapshot(snapshot);
+  const stored = repository.findById(FIXED_CAMPAIGN_ID) as {
+    attempts: Array<{
+      result: {
+        details: {
+          blocked_records?: Array<{ reason?: string }>;
+        };
+      };
+    }>;
+  };
+  const storedBlocked = stored.attempts[0].result.details.blocked_records!;
+  assert.ok(
+    storedBlocked.length > 0 && storedBlocked[0].reason !== SECRET_BLOCKED,
+    "narrative content in blocked_record reason must not be persisted"
+  );
+});
