@@ -2567,3 +2567,51 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - canonical hashing uses UTF-8 byte length, not string length
 - status: PHASE_1_REWORK_7_COMPLETE_PENDING_REVIEW
 - next blocker: user review of rework 7 before Phase 2 backend work
+
+## 2026-07-01 - REQ-T1-DEMO-010 Phase 2 Backend Ingest and Campaign Read API
+
+- requirement: Track 1 campaign supervision backend — split-listener ingest/read architecture, campaign projector, public read API, and permanent repository gates
+- scope:
+  - P2-T1: `backend/src/modules/supervision/repositories/in-memory-campaign.repository.ts` — defensive in-memory campaign repository with structuredClone
+  - P2-T2: `backend/src/modules/supervision/campaign-ingest.service.ts` — campaign lifecycle service (start, snapshot, finalize, evidence)
+  - P2-T3: `backend/src/modules/supervision/campaign-ingest-auth.ts` + `campaign-ingest.controller.ts` — timing-safe bearer token auth + authenticated controller
+  - P2-T4: `backend/src/runtime-dependencies.ts` — single composition root sharing one task repository and one campaign repository between public and internal modules
+  - P2-T5: `backend/src/common/http/limited-json-body.ts` + `internal-router.ts` + `internal-app.module.ts` — separate internal HTTP listener with body limits
+  - P2-T6: `backend/src/modules/supervision/campaign-projector.ts` + `campaign-supervision.service.ts` + `dto/campaign-query.ts` — content-free projector, query service, and CampaignQuery DTO
+  - P2-T7: `backend/src/modules/supervision/campaign-supervision.controller.ts` + router/app-module wiring — three public GET routes
+  - P2-T8: `tests/repository/track1-campaign-backend.spec.ts` — permanent repository gate; package.json test registration; docs update
+- tests added:
+  - `backend/tests/campaign-repository.spec.ts` — repository defensive cloning and sort
+  - `backend/tests/campaign-ingest.service.spec.ts` — lifecycle invariants (start, snapshot chain, finalize, evidence)
+  - `backend/tests/campaign-ingest.controller.spec.ts` — auth and body limit enforcement
+  - `backend/tests/runtime-dependencies.spec.ts` — shared composition root
+  - `backend/tests/campaign-projector.spec.ts` — 10 projector tests (counters, cross-agent rejection, content-free detail, evidence)
+  - `backend/tests/campaign-supervision.service.spec.ts` — 9 service tests (list cap, filtering, sort, detail/evidence lookups)
+  - `tests/integration/backend-campaign-ingest.api.spec.ts` — 10 internal API integration tests
+  - `tests/integration/backend-supervision.api.spec.ts` — 6 new campaign public API integration tests
+  - `tests/repository/track1-campaign-backend.spec.ts` — 8 permanent gate tests
+- test result:
+  - `npm run test:backend` — 102 tests, 101 pass, 1 pre-existing failure (network-dependent asset scan test 65, not caused by Phase 2)
+  - `npm run test:repo` — 91 tests, 91 pass (83 existing + 8 new gate)
+  - `npm run test:shared` — 146/146 pass (unchanged)
+  - `npm run test:engine:sandbox` — 391/391 pass (unchanged)
+- constraints honored:
+  - public router never matches `/internal/*`; internal router recognizes only health + 4 ingest routes
+  - ingest controllers carry no launch/retry/model/tool invocation imports
+  - all campaign counters are recomputed from stored attempts/results (no caller-supplied aggregates)
+  - attempt summaries are content-free (no events, policy_decisions, alerts, blocked_records, or result)
+  - body limits enforced on raw byte length before JSON parse
+  - token comparison is timing-safe (SHA-256 hash + timingSafeEqual)
+  - list cap is 50 (distinct from supervision's 100)
+  - sort order is updated_at desc then campaign_id asc
+- commits (8):
+  - `b427fb1` feat(backend): add campaign repository
+  - `aaaea95` feat(backend): add campaign ingest service
+  - `200069d` feat(backend): authenticate campaign ingest
+  - `a8165cf` feat(backend): share runtime dependencies
+  - `fbadee1` feat(backend): separate internal HTTP listener
+  - `67b416e` feat(backend): project campaign supervision views
+  - `6a2cfb8` feat(api): expose campaign supervision reads
+  - (P2-T8 docs commit integrated into the gate entry above)
+- status: PHASE_2_COMPLETE_PENDING_REVIEW
+- next blocker: user review of Phase 2 before Phase 3

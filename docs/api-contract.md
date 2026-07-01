@@ -1601,3 +1601,108 @@ Schema versions are pinned via `SANDBOX_SUPERVISION_SCHEMA_VERSION` and `SANDBOX
 - `session` (the full `SandboxSupervisionSessionDetail`)
 
 The export never includes `request_id`, `metadata`, decision `reason`, alert `title`/`reason`, blocked-record `reason`/`resource_ref`, or any producer narrative field. The frontend serializes the normalized export with `JSON.stringify(value, null, 2)` plus a trailing newline, and downloads it as `supervision-<sanitized-session-id>.json` via a transient blob URL that is revoked immediately after the click. The serialized bytes are deterministic for a given session ID.
+
+## REQ-T1-DEMO-010 Track 1 Campaign Ingest and Read API
+
+REQ-T1-DEMO-010 adds a split-listener architecture for Track 1 campaign supervision: an internal-only ingest listener and a public read API. The two listeners never share routes.
+
+### Listener separation
+
+- **Public listener** (`AppModule` + `matchRoute`): serves `/health`, `/api/tasks/*`, `/api/supervision/sessions/*`, and `/api/supervision/campaigns/*`. It never matches any `/internal/*` path.
+- **Internal listener** (`InternalAppModule` + `matchInternalRoute`): serves `/internal/health` and the four campaign ingest write routes only. Every other path returns 404.
+
+The split is enforced at the router level: `matchRoute` has no `/internal/` branch, and `matchInternalRoute` recognizes only health plus the four ingest routes.
+
+### Internal ingest routes (authenticated)
+
+All four internal routes require a `Authorization: Bearer <token>` header. Token comparison is timing-safe (both supplied and expected tokens are SHA-256 hashed before `timingSafeEqual`). The expected token is configured at internal module construction.
+
+- `POST /internal/track1/campaigns` — start campaign (body: `Track1CampaignStartEnvelope`)
+- `POST /internal/track1/campaigns/:campaignId/snapshots` — ingest snapshot (body: `Track1CampaignSnapshotEnvelope`)
+- `POST /internal/track1/campaigns/:campaignId/finalize` — finalize campaign (body: `Track1CampaignFinalizeEnvelope`)
+- `POST /internal/track1/campaigns/:campaignId/evidence` — register evidence (body: `Track1CampaignEvidenceRegistration`)
+
+### Body limits
+
+- Lifecycle envelopes (start, finalize, evidence registration): `TRACK1_LIFECYCLE_MAX_BYTES` = 256 KiB
+- Snapshot envelopes: `TRACK1_SNAPSHOT_MAX_BYTES` = 2 MiB
+
+Body limits are enforced on raw `Buffer.byteLength` before JSON parse. Oversized bodies are rejected with `400` and `error_code: "CAMPAIGN_BODY_TOO_LARGE"`.
+
+### Lifecycle invariants
+
+- Campaign start is idempotent on `campaign_manifest_sha256` — a second start with the same manifest returns the existing campaign summary.
+- Snapshots form a hash chain: `previous_snapshot_sha256` must match the last accepted snapshot hash, or be `null` for the first snapshot. Sequence numbers must be gapless starting at 1.
+- A second attempt is only allowed if the first attempt failed. Two passed attempts for the same case are rejected.
+- Finalize requires all 9 cases to be terminal. A completed campaign requires every case to be `passed` (oracle match).
+- Evidence registration is only allowed after finalize with `requested_status: "completed"`.
+
+### Public read routes
+
+- `GET /api/supervision/campaigns` — list campaign summaries (capped at 50)
+- `GET /api/supervision/campaigns/:campaignId` — single-campaign detail (3 agents × 3 cases with content-free attempt summaries)
+- `GET /api/supervision/campaigns/:campaignId/evidence` — deterministic evidence export
+
+All three routes are wrapped in the standard `ApiResponse<T>` envelope.
+
+### Query fields and validation (campaign list)
+
+`GET /api/supervision/campaigns` accepts the following optional query parameters:
+
+- `q` (free-text fragment match against campaign ID; max 128 characters)
+- `status` (`Track1CampaignStatus`)
+- `scenario_id` (`Track1ScenarioId`)
+- `agent_id` (`Track1CampaignAgentId`)
+
+Unknown keys, duplicate keys, empty-but-present enum values, and control characters are rejected with `400` and `error_code: "INVALID_CAMPAIGN_QUERY"`. Filters are AND-combined.
+
+### 50-row cap and sort order
+
+- List is capped at 50 entries.
+- Sort order: `updated_at` descending (newest first), then `campaign_id` ascending.
+- All counters in the summary are recomputed from stored attempts/results — callers cannot supply aggregate counters.
+
+### Content-free detail projection
+
+The campaign detail never copies raw result content into the response. Attempt summaries in the detail carry only:
+
+- `campaign_id`, `agent_id`, `scenario_id`, `case_id` (fixed association IDs)
+- `attempt_id`, `attempt_index`, `session_id`, `task_id` (identifier reuse)
+- `status`, `actual_action` (derived from policy decisions)
+- `started_at`, `updated_at` (timestamps)
+
+The following fields are never present in attempt summaries: `events`, `policy_decisions`, `alerts`, `blocked_records`, `result`.
+
+### Cross-agent validation
+
+The projector rejects any attempt whose `agent_id` does not match the expected agent/scenario/case mapping with `500` and `error_code: "CAMPAIGN_PROJECTION_INVALID"`.
+
+### Safe error codes
+
+- `400` with `error_code: "INVALID_CAMPAIGN_QUERY"` for malformed query parameters.
+- `400` with `error_code: "CAMPAIGN_BODY_TOO_LARGE"` for oversized request bodies.
+- `401` with `error_code: "CAMPAIGN_INGEST_UNAUTHORIZED"` for missing or invalid bearer tokens.
+- `404` with `error_code: "CAMPAIGN_NOT_FOUND"` when the campaign ID does not exist.
+- `409` with `error_code: "CAMPAIGN_EVIDENCE_NOT_READY"` when evidence is requested before registration.
+- `409` with `error_code: "CAMPAIGN_ALREADY_EXISTS"` for duplicate campaign start.
+- `409` with `error_code: "CAMPAIGN_SNAPSHOT_CONFLICT"` for byte-mismatched snapshot retries.
+- `409` with `error_code: "CAMPAIGN_SEQUENCE_INVALID"` for gap or broken hash chain.
+- `409` with `error_code: "CAMPAIGN_SECOND_ATTEMPT_NOT_ALLOWED"` for retry after a passed first attempt.
+- `409` with `error_code: "CAMPAIGN_INCOMPLETE"` for finalize with fewer than nine terminal cases.
+- `500` with `error_code: "CAMPAIGN_PROJECTION_INVALID"` for inconsistent stored records.
+- `500` with `error_code: "INTERNAL_ERROR"` for unexpected failures.
+
+### Shared DTO names
+
+All campaign DTOs live in `shared/types/campaign-supervision.ts` and `shared/types/campaign-ingest.ts`, normalized by `shared/contracts/campaign-supervision.ts` and `shared/contracts/campaign-ingest.ts`:
+
+- `Track1CampaignSummary` (list item)
+- `Track1CampaignDetail` (detail with 3 agents × 3 cases)
+- `Track1CampaignAgentDetail`, `Track1CampaignCaseDetail`, `Track1CampaignAttemptSummary`
+- `Track1CampaignEvidenceExport` (evidence with deterministic session refs)
+
+Schema versions are pinned via `TRACK1_CAMPAIGN_READ_SCHEMA_VERSION` (`track1-campaign-read.v1`) and `TRACK1_CAMPAIGN_EVIDENCE_SCHEMA_VERSION` (`track1-campaign-evidence.v1`).
+
+### Runtime dependency composition
+
+A single `createRuntimeDependencies()` composition root creates one `InMemoryTaskRepository` and one `InMemoryCampaignRepository`. Both the public `AppModule` and the internal `InternalAppModule` share the same repository instances, so writes from the internal listener are immediately visible to public reads.

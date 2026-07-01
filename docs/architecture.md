@@ -429,6 +429,41 @@ The following capabilities remain outside REQ-009 scope and must not be added wi
 - full report generation (no PDF, CSV, XLSX, or ZIP export)
 - OpenClaw integration, cluster aggregation, or pagination
 
+## REQ-T1-DEMO-010 Track 1 Campaign Ingest and Supervision Backend
+
+REQ-T1-DEMO-010 adds a split-listener backend for Track 1 campaign supervision. The internal listener accepts authenticated ingest writes; the public listener serves read-only projections. Both listeners share the same in-memory repositories but never share routes.
+
+### Listener and repository assignment
+
+- `backend/src/runtime-dependencies.ts` is the single composition root. It creates one `InMemoryTaskRepository` and one `InMemoryCampaignRepository`. Both repositories are passed to the public `AppModule` and the internal `InternalAppModule` so writes from ingest are immediately visible to public reads.
+- `backend/src/app.module.ts` (public listener) owns the `SupervisionModule`, which in turn owns the `SupervisionController` (session reads), `CampaignSupervisionController` (campaign reads), and the shared `InMemoryCampaignRepository`.
+- `backend/src/internal-app.module.ts` (internal listener) owns the `CampaignIngestController` and `CampaignIngestService`, which reference the same `InMemoryCampaignRepository` instance via constructor injection.
+- `backend/src/common/http/router.ts` (public router) recognizes `/api/supervision/campaigns`, `/api/supervision/campaigns/:campaignId`, and `/api/supervision/campaigns/:campaignId/evidence`. It never matches `/internal/*`.
+- `backend/src/common/http/internal-router.ts` (internal router) recognizes `/internal/health` and the four campaign ingest write routes only.
+
+### Ingest lifecycle
+
+- `backend/src/modules/supervision/campaign-ingest.service.ts` enforces the campaign lifecycle: start (idempotent on manifest hash), snapshot ingest (hash chain + sequence gap check + second-attempt-only-after-failure), finalize (requires 9 terminal cases; completed requires all passed), and evidence registration (only after completed finalize).
+- `backend/src/modules/supervision/campaign-ingest-auth.ts` performs timing-safe bearer token comparison. Both supplied and expected tokens are SHA-256 hashed before `timingSafeEqual`.
+- `backend/src/modules/supervision/campaign-ingest.controller.ts` wraps the service with auth and body limits. It never imports engine modules, model invocation, tool execution, or retry logic.
+- `backend/src/common/http/limited-json-body.ts` enforces byte limits on raw request bodies before JSON parse: 256 KiB for lifecycle envelopes, 2 MiB for snapshots.
+
+### Read projection
+
+- `backend/src/modules/supervision/campaign-projector.ts` recomputes all campaign counters from stored attempts/results. It produces exactly 3 ordered agents and 9 ordered cases. Attempt summaries are content-free: they never carry `events`, `policy_decisions`, `alerts`, `blocked_records`, or `result`. Cross-agent case mismatches raise `CAMPAIGN_PROJECTION_INVALID`.
+- `backend/src/modules/supervision/campaign-supervision.service.ts` mirrors the supervision service pattern: project all records, filter, sort by `updated_at` desc then `campaign_id` asc, cap at 50. Detail and evidence lookups throw `CAMPAIGN_NOT_FOUND` or `CAMPAIGN_EVIDENCE_NOT_READY` respectively.
+- `backend/src/modules/supervision/campaign-supervision.controller.ts` exposes three GET routes wrapped in `ApiResponse<T>`. It validates query parameters via `normalizeCampaignQuery`, which rejects unknown keys, duplicate keys, empty enum values, and control characters.
+- `backend/src/modules/supervision/dto/campaign-query.ts` is the query DTO. It accepts only `q`, `status`, `scenario_id`, and `agent_id`.
+
+### Explicit non-goals
+
+The following capabilities remain outside REQ-T1-DEMO-010 scope and must not be added without a new requirement:
+
+- campaign execution, retry, or model/tool invocation from either controller
+- persistence beyond the in-memory repositories
+- pagination beyond the 50-row cap
+- direct engine imports from the ingest or supervision controllers
+
 ## REQ-T1-SANDBOX-CONTRACT-005 Track 1 Sandbox Supervision Contract
 
 Track 1 sandbox supervision data is owned by the shared contract layer and kept separate from engine execution.
