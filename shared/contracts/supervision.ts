@@ -284,7 +284,8 @@ export function normalizeSandboxSupervisionOverview(
 export const SUPERVISION_STATE_CHANGES = [
   "none",
   "outbox_append",
-  "virtual_file_write"
+  "virtual_file_write",
+  "simulated"
 ] as const;
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;

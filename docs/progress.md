@@ -2707,3 +2707,20 @@ User fifth review identified that R28's constant `"projected"` token design brok
   - full integration `backend-campaign-ingest.api.spec.ts` — 14/14 pass (supervision API 404 regression resolved)
 - status: PHASE_2_REWORK_REVIEW_4_COMPLETE_PENDING_REVIEW
 - next blocker: user review of Phase 2 rework review 4 (R31-R34) before Phase 3
+
+## Phase 2 Rework Review 5 (1 P1 finding, R35)
+
+User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set was incompatible with Phase 3's observed-session contract. Phase 3 (`engines/sandbox/src/monitoring/observed-session.ts:642`) produces `state_change: "none" | "simulated"`, but R31 only accepted `["none", "outbox_append", "virtual_file_write"]`. This caused Phase 3's successful tool_result events to be rejected with `CAMPAIGN_SNAPSHOT_INVALID`, blocking Phase 3 from entering Campaign ingest.
+
+- R35 (P1): Added `"simulated"` to `SUPERVISION_STATE_CHANGES` in `shared/contracts/supervision.ts` and to `SandboxSupervisionStateChange` type in `shared/types/supervision.ts`. The closed set now accepts all four values: `none`, `outbox_append`, `virtual_file_write`, `simulated`. This maintains backward compatibility with existing simulated-tools executor output while accepting Phase 3's observed-session output.
+- files modified:
+  - `shared/types/supervision.ts` — added `"simulated"` to `SandboxSupervisionStateChange` union
+  - `shared/contracts/supervision.ts` — added `"simulated"` to `SUPERVISION_STATE_CHANGES` array
+  - `backend/tests/campaign-ingest.service.spec.ts` — added R35 test: snapshot with `state_change="simulated"` is accepted
+  - `docs/progress.md` — added Phase 2 Rework Review 5 section
+- test result after rework review 5:
+  - `npm run test:backend` — 229 tests, 228 pass, 1 pre-existing failure (`tests/integration/backend-task-center.api.spec.ts:648`: Semgrep `spawn EPERM` — unrelated to campaign ingest)
+  - `npm run test:repo` — 92/92 pass
+  - `npm run test:shared` — 147/147 pass
+- status: PHASE_2_REWORK_REVIEW_5_COMPLETE_PENDING_REVIEW
+- next blocker: user review of Phase 2 rework review 5 (R35) before Phase 3

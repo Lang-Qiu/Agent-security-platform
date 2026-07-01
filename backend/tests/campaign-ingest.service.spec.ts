@@ -2125,6 +2125,63 @@ test("REQ-T1-DEMO-010 rejects tool_name not in approved closed set", async () =>
   );
 });
 
+// R35 (Phase 2 rework review 5 P1): state_change closed set must include
+// "simulated" to be compatible with Phase 3's observed-session contract.
+// Phase 3 (engines/sandbox/src/monitoring/observed-session.ts:642) produces
+// state_change: "none" | "simulated", but R31's SUPERVISION_STATE_CHANGES
+// only accepts ["none", "outbox_append", "virtual_file_write"]. This causes
+// Phase 3's successful tool_result events to be rejected with
+// CAMPAIGN_SNAPSHOT_INVALID, blocking Phase 3 from entering Campaign ingest.
+
+test("REQ-T1-DEMO-010 accepts tool_result with state_change=simulated from Phase 3", async () => {
+  const { service, repository } = await makeStartedService();
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+
+  // Add a tool_result event with state_change="simulated" — this is what
+  // Phase 3's observed-session produces for successful simulated tool calls.
+  const toolResultEvent = {
+    event_id: "event_tool_result_1",
+    session_id: baseSnapshot.result.details.session_id!,
+    sequence: 3,
+    event_type: "tool_result" as const,
+    occurred_at: "2026-06-30T00:00:03.000Z",
+    source: "agent" as const,
+    evidence_refs: ["evidence://tool/result/1"],
+    payload: {
+      call_id: "call_1",
+      tool_name: "send_email",
+      status: "success" as const,
+      result_ref: "result://tool/success/1",
+      state_change: "simulated" as const
+    }
+  };
+  const eventsWithResult = [
+    ...baseSnapshot.result.details.events!,
+    toolResultEvent
+  ];
+  const detailsWithResult = {
+    ...baseSnapshot.result.details,
+    events: eventsWithResult,
+    event_count: eventsWithResult.length
+  };
+  const resultWithResult = { ...baseSnapshot.result, details: detailsWithResult };
+  const withoutHash = { ...baseSnapshot, result: resultWithResult };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  // R35: must NOT throw — state_change="simulated" is a valid Phase 3 value.
+  service.ingestSnapshot(snapshot);
+
+  const stored = repository.findById(FIXED_CAMPAIGN_ID);
+  assert.ok(stored, "snapshot with state_change=simulated must be accepted");
+});
+
 // R33 (Phase 2 rework review 4 P1 #3): constant projection makes R26's
 // deep-equal prefix check blind to reference field changes. Two different
 // target_ref values both become "projected", so the deep-equal check passes.
