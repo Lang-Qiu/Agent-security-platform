@@ -2587,11 +2587,11 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - `backend/tests/runtime-dependencies.spec.ts` — shared composition root
   - `backend/tests/campaign-projector.spec.ts` — 10 projector tests (counters, cross-agent rejection, content-free detail, evidence)
   - `backend/tests/campaign-supervision.service.spec.ts` — 9 service tests (list cap, filtering, sort, detail/evidence lookups)
-  - `tests/integration/backend-campaign-ingest.api.spec.ts` — 10 internal API integration tests
+  - `tests/integration/backend-campaign-ingest.api.spec.ts` — 14 internal API integration tests
   - `tests/integration/backend-supervision.api.spec.ts` — 6 new campaign public API integration tests
   - `tests/repository/track1-campaign-backend.spec.ts` — 8 permanent gate tests
 - test result:
-  - `npm run test:backend` — 102 tests, 101 pass, 1 pre-existing failure (network-dependent asset scan test 65, not caused by Phase 2)
+  - `npm run test:backend` — 192 tests, 191 pass, 1 pre-existing failure (network-dependent asset scan `task-engine.service.spec.ts`, not caused by Phase 2)
   - `npm run test:repo` — 91 tests, 91 pass (83 existing + 8 new gate)
   - `npm run test:shared` — 146/146 pass (unchanged)
   - `npm run test:engine:sandbox` — 391/391 pass (unchanged)
@@ -2613,5 +2613,25 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - `67b416e` feat(backend): project campaign supervision views
   - `6a2cfb8` feat(api): expose campaign supervision reads
   - (P2-T8 docs commit integrated into the gate entry above)
-- status: PHASE_2_COMPLETE_PENDING_REVIEW
-- next blocker: user review of Phase 2 before Phase 3
+- status: PHASE_2_REWORK_COMPLETE_PENDING_REVIEW
+- next blocker: user review of Phase 2 rework (R1-R9) before Phase 3
+
+## Phase 2 Rework (9 findings, R1-R9)
+
+User review of Phase 2 identified 9 issues (7 P1, 2 P2). All fixed via strict RED→GREEN→commit per finding.
+
+- R1 (finding 4, P1): `failed` and `partial_success` now treated as terminal result statuses. Commit `02b1b00`.
+- R2 (finding 5, P1): Campaign manifest SHA-256 pinned to canonical `3fb7887447cc...`. Commit `24b6c25`.
+- R3 (finding 2, P1): Snapshot content boundary closed — validates canonical task_id/session_id, time ordering; strips summary, metadata, target, result_id, started_at, finished_at. Commit `ef9e0f0`.
+- R4 (finding 7, P1): `ask_count` uses consistent highest-action reduction in both projector and ingest summary. Commit `bd055f9`.
+- R5 (finding 8, P2): Content-Type strictly matched via `split(";")[0].trim().toLowerCase()` — substring bypass blocked. Commit `ed6fd2f`.
+- R6 (finding 6, P1): Auth checked before body read (unauthenticated→401 regardless of body); route `campaignId` matched against `body.campaign_id` (mismatch→400 `CAMPAIGN_PATH_BODY_MISMATCH`). Commit `3805c57`.
+- R7 (finding 3, P1): Campaign sessions mirrored to TaskRepository on ingest — session inspector can query ingested sessions via public API. Commit `9a4ecff`.
+- R8 (finding 1, P1): `main.ts` production entrypoint starts both public (3000) and internal (3001) listeners with shared deps via `createProductionServers`. Commit `34b64a1`.
+- R9a (finding 9a, P2): CRLF line endings normalized to LF; gate test enforces. Commit `519790c`.
+- R9b (finding 9b, P2): `docs/progress.md` test counts corrected (was 101/102, now 191/192).
+- test result after rework:
+  - `npm run test:backend` — 192 tests, 191 pass, 1 pre-existing failure (network-dependent `task-engine.service.spec.ts`)
+  - `npm run test:repo` — 91/91 pass
+  - `npm run test:shared` — 146/146 pass
+  - `npm run test:engine:sandbox` — 391/391 pass
