@@ -127,6 +127,67 @@ test("REQ-T1-DEMO-010 start rejects a non-pinned campaign manifest hash even wit
   assert.equal(repository.list().length, 0);
 });
 
+// R1 (Phase 2 rework finding 4): a sandbox result with status="failed" is a
+// legitimate terminal state produced by the sandbox monitor. The ingest
+// service must treat it as terminal so the attempt becomes "failed" (or
+// "passed" when expected_action matches), not "running". Without this fix
+// failed attempts could never enter the retry flow or be finalized.
+test("REQ-T1-DEMO-010 treats sandbox result status=failed as terminal", async () => {
+  const { service } = await makeStartedService();
+  // Build a snapshot whose result has status="failed" AND a non-matching
+  // action ("allow" while case 0 expects "deny") so the attempt becomes
+  // "failed" rather than "passed".
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null, {
+    action: "allow"
+  });
+  const failedResult = {
+    ...baseSnapshot.result,
+    status: "failed" as const,
+    summary: "Sandbox failed terminally"
+  };
+  // Recompute snapshot hash because result changed.
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const withoutHash = { ...baseSnapshot, result: failedResult };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  const ack = service.ingestSnapshot(snapshot) as { status: string };
+  assert.equal(ack.status, "failed");
+});
+
+test("REQ-T1-DEMO-010 treats sandbox result status=partial_success as terminal", async () => {
+  const { service } = await makeStartedService();
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const partialResult = {
+    ...baseSnapshot.result,
+    status: "partial_success" as const,
+    summary: "Sandbox partial success terminal state"
+  };
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const withoutHash = { ...baseSnapshot, result: partialResult };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  const ack = service.ingestSnapshot(snapshot) as { status: string };
+  // partial_success is terminal; for case 0 expected_action="deny" but the
+  // fixture result has action "deny" too (matches), so status should be "passed".
+  assert.notEqual(ack.status, "running");
+  assert.ok(
+    ack.status === "passed" || ack.status === "failed",
+    `expected terminal attempt status, got ${ack.status}`
+  );
+});
+
 // -- Snapshot lifecycle -------------------------------------------------------
 
 test("REQ-T1-DEMO-010 accepts byte-identical snapshot retry only", async () => {

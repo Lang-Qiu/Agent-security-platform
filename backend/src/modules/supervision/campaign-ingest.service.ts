@@ -52,7 +52,17 @@ function deriveHighestAction(
 }
 
 function isTerminalResultStatus(status: string): boolean {
-  return status === "finished" || status === "blocked";
+  // R1 (Phase 2 rework finding 4): sandbox monitor produces status="failed"
+  // and status="partial_success" as legitimate terminal states. Only
+  // "pending" and "running" are non-terminal. Treating "failed" as non-
+  // terminal prevented failed attempts from entering the retry flow and
+  // made finalize impossible when the last snapshot was a failure.
+  return (
+    status === "finished" ||
+    status === "failed" ||
+    status === "blocked" ||
+    status === "partial_success"
+  );
 }
 
 function determineAttemptStatus(
