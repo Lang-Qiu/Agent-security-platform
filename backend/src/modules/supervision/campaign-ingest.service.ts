@@ -9,6 +9,10 @@ import {
   isTaskId,
   normalizeTrack1CampaignSummary
 } from "../../../../shared/contracts/campaign-supervision.ts";
+import {
+  isStrictIso8601,
+  parseIso8601Instant
+} from "../../../../shared/utils/guards.ts";
 import type {
   Track1CampaignEvidenceRegistration,
   Track1CampaignFinalizeEnvelope,
@@ -125,7 +129,35 @@ function validateAndProjectSnapshotResult(
     );
   }
 
-  if (result.created_at > result.updated_at) {
+  // R12 (Phase 2 rework review P1 #3): validate both timestamps as strict
+  // ISO-8601 with real calendar dates, then compare PARSED instants (not
+  // lexicographic strings). The previous string comparison accepted
+  // arbitrary strings like "aaa"/"bbb" and silently produced passed
+  // attempts from malformed timestamps.
+  if (!isStrictIso8601(result.created_at)) {
+    throw new DomainError(
+      "Snapshot result created_at must be a strict ISO-8601 timestamp",
+      "CAMPAIGN_SNAPSHOT_INVALID",
+      400
+    );
+  }
+  if (!isStrictIso8601(result.updated_at)) {
+    throw new DomainError(
+      "Snapshot result updated_at must be a strict ISO-8601 timestamp",
+      "CAMPAIGN_SNAPSHOT_INVALID",
+      400
+    );
+  }
+  const createdInstant = parseIso8601Instant(result.created_at);
+  const updatedInstant = parseIso8601Instant(result.updated_at);
+  if (createdInstant === null || updatedInstant === null) {
+    throw new DomainError(
+      "Snapshot result timestamps must be parseable ISO-8601 instants",
+      "CAMPAIGN_SNAPSHOT_INVALID",
+      400
+    );
+  }
+  if (createdInstant > updatedInstant) {
     throw new DomainError(
       "Snapshot result created_at must not exceed updated_at",
       "CAMPAIGN_SNAPSHOT_INVALID",

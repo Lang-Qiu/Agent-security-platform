@@ -336,6 +336,87 @@ test("REQ-T1-DEMO-010 rejects snapshot with created_at > updated_at", async () =
   );
 });
 
+// R12 (Phase 2 rework review P1 #3): timestamps must be validated as strict
+// ISO-8601 with real calendar dates, and monotonicity must be checked on
+// the PARSED instants, not lexicographically. The previous check
+// `created_at > updated_at` accepted arbitrary strings like "aaa"/"bbb"
+// and would silently produce a passed attempt from malformed timestamps.
+test("REQ-T1-DEMO-010 rejects snapshot with non-ISO-8601 created_at", async () => {
+  const { service } = await makeStartedService();
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const badResult = {
+    ...baseSnapshot.result,
+    created_at: "aaa",
+    updated_at: "bbb"
+  };
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const withoutHash = { ...baseSnapshot, result: badResult };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  assert.throws(
+    () => service.ingestSnapshot(snapshot),
+    { code: "CAMPAIGN_SNAPSHOT_INVALID" }
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects snapshot with invalid calendar date in updated_at", async () => {
+  const { service } = await makeStartedService();
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const badResult = {
+    ...baseSnapshot.result,
+    created_at: "2026-06-30T00:00:00.000Z",
+    updated_at: "2026-13-45T00:00:00.000Z"
+  };
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const withoutHash = { ...baseSnapshot, result: badResult };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  assert.throws(
+    () => service.ingestSnapshot(snapshot),
+    { code: "CAMPAIGN_SNAPSHOT_INVALID" }
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects snapshot where parsed instant created_at > updated_at despite lex order", async () => {
+  const { service } = await makeStartedService();
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  // Same UTC instant expressed with different timezone offsets. Lexically
+  // "2026-06-30T00:05:00+00:00" < "2026-06-30T00:01:00+05:00" but the
+  // parsed instants are 00:05Z and 2026-06-29T19:01Z, so created_at is
+  // actually LATER than updated_at.
+  const badResult = {
+    ...baseSnapshot.result,
+    created_at: "2026-06-30T00:05:00+00:00",
+    updated_at: "2026-06-30T00:01:00+05:00"
+  };
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const withoutHash = { ...baseSnapshot, result: badResult };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  assert.throws(
+    () => service.ingestSnapshot(snapshot),
+    { code: "CAMPAIGN_SNAPSHOT_INVALID" }
+  );
+});
+
 test("REQ-T1-DEMO-010 strips metadata from stored snapshot result", async () => {
   const { service, repository } = await makeStartedService();
   const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
