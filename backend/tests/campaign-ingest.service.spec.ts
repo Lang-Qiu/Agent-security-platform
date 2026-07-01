@@ -1414,3 +1414,112 @@ test("REQ-T1-DEMO-010 does not persist narrative content in blocked_record reaso
     "narrative content in blocked_record reason must not be persisted"
   );
 });
+
+// R22 (Phase 2 rework review 2 P1 #5): envelope-to-event correlation.
+// The validation function only receives `result` and has no access to the
+// outer envelope's scenario_id/case_id. A client can set the envelope to
+// T1-SC-001-C001 while injecting events with scenario_id=T1-SC-002 and
+// case_id=T1-SC-002-C001, and the mismatch is accepted as "passed".
+// The validation must receive the envelope context and reject events whose
+// scenario_id or case_id disagree with the envelope.
+
+test("REQ-T1-DEMO-010 rejects snapshot when event scenario_id mismatches envelope scenario_id", async () => {
+  const { service } = await makeStartedService();
+  const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
+  // Envelope says T1-SC-001 / T1-SC-001-C001 (case index 0).
+  // Inject events with mismatched scenario_id and case_id.
+  const maliciousEvents = baseSnapshot.result.details.events!.map((e) => ({
+    ...e,
+    scenario_id: "T1-SC-002",
+    case_id: "T1-SC-002-C001"
+  }));
+  const maliciousDetails = {
+    ...baseSnapshot.result.details,
+    events: maliciousEvents
+  };
+  const maliciousResult = { ...baseSnapshot.result, details: maliciousDetails };
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const withoutHash = { ...baseSnapshot, result: maliciousResult };
+  delete (withoutHash as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot = {
+    ...withoutHash,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+  };
+
+  assert.throws(
+    () => service.ingestSnapshot(snapshot),
+    { code: "CAMPAIGN_SNAPSHOT_INVALID" }
+  );
+});
+
+// R22: event-prefix monotonicity across snapshots. When a new snapshot
+// arrives for an existing attempt, its events must be a superset of the
+// previous snapshot's events (by event_id). A snapshot that drops or
+// rewrites an event_id from the previous snapshot must be rejected —
+// otherwise a client could silently rewrite history.
+
+test("REQ-T1-DEMO-010 rejects snapshot when event_prefix shrinks across snapshots", async () => {
+  const { service } = await makeStartedService();
+  // Snapshot 1 (sequence 1): use status="running" so the attempt is
+  // non-terminal and can accept a second snapshot. The events are
+  // [event_tool_request_1, event_policy_decision_1].
+  const baseSnapshot1 = makeCampaignSnapshotForCase(0, 1, 1, null);
+  const { calculateTrack1SnapshotSha256 } = await import(
+    "../../shared/contracts/campaign-ingest.ts"
+  );
+  const runningResult = {
+    ...baseSnapshot1.result,
+    status: "running" as const,
+    updated_at: "2026-06-30T00:01:05.000Z"
+  };
+  const withoutHash1: Track1CampaignSnapshotWithoutHash = {
+    ...baseSnapshot1,
+    result: runningResult,
+    observed_at: "2026-06-30T00:01:05.000Z"
+  };
+  delete (withoutHash1 as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot1 = {
+    ...withoutHash1,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash1)
+  };
+  service.ingestSnapshot(snapshot1);
+
+  // Snapshot 2 (sequence 2): change event_policy_decision_1's event_id to
+  // a different value. The supervision contract still passes (policy_decision
+  // event is identified by event_type, not event_id), but the prefix check
+  // must reject this because "event_policy_decision_1" from snapshot 1 is
+  // no longer present.
+  const modifiedEvents = snapshot1.result.details.events!.map((e) =>
+    e.event_type === "policy_decision"
+      ? { ...e, event_id: "event_policy_decision_REWRITTEN" }
+      : e
+  );
+  const modifiedDetails = {
+    ...snapshot1.result.details,
+    events: modifiedEvents
+  };
+  const modifiedResult = {
+    ...snapshot1.result,
+    details: modifiedDetails,
+    updated_at: "2026-06-30T00:01:10.000Z"
+  };
+  const withoutHash2: Track1CampaignSnapshotWithoutHash = {
+    ...snapshot1,
+    result: modifiedResult,
+    sequence: 2,
+    previous_snapshot_sha256: snapshot1.snapshot_sha256,
+    observed_at: "2026-06-30T00:01:10.000Z"
+  };
+  delete (withoutHash2 as { snapshot_sha256?: string }).snapshot_sha256;
+  const snapshot2 = {
+    ...withoutHash2,
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash2)
+  };
+
+  assert.throws(
+    () => service.ingestSnapshot(snapshot2),
+    { code: "CAMPAIGN_SNAPSHOT_INVALID" }
+  );
+});

@@ -111,8 +111,13 @@ function cloneStoredCampaignRecord(record: StoredCampaignRecord): StoredCampaign
 // the result to a closed shape that strips content fields (summary, metadata,
 // target) not needed for campaign projection. This prevents arbitrary content
 // like metadata.raw_prompt="SECRET_SENTINEL" from being persisted.
+// R22 (Phase 2 rework review 2 P1 #5): accept envelope context (scenario_id,
+// case_id) and validate that any event carrying scenario_id or case_id
+// agrees with the envelope. Without this, a client could set the envelope
+// to T1-SC-001-C001 while injecting events with T1-SC-002-C001.
 function validateAndProjectSnapshotResult(
-  result: BaseResult<SandboxRunResultDetails>
+  result: BaseResult<SandboxRunResultDetails>,
+  envelopeContext: { scenario_id: string; case_id: string }
 ): BaseResult<SandboxRunResultDetails> {
   if (!isTaskId(result.task_id)) {
     throw new DomainError(
@@ -165,6 +170,36 @@ function validateAndProjectSnapshotResult(
       "CAMPAIGN_SNAPSHOT_INVALID",
       400
     );
+  }
+
+  // R22 (Phase 2 rework review 2 P1 #5): envelope-to-event correlation.
+  // Any event that carries scenario_id or case_id must agree with the
+  // envelope. Without this, a client could set the envelope to
+  // T1-SC-001-C001 while injecting events with T1-SC-002-C001, and the
+  // mismatch would be accepted as "passed".
+  if (result.details.events) {
+    for (const event of result.details.events) {
+      if (
+        event.scenario_id !== undefined &&
+        event.scenario_id !== envelopeContext.scenario_id
+      ) {
+        throw new DomainError(
+          `Event scenario_id "${event.scenario_id}" does not match envelope scenario_id "${envelopeContext.scenario_id}"`,
+          "CAMPAIGN_SNAPSHOT_INVALID",
+          400
+        );
+      }
+      if (
+        event.case_id !== undefined &&
+        event.case_id !== envelopeContext.case_id
+      ) {
+        throw new DomainError(
+          `Event case_id "${event.case_id}" does not match envelope case_id "${envelopeContext.case_id}"`,
+          "CAMPAIGN_SNAPSHOT_INVALID",
+          400
+        );
+      }
+    }
   }
 
   // R21 (Phase 2 rework review 2 P1 #4): project nested narrative content.
@@ -530,7 +565,12 @@ export class CampaignIngestService {
     // R3: validate canonical IDs, time ordering, and project to closed shape
     // before storing. This strips summary, metadata, target, and other
     // content fields that should not be persisted.
-    const projectedResult = validateAndProjectSnapshotResult(normalized.result);
+    // R22: pass envelope context so event scenario_id/case_id can be
+    // validated against the outer envelope.
+    const projectedResult = validateAndProjectSnapshotResult(normalized.result, {
+      scenario_id: normalized.scenario_id,
+      case_id: normalized.case_id
+    });
     const sessionId = projectedResult.details.session_id!;
 
     // R13 (Phase 2 rework review P1 #4): enforce identity continuity — the
@@ -552,6 +592,26 @@ export class CampaignIngestService {
           "CAMPAIGN_SNAPSHOT_IDENTITY_DRIFT",
           409
         );
+      }
+
+      // R22 (Phase 2 rework review 2 P1 #5): event-prefix monotonicity.
+      // The new snapshot's events must be a superset of the previous
+      // snapshot's events (by event_id). A snapshot that drops or rewrites
+      // an event_id from the previous snapshot must be rejected — otherwise
+      // a client could silently rewrite history.
+      const previousEvents = existingAttempt.result.details.events;
+      const newEvents = projectedResult.details.events;
+      if (previousEvents && newEvents) {
+        const newEventIds = new Set(newEvents.map((e) => e.event_id));
+        for (const prevEvent of previousEvents) {
+          if (!newEventIds.has(prevEvent.event_id)) {
+            throw new DomainError(
+              `Event "${prevEvent.event_id}" from previous snapshot is missing in the new snapshot`,
+              "CAMPAIGN_SNAPSHOT_INVALID",
+              400
+            );
+          }
+        }
       }
     }
 
