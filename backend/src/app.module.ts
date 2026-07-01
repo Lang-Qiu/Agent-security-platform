@@ -92,6 +92,32 @@ export class AppModule {
           writeJsonResponse(response, { statusCode: 200, body: httpResponse });
           return;
         }
+        case "listCampaigns": {
+          const httpResponse = this.supervisionModule.campaignSupervisionController.listCampaigns(
+            url.searchParams,
+            requestId
+          );
+          writeJsonResponse(response, { statusCode: 200, body: httpResponse });
+          return;
+        }
+        case "getCampaignDetail": {
+          const campaignId = this.decodeCampaignId(route.params.campaignId);
+          const httpResponse = this.supervisionModule.campaignSupervisionController.getCampaignDetail(
+            campaignId,
+            requestId
+          );
+          writeJsonResponse(response, { statusCode: 200, body: httpResponse });
+          return;
+        }
+        case "getCampaignEvidence": {
+          const campaignId = this.decodeCampaignId(route.params.campaignId);
+          const httpResponse = this.supervisionModule.campaignSupervisionController.getCampaignEvidence(
+            campaignId,
+            requestId
+          );
+          writeJsonResponse(response, { statusCode: 200, body: httpResponse });
+          return;
+        }
       }
     } catch (error) {
       const domainError =
@@ -116,6 +142,18 @@ export class AppModule {
       throw new DomainError(
         `Malformed session id encoding: ${raw}`,
         "INVALID_SUPERVISION_QUERY",
+        400
+      );
+    }
+  }
+
+  private decodeCampaignId(raw: string): string {
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      throw new DomainError(
+        `Malformed campaign id encoding: ${raw}`,
+        "INVALID_CAMPAIGN_QUERY",
         400
       );
     }

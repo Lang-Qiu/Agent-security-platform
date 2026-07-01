@@ -9,6 +9,11 @@ import {
   makeStoredSandboxRecord,
   RAW_NARRATIVE_SENTINEL
 } from "../fixtures/track1-supervision.fixture.ts";
+import {
+  makeCompletedCampaignRecord,
+  makeCampaignEvidenceRegistration,
+  FIXED_CAMPAIGN_ID
+} from "../../backend/tests/fixtures/track1-campaign.fixture.ts";
 
 const mainModulePath = resolve(import.meta.dirname, "../../backend/src/main.ts");
 const sharedEntrypointPath = resolve(import.meta.dirname, "../../shared/index.ts");
@@ -17,6 +22,11 @@ type AppModule = {
   taskCenterModule: {
     repository: {
       save: (record: unknown) => void;
+    };
+  };
+  supervisionModule: {
+    campaignRepository: {
+      create: (record: unknown) => unknown;
     };
   };
 };
@@ -30,6 +40,9 @@ type SharedModule = {
   normalizeSandboxSupervisionOverview?: (value: unknown) => unknown;
   normalizeSandboxSupervisionSessionDetail?: (value: unknown) => unknown;
   normalizeSandboxSupervisionEvidenceExport?: (value: unknown) => unknown;
+  normalizeTrack1CampaignDetail?: (value: unknown) => unknown;
+  normalizeTrack1CampaignEvidenceExport?: (value: unknown) => unknown;
+  normalizeTrack1CampaignSummary?: (value: unknown) => unknown;
   isApiResponse?: (value: unknown) => boolean;
 };
 
@@ -406,4 +419,162 @@ test("REQ-T1-SUPERVISION-UI-009 existing task and health routes remain green", a
   assert.equal(tasksResult.status, 200);
   assert.equal((healthResult.body as { success: boolean }).success, true);
   assert.equal((tasksResult.body as { success: boolean }).success, true);
+});
+
+// -- P2-T7: Campaign public read API ------------------------------------------
+
+async function startBackendWithCompletedCampaign(options?: {
+  evidence: boolean;
+}): Promise<{
+  baseUrl: string;
+  close: () => Promise<void>;
+}> {
+  const mainModule = await importIfExists<MainModule>(mainModulePath);
+  if (!mainModule?.createAppModule || !mainModule?.createAppServer) {
+    throw new Error("Backend module not available");
+  }
+
+  const app = mainModule.createAppModule();
+  const record = makeCompletedCampaignRecord();
+  if (options?.evidence) {
+    record.evidence = makeCampaignEvidenceRegistration();
+  } else {
+    record.evidence = null;
+  }
+  app.supervisionModule.campaignRepository.create(record);
+
+  const server = mainModule.createAppServer(app);
+  const { baseUrl, close } = await startServer(server);
+  return { baseUrl, close };
+}
+
+test("REQ-T1-DEMO-010 exposes campaign list detail and evidence reads", async (t) => {
+  const sharedModule = await importIfExists<SharedModule>(sharedEntrypointPath);
+  assert.ok(sharedModule?.normalizeTrack1CampaignDetail);
+  assert.ok(sharedModule?.normalizeTrack1CampaignEvidenceExport);
+
+  const { baseUrl, close } = await startBackendWithCompletedCampaign({
+    evidence: true
+  });
+  t.after(close);
+
+  const encodedCampaignId = encodeURIComponent(FIXED_CAMPAIGN_ID);
+
+  const listResult = await getJson(baseUrl, "/api/supervision/campaigns");
+  const detailResult = await getJson(
+    baseUrl,
+    `/api/supervision/campaigns/${encodedCampaignId}`
+  );
+  const evidenceResult = await getJson(
+    baseUrl,
+    `/api/supervision/campaigns/${encodedCampaignId}/evidence`
+  );
+
+  assert.equal(listResult.status, 200);
+  assert.equal(detailResult.status, 200);
+  assert.equal(evidenceResult.status, 200);
+
+  const listBody = listResult.body as { success: boolean; data: unknown };
+  const detailBody = detailResult.body as { success: boolean; data: unknown };
+  const evidenceBody = evidenceResult.body as { success: boolean; data: unknown };
+
+  assert.equal(listBody.success, true);
+  assert.equal(detailBody.success, true);
+  assert.equal(evidenceBody.success, true);
+
+  assert.ok(Array.isArray(listBody.data));
+  assert.notEqual(
+    sharedModule.normalizeTrack1CampaignDetail?.(detailBody.data),
+    null
+  );
+  assert.notEqual(
+    sharedModule.normalizeTrack1CampaignEvidenceExport?.(evidenceBody.data),
+    null
+  );
+});
+
+test("REQ-T1-DEMO-010 rejects unknown campaign query keys", async (t) => {
+  const { baseUrl, close } = await startBackendWithCompletedCampaign({
+    evidence: false
+  });
+  t.after(close);
+
+  const result = await getJson(baseUrl, "/api/supervision/campaigns?raw_prompt=sentinel");
+  assert.equal(result.status, 400);
+  assert.equal(
+    (result.body as { error_code: string }).error_code,
+    "INVALID_CAMPAIGN_QUERY"
+  );
+});
+
+test("REQ-T1-DEMO-010 campaign detail returns 404 for unknown campaign", async (t) => {
+  const { baseUrl, close } = await startBackendWithCompletedCampaign({
+    evidence: false
+  });
+  t.after(close);
+
+  const unknownId = encodeURIComponent("campaign:t1:ffffffffffffffffffffffffffffffff");
+  const result = await getJson(baseUrl, `/api/supervision/campaigns/${unknownId}`);
+  assert.equal(result.status, 404);
+  assert.equal(
+    (result.body as { error_code: string }).error_code,
+    "CAMPAIGN_NOT_FOUND"
+  );
+});
+
+test("REQ-T1-DEMO-010 campaign evidence returns 409 before registration", async (t) => {
+  const { baseUrl, close } = await startBackendWithCompletedCampaign({
+    evidence: false
+  });
+  t.after(close);
+
+  const encodedCampaignId = encodeURIComponent(FIXED_CAMPAIGN_ID);
+  const result = await getJson(
+    baseUrl,
+    `/api/supervision/campaigns/${encodedCampaignId}/evidence`
+  );
+  assert.equal(result.status, 409);
+  assert.equal(
+    (result.body as { error_code: string }).error_code,
+    "CAMPAIGN_EVIDENCE_NOT_READY"
+  );
+});
+
+test("REQ-T1-DEMO-010 campaign list filters by status", async (t) => {
+  const { baseUrl, close } = await startBackendWithCompletedCampaign({
+    evidence: false
+  });
+  t.after(close);
+
+  const completedResult = await getJson(baseUrl, "/api/supervision/campaigns?status=completed");
+  const createdResult = await getJson(baseUrl, "/api/supervision/campaigns?status=created");
+
+  assert.equal(completedResult.status, 200);
+  assert.equal(createdResult.status, 200);
+
+  const completedBody = completedResult.body as { data: Array<{ status: string }> };
+  const createdBody = createdResult.body as { data: Array<{ status: string }> };
+
+  assert.equal(completedBody.data.length, 1);
+  assert.equal(completedBody.data[0].status, "completed");
+  assert.equal(createdBody.data.length, 0);
+});
+
+test("REQ-T1-DEMO-010 existing session routes remain green alongside campaign routes", async (t) => {
+  const mainModule = await importIfExists<MainModule>(mainModulePath);
+  assert.ok(mainModule?.createAppModule);
+  assert.ok(mainModule?.createAppServer);
+  if (!mainModule?.createAppModule || !mainModule?.createAppServer) return;
+
+  const app = mainModule.createAppModule();
+  app.taskCenterModule.repository.save(
+    makeStoredSandboxRecord({ sessionId: "session:compat:001", taskId: "task:compat:001" })
+  );
+  const server = mainModule.createAppServer(app);
+  const { baseUrl, close } = await startServer(server);
+  t.after(close);
+
+  const sessionList = await getJson(baseUrl, "/api/supervision/sessions");
+  assert.equal(sessionList.status, 200);
+  assert.equal((sessionList.body as { success: boolean }).success, true);
 });

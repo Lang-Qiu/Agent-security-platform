@@ -7,7 +7,10 @@ export type RouteName =
   | "getRiskSummary"
   | "listSupervisionSessions"
   | "getSupervisionSession"
-  | "getSupervisionEvidence";
+  | "getSupervisionEvidence"
+  | "listCampaigns"
+  | "getCampaignDetail"
+  | "getCampaignEvidence";
 
 export interface RouteMatch {
   name: RouteName;
@@ -39,6 +42,38 @@ export function matchRoute(method: string | undefined, pathname: string): RouteM
   }
 
   const segments = pathname.split("/").filter(Boolean);
+
+  // /api/supervision/campaigns[/:campaignId[/evidence]]
+  // P2-T7: Route precedence places evidence > detail > list to avoid shadowing.
+  // Must be checked before the generic /api/supervision/sessions block below.
+  if (
+    method === "GET" &&
+    segments[0] === "api" &&
+    segments[1] === "supervision" &&
+    segments[2] === "campaigns"
+  ) {
+    if (segments.length === 3) {
+      return {
+        name: "listCampaigns",
+        params: {}
+      };
+    }
+
+    const campaignId = segments[3];
+    if (segments.length === 4) {
+      return {
+        name: "getCampaignDetail",
+        params: { campaignId }
+      };
+    }
+
+    if (segments.length === 5 && segments[4] === "evidence") {
+      return {
+        name: "getCampaignEvidence",
+        params: { campaignId }
+      };
+    }
+  }
 
   // /api/supervision/sessions[/:sessionId[/evidence]]
   if (
