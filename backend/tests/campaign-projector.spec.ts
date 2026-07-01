@@ -82,7 +82,13 @@ test("REQ-T1-DEMO-010 projector recomputes campaign counters", async () => {
   const expectedAsk = stored.attempts.filter((a) => {
     const decisions = a.result.details.policy_decisions ?? [];
     if (decisions.length === 0) return false;
-    return decisions.every((d) => d.action === "ask");
+    // R4: use highest-action reduction (matches ingest service + projector).
+    let highest: import("../../shared/types/sandbox.ts").SandboxPolicyAction = "allow";
+    for (const d of decisions) {
+      const prec = { allow: 0, alert: 1, ask: 2, deny: 3 } as const;
+      if (prec[d.action] > prec[highest]) highest = d.action;
+    }
+    return highest === "ask";
   }).length;
   assert.equal(projected.summary.ask_count, expectedAsk);
 
@@ -181,5 +187,48 @@ test("REQ-T1-DEMO-010 projector detail normalizes through campaign detail normal
   assert.notEqual(
     normalizeTrack1CampaignDetail(projected.detail),
     null
+  );
+});
+
+// R4 (Phase 2 rework finding 7): ask_count must be consistent between the
+// ingest service's finalize response and the public read projector. Both
+// must use the same reduction: an attempt counts toward ask_count when its
+// HIGHEST policy action is "ask" (not when EVERY decision is "ask"). An
+// attempt with mixed decisions [allow, ask] has highest action "ask" and
+// must be counted.
+//
+// The completed record has 2 cases with expected_action "ask" (case index 4
+// and 6), each with a single "ask" decision. Baseline ask_count = 2. We
+// prepend an "allow" decision to case 4's existing "ask" decision, producing
+// [allow, ask]. Highest action is still "ask" (precedence 2 > 0), so the
+// correct ask_count remains 2. The previous buggy projector logic used
+// decisions.every(d => d.action === "ask"), which would return false for
+// [allow, ask] and drop case 4 from the count, yielding 1.
+test("REQ-T1-DEMO-010 projector ask_count counts attempts whose highest action is ask (not every decision)", async () => {
+  const { projectTrack1Campaign } = await requireProjector();
+  const stored = makeCompletedCampaignRecord();
+
+  // Case 4 (index 4) has expected_action "ask" and a single "ask" decision.
+  // Prepend an "allow" decision so decisions = [allow, ask]. Highest action
+  // is "ask" (precedence 2 > 0). actual_action stays "ask" === expected_action.
+  const targetAttempt = stored.attempts[4];
+  const originalAsk = targetAttempt.result.details.policy_decisions![0];
+  const allowDecision = {
+    decision_id: "decision_allow_mixed_4",
+    subject_event_id: originalAsk.subject_event_id,
+    policy_id: "policy_allow_mixed_4",
+    action: "allow" as const,
+    reason_code: "allow_mixed",
+    reason: "Allow decision prepended to a mixed ask attempt",
+    evidence_refs: ["evidence://mixed/allow"],
+    decided_at: originalAsk.decided_at
+  };
+  targetAttempt.result.details.policy_decisions = [allowDecision, originalAsk];
+
+  const projected = projectTrack1Campaign(stored);
+  assert.equal(
+    projected.summary.ask_count,
+    2,
+    "ask_count must be 2: case 4 (mixed [allow, ask], highest=ask) + case 6 (single ask). The buggy every() logic would return 1."
   );
 });

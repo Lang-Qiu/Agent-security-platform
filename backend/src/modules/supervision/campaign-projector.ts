@@ -245,7 +245,11 @@ export function projectTrack1Campaign(
     alertCount += (details.alerts ?? []).length;
 
     const decisions = details.policy_decisions ?? [];
-    if (decisions.length > 0 && decisions.every((d) => d.action === "ask")) {
+    // R4 (Phase 2 rework finding 7): use the same highest-action reduction as
+    // the ingest service's projectSummary. An attempt counts toward ask_count
+    // when its HIGHEST policy action is "ask", not when EVERY decision is
+    // "ask". This keeps the projector and finalize response consistent.
+    if (deriveHighestAction(decisions) === "ask") {
       askCount++;
     }
   }
