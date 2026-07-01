@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import test from "node:test";
 
 import {
@@ -15,6 +18,7 @@ import {
   TRACK1_OPENCLAW_PACKAGE_INTEGRITY,
   TRACK1_MODEL_REF_CANONICAL
 } from "../index.ts";
+import { TRACK1_CAMPAIGN_MANIFEST_SHA256 } from "../types/campaign-ingest.ts";
 import {
   makeCampaignEvidenceRegistration,
   makeCampaignFinalizeEnvelope,
@@ -375,6 +379,25 @@ test("REQ-T1-DEMO-010 finalize envelope uses track1-campaign-finalize.v1", () =>
     }),
     null,
     "normalizer must reject the drifted schema_version"
+  );
+});
+
+// R15 (Phase 2 rework review P2 #6): the TRACK1_CAMPAIGN_MANIFEST_SHA256
+// constant must match the real SHA-256 of samples/track1/openclaw/campaign.v1.json.
+// Without this test, modifying the manifest file without updating the constant
+// (or vice versa) would silently drift and break campaign start validation.
+
+test("REQ-T1-DEMO-010 manifest SHA constant matches real campaign.v1.json file", () => {
+  const manifestPath = resolve(
+    import.meta.dirname,
+    "../../samples/track1/openclaw/campaign.v1.json"
+  );
+  const fileContent = readFileSync(manifestPath);
+  const actualSha = createHash("sha256").update(fileContent).digest("hex");
+  assert.equal(
+    actualSha,
+    TRACK1_CAMPAIGN_MANIFEST_SHA256,
+    "TRACK1_CAMPAIGN_MANIFEST_SHA256 must match the real SHA-256 of samples/track1/openclaw/campaign.v1.json"
   );
 });
 
