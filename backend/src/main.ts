@@ -128,16 +128,18 @@ export async function startProductionServers(options: {
   internalBindHost?: string;
   deps?: RuntimeDependencies;
   ingestToken?: string;
-}): Promise<ProductionServerHandles> {
+} = {}): Promise<ProductionServerHandles> {
   const publicPort = options.publicPort ?? Number(process.env.PORT ?? 3000);
   const internalPort =
     options.internalPort ?? Number(process.env.INTERNAL_PORT ?? 3001);
   const publicBindHost = options.publicBindHost ?? "127.0.0.1";
-  // R14: default internal bind host to 127.0.0.1 for backward compat, but
-  // allow overriding to 0.0.0.0 (or env var INTERNAL_BIND_HOST) so other
-  // containers can reach the internal API.
+  // R23 (Phase 2 rework review 2 P2): default internal bind host to 0.0.0.0
+  // so other containers (e.g. OpenClaw) can reach backend:3001 via the
+  // Docker network. The previous 127.0.0.1 default made the internal API
+  // unreachable from other containers even when INTERNAL_BIND_HOST was
+  // not explicitly set.
   const internalBindHost =
-    options.internalBindHost ?? process.env.INTERNAL_BIND_HOST ?? "127.0.0.1";
+    options.internalBindHost ?? process.env.INTERNAL_BIND_HOST ?? "0.0.0.0";
 
   const servers = createProductionServers({
     deps: options.deps,

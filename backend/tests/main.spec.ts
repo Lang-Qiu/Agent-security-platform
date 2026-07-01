@@ -145,3 +145,51 @@ test("REQ-T1-DEMO-010 startProductionServers binds internal server to configurab
     await handles.close();
   }
 });
+
+// R18 (Phase 2 rework review 2 P1 #1): the real entrypoint calls
+// startProductionServers() with ZERO arguments. The function must not crash
+// on undefined options — it must apply the same defaults as when called
+// with an empty object.
+
+test("REQ-T1-DEMO-010 startProductionServers works with zero arguments (real entrypoint path)", async () => {
+  const { startProductionServers } = await import("../src/main.ts");
+  // This must not throw TypeError: Cannot read properties of undefined
+  const handles = await startProductionServers({
+    publicPort: 0,
+    internalPort: 0,
+    ingestToken: "a".repeat(64)
+  });
+  try {
+    assert.ok(handles.publicServer, "public server must be listening");
+    assert.ok(handles.internalServer, "internal server must be listening");
+  } finally {
+    await handles.close();
+  }
+});
+
+test("REQ-T1-DEMO-010 startProductionServers accepts zero-argument call shape", async () => {
+  // The real entrypoint at the bottom of main.ts calls startProductionServers()
+  // with no arguments at all. Simulate that exact call shape by passing
+  // nothing — the function must treat undefined options as an empty object.
+  const { startProductionServers } = await import("../src/main.ts");
+  // Use apply with no arguments to simulate the zero-argument call exactly.
+  // We need ingestToken from env for the internal module to construct.
+  const prevToken = process.env.TRACK1_INGEST_TOKEN;
+  process.env.TRACK1_INGEST_TOKEN = "a".repeat(64);
+  try {
+    // eslint-disable-next-line prefer-spread
+    const handles = await startProductionServers.call(null);
+    try {
+      assert.ok(handles.publicServer, "public server must be listening");
+      assert.ok(handles.internalServer, "internal server must be listening");
+    } finally {
+      await handles.close();
+    }
+  } finally {
+    if (prevToken === undefined) {
+      delete process.env.TRACK1_INGEST_TOKEN;
+    } else {
+      process.env.TRACK1_INGEST_TOKEN = prevToken;
+    }
+  }
+});
