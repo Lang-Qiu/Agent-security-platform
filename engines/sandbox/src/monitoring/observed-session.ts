@@ -3,11 +3,14 @@ import type {
   SandboxBehaviorEvent,
   SandboxBlockedRecord,
   SandboxEventEnvelope,
+  SandboxMemoryPayload,
   SandboxModelContentPayload,
-  SandboxPolicyDecision
+  SandboxPolicyDecision,
+  SandboxToolRequestPayload,
+  SandboxToolResultPayload
 } from "../../../../shared/types/sandbox.ts";
 import type { BaseResult, SandboxRunResultDetails } from "../../../../shared/types/result.ts";
-import { sha256MonitorValue, createFrozenMonitorSnapshot } from "./content-boundary.ts";
+import { sha256MonitorValue, createFrozenMonitorSnapshot, createToolArgumentsRef, createToolTargetRef } from "./content-boundary.ts";
 import {
   Track1MonitorError,
   MONITOR_FAIL_CLOSED_PROPOSAL,
@@ -31,6 +34,8 @@ import type {
   MonitorLifecycleState,
   Track1MonitorMetadata
 } from "./contract.ts";
+import type { SimulatedToolName } from "../simulated-tools/contract.ts";
+import { normalizeSimulatedToolRequest } from "../simulated-tools/contract.ts";
 import { buildMonitorResult } from "./result-builder.ts";
 
 // -- public engine-private types ------------------------------------------
@@ -43,6 +48,28 @@ export interface ObservedModelInput {
 
 export interface ObservedModelOutput {
   session_id: string;
+  content: string;
+  content_ref: string;
+}
+
+export interface ObservedToolBeforeOutcome {
+  disposition: "execute" | "intercept";
+  decision: SandboxPolicyDecision;
+  snapshot: BaseResult<SandboxRunResultDetails>;
+}
+
+export interface ObservedToolResult {
+  session_id: string;
+  call_id: string;
+  tool_name: SimulatedToolName;
+  status: "success" | "failed";
+  result_ref: string;
+  state_change: "none" | "simulated";
+}
+
+export interface ObservedMemoryValue {
+  session_id: string;
+  memory_entry_id: string;
   content: string;
   content_ref: string;
 }
@@ -70,6 +97,10 @@ const DEFAULT_PORTS: MonitorRuntimePorts = Object.freeze({
 const EVIDENCE_MODEL_INPUT = "evidence://track1/monitor/model-input";
 const EVIDENCE_MODEL_OUTPUT = "evidence://track1/monitor/model-output";
 const EVIDENCE_POLICY_DECISION = "evidence://track1/monitor/policy-decision";
+const EVIDENCE_TOOL_REQUEST = "evidence://track1/monitor/tool-request";
+const EVIDENCE_TOOL_RESULT = "evidence://track1/monitor/tool-result";
+const EVIDENCE_MEMORY_WRITE = "evidence://track1/monitor/memory-write";
+const EVIDENCE_MEMORY_READ = "evidence://track1/monitor/memory-read";
 
 // -- internal helpers ------------------------------------------------------
 
@@ -128,6 +159,15 @@ export class ObservedMonitoredSession {
     output: Readonly<MonitorModelResponse>;
   } | null = null;
 
+  // Pending safe call record (IDs, tool name, refs only — never raw arguments)
+  #pendingCall: {
+    call_id: string;
+    tool_name: SimulatedToolName;
+    target_ref: string;
+    arguments_ref: string;
+    subject_event_id: string;
+  } | null = null;
+
   // Durable: safe refs and hashes only
   #lastModelInputRef: string | null = null;
   #lastModelInputSha256: string | null = null;
@@ -136,8 +176,20 @@ export class ObservedMonitoredSession {
 
   // Counters
   #modelCallCount = 0;
+  #toolCallCount = 0;
   #decisionCount = 0;
+  #executedToolCount = 0;
+  #interceptedToolCount = 0;
   #providerFailureCount = 0;
+
+  // Model stage locked after a deny/ask at model output: further model
+  // input is rejected, but the session stays open for tool interception.
+  #modelStageLocked = false;
+
+  // Distinguish seal causes: an intercept seal (deny/ask at tool stage) is
+  // a normal terminal state that can be finalized; a failure seal (provider
+  // throw, correlation mismatch, malformed input) is a hard error.
+  #failed = false;
 
   #sequence = 0;
   #firstTimestamp: string;
@@ -185,6 +237,11 @@ export class ObservedMonitoredSession {
     }
     // Reject second input while a pair is pending
     if (this.#pendingInput !== null) {
+      this.#seal();
+      throw new Track1MonitorError("monitor_state_invalid");
+    }
+    // Reject new model input after the model stage was locked by a deny/ask
+    if (this.#modelStageLocked) {
       this.#seal();
       throw new Track1MonitorError("monitor_state_invalid");
     }
@@ -315,7 +372,7 @@ export class ObservedMonitoredSession {
     } catch {
       this.#providerFailureCount += 1;
       this.#clearVolatile();
-      this.#seal();
+      this.#failSeal();
       throw new Track1MonitorError("monitor_decision_invalid");
     }
 
@@ -323,7 +380,7 @@ export class ObservedMonitoredSession {
     if (!proposal) {
       this.#providerFailureCount += 1;
       this.#clearVolatile();
-      this.#seal();
+      this.#failSeal();
       throw new Track1MonitorError("monitor_decision_invalid");
     }
 
@@ -338,7 +395,7 @@ export class ObservedMonitoredSession {
     ) {
       this.#providerFailureCount += 1;
       this.#clearVolatile();
-      this.#seal();
+      this.#failSeal();
       throw new Track1MonitorError("monitor_decision_invalid");
     }
 
@@ -354,6 +411,432 @@ export class ObservedMonitoredSession {
       decided_at: this.#nextTimestamp()
     };
 
+    this.#materializeDecision(subjectEventId, materializedDecision);
+
+    const canContinue =
+      materializedDecision.action === "allow" ||
+      materializedDecision.action === "alert";
+
+    // Retain frozen latest pair for future tool decision (volatile)
+    this.#latestPair = { input: pendingInput, output: frozenOutput };
+
+    // Clear pending input — pair is no longer pending
+    this.#pendingInput = null;
+    this.#pendingInputEventId = null;
+
+    if (!canContinue) {
+      // Model pair was denied/asked: lock the model stage but keep the
+      // session open so the next tool call can be intercepted at the
+      // tool_request stage. Further model input is rejected.
+      this.#modelStageLocked = true;
+    }
+
+    const responseCopy: MonitorModelResponse = {
+      content: frozenOutput.content,
+      content_ref: frozenOutput.content_ref
+    };
+
+    return {
+      response: responseCopy,
+      decision: materializedDecision,
+      can_continue: canContinue
+    };
+  }
+
+  // -- two-phase tool observation -----------------------------------------
+
+  async beforeTool(request: unknown): Promise<ObservedToolBeforeOutcome> {
+    if (this.#lifecycle !== "open") {
+      this.#seal();
+      throw new Track1MonitorError("monitor_state_invalid");
+    }
+    // Require a completed model pair
+    if (this.#latestPair === null) {
+      this.#seal();
+      throw new Track1MonitorError("monitor_state_invalid");
+    }
+    // Reject if a tool call is already pending (do not seal — caller may
+    // complete the pending call and retry).
+    if (this.#pendingCall !== null) {
+      throw new Track1MonitorError("monitor_state_invalid");
+    }
+
+    const normalizedRequest = normalizeSimulatedToolRequest(request);
+    if (!normalizedRequest) {
+      this.#failSeal();
+      throw new Track1MonitorError("monitor_tool_request_invalid");
+    }
+
+    // Correlation with session context
+    if (
+      normalizedRequest.session_id !== this.#context.session_id ||
+      normalizedRequest.scenario_id !== this.#context.scenario_id ||
+      normalizedRequest.case_id !== this.#context.case_id
+    ) {
+      this.#failSeal();
+      throw new Track1MonitorError("monitor_tool_request_invalid");
+    }
+
+    const frozenRequest = createFrozenMonitorSnapshot(normalizedRequest);
+    const argumentsRef = createToolArgumentsRef(normalizedRequest);
+    const targetRef = createToolTargetRef(normalizedRequest);
+
+    // Emit tool_request event
+    const toolRequestEventId = this.#nextId("tool-request");
+    const requestPayload: SandboxToolRequestPayload = {
+      call_id: normalizedRequest.call_id,
+      tool_name: normalizedRequest.tool_name,
+      target_ref: targetRef,
+      arguments_ref: argumentsRef
+    };
+    const toolRequestEvent: SandboxEventEnvelope<"tool_request", SandboxToolRequestPayload> = {
+      event_id: toolRequestEventId,
+      session_id: this.#context.session_id,
+      sequence: this.#nextSequence(),
+      event_type: "tool_request",
+      occurred_at: this.#nextTimestamp(),
+      source: "agent",
+      scenario_id: this.#context.scenario_id,
+      case_id: this.#context.case_id,
+      evidence_refs: [EVIDENCE_TOOL_REQUEST],
+      payload: requestPayload
+    };
+    this.#events.push(toolRequestEvent);
+    this.#toolCallCount += 1;
+
+    // Ask provider at tool_request stage
+    const decisionInput: MonitorDecisionInput = Object.freeze({
+      stage: "tool_request",
+      session: createFrozenMonitorSnapshot(this.#context),
+      subject_event_id: toolRequestEventId,
+      model_input: this.#latestPair.input,
+      model_output: this.#latestPair.output,
+      tool_request: frozenRequest
+    });
+
+    let rawProposal: unknown;
+    try {
+      rawProposal = await this.#provider.decide(decisionInput);
+    } catch {
+      this.#providerFailureCount += 1;
+      this.#emitFailedToolResult(normalizedRequest.call_id, normalizedRequest.tool_name);
+      this.#clearVolatile();
+      this.#failSeal();
+      throw new Track1MonitorError("monitor_tool_failed");
+    }
+
+    const proposal = normalizeMonitorDecisionProposal(rawProposal);
+    if (!proposal) {
+      this.#providerFailureCount += 1;
+      this.#emitFailedToolResult(normalizedRequest.call_id, normalizedRequest.tool_name);
+      this.#clearVolatile();
+      this.#failSeal();
+      throw new Track1MonitorError("monitor_tool_failed");
+    }
+
+    // Reject proposals echoing raw model/tool content
+    const sensitiveValues = [
+      this.#latestPair.input.content,
+      this.#latestPair.output.content
+    ].filter((v) => v.length > 0);
+    if (
+      sensitiveValues.some(
+        (s) => proposal.reason.includes(s) || proposal.evidence_refs.includes(s)
+      )
+    ) {
+      this.#providerFailureCount += 1;
+      this.#emitFailedToolResult(normalizedRequest.call_id, normalizedRequest.tool_name);
+      this.#clearVolatile();
+      this.#failSeal();
+      throw new Track1MonitorError("monitor_tool_failed");
+    }
+
+    const materializedDecision: SandboxPolicyDecision = {
+      decision_id: this.#nextId("decision"),
+      subject_event_id: toolRequestEventId,
+      policy_id: proposal.policy_id,
+      action: proposal.action,
+      reason_code: proposal.reason_code,
+      reason: proposal.reason,
+      evidence_refs: [...proposal.evidence_refs],
+      decided_at: this.#nextTimestamp()
+    };
+
+    this.#materializeDecision(toolRequestEventId, materializedDecision);
+
+    const snapshot = this.#buildNonTerminalResult();
+
+    if (proposal.action === "deny" || proposal.action === "ask") {
+      // Intercept: emit rejected tool_result and seal
+      this.#interceptedToolCount += 1;
+      const interceptRef = `simulated-result://${normalizedRequest.call_id}/${sha256MonitorValue(normalizedRequest.call_id + "-intercepted")}`;
+      const interceptPayload: SandboxToolResultPayload = {
+        call_id: normalizedRequest.call_id,
+        tool_name: normalizedRequest.tool_name,
+        status: "rejected",
+        result_ref: interceptRef,
+        state_change: "none"
+      };
+      this.#pushToolResultEvent(interceptPayload);
+      this.#clearVolatile();
+      this.#seal();
+      return {
+        disposition: "intercept",
+        decision: materializedDecision,
+        snapshot
+      };
+    }
+
+    // allow / alert: execute disposition, retain pending safe call record
+    this.#executedToolCount += 1;
+    this.#pendingCall = {
+      call_id: normalizedRequest.call_id,
+      tool_name: normalizedRequest.tool_name,
+      target_ref: targetRef,
+      arguments_ref: argumentsRef,
+      subject_event_id: toolRequestEventId
+    };
+
+    return {
+      disposition: "execute",
+      decision: materializedDecision,
+      snapshot
+    };
+  }
+
+  afterTool(result: unknown): BaseResult<SandboxRunResultDetails> {
+    if (this.#lifecycle !== "open") {
+      this.#seal();
+      throw new Track1MonitorError("monitor_state_invalid");
+    }
+    if (this.#pendingCall === null) {
+      this.#seal();
+      throw new Track1MonitorError("monitor_state_invalid");
+    }
+
+    // Structural validation of ObservedToolResult — require the known
+    // fields to be present; extra fields are ignored (stripped) so callers
+    // cannot smuggle sentinel content into the canonical event stream.
+    if (!isPlainObject(result)) {
+      this.#emitFailedToolResult(
+        this.#pendingCall.call_id,
+        this.#pendingCall.tool_name
+      );
+      this.#clearVolatile();
+      this.#failSeal();
+      throw new Track1MonitorError("monitor_tool_failed");
+    }
+
+    const r = result;
+
+    // Correlation + value checks on the six canonical fields
+    if (
+      !isCorrelationId(r.session_id) ||
+      r.session_id !== this.#context.session_id ||
+      !isNonEmptyString(r.call_id) ||
+      r.call_id !== this.#pendingCall.call_id ||
+      !isNonEmptyString(r.tool_name) ||
+      r.tool_name !== this.#pendingCall.tool_name ||
+      (r.status !== "success" && r.status !== "failed") ||
+      !isSafeReference(r.result_ref) ||
+      (r.state_change !== "none" && r.state_change !== "simulated")
+    ) {
+      this.#emitFailedToolResult(
+        this.#pendingCall.call_id,
+        this.#pendingCall.tool_name
+      );
+      this.#clearVolatile();
+      this.#failSeal();
+      throw new Track1MonitorError("monitor_tool_failed");
+    }
+
+    // Emit success/failed tool_result with safe fields only
+    const payload: SandboxToolResultPayload = {
+      call_id: r.call_id as string,
+      tool_name: r.tool_name as string,
+      status: r.status as "success" | "failed",
+      result_ref: r.result_ref as string,
+      state_change: r.state_change as "none" | "simulated"
+    };
+    this.#pushToolResultEvent(payload);
+
+    // Clear pending call and volatile latest pair
+    this.#pendingCall = null;
+    this.#latestPair = null;
+
+    return this.#buildNonTerminalResult();
+  }
+
+  // -- memory observation --------------------------------------------------
+
+  observeMemoryWrite(value: unknown): BaseResult<SandboxRunResultDetails> {
+    return this.#observeMemory(value, "memory_write", EVIDENCE_MEMORY_WRITE);
+  }
+
+  observeMemoryRead(value: unknown): BaseResult<SandboxRunResultDetails> {
+    return this.#observeMemory(value, "memory_read", EVIDENCE_MEMORY_READ);
+  }
+
+  #observeMemory(
+    value: unknown,
+    eventType: "memory_write" | "memory_read",
+    evidenceRef: string
+  ): BaseResult<SandboxRunResultDetails> {
+    if (this.#lifecycle !== "open") {
+      this.#seal();
+      throw new Track1MonitorError("monitor_state_invalid");
+    }
+
+    if (
+      !isPlainObject(value) ||
+      !hasExactKeys(value, ["session_id", "memory_entry_id", "content", "content_ref"])
+    ) {
+      this.#seal();
+      throw new Track1MonitorError("monitor_model_request_invalid");
+    }
+
+    if (
+      !isCorrelationId(value.session_id) ||
+      value.session_id !== this.#context.session_id ||
+      !isNonEmptyString(value.memory_entry_id) ||
+      !isNonEmptyString(value.content) ||
+      !isSafeReference(value.content_ref)
+    ) {
+      this.#seal();
+      throw new Track1MonitorError("monitor_model_request_invalid");
+    }
+
+    const sha256 = sha256MonitorValue(value.content);
+    const payload: SandboxMemoryPayload = {
+      memory_entry_id: value.memory_entry_id,
+      content_ref: value.content_ref,
+      content_sha256: sha256
+    };
+    const event: SandboxBehaviorEvent = {
+      event_id: this.#nextId(eventType),
+      session_id: this.#context.session_id,
+      sequence: this.#nextSequence(),
+      event_type: eventType,
+      occurred_at: this.#nextTimestamp(),
+      source: "memory",
+      scenario_id: this.#context.scenario_id,
+      case_id: this.#context.case_id,
+      evidence_refs: [evidenceRef],
+      payload
+    } as SandboxBehaviorEvent;
+    this.#events.push(event);
+
+    return this.#buildNonTerminalResult();
+  }
+
+  // -- defensive snapshot --------------------------------------------------
+
+  snapshot(): BaseResult<SandboxRunResultDetails> {
+    if (this.#lifecycle === "finalized") {
+      throw new Track1MonitorError("monitor_state_invalid");
+    }
+    // Sealed sessions may still be snapshotted (e.g. after intercept or
+    // correlation failure) to inspect the canonical event stream.
+    return this.#buildNonTerminalResult();
+  }
+
+  // -- finalization --------------------------------------------------------
+
+  finalize(): BaseResult<SandboxRunResultDetails> {
+    if (this.#cachedResult) {
+      return this.#cachedResult;
+    }
+
+    if (this.#lifecycle === "finalized") {
+      throw new Track1MonitorError("monitor_state_invalid");
+    }
+
+    // Sealed sessions: an intercept seal (deny/ask at tool stage) can be
+    // finalized to produce the canonical blocked result. A failure seal
+    // (provider throw, correlation mismatch, malformed input) is a hard
+    // error and finalize must reject.
+    if (this.#lifecycle === "sealed") {
+      if (this.#failed) {
+        throw new Track1MonitorError("monitor_state_invalid");
+      }
+      if (this.#pendingInput !== null || this.#pendingCall !== null) {
+        this.#clearVolatile();
+        throw new Track1MonitorError("monitor_state_invalid");
+      }
+      // Build the finalized result from the intercept-sealed state.
+      const finalTimestamp = this.#ports.now();
+      const metadata: Track1MonitorMetadata = {
+        schema_version: "track1-monitor.v1",
+        model_call_count: this.#modelCallCount,
+        tool_call_count: this.#toolCallCount,
+        decision_count: this.#decisionCount,
+        executed_tool_count: this.#executedToolCount,
+        intercepted_tool_count: this.#interceptedToolCount,
+        provider_failure_count: this.#providerFailureCount
+      };
+      const sealedResult = buildMonitorResult({
+        context: this.#context,
+        events: [...this.#events],
+        decisions: [...this.#decisions],
+        alerts: [...this.#alerts],
+        blockedRecords: [...this.#blockedRecords],
+        metadata,
+        firstTimestamp: this.#firstTimestamp,
+        finalTimestamp,
+        failed: false
+      });
+      this.#clearVolatile();
+      this.#lifecycle = "finalized";
+      this.#cachedResult = sealedResult;
+      return sealedResult;
+    }
+
+    if (this.#pendingInput !== null || this.#pendingCall !== null) {
+      this.#clearVolatile();
+      this.#seal();
+      throw new Track1MonitorError("monitor_state_invalid");
+    }
+
+    if (this.#modelCallCount === 0) {
+      this.#seal();
+      throw new Track1MonitorError("monitor_session_empty");
+    }
+
+    const finalTimestamp = this.#ports.now();
+    const metadata: Track1MonitorMetadata = {
+      schema_version: "track1-monitor.v1",
+      model_call_count: this.#modelCallCount,
+      tool_call_count: this.#toolCallCount,
+      decision_count: this.#decisionCount,
+      executed_tool_count: this.#executedToolCount,
+      intercepted_tool_count: this.#interceptedToolCount,
+      provider_failure_count: this.#providerFailureCount
+    };
+
+    const result = buildMonitorResult({
+      context: this.#context,
+      events: [...this.#events],
+      decisions: [...this.#decisions],
+      alerts: [...this.#alerts],
+      blockedRecords: [...this.#blockedRecords],
+      metadata,
+      firstTimestamp: this.#firstTimestamp,
+      finalTimestamp,
+      failed: false
+    });
+
+    this.#clearVolatile();
+    this.#lifecycle = "finalized";
+    this.#cachedResult = result;
+    return result;
+  }
+
+  // -- private helpers -----------------------------------------------------
+
+  #materializeDecision(
+    subjectEventId: string,
+    materializedDecision: SandboxPolicyDecision
+  ): void {
     const decisionEvent: SandboxEventEnvelope<"policy_decision", SandboxPolicyDecision> = {
       event_id: this.#nextId("policy-decision"),
       session_id: this.#context.session_id,
@@ -394,75 +877,50 @@ export class ObservedMonitoredSession {
         occurred_at: materializedDecision.decided_at
       });
     }
-
-    const canContinue =
-      materializedDecision.action === "allow" ||
-      materializedDecision.action === "alert";
-
-    // Retain frozen latest pair for future tool decision (volatile)
-    this.#latestPair = { input: pendingInput, output: frozenOutput };
-
-    // Clear pending input — pair is no longer pending
-    this.#pendingInput = null;
-    this.#pendingInputEventId = null;
-
-    if (!canContinue) {
-      this.#lifecycle = "sealed";
-      // On seal, clear the volatile pair as well
-      this.#latestPair = null;
-    }
-
-    const responseCopy: MonitorModelResponse = {
-      content: frozenOutput.content,
-      content_ref: frozenOutput.content_ref
-    };
-
-    return {
-      response: responseCopy,
-      decision: materializedDecision,
-      can_continue: canContinue
-    };
   }
 
-  // -- finalization --------------------------------------------------------
+  #pushToolResultEvent(payload: SandboxToolResultPayload): void {
+    const event: SandboxEventEnvelope<"tool_result", SandboxToolResultPayload> = {
+      event_id: this.#nextId("tool-result"),
+      session_id: this.#context.session_id,
+      sequence: this.#nextSequence(),
+      event_type: "tool_result",
+      occurred_at: this.#nextTimestamp(),
+      source: "tool",
+      scenario_id: this.#context.scenario_id,
+      case_id: this.#context.case_id,
+      evidence_refs: [EVIDENCE_TOOL_RESULT],
+      payload
+    };
+    this.#events.push(event);
+  }
 
-  finalize(): BaseResult<SandboxRunResultDetails> {
-    if (this.#cachedResult) {
-      return this.#cachedResult;
-    }
+  #emitFailedToolResult(
+    call_id: string,
+    tool_name: SimulatedToolName
+  ): void {
+    const failedRef = `simulated-result://${call_id}/${sha256MonitorValue(call_id + "-failed")}`;
+    this.#pushToolResultEvent({
+      call_id,
+      tool_name,
+      status: "failed",
+      result_ref: failedRef,
+      state_change: "none"
+    });
+  }
 
-    if (this.#lifecycle === "finalized") {
-      throw new Track1MonitorError("monitor_state_invalid");
-    }
-
-    if (this.#lifecycle === "sealed") {
-      this.#clearVolatile();
-      throw new Track1MonitorError("monitor_state_invalid");
-    }
-
-    if (this.#pendingInput !== null) {
-      this.#clearVolatile();
-      this.#seal();
-      throw new Track1MonitorError("monitor_state_invalid");
-    }
-
-    if (this.#modelCallCount === 0) {
-      this.#seal();
-      throw new Track1MonitorError("monitor_session_empty");
-    }
-
-    const finalTimestamp = this.#ports.now();
+  #buildNonTerminalResult(): BaseResult<SandboxRunResultDetails> {
     const metadata: Track1MonitorMetadata = {
       schema_version: "track1-monitor.v1",
       model_call_count: this.#modelCallCount,
-      tool_call_count: 0,
+      tool_call_count: this.#toolCallCount,
       decision_count: this.#decisionCount,
-      executed_tool_count: 0,
-      intercepted_tool_count: 0,
+      executed_tool_count: this.#executedToolCount,
+      intercepted_tool_count: this.#interceptedToolCount,
       provider_failure_count: this.#providerFailureCount
     };
 
-    const result = buildMonitorResult({
+    const built = buildMonitorResult({
       context: this.#context,
       events: [...this.#events],
       decisions: [...this.#decisions],
@@ -470,17 +928,28 @@ export class ObservedMonitoredSession {
       blockedRecords: [...this.#blockedRecords],
       metadata,
       firstTimestamp: this.#firstTimestamp,
-      finalTimestamp,
-      failed: false
+      finalTimestamp: this.#ports.now(),
+      failed: this.#failed
     });
 
-    this.#clearVolatile();
-    this.#lifecycle = "finalized";
-    this.#cachedResult = result;
-    return result;
+    // A snapshot is non-terminal: the session is still in progress unless
+    // it has been failure-sealed. Strip finished_at and force the status
+    // to "running" for live sessions, or "failed" for failure-sealed ones.
+    if (this.#failed) {
+      return {
+        ...built,
+        status: "failed",
+        summary: "Monitored sandbox session failed",
+        finished_at: built.finished_at
+      };
+    }
+    const { finished_at: _omit, ...withoutFinishedAt } = built;
+    return {
+      ...withoutFinishedAt,
+      status: "running",
+      summary: "Monitored sandbox session in progress"
+    };
   }
-
-  // -- private helpers -----------------------------------------------------
 
   #normalizeObservedInputStructure(
     value: unknown
@@ -526,9 +995,15 @@ export class ObservedMonitoredSession {
     this.#pendingInput = null;
     this.#pendingInputEventId = null;
     this.#latestPair = null;
+    this.#pendingCall = null;
   }
 
   #seal(): void {
+    this.#lifecycle = "sealed";
+  }
+
+  #failSeal(): void {
+    this.#failed = true;
     this.#lifecycle = "sealed";
   }
 
