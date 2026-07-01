@@ -564,15 +564,34 @@ export async function makePluginHookHarness(
   };
 }
 
-// -- P3-T6: runtime probe ports (stubs, extended in P3-T6) ----------------
+// -- P3-T6: runtime probe ports -------------------------------------------
 
-export function makeCompleteRuntimeProbePorts(): PluginRuntimePorts {
-  return makePluginRuntimePorts({ action: "allow" });
+export type Track1ProbeMutation =
+  | "wrong-version"
+  | "missing-tool"
+  | "duplicate-tool"
+  | "missing-hook"
+  | "block-failed"
+  | "after-not-observed"
+  | "correlation-missing"
+  | "diagnostic-present";
+
+export interface Track1PluginProbePorts {
+  ports: PluginRuntimePorts;
+  mutation?: Track1ProbeMutation;
+}
+
+export function makeCompleteRuntimeProbePorts(): Track1PluginProbePorts {
+  return {
+    ports: makePluginRuntimePorts({ action: "allow" })
+  };
 }
 
 export function makeProbePorts(
-  mutation?: Partial<PluginRuntimePorts>
-): PluginRuntimePorts {
-  const base = makePluginRuntimePorts({ action: "allow" });
-  return { ...base, ...mutation };
+  mutation: Track1ProbeMutation
+): Track1PluginProbePorts {
+  return {
+    ports: makePluginRuntimePorts({ action: "allow" }),
+    mutation
+  };
 }

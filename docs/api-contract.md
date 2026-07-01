@@ -644,6 +644,9 @@
 | `memory_write` | 记忆写入事件 | `memory_entry_id`, `content_ref`, `content_sha256`, `summary` |
 | `memory_read` | 记忆读取事件 | `memory_entry_id`, `content_ref`, `content_sha256` |
 
+`tool_result.payload.state_change` is a closed set: `none`,
+`outbox_append`, `virtual_file_write`, or `simulated`.
+
 原始模型内容不直接跨越 shared 边界，而是通过 `content_ref`（内容引用）、`content_sha256`（SHA-256 摘要）和可选的 `summary` 字段表示。
 
 #### 四类策略动作
@@ -1706,3 +1709,67 @@ Schema versions are pinned via `TRACK1_CAMPAIGN_READ_SCHEMA_VERSION` (`track1-ca
 ### Runtime dependency composition
 
 A single `createRuntimeDependencies()` composition root creates one `InMemoryTaskRepository` and one `InMemoryCampaignRepository`. Both the public `AppModule` and the internal `InternalAppModule` share the same repository instances, so writes from the internal listener are immediately visible to public reads.
+
+## REQ-T1-DEMO-010 Phase 3 OpenClaw Plugin Internal Surface
+
+Phase 3 adds the OpenClaw plugin integration layer that observes native hooks and ingests snapshots. The plugin does not expose new public API routes — it consumes the existing internal ingest routes through a typed client.
+
+### Plugin manifest
+
+`integrations/openclaw/openclaw.plugin.json` is a strict manifest with no unknown keys:
+
+- `id`: `"agent-security-track1"`
+- `main`: `"./src/plugin.ts"`
+- `contracts.tools`: exactly `["send_email", "read_file", "write_file", "call_api"]`
+- `configSchema`: closed object requiring `ingestEndpoint` and `ingestToken`. `ingestToken` is `writeOnly: true`. The default endpoint is `http://backend:3001/internal/track1/campaigns`.
+
+### Native hook registration
+
+`integrations/openclaw/src/plugin.ts` exports `registerTrack1Plugin` and `definePluginEntry`. It registers exactly six typed hooks via `api.on`:
+
+- `session_start`, `llm_input`, `llm_output`, `after_tool_call`, `session_end` (default options)
+- `before_tool_call` with `{ priority: 100, timeoutMs: 10_000 }`
+
+Legacy `registerHook` is permanently prohibited.
+
+### Acknowledgement barrier and fail-closed semantics
+
+For `allow`/`alert` decisions, `before_tool_call` ingests the snapshot before returning. Ingest failure converts the outcome into `{ block: true, blockReason: "security_monitor_unavailable" }`.
+
+For `deny`/`ask` decisions, `before_tool_call` returns `{ block: true, blockReason: "policy_denied" | "policy_ask_required" }` without reaching tool execution.
+
+Unknown tools are blocked with `{ block: true, blockReason: "tool_not_permitted" }` before touching the adapter.
+
+### Ingest client contract
+
+`integrations/openclaw/src/ingest-client.ts` exposes `Track1IngestClient`:
+
+- Constructor validates the fixed endpoint: protocol `http:`, hostname `backend`, port `3001`, pathname `/internal/track1/campaigns`, no search/hash. Token must be non-empty.
+- `appendSnapshot(campaignId, envelope)` builds URL `…/campaigns/<encoded-id>/snapshots/<sequence>`, sends `PUT` with `Authorization: Bearer <token>` and `AbortController` timeout (5000 ms).
+- Accepts only `200` or `202`. Validates ack via `normalizeTrack1CampaignSnapshotAck` and verifies `campaign_id`, `attempt_id`, `sequence`, and `snapshot_sha256` match.
+- The token is never included in error messages. Backend body is never echoed. All failures raise `Track1IngestError` with a stable code.
+
+### Startup capability probe
+
+`integrations/openclaw/src/runtime-probe.ts` exports `runTrack1PluginCapabilityProbe` and `TRACK1_PLUGIN_PROBE_COMMAND`. The probe result `Track1PluginProbeResult` has exactly nine canonical keys:
+
+- `schema_version` (`"track1-openclaw-probe.v1"`)
+- `plugin_id` (`"agent-security-track1"`)
+- `runtime_version` (`"2026.6.10"`)
+- `tool_names` (sorted: `call_api`, `read_file`, `send_email`, `write_file`)
+- `hook_names` (sorted: six canonical hooks)
+- `before_tool_blocked` (`true`)
+- `after_tool_observed` (`true`)
+- `correlation_ready` (`true`)
+- `diagnostics` (empty array)
+
+The fixed runtime command is `openclaw plugins inspect agent-security-track1 --runtime --json`. Any missing capability, duplicate, version mismatch, failed blocking, missing after-observation, missing correlation, or diagnostic causes `track1_plugin_probe_failed`.
+
+### Test script registration
+
+- Root `test:integration:openclaw` runs all five Phase 3 spec files: `plugin-contract.spec.ts`, `campaign-context.spec.ts`, `ingest-client.spec.ts`, `plugin-hooks.spec.ts`, `plugin-runtime-probe.spec.ts`.
+- Root `test:repo` includes `tests/repository/track1-openclaw-plugin.spec.ts` as a permanent gate.
+
+### Explicit non-goals
+
+The plugin does not expose any new public HTTP route, does not invoke real models or tools, does not manage campaign retry/attempt lifecycle, and does not produce frontend-facing payloads. Real Docker/OpenClaw runtime execution belongs to Phase 4.

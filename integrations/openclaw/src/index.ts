@@ -2,7 +2,8 @@
 // Re-exports the typed plugin registration surface and supporting types.
 
 export {
-  registerTrack1Plugin
+  registerTrack1Plugin,
+  definePluginEntry
 } from "./plugin.ts";
 
 export type {
@@ -45,3 +46,15 @@ export {
 export type {
   Track1IngestTransport
 } from "./ingest-client.ts";
+
+export {
+  runTrack1PluginCapabilityProbe,
+  TRACK1_PLUGIN_PROBE_COMMAND,
+  TRACK1_PLUGIN_PROBE_RESULT_KEYS,
+  TRACK1_PLUGIN_PROBE_RUNTIME_VERSION
+} from "./runtime-probe.ts";
+
+export type {
+  Track1PluginProbeResult,
+  Track1PluginProbePorts
+} from "./runtime-probe.ts";

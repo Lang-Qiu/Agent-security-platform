@@ -627,3 +627,51 @@ All registered in `test:engine:sandbox` and `test:repo` package scripts.
 ### Next Consumer
 
 `REQ-T1-SUPERVISION-UI-009` will present monitoring results to the platform UI.
+
+## REQ-T1-DEMO-010 Phase 3 OpenClaw Plugin and Native Monitor Hooks
+
+Phase 3 adds the OpenClaw plugin integration layer that wires the engine-private split model observation adapter to the OpenClaw native hook surface and the Track 1 campaign ingest client.
+
+### Engine-private split model observation
+
+- `engines/sandbox/src/monitoring/observed-session.ts` exports `ObservedMonitoredSession`, which observes `llm_input`/`llm_output` pair events and evaluates the existing Track 1 policy through the unchanged `MonitorDecisionProvider` port.
+- The adapter retains exactly one frozen pending raw input between a matched `llm_input` and `llm_output`. After `llm_output` resolves, durable state contains only refs, hashes, counters, events, and decisions.
+- The two-phase tool lifecycle (`beforeTool`/`afterTool`) implements intercept-seal (deny/ask at tool stage) and failure-seal (provider throw, correlation mismatch, malformed input) as distinct terminal states.
+- Memory observations (`observeMemoryWrite`/`observeMemoryRead`) emit refs and hashes only — never raw content.
+
+### OpenClaw plugin manifest and tools
+
+- `integrations/openclaw/openclaw.plugin.json` is a strict manifest with no unknown keys, exactly four tool contracts (`send_email`, `read_file`, `write_file`, `call_api`), and a closed `configSchema` with `writeOnly: true` for `ingestToken`.
+- `integrations/openclaw/src/tool-adapters.ts` registers four campaign-local simulated tools. Each tool delegates only to a campaign-local `InMemorySimulatedToolState` and `SimulatedToolExecutor`. Safe JSON output contains stable status and safe refs only.
+- `integrations/openclaw/package.json` pins `openclaw@2026.6.10` and `typebox@1.1.38`.
+
+### Closed campaign context and authenticated ingest client
+
+- `integrations/openclaw/src/campaign-context.ts` normalizes the plugin hook context and the model input envelope. It rejects correlation drift, extra keys, missing required keys, and oracle fields (`expected_outcome`, `expected_action`, `policy_action`, `report_metadata`, `attempt_outcome`). Normalized results are `Object.freeze`d.
+- `integrations/openclaw/src/ingest-client.ts` validates a fixed ingest endpoint (`http://backend:3001/internal/track1/campaigns`), enforces `Bearer` token auth with `AbortController` timeout (5000 ms), accepts only 200/202, and validates ack correlation (campaign_id, attempt_id, sequence, snapshot_sha256). The token is never leaked in errors; backend body is never echoed.
+
+### Typed native hook wiring and acknowledgement barrier
+
+- `integrations/openclaw/src/plugin.ts` exports `registerTrack1Plugin` and `definePluginEntry`. It registers exactly six native hooks: `session_start`, `llm_input`, `llm_output`, `before_tool_call` (with `{ priority: 100, timeoutMs: 10_000 }`), `after_tool_call`, and `session_end`.
+- Plugin session state is isolated by `session_id` via a `Map<string, PluginSessionState>`. Duplicate `session_start` or `session_end` are rejected.
+- `before_tool_call` implements the acknowledgement barrier: for `allow`/`alert`, the snapshot must be ingested before the handler returns. Ingest failure converts `allow`/`alert` into `{ block: true, blockReason: "security_monitor_unavailable" }`.
+- `deny`/`ask` never reach tool execution; they return `{ block: true, blockReason: "policy_denied" | "policy_ask_required" }`.
+- Unknown tools are blocked with `tool_not_permitted` before touching the adapter.
+- Raw hook event arguments are not retained; only frozen normalized snapshots are ingested. Hook errors are stable strings and contain no raw context, model, arguments, result, provider, or backend body.
+
+### Startup capability probe and permanent gates
+
+- `integrations/openclaw/src/runtime-probe.ts` exports `runTrack1PluginCapabilityProbe`. The probe result is a fixed-shape `Track1PluginProbeResult` with nine canonical keys: `schema_version`, `plugin_id`, `runtime_version`, `tool_names`, `hook_names`, `before_tool_blocked`, `after_tool_observed`, `correlation_ready`, `diagnostics`.
+- The probe verifies static capabilities (exact tool set, exact hook set, no duplicates, runtime version) and dynamic capabilities (unknown tool blocks, after-tool observes a snapshot, every snapshot carries non-empty correlation).
+- The fixed runtime command is `openclaw plugins inspect agent-security-track1 --runtime --json`.
+- `tests/repository/track1-openclaw-plugin.spec.ts` permanently gates: `definePluginEntry` presence, typed `api.on("before_tool_call", ...)` usage, no legacy `registerHook`, exact manifest tool contracts, exact pinned dependency versions, no forbidden side-effect tokens in tool/plugin source, no oracle field reads in decision paths, root `test:integration:openclaw` script registers all Phase 3 specs, and root `test:repo` includes the openclaw plugin gate.
+
+### Explicit non-goals
+
+The following remain outside Phase 3 scope and belong to Phase 4:
+
+- real Docker/OpenClaw runtime execution
+- real model invocation or tool execution outside the simulated tool executor
+- campaign orchestration, retry, or attempt lifecycle management
+- frontend campaign UI
+- report generation or evidence export

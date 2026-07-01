@@ -2722,5 +2722,59 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   - `npm run test:backend` — 229 tests, 228 pass, 1 pre-existing failure (`tests/integration/backend-task-center.api.spec.ts:648`: Semgrep `spawn EPERM` — unrelated to campaign ingest)
   - `npm run test:repo` — 92/92 pass
   - `npm run test:shared` — 147/147 pass
-- status: PHASE_2_REWORK_REVIEW_5_COMPLETE_PENDING_REVIEW
-- next blocker: user review of Phase 2 rework review 5 (R35) before Phase 3
+- closure review:
+  - added a shared-contract regression proving `state_change: "simulated"` normalizes at the public boundary
+  - strengthened the R35 backend regression to prove ingest, task mirroring, and `SupervisionService.getSessionDetail` preserve the closed-set value
+  - documented the four-value `state_change` closed set in `docs/api-contract.md`
+  - removed the R35 trailing-whitespace failure; `git diff --check` is clean
+  - `README.md` and `docs/architecture.md` were checked and require no update because runtime entrypoints, ownership, and architecture boundaries did not change
+- final closure gates:
+  - focused shared + ingest tests — 88/88 pass
+  - `npm run test:shared` — 148/148 pass
+  - `npm run test:repo` — 101/101 pass
+  - `npm run test:engine:sandbox` — 424/424 pass
+  - `npm run test:backend` — 229 tests, 228 pass, 1 pre-existing environment failure (`tests/integration/backend-task-center.api.spec.ts:648`: local Semgrep `spawn EPERM`; campaign and supervision tests pass)
+- status: PHASE_2_COMPLETE
+- next dependency: none for Phase 2; Phase 3 continues independently under the approved parallel task DAG
+
+## 2026-07-02 - REQ-T1-DEMO-010 Phase 3 OpenClaw Plugin and Native Monitor Hooks
+
+- requirement: Track 1 OpenClaw plugin integration — engine-private split model observation adapter, strict plugin manifest, four simulated tool adapters, closed campaign context, authenticated ingest client, typed native hook wiring with acknowledgement barrier, startup capability probe, and permanent repository gates
+- scope:
+  - P3-T1: `engines/sandbox/src/monitoring/observed-session.ts` — engine-private split model observation adapter (`ObservedMonitoredSession`) with `llm_input`/`llm_output` pair lifecycle, two-phase tool observation (`beforeTool`/`afterTool`), intercept-seal vs failure-seal distinction, and memory observations emitting refs/hashes only
+  - P3-T2: extended `observed-session.ts` with pre-tool decision and post-tool result state machine, pending-call tracking, and tool stage lifecycle guards
+  - P3-T3: `integrations/openclaw/openclaw.plugin.json` + `src/tool-adapters.ts` — strict manifest (no unknown keys, four tool contracts, closed configSchema with writeOnly token) and four campaign-local simulated tool adapters with safe JSON output
+  - P3-T4: `integrations/openclaw/src/campaign-context.ts` + `src/ingest-client.ts` — closed campaign context normalizer (rejects oracle fields, correlation drift, extra/missing keys) and authenticated ingest client (fixed endpoint, Bearer token, AbortController timeout, ack validation, no token/body leak)
+  - P3-T5: `integrations/openclaw/src/plugin.ts` + `src/index.ts` — typed native hook wiring (`registerTrack1Plugin`, `definePluginEntry`) registering six hooks, with acknowledgement barrier (ingest before allow/alert returns), fail-closed semantics (deny/ask/unknown/ingest-failure), session state isolation by session_id, and content boundary (no raw arguments retained)
+  - P3-T6: `integrations/openclaw/src/runtime-probe.ts` + `tests/repository/track1-openclaw-plugin.spec.ts` — startup capability probe with fixed-shape result (nine canonical keys), permanent repository gates (definePluginEntry presence, typed api.on usage, no legacy registerHook, exact manifest/dependency pins, forbidden side-effect token scan, oracle isolation, root test script registration)
+- RED evidence:
+  - P3-T1: `node --test engines/sandbox/tests/attack-monitor-observed-session.spec.ts` -> ERR_MODULE_NOT_FOUND for observed-session.ts
+  - P3-T2: extended observed-session tests -> failing on missing beforeTool/afterTool lifecycle
+  - P3-T3: `node --test integrations/openclaw/tests/plugin-contract.spec.ts` -> ERR_MODULE_NOT_FOUND for tool-adapters.ts
+  - P3-T4: `node --test integrations/openclaw/tests/campaign-context.spec.ts integrations/openclaw/tests/ingest-client.spec.ts` -> ERR_MODULE_NOT_FOUND for campaign-context.ts and ingest-client.ts
+  - P3-T5: `node --test integrations/openclaw/tests/plugin-hooks.spec.ts` -> ERR_MODULE_NOT_FOUND for plugin.ts
+  - P3-T6: `node --test integrations/openclaw/tests/plugin-runtime-probe.spec.ts tests/repository/track1-openclaw-plugin.spec.ts` -> 9 failures (runtime-probe.ts missing, definePluginEntry missing, test scripts missing)
+- commits:
+  - P3-T1 — `feat(sandbox): adapt split model observations`
+  - P3-T2 — `feat(sandbox): adapt split tool observations`
+  - P3-T3 — `feat(openclaw): register Track 1 simulated tools`
+  - P3-T4 `d72bb12` — `feat(openclaw): add safe campaign ingest client`
+  - P3-T5 `d55384f` — `feat(openclaw): wire Track 1 monitor hooks`
+  - P3-T6 — `test(openclaw): gate native monitor plugin`
+- phase gate:
+  - `npm run test:integration:openclaw` — 49/49 pass (plugin-contract 13, campaign-context 8, ingest-client 10, plugin-hooks 14, plugin-runtime-probe 4)
+  - `npm run test:engine:sandbox` — 424/424 pass
+  - `npm run test:shared` — 147/147 pass
+  - `npm run test:repo` — pass with new track1-openclaw-plugin.spec.ts gate
+  - `npm run test:backend` — 228 pass, 1 pre-existing failure (Semgrep EPERM in backend-task-center.api.spec.ts:648, unrelated to campaign ingest)
+- constraints honored:
+  - no raw-content sentinel appears in snapshots, errors, or logs
+  - plugin registers exactly four tools and six required native hooks
+  - policy and ingest acknowledgement both occur before tool execution
+  - hook errors are stable strings with no raw context/model/arguments/result/provider/backend body
+  - decision paths cannot read campaign oracle fields (campaign.v1, expected_action, expected_outcome)
+  - input-envelope normalizer mentions oracle fields only in its explicit rejection list
+  - existing REQ-007 and REQ-008 demo hashes unchanged (engine, shared, replay, and monitoring source unchanged)
+  - docs state that real Docker/OpenClaw execution belongs to Phase 4
+- status: PHASE_3_COMPLETE_PENDING_REVIEW
+- next blocker: user review of Phase 3 before Phase 4 runtime orchestration
