@@ -292,6 +292,29 @@ test("REQ-T1-DEMO-010 internal listener rejects wrong content type", async (t) =
   assert.equal(harness.campaignRepository.list().length, 0);
 });
 
+// R5 (Phase 2 rework finding 8): Content-Type must be parsed strictly by
+// splitting on ";" and comparing the media type exactly. The previous
+// includes("application/json") logic accepted substring matches like
+// "text/application/json-evil", which is not a valid JSON media type.
+test("REQ-T1-DEMO-010 internal listener rejects content-type substring bypass", async (t) => {
+  const harness = await startDualServerHarness();
+  t.after(() => harness.close());
+
+  const response = await fetch(
+    `${harness.internalUrl}/internal/track1/campaigns`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "text/application/json-evil",
+        authorization: `Bearer ${INGEST_TOKEN}`
+      },
+      body: JSON.stringify(makeCampaignStartEnvelope())
+    }
+  );
+  assert.equal(response.status, 415);
+  assert.equal(harness.campaignRepository.list().length, 0);
+});
+
 // -- Unknown internal route rejected -----------------------------------------
 
 test("REQ-T1-DEMO-010 internal listener rejects unknown internal route", async (t) => {

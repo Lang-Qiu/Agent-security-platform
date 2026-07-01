@@ -27,10 +27,19 @@ const SNAPSHOT_BODY_LIMIT = 2 * 1024 * 1024;
 
 function requireJsonContentType(request: IncomingMessage): void {
   const contentType = request.headers["content-type"];
-  if (
-    typeof contentType !== "string" ||
-    !contentType.toLowerCase().includes("application/json")
-  ) {
+  if (typeof contentType !== "string") {
+    throw new DomainError(
+      "Content-Type must be application/json",
+      "CAMPAIGN_INGEST_UNSUPPORTED_MEDIA_TYPE",
+      415
+    );
+  }
+  // R5 (Phase 2 rework finding 8): parse the media type strictly by splitting
+  // on ";" and trimming whitespace. Do not use includes("application/json")
+  // because substring matches like "text/application/json-evil" would bypass
+  // the check.
+  const mediaType = contentType.split(";")[0].trim().toLowerCase();
+  if (mediaType !== "application/json") {
     throw new DomainError(
       "Content-Type must be application/json",
       "CAMPAIGN_INGEST_UNSUPPORTED_MEDIA_TYPE",
