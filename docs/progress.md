@@ -2613,8 +2613,8 @@ check task result：http://127.0.0.1:3000/api/tasks/<task_id>/result
   - `67b416e` feat(backend): project campaign supervision views
   - `6a2cfb8` feat(api): expose campaign supervision reads
   - (P2-T8 docs commit integrated into the gate entry above)
-- status: PHASE_2_REWORK_REVIEW_COMPLETE_PENDING_REVIEW
-- next blocker: user review of Phase 2 rework review (R10-R17) before Phase 3
+- status: PHASE_2_REWORK_REVIEW_2_COMPLETE_PENDING_REVIEW
+- next blocker: user review of Phase 2 rework review 2 (R18-R24) before Phase 3
 
 ## Phase 2 Rework (9 findings, R1-R9)
 
@@ -2652,4 +2652,21 @@ User re-review of the R1-R9 rework identified 5 remaining P1 blockers and 3 P2 i
   - `npm run test:backend` — 206 tests, 205 pass, 1 pre-existing failure (local Semgrep `spawn EPERM` in `task-engine.service.spec.ts`)
   - `npm run test:repo` — 92/92 pass
   - `npm run test:shared` — 147/147 pass (+1 R15 manifest SHA test)
+  - `npm run test:engine:sandbox` — 391/391 pass
+
+## Phase 2 Rework Review 2 (5 P1 + 2 P2 findings, R18-R24)
+
+User third review of the R10-R17 rework identified 5 remaining P1 blockers and 2 P2 issues. All fixed via strict RED→GREEN→commit per finding.
+
+- R18 (P1 #1): `startProductionServers` now accepts zero arguments — `options` parameter defaults to `{}`. Real entrypoint `startProductionServers()` no longer crashes with `Cannot read properties of undefined (reading 'publicPort')`. Commit `ba3cfc7` (combined with R23).
+- R19 (P1 #2): Dual-repository write is now atomic — task save wrapped in try/catch around campaign save; on `campaignRepository.save` failure the task mirror is rolled back via `TaskRepository.delete(taskId)`. Added `delete(taskId: string): boolean` to the `TaskRepository` interface. Both failure directions covered by tests. Commit `0bec533`.
+- R20 (P1 #3): Global `task_id` uniqueness closed — `TaskRepository.findById()` checked before saving; conflicts from other campaigns rejected with `CAMPAIGN_TASK_ID_GLOBAL_CONFLICT`. Per-campaign `session_id` uniqueness enforced — reuse across attempts rejected with `CAMPAIGN_SESSION_ID_DUPLICATE` (fixes `SUPERVISION_SESSION_AMBIGUOUS` from the public detail API). Commit `35acd37`.
+- R21 (P1 #4): Nested narrative content projected — `policy_decisions[].reason`/`reason_code`, `alerts[].category`/`title`/`reason`, `blocked_records[].reason` replaced with the fixed closed-vocabulary token `"projected"` (not empty string — the shared normalizers require non-empty strings via `isNonEmptyString`). Matching `policy_decision` event payloads projected to satisfy the 1:1 supervision contract. Structural fields (IDs, action, risk_level, timestamps, evidence_refs) preserved. Commits `a8f42cd` (initial) and `b58f738` (fix: token `"projected"` instead of `""` to keep results re-normalizable).
+- R22 (P1 #5): Envelope-to-event correlation enforced — `validateAndProjectSnapshotResult` now accepts `envelopeContext: { scenario_id, case_id }` and rejects events whose `scenario_id` or `case_id` disagree with the envelope (`CAMPAIGN_SNAPSHOT_INVALID`). Cross-snapshot event-prefix monotonicity enforced — when ingesting a snapshot for an existing attempt, all `event_id`s from the previous snapshot must be present in the new snapshot. Commit `4193a93`.
+- R23 (P2 #6): Internal listener default bind host changed from `127.0.0.1` to `0.0.0.0` so Docker containers can reach `backend:3001`. Commit `ba3cfc7` (combined with R18).
+- R24 (P2 #7): Corrected `docs/progress.md` test counts to actual: `test:backend` 216/215 (was 206/205), `test:repo` 92/92 (was 91/91 in stale sections), `test:shared` 147/147, `test:engine:sandbox` 391/391.
+- test result after rework review 2:
+  - `npm run test:backend` — 216 tests, 215 pass, 1 pre-existing failure (local Semgrep `spawn EPERM` in `task-engine.service.spec.ts`)
+  - `npm run test:repo` — 92/92 pass
+  - `npm run test:shared` — 147/147 pass
   - `npm run test:engine:sandbox` — 391/391 pass
