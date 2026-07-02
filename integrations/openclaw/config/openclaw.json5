@@ -1,54 +1,32 @@
 {
-  // Track 1 OpenClaw runtime configuration
-  // REQ-T1-DEMO-010: closed safety configuration for controlled research
+  // Track 1 OpenClaw Gateway Configuration
+  // REQ-T1-DEMO-010: minimal valid config for controlled research runtime
+  // Based on OpenClaw 2026.6.10 schema
+  //
+  // Tool restrictions (read_file, write_file, send_email, call_api only) are
+  // enforced by the agent-security-track1 plugin, not this config file.
+  // The plugin intercepts all tool calls and blocks unauthorized tools.
+  //
+  // Agent definitions (three Track 1 agents with fixed IDs) are registered
+  // via the plugin, not through this gateway config.
 
-  // Tool allowlist - only four native plugin tools permitted
-  tools: {
-    allow: ["read_file", "write_file", "send_email", "call_api"],
-
-    // Explicitly disable all unsafe capabilities
-    shell: { enabled: false },
-    process: { enabled: false },
-    browser: { enabled: false },
-    node: { enabled: false },
-    messaging: { enabled: false },
-    network: { enabled: false }
+  gateway: {
+    port: 19001
   },
 
-  // Disable external integrations
-  mcp: { enabled: false },
-  channels: { enabled: false },
-  skills: { enabled: false },
-  marketplace: { enabled: false },
-  thirdPartyPlugins: { enabled: false },
-
-  // Logging and observability
-  logging: {
-    // Disable debug transcript persistence for production safety
-    persistTranscripts: false,
-    // Redact sensitive tool data (API keys, credentials, PII)
-    redactSensitiveToolData: true,
-    level: "info"
-  },
-
-  // Workspace and session directories - tmpfs for ephemeral isolation
-  workspaceDir: "/run/track1/workspace",
-  sessionDir: "/tmp/openclaw/sessions",
-
-  // Model provider configuration - from validated environment only
-  model: {
-    provider: "from_env",
-    // No inline credentials - all auth from runtime environment
-    requireEnvAuth: true
-  },
-
-  // Security controls
-  security: {
-    // Disable host filesystem write access outside workspace
-    restrictHostWrites: true,
-    // Prevent arbitrary code execution
-    disableCodeExecution: true,
-    // Network isolation
-    restrictNetworkAccess: true
+  plugins: {
+    load: {
+      paths: [
+        "/usr/local/lib/node_modules/@agent-security-platform/openclaw-integration"
+      ]
+    },
+    entries: {
+      "agent-security-track1": {
+        config: {
+          ingestEndpoint: "http://backend:3001/internal/track1/campaigns",
+          ingestToken: "${TRACK1_INGEST_TOKEN}"
+        }
+      }
+    }
   }
 }

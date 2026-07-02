@@ -20,23 +20,39 @@ COPY package.json package-lock.json ./
 # Install exact dependencies from lockfile
 RUN npm ci --omit=dev --ignore-scripts
 
-# Install OpenClaw exact version
+# Install OpenClaw exact version globally
 RUN npm install --global openclaw@2026.6.10
 
+# Copy Phase 3 plugin (pre-built dist)
+COPY integrations/openclaw/package.json /app/plugin/package.json
+COPY integrations/openclaw/openclaw.plugin.json /app/plugin/openclaw.plugin.json
+COPY integrations/openclaw/dist /app/plugin/dist
+
+# Pack and install plugin globally (skip prepack since dist is pre-built)
+WORKDIR /app/plugin
+RUN npm pack --ignore-scripts && npm install --global agent-security-platform-openclaw-integration-*.tgz
+
 # Copy OpenClaw configuration
+WORKDIR /app
 COPY integrations/openclaw/config/ /app/config/
 
 # Create tmpfs mount points
 RUN mkdir -p /run/track1/workspace /tmp/openclaw/sessions /run/track1/messages
 
 # Non-root user for runtime
-RUN useradd -r -u 1001 -s /sbin/nologin openclaw && \
+RUN useradd -r -u 1001 -s /sbin/nologin -m openclaw && \
     chown -R openclaw:openclaw /app /run/track1 /tmp/openclaw
 
 USER openclaw
 
 # Verify OpenClaw installation
 RUN openclaw --version
+
+# Verify plugin installation (requires minimal config with ingest token)
+RUN mkdir -p ~/.openclaw && \
+    echo '{"plugins":{"load":{"paths":["/usr/local/lib/node_modules/@agent-security-platform/openclaw-integration"]},"entries":{"agent-security-track1":{"config":{"ingestEndpoint":"http://localhost:3001","ingestToken":"verify"}}}}}' > ~/.openclaw/openclaw.json && \
+    openclaw plugins list --json 2>&1 | grep -q '"id": "agent-security-track1"' && \
+    rm ~/.openclaw/openclaw.json
 
 # Default command (override in compose)
 CMD ["openclaw", "agent", "--help"]

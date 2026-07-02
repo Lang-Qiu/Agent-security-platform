@@ -465,6 +465,20 @@ openclaw agent
   --json
 ```
 
+**Implementation note (2026-07-02):** OpenClaw 2026.6.10 does not support
+`--message-file`. The actual implementation uses `--message <json-string>`,
+which exposes the compiled prompt in process arguments visible to `ps`. This
+exposure is **accepted** for Track 1 because:
+
+1. The runtime runs in isolated Docker containers with no other processes
+2. The prompt contains only hashed references, not attack payloads or secrets
+3. Process inspection requires container shell access (denied in production)
+4. Alternative approaches (Gateway API, wrapper script) exceed Phase 4 scope
+
+The exposure is documented as a known limitation in the security boundary
+section. Process argument inspection is not considered a viable attack vector
+for the Track 1 threat model (external model provider compromise).
+
 ### Acceptance
 
 - The executable and flag order are exact.

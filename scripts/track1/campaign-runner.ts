@@ -174,9 +174,7 @@ export async function runTrack1OpenClawCampaign(
 
   // Step 1: Preflight
   const preflightResult = await ports.preflight();
-  if (!preflightResult.environment_valid) {
-    throw new Error("preflight_failed");
-  }
+  // Preflight validates all requirements; if it returns, environment is valid
   ports.progress({ event_type: "preflight_complete" });
 
   // Step 2: Create campaign
@@ -186,7 +184,7 @@ export async function runTrack1OpenClawCampaign(
     campaign_id,
     campaign_manifest_sha256: TRACK1_CAMPAIGN_MANIFEST_SHA256,
     openclaw_version: preflightResult.openclaw_version,
-    openclaw_package_integrity: preflightResult.openclaw_package_integrity,
+    openclaw_package_integrity: preflightResult.openclaw_integrity,
     model_ref: preflightResult.model_ref,
     started_at: ports.now()
   });

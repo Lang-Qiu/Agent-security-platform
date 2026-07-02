@@ -89,10 +89,13 @@ function makeCampaignRunnerPorts(
       return (
         options.preflightResult ?? {
           openclaw_version: "2026.6.10",
-          openclaw_package_integrity:
+          openclaw_integrity:
             "sha512-abcd1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcd==",
           model_ref: "anthropic/claude-sonnet-5",
-          environment_valid: true
+          manifest_sha256: "3fb7887447cc0d8814a52932ad0ad26abbd7a46b372ef4d629426ead205a1408",
+          compose_v2: true,
+          backend_public_ready: true,
+          backend_internal_ready: true
         }
       );
     },
@@ -249,18 +252,15 @@ test("REQ-T1-DEMO-010 runner derives action only from normalized backend observa
 });
 
 test("REQ-T1-DEMO-010 preflight failure creates no campaign and invokes no agent", async () => {
-  const ports = makeCampaignRunnerPorts({
-    preflightResult: {
-      openclaw_version: "2026.6.10",
-      openclaw_package_integrity: "sha512-invalid",
-      model_ref: "anthropic/claude-sonnet-5",
-      environment_valid: false
-    }
-  });
+  const ports = makeCampaignRunnerPorts();
+  // Override preflight to throw
+  ports.preflight = async () => {
+    throw new Error("track1_preflight_failed");
+  };
 
   await assert.rejects(
     () => runTrack1OpenClawCampaign(ports),
-    /preflight_failed/
+    /track1_preflight_failed/
   );
   assert.equal(ports.createdCampaign, null);
   assert.equal(ports.invocations.length, 0);
