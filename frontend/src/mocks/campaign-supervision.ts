@@ -84,6 +84,7 @@ function clone<T>(value: T): T {
 }
 
 export interface CampaignSummaryOverrides {
+  campaign_id?: string;
   status?: Track1CampaignStatus;
   passed_case_count?: number;
   failed_case_count?: number;
@@ -97,6 +98,7 @@ export interface CampaignSummaryOverrides {
 export function makeCampaignSummary(
   overrides?: CampaignSummaryOverrides
 ): Track1CampaignSummary {
+  const campaignId = overrides?.campaign_id ?? CAMPAIGN_ID;
   const status = overrides?.status ?? "running";
   const passed = overrides?.passed_case_count ?? 1;
   const failed = overrides?.failed_case_count ?? 0;
@@ -108,7 +110,7 @@ export function makeCampaignSummary(
 
   const base: Track1CampaignSummary = {
     schema_version: TRACK1_CAMPAIGN_READ_SCHEMA_VERSION,
-    campaign_id: CAMPAIGN_ID,
+    campaign_id: campaignId,
     status,
     started_at: STARTED_AT,
     updated_at: UPDATED_AT,
