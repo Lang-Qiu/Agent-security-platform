@@ -1,0 +1,42 @@
+# Track 1 OpenClaw Runtime Image
+# REQ-T1-DEMO-010: digest-pinned base with exact lockfile dependencies
+
+# Base: node:22.19.0-bookworm-slim with immutable digest
+FROM node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90
+
+# Install system dependencies required for OpenClaw
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates \
+      git && \
+    rm -rf /var/lib/apt/lists/*
+
+# Create application directory
+WORKDIR /app
+
+# Copy package files for dependency installation
+COPY package.json package-lock.json ./
+
+# Install exact dependencies from lockfile
+RUN npm ci --omit=dev --ignore-scripts
+
+# Install OpenClaw exact version
+RUN npm install --global openclaw@2026.6.10
+
+# Copy OpenClaw configuration
+COPY integrations/openclaw/config/ /app/config/
+
+# Create tmpfs mount points
+RUN mkdir -p /run/track1/workspace /tmp/openclaw/sessions /run/track1/messages
+
+# Non-root user for runtime
+RUN useradd -r -u 1001 -s /sbin/nologin openclaw && \
+    chown -R openclaw:openclaw /app /run/track1 /tmp/openclaw
+
+USER openclaw
+
+# Verify OpenClaw installation
+RUN openclaw --version
+
+# Default command (override in compose)
+CMD ["openclaw", "agent", "--help"]

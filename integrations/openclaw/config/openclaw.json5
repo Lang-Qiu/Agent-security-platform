@@ -1,0 +1,54 @@
+{
+  // Track 1 OpenClaw runtime configuration
+  // REQ-T1-DEMO-010: closed safety configuration for controlled research
+
+  // Tool allowlist - only four native plugin tools permitted
+  tools: {
+    allow: ["read_file", "write_file", "send_email", "call_api"],
+
+    // Explicitly disable all unsafe capabilities
+    shell: { enabled: false },
+    process: { enabled: false },
+    browser: { enabled: false },
+    node: { enabled: false },
+    messaging: { enabled: false },
+    network: { enabled: false }
+  },
+
+  // Disable external integrations
+  mcp: { enabled: false },
+  channels: { enabled: false },
+  skills: { enabled: false },
+  marketplace: { enabled: false },
+  thirdPartyPlugins: { enabled: false },
+
+  // Logging and observability
+  logging: {
+    // Disable debug transcript persistence for production safety
+    persistTranscripts: false,
+    // Redact sensitive tool data (API keys, credentials, PII)
+    redactSensitiveToolData: true,
+    level: "info"
+  },
+
+  // Workspace and session directories - tmpfs for ephemeral isolation
+  workspaceDir: "/run/track1/workspace",
+  sessionDir: "/tmp/openclaw/sessions",
+
+  // Model provider configuration - from validated environment only
+  model: {
+    provider: "from_env",
+    // No inline credentials - all auth from runtime environment
+    requireEnvAuth: true
+  },
+
+  // Security controls
+  security: {
+    // Disable host filesystem write access outside workspace
+    restrictHostWrites: true,
+    // Prevent arbitrary code execution
+    disableCodeExecution: true,
+    // Network isolation
+    restrictNetworkAccess: true
+  }
+}
