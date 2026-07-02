@@ -46,6 +46,16 @@ export interface Track1AttemptObservation {
   attempt_id: Track1AttemptId;
   final_action: "allow" | "ask" | "alert" | "deny";
   observation_complete: true;
+  retry_classification?:
+    | "success"
+    | "provider_transport_failed"
+    | "model_protocol_invalid"
+    | "expected_tool_request_missing"
+    | "derived_action_mismatch"
+    | "ingest_failed"
+    | "correlation_invalid"
+    | "real_side_effect_detected"
+    | "content_boundary_violated";
 }
 
 export interface Track1SafeProgressEvent {
@@ -70,6 +80,7 @@ export interface Track1CampaignRunSummary {
   campaign_id: Track1CampaignId;
   case_count: number;
   agent_count: number;
+  retry_count: number;
   final_actions: Record<Track1CaseId, string>;
   completed: boolean;
 }
@@ -183,6 +194,15 @@ export async function runTrack1OpenClawCampaign(
 
   const final_actions: Record<Track1CaseId, string> = {};
   let caseOrdinal = 0;
+  let retryCount = 0;
+  let campaignFailed = false;
+
+  const RETRYABLE_REASONS = new Set([
+    "provider_transport_failed",
+    "model_protocol_invalid",
+    "expected_tool_request_missing",
+    "derived_action_mismatch"
+  ]);
 
   // Step 3: Execute all cases in manifest order
   for (const caseEntry of manifest.cases) {
@@ -197,57 +217,101 @@ export async function runTrack1OpenClawCampaign(
       total_cases: manifest.cases.length
     });
 
-    // P4-T4 implements only attempt_index=1 (no retry). P4-T5 adds retry logic.
-    const attempt_index: 1 | 2 = 1;
-    const attempt_id = generateAttemptId(case_id as Track1CaseId, attempt_index);
-    const session_id = generateSessionId(ports.randomHex32());
-    const session_key = generateSessionKey(ports.randomHex32());
+    // P4-T5: Execute attempt 1, retry once if retryable
+    let finalObservation: Track1AttemptObservation | null = null;
 
-    // Compile oracle-free prompt
-    const prompt = await ports.compilePrompt({
-      campaign_id,
-      agent_id: agent_id as Track1CampaignAgentId,
-      scenario_id: scenario_id as Track1ScenarioId,
-      case_id: case_id as Track1CaseId,
-      attempt_id,
-      attempt_index,
-      session_id
-    });
+    for (const attempt_index of [1, 2] as const) {
+      const attempt_id = generateAttemptId(case_id as Track1CaseId, attempt_index);
+      const session_id = generateSessionId(ports.randomHex32());
+      const session_key = generateSessionKey(ports.randomHex32());
 
-    // Invoke OpenClaw agent
-    await ports.invokeAgent({
-      agent_id: agent_id as Track1CampaignAgentId,
-      session_key,
-      attempt_id,
-      prompt
-    });
-    ports.progress({
-      event_type: "attempt_invoked",
-      agent_id: agent_id as Track1CampaignAgentId,
-      case_id: case_id as Track1CaseId,
-      attempt_id,
-      attempt_index
-    });
+      // Compile oracle-free prompt
+      const prompt = await ports.compilePrompt({
+        campaign_id,
+        agent_id: agent_id as Track1CampaignAgentId,
+        scenario_id: scenario_id as Track1ScenarioId,
+        case_id: case_id as Track1CaseId,
+        attempt_id,
+        attempt_index,
+        session_id
+      });
 
-    // Wait for backend-normalized terminal evidence
-    const observation = await ports.awaitAttempt({
-      campaign_id,
-      agent_id: agent_id as Track1CampaignAgentId,
-      scenario_id: scenario_id as Track1ScenarioId,
-      case_id: case_id as Track1CaseId,
-      attempt_id,
-      session_id
-    });
+      // Invoke OpenClaw agent
+      await ports.invokeAgent({
+        agent_id: agent_id as Track1CampaignAgentId,
+        session_key,
+        attempt_id,
+        prompt
+      });
+      ports.progress({
+        event_type: "attempt_invoked",
+        agent_id: agent_id as Track1CampaignAgentId,
+        case_id: case_id as Track1CaseId,
+        attempt_id,
+        attempt_index
+      });
 
-    final_actions[case_id as Track1CaseId] = observation.final_action;
+      // Wait for backend-normalized terminal evidence
+      const observation = await ports.awaitAttempt({
+        campaign_id,
+        agent_id: agent_id as Track1CampaignAgentId,
+        scenario_id: scenario_id as Track1ScenarioId,
+        case_id: case_id as Track1CaseId,
+        attempt_id,
+        session_id
+      });
 
-    ports.progress({
-      event_type: "attempt_observed",
-      agent_id: agent_id as Track1CampaignAgentId,
-      case_id: case_id as Track1CaseId,
-      attempt_id,
-      final_action: observation.final_action
-    });
+      ports.progress({
+        event_type: "attempt_observed",
+        agent_id: agent_id as Track1CampaignAgentId,
+        case_id: case_id as Track1CaseId,
+        attempt_id,
+        final_action: observation.final_action
+      });
+
+      const classification = observation.retry_classification ?? "success";
+
+      // Check if retry is needed and allowed
+      if (attempt_index === 1) {
+        if (classification === "success") {
+          // Success on first attempt
+          finalObservation = observation;
+          break;
+        } else if (RETRYABLE_REASONS.has(classification)) {
+          // Retryable failure on first attempt - continue to attempt 2
+          retryCount++;
+          continue;
+        } else {
+          // Non-retryable failure on first attempt
+          campaignFailed = true;
+          break;
+        }
+      } else {
+        // attempt_index === 2
+        if (classification !== "success") {
+          // Second attempt failed - terminal
+          campaignFailed = true;
+        }
+        finalObservation = observation;
+        break;
+      }
+    }
+
+    if (campaignFailed) {
+      await ports.finalizeCampaign({
+        schema_version: TRACK1_CAMPAIGN_FINALIZE_SCHEMA_VERSION,
+        campaign_id,
+        requested_status: "failed",
+        completed_at: ports.now()
+      });
+      throw new Error("track1_campaign_failed");
+    }
+
+    if (!finalObservation) {
+      throw new Error("track1_internal_state_invalid");
+    }
+
+    final_actions[case_id as Track1CaseId] = finalObservation.final_action;
 
     ports.progress({
       event_type: "case_complete",
@@ -269,6 +333,7 @@ export async function runTrack1OpenClawCampaign(
     campaign_id,
     case_count: manifest.cases.length,
     agent_count: manifest.agents.length,
+    retry_count: retryCount,
     final_actions,
     completed: true
   };

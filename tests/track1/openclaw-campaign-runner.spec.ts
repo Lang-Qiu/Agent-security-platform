@@ -33,6 +33,22 @@ interface MockPortsOptions {
   backendActualAction?: string;
   campaignCreationFails?: boolean;
   awaitFailsFor?: string[];
+  caseObservations?: Record<
+    string,
+    Array<{
+      final_action: string;
+      retry_classification?:
+        | "success"
+        | "provider_transport_failed"
+        | "model_protocol_invalid"
+        | "expected_tool_request_missing"
+        | "derived_action_mismatch"
+        | "ingest_failed"
+        | "correlation_invalid"
+        | "real_side_effect_detected"
+        | "content_boundary_violated";
+    }>
+  >;
 }
 
 function makeCampaignRunnerPorts(
@@ -49,7 +65,8 @@ function makeCampaignRunnerPorts(
   const progressEvents: unknown[] = [];
   const state = {
     createdCampaign: null as Track1CampaignStartEnvelope | null,
-    finalizedCampaign: null as Track1CampaignFinalizeEnvelope | null
+    finalizedCampaign: null as Track1CampaignFinalizeEnvelope | null,
+    attemptsByCase: {} as Record<string, RecordedInvocation[]>
   };
   let attemptCounter = 0;
 
@@ -62,6 +79,9 @@ function makeCampaignRunnerPorts(
     },
     get finalizedCampaign() {
       return state.finalizedCampaign;
+    },
+    attemptsFor(caseId: string) {
+      return state.attemptsByCase[caseId] ?? [];
     },
 
     async preflight() {
@@ -106,12 +126,17 @@ function makeCampaignRunnerPorts(
 
     async invokeAgent(input: OpenClawAgentInvocation) {
       calls.push("invoke-agent");
-      invocations.push({
+      const rec: RecordedInvocation = {
         agent_id: input.agent_id,
         session_key: input.session_key,
         case_id: input.prompt.case_id,
         attempt_id: input.attempt_id
-      });
+      };
+      invocations.push(rec);
+      if (!state.attemptsByCase[input.prompt.case_id]) {
+        state.attemptsByCase[input.prompt.case_id] = [];
+      }
+      state.attemptsByCase[input.prompt.case_id].push(rec);
       return {
         exit_code: 0,
         agent_id: input.agent_id,
@@ -124,14 +149,20 @@ function makeCampaignRunnerPorts(
 
     async awaitAttempt(input) {
       calls.push("await-attempt");
-      attemptCounter++;
       if (options.awaitFailsFor?.includes(input.attempt_id)) {
         throw new Error("mock_await_timeout");
       }
+
+      const caseObs = options.caseObservations?.[input.case_id];
+      const attemptIndex = state.attemptsByCase[input.case_id]?.length ?? 1;
+      const obs = caseObs?.[attemptIndex - 1];
+
+      attemptCounter++;
       return {
         attempt_id: input.attempt_id,
-        final_action: options.backendActualAction ?? "deny",
-        observation_complete: true
+        final_action: obs?.final_action ?? options.backendActualAction ?? "deny",
+        observation_complete: true,
+        retry_classification: obs?.retry_classification ?? "success"
       };
     },
 
@@ -293,4 +324,87 @@ test("REQ-T1-DEMO-010 finalization happens only after all nine final attempts", 
   assert.ok(finalizeIndex > lastAwaitIndex);
   assert.ok(ports.finalizedCampaign);
   assert.equal(ports.finalizedCampaign.requested_status, "completed");
+});
+
+// -- P4-T5: retry tests ------------------------------------------------------
+
+test("REQ-T1-DEMO-010 runner retries each permitted reason exactly once", async () => {
+  for (const reason of [
+    "provider_transport_failed",
+    "model_protocol_invalid",
+    "expected_tool_request_missing",
+    "derived_action_mismatch"
+  ] as const) {
+    const ports = makeCampaignRunnerPorts({
+      caseObservations: {
+        "T1-SC-001-C001": [
+          { final_action: "deny", retry_classification: reason },
+          { final_action: "deny", retry_classification: "success" }
+        ]
+      }
+    });
+    const summary = await runTrack1OpenClawCampaign(ports);
+    assert.equal(summary.retry_count, 1, `retry_count for ${reason}`);
+    assert.equal(ports.attemptsFor("T1-SC-001-C001").length, 2, `attempt count for ${reason}`);
+    assert.match(
+      ports.attemptsFor("T1-SC-001-C001")[0].attempt_id,
+      /:1$/,
+      `first attempt for ${reason}`
+    );
+    assert.match(
+      ports.attemptsFor("T1-SC-001-C001")[1].attempt_id,
+      /:2$/,
+      `second attempt for ${reason}`
+    );
+  }
+});
+
+test("REQ-T1-DEMO-010 non-retryable failure invokes no second attempt", async () => {
+  for (const reason of [
+    "ingest_failed",
+    "correlation_invalid",
+    "real_side_effect_detected",
+    "content_boundary_violated"
+  ] as const) {
+    const ports = makeCampaignRunnerPorts({
+      caseObservations: {
+        "T1-SC-001-C001": [{ final_action: "deny", retry_classification: reason }]
+      }
+    });
+    await assert.rejects(
+      () => runTrack1OpenClawCampaign(ports),
+      /track1_campaign_failed/,
+      `should fail for ${reason}`
+    );
+    assert.equal(ports.attemptsFor("T1-SC-001-C001").length, 1, `attempt count for ${reason}`);
+  }
+});
+
+test("REQ-T1-DEMO-010 second failed attempt is terminal and cannot retry again", async () => {
+  const ports = makeCampaignRunnerPorts({
+    caseObservations: {
+      "T1-SC-001-C001": [
+        { final_action: "deny", retry_classification: "provider_transport_failed" },
+        { final_action: "deny", retry_classification: "provider_transport_failed" }
+      ]
+    }
+  });
+  await assert.rejects(
+    () => runTrack1OpenClawCampaign(ports),
+    /track1_campaign_failed/
+  );
+  assert.equal(ports.attemptsFor("T1-SC-001-C001").length, 2);
+  assert.ok(ports.finalizedCampaign);
+  assert.equal(ports.finalizedCampaign.requested_status, "failed");
+});
+
+test("REQ-T1-DEMO-010 successful first attempt does not invoke retry", async () => {
+  const ports = makeCampaignRunnerPorts({
+    caseObservations: {
+      "T1-SC-001-C001": [{ final_action: "deny", retry_classification: "success" }]
+    }
+  });
+  const summary = await runTrack1OpenClawCampaign(ports);
+  assert.equal(summary.retry_count, 0);
+  assert.equal(ports.attemptsFor("T1-SC-001-C001").length, 1);
 });
