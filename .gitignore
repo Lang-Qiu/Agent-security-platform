@@ -36,6 +36,15 @@ artifacts/
 reports/
 sandbox-data/
 
+# Track 1 OpenClaw runtime state (ephemeral, never commit)
+/run/track1/
+/tmp/openclaw/
+/workspace/
+openclaw-state/
+.openclaw/
+campaign-artifacts/
+openclaw-logs/
+
 # Test outputs
 playwright-report/
 test-results/

@@ -1,0 +1,124 @@
+# Track 1 OpenClaw Security Demo - Docker Compose Topology
+# REQ-T1-DEMO-010: isolated runtime with network segmentation and tmpfs isolation
+
+services:
+  # Frontend service - public HTTP interface
+  frontend:
+    profiles: ["track1"]
+    image: agent-security-track1-frontend:latest
+    build:
+      context: ../..
+      dockerfile: deploy/track1/Dockerfile.frontend
+    ports:
+      - "3000:3000"
+    networks:
+      - track1-public
+    environment:
+      - TRACK1_BACKEND_URL=http://backend:3000
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  # Backend service - handles public API and internal ingest
+  backend:
+    profiles: ["track1"]
+    image: agent-security-track1-backend:latest
+    build:
+      context: ../..
+      dockerfile: deploy/track1/Dockerfile.backend
+    ports:
+      - "3000:3000"
+    expose:
+      - "3001"
+    networks:
+      - track1-public
+      - track1-ingest
+    environment:
+      - TRACK1_PUBLIC_PORT=3000
+      - TRACK1_INGEST_PORT=3001
+      - TRACK1_INGEST_TOKEN=${TRACK1_INGEST_TOKEN}
+      - NODE_ENV=production
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  # OpenClaw gateway - isolated agent runtime
+  openclaw-gateway:
+    profiles: ["track1"]
+    image: agent-security-track1-openclaw:2026.6.10
+    build:
+      context: ../..
+      dockerfile: deploy/track1/Dockerfile.openclaw
+    networks:
+      - track1-ingest
+      - track1-model-egress
+    environment:
+      - OPENCLAW_MODEL_BASE_URL=${OPENCLAW_MODEL_BASE_URL}
+      - OPENCLAW_MODEL_API_KEY=${OPENCLAW_MODEL_API_KEY}
+      - OPENCLAW_MODEL_ID=${OPENCLAW_MODEL_ID}
+      - OPENCLAW_CONFIG_DIR=/app/config
+    volumes:
+      # Read-only mounts for cases and configuration
+      - ../../samples/track1/cases:/app/cases:ro
+      - ../../integrations/openclaw/config:/app/config:ro
+    tmpfs:
+      # Ephemeral storage for workspace, sessions, and transient messages
+      - /workspace
+      - /run/track1
+      - /tmp/openclaw
+    command: ["openclaw", "gateway", "--config", "/app/config/openclaw.json5"]
+    healthcheck:
+      test: ["CMD", "openclaw", "ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  # Campaign runner - orchestrates the security evaluation campaign
+  campaign-runner:
+    profiles: ["track1"]
+    image: agent-security-track1-runner:latest
+    build:
+      context: ../..
+      dockerfile: deploy/track1/Dockerfile.runner
+    networks:
+      - track1-ingest
+    environment:
+      - TRACK1_BACKEND_INGEST_URL=http://backend:3001
+      - TRACK1_INGEST_TOKEN=${TRACK1_INGEST_TOKEN}
+      - TRACK1_OPENCLAW_GATEWAY_URL=http://openclaw-gateway:8080
+      - OPENCLAW_MODEL_BASE_URL=${OPENCLAW_MODEL_BASE_URL}
+      - OPENCLAW_MODEL_API_KEY=${OPENCLAW_MODEL_API_KEY}
+      - OPENCLAW_MODEL_ID=${OPENCLAW_MODEL_ID}
+    volumes:
+      # Read-only mount for campaign manifest and cases
+      - ../../samples/track1:/app/samples/track1:ro
+      - ../../scripts/track1:/app/scripts/track1:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      openclaw-gateway:
+        condition: service_healthy
+    command: ["node", "--experimental-strip-types", "scripts/track1/run-openclaw-campaign.ts"]
+    restart: "no"
+
+networks:
+  # Public network - frontend and backend public interface
+  track1-public:
+    driver: bridge
+
+  # Internal ingest network - backend internal port, openclaw gateway, and runner
+  track1-ingest:
+    driver: bridge
+    internal: false
+
+  # Model egress network - openclaw to external model provider only
+  track1-model-egress:
+    driver: bridge
+    internal: false
