@@ -7,21 +7,22 @@ import type {
   SandboxSupervisionOverview,
   SandboxSupervisionSessionDetail
 } from "../../../shared/types/supervision";
+import type { Track1CampaignDetail } from "../../../shared/types/campaign-supervision";
 import {
+  findMockSession,
   makeSupervisionDetail,
   makeSupervisionEvidence,
   makeSupervisionOverview
 } from "../mocks/supervision";
+import { makeCampaignDetail, makeCampaignEvidence } from "../mocks/campaign-supervision";
 import { renderAppAtRoute } from "../test/app-test-harness";
 
-// Controllable mock for the supervision service. By default, delegates to the
-// real implementation (which uses fetch). The cross-session race test
-// overrides getSupervisionSession to control timing.
+// Keep the real service module surface and replace only the two async reads
+// whose timing the cross-session race test must control.
 const supervisionServiceMock = vi.hoisted(() => {
   let realService: {
     getSupervisionSession: (sessionId: string, options?: unknown) => Promise<unknown>;
     listSupervisionSessions: (query: unknown, options?: unknown) => Promise<unknown>;
-    serializeSupervisionQuery: (query: unknown) => string;
   } | null = null;
 
   async function ensureReal() {
@@ -31,8 +32,7 @@ const supervisionServiceMock = vi.hoisted(() => {
       >("../services/supervision-service");
       realService = {
         getSupervisionSession: mod.getSupervisionSession.bind(mod),
-        listSupervisionSessions: mod.listSupervisionSessions.bind(mod),
-        serializeSupervisionQuery: mod.serializeSupervisionQuery.bind(mod)
+        listSupervisionSessions: mod.listSupervisionSessions.bind(mod)
       };
     }
     return realService;
@@ -47,41 +47,23 @@ const supervisionServiceMock = vi.hoisted(() => {
       const real = await ensureReal();
       return real.listSupervisionSessions(args[0], args[1]);
     }),
-    serializeSupervisionQuery: vi.fn((...args: [unknown]) => {
-      // Synchronous fallback: build query string inline
-      const query = args[0] as Record<string, unknown>;
-      const params = new URLSearchParams();
-      for (const [k, v] of Object.entries(query)) {
-        if (v !== undefined && v !== null && String(v).length > 0) {
-          params.set(k, String(v));
-        }
-      }
-      const s = params.toString();
-      return s.length === 0 ? "" : `?${s}`;
-    }),
-    downloadSupervisionEvidence: vi.fn(async (...args: [string, unknown?]) => {
-      const real = await ensureReal();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return (real as any).downloadSupervisionEvidence(args[0], args[1]);
-    }),
-    loadTaskSupervisionDetail: vi.fn(async (...args: [string, unknown?]) => {
-      const real = await ensureReal();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return (real as any).loadTaskSupervisionDetail(args[0], args[1]);
-    }),
     _resetToReal: () => {
       realService = null;
     }
   };
 });
 
-vi.mock("../services/supervision-service", () => ({
-  getSupervisionSession: supervisionServiceMock.getSupervisionSession,
-  listSupervisionSessions: supervisionServiceMock.listSupervisionSessions,
-  serializeSupervisionQuery: supervisionServiceMock.serializeSupervisionQuery,
-  downloadSupervisionEvidence: supervisionServiceMock.downloadSupervisionEvidence,
-  loadTaskSupervisionDetail: supervisionServiceMock.loadTaskSupervisionDetail
-}));
+vi.mock("../services/supervision-service", async () => {
+  const realService = await vi.importActual<
+    typeof import("../services/supervision-service")
+  >("../services/supervision-service");
+
+  return {
+    ...realService,
+    getSupervisionSession: supervisionServiceMock.getSupervisionSession,
+    listSupervisionSessions: supervisionServiceMock.listSupervisionSessions
+  };
+});
 
 function createOverview(
   sessions: SandboxSupervisionOverview["sessions"]
@@ -273,14 +255,6 @@ describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
     supervisionServiceMock.listSupervisionSessions.mockImplementation(async (query: unknown, options?: unknown) => {
       const mod = await vi.importActual<typeof import("../services/supervision-service")>("../services/supervision-service");
       return mod.listSupervisionSessions(query as never, options as never);
-    });
-    supervisionServiceMock.downloadSupervisionEvidence.mockImplementation(async (sessionId: string, options?: unknown) => {
-      const mod = await vi.importActual<typeof import("../services/supervision-service")>("../services/supervision-service");
-      return mod.downloadSupervisionEvidence(sessionId, options as never);
-    });
-    supervisionServiceMock.loadTaskSupervisionDetail.mockImplementation(async (sessionId: string, options?: unknown) => {
-      const mod = await vi.importActual<typeof import("../services/supervision-service")>("../services/supervision-service");
-      return mod.loadTaskSupervisionDetail(sessionId, options as never);
     });
   });
 
@@ -1129,6 +1103,11 @@ describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
     const sessionAId = overview.sessions[0].session_id;
     const sessionBId = overview.sessions[1].session_id;
     const detailA = makeSupervisionDetail();
+    const detailB = findMockSession(sessionBId);
+    if (!detailB) {
+      throw new Error(`Missing supervision detail fixture for ${sessionBId}`);
+    }
+    expect(detailB.summary.session_id).toBe(sessionBId);
 
     let resolveDetailA: ((value: {
       data: typeof detailA;
@@ -1150,7 +1129,7 @@ describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
         }
         // Session B: returns mock. If hasRealDetailRef is wrongly true from
         // A's late resolve, the page loadDetail would throw, marking B stale.
-        return { data: makeSupervisionDetail(), source: "mock" };
+        return { data: detailB, source: "mock" };
       }
     );
     supervisionServiceMock.listSupervisionSessions.mockResolvedValue({
@@ -1207,4 +1186,446 @@ describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
       screen.getByRole("heading", { name: /Session Inspector/i })
     ).toBeInTheDocument();
   }, 30000);
+});
+
+// ---------------------------------------------------------------------------
+// REQ-T1-DEMO-010 Phase 5 — Campaign supervision mode
+// ---------------------------------------------------------------------------
+
+const CAMPAIGN_ID = "campaign:t1:0123456789abcdef0123456789abcdef";
+
+// Produce a session detail whose summary and events all reference the
+// requested sessionId. The normalizer rejects details where
+// event.session_id !== summary.session_id, so both must be rewritten
+// consistently when serving campaign session IDs (which differ from the
+// mock fixture's primary session ID).
+function rewriteSessionDetailId(
+  detail: SandboxSupervisionSessionDetail,
+  sessionId: string
+): SandboxSupervisionSessionDetail {
+  return {
+    ...detail,
+    summary: {
+      ...detail.summary,
+      session_id: sessionId
+    },
+    events: detail.events.map((event) => ({
+      ...event,
+      session_id: sessionId
+    }))
+  };
+}
+
+function mockCampaignApi(input: {
+  detail?: Track1CampaignDetail;
+  sessionDetail?: SandboxSupervisionSessionDetail;
+  sequence?: Array<Track1CampaignDetail | Response>;
+  failDetailAfter?: number;
+  evidenceNotReady?: boolean;
+} = {}) {
+  const detail = input.detail ?? makeCampaignDetail();
+  const sessionDetail = input.sessionDetail ?? makeSupervisionDetail();
+  const sequence = input.sequence;
+  let detailCallCount = 0;
+  const fetchMock = vi.fn(async (resource: string | URL) => {
+    const path = String(resource);
+
+    // Campaign detail endpoint
+    if (/\/api\/supervision\/campaigns\/[^/]+$/.test(path)) {
+      detailCallCount++;
+      if (input.failDetailAfter && detailCallCount > input.failDetailAfter) {
+        throw new Error("campaign detail offline");
+      }
+      if (sequence) {
+        const item = sequence[Math.min(detailCallCount - 1, sequence.length - 1)];
+        if (item instanceof Response) return item;
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            message: "ok",
+            data: item,
+            error_code: null,
+            request_id: "req_campaign_test"
+          })
+        };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          message: "ok",
+          data: detail,
+          error_code: null,
+          request_id: "req_campaign_test"
+        })
+      };
+    }
+
+    // Campaign evidence endpoint
+    if (/\/api\/supervision\/campaigns\/[^/]+\/evidence$/.test(path)) {
+      if (input.evidenceNotReady) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            message: "Campaign evidence is not ready",
+            data: null,
+            error_code: "CAMPAIGN_EVIDENCE_NOT_READY",
+            request_id: "req_campaign_test"
+          }),
+          { status: 409 }
+        );
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          message: "ok",
+          data: makeCampaignEvidence(),
+          error_code: null,
+          request_id: "req_campaign_test"
+        })
+      };
+    }
+
+    // Session detail endpoint (for the inspector inside campaign mode)
+    if (/\/api\/supervision\/sessions\/[^?]+$/.test(path)) {
+      const match = path.match(/\/api\/supervision\/sessions\/([^?]+)$/);
+      const sessionId = match ? decodeURIComponent(match[1]) : "";
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          message: "ok",
+          data: rewriteSessionDetailId(sessionDetail, sessionId),
+          error_code: null,
+          request_id: "req_campaign_test"
+        })
+      };
+    }
+
+    // Session overview endpoint (not used in campaign mode, but provide a
+    // safe fallback so unrelated fetches don't crash).
+    if (path.startsWith("/api/supervision/sessions")) {
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          message: "ok",
+          data: makeSupervisionOverview(),
+          error_code: null,
+          request_id: "req_campaign_test"
+        })
+      };
+    }
+
+    throw new Error(`Unexpected campaign request: ${path}`);
+  });
+
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+function campaignSessionIds(detail: Track1CampaignDetail): string[] {
+  const ids: string[] = [];
+  for (const agent of detail.agents) {
+    for (const c of agent.cases) {
+      for (const a of c.attempts) {
+        ids.push(a.session_id);
+      }
+    }
+  }
+  return ids;
+}
+
+describe("REQ-T1-DEMO-010 campaign supervision mode", () => {
+  beforeEach(() => {
+    vi.mocked(window.matchMedia).mockImplementation((query: string) => ({
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn()
+    }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    supervisionServiceMock._resetToReal();
+  });
+
+  test("campaign URL renders three agents, nine cases, and existing inspector", async () => {
+    const detail = makeCampaignDetail({ status: "running" });
+    mockCampaignApi({ detail });
+    await renderAppAtRoute(
+      `/results/sandbox?campaign_id=${encodeURIComponent(CAMPAIGN_ID)}`
+    );
+
+    expect(
+      await screen.findByTestId("campaign-overview")
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("group", { name: /agent:/ })
+    ).toHaveLength(3);
+    expect(
+      screen.getAllByRole("listitem", { name: /T1-SC-00[1-3]-C00[1-3]/ })
+    ).toHaveLength(9);
+    expect(
+      await screen.findByTestId("supervision-session-inspector")
+    ).toBeInTheDocument();
+  });
+
+  test("default selection picks first final attempt in first fixed agent", async () => {
+    const detail = makeCampaignDetail({ status: "running" });
+    mockCampaignApi({ detail });
+    const { router } = await renderAppAtRoute(
+      `/results/sandbox?campaign_id=${encodeURIComponent(CAMPAIGN_ID)}`
+    );
+
+    await screen.findByTestId("supervision-session-inspector");
+
+    // First agent is agent:track1:prompt-injection, first case is T1-SC-001-C001,
+    // first (and only) attempt's session_id is the default selection.
+    const firstAttempt = detail.agents[0].cases[0].attempts[0];
+    await waitFor(() => {
+      expect(router.state.location.search).toContain(
+        `session_id=${encodeURIComponent(firstAttempt.session_id)}`
+      );
+    });
+  });
+
+  test("deep link preserves campaign agent and session in URL", async () => {
+    const detail = makeCampaignDetail({ status: "running" });
+    const sessionId = detail.agents[1].cases[0].attempts[0].session_id;
+    const agentId = detail.agents[1].agent_id;
+    mockCampaignApi({ detail });
+
+    const { router } = await renderAppAtRoute(
+      `/results/sandbox?campaign_id=${encodeURIComponent(CAMPAIGN_ID)}` +
+      `&agent_id=${encodeURIComponent(agentId)}` +
+      `&session_id=${encodeURIComponent(sessionId)}`
+    );
+
+    expect(await screen.findByTestId("campaign-overview")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(router.state.location.search).toContain(
+        `campaign_id=${encodeURIComponent(CAMPAIGN_ID)}`
+      );
+      expect(router.state.location.search).toContain(
+        `agent_id=${encodeURIComponent(agentId)}`
+      );
+      expect(router.state.location.search).toContain(
+        `session_id=${encodeURIComponent(sessionId)}`
+      );
+    });
+  });
+
+  test("session outside campaign is never requested", async () => {
+    const detail = makeCampaignDetail({ status: "running" });
+    const fetchMock = mockCampaignApi({ detail });
+    await renderAppAtRoute(
+      `/results/sandbox?campaign_id=${encodeURIComponent(CAMPAIGN_ID)}` +
+      "&session_id=session%3Aforeign"
+    );
+
+    await screen.findByTestId("campaign-overview");
+    await waitFor(() => {
+      expect(
+        screen.getByText(/not part of this campaign/i)
+      ).toBeInTheDocument();
+    });
+    expect(
+      fetchMock.mock.calls.some(
+        ([url]) => typeof url === "string" && url.includes("session%3Aforeign")
+      )
+    ).toBe(false);
+  });
+
+  test("session mode remains active without campaign_id", async () => {
+    mockSupervisionApi();
+    await renderAppAtRoute("/results/sandbox");
+
+    expect(
+      await screen.findByRole("heading", { name: "Behavior Supervision" })
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("campaign-overview")).not.toBeInTheDocument();
+  });
+
+  test("invalid campaign_id is removed from URL", async () => {
+    const { router } = await renderAppAtRoute(
+      `/results/sandbox?campaign_id=invalid-id`
+    );
+
+    await waitFor(() => {
+      expect(router.state.location.search).not.toContain("campaign_id=invalid");
+    });
+  });
+
+  test("campaign switch resets agent and session", async () => {
+    const detailA = makeCampaignDetail({ status: "running" });
+    detailA.campaign_id = CAMPAIGN_ID;
+    const campaignB = "campaign:t1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const detailB = makeCampaignDetail({ status: "running" });
+    detailB.campaign_id = campaignB;
+    for (const agent of detailB.agents) {
+      agent.campaign_id = campaignB;
+      for (const c of agent.cases) {
+        c.campaign_id = campaignB;
+        for (const a of c.attempts) {
+          a.campaign_id = campaignB;
+        }
+      }
+    }
+
+    let callCount = 0;
+    const fetchMock = vi.fn(async (resource: string | URL) => {
+      const path = String(resource);
+      if (/\/api\/supervision\/campaigns\/[^/]+$/.test(path)) {
+        callCount++;
+        const isCampaignB = path.includes(encodeURIComponent(campaignB));
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            message: "ok",
+            data: isCampaignB ? detailB : detailA,
+            error_code: null,
+            request_id: "req_campaign_test"
+          })
+        };
+      }
+      if (/\/api\/supervision\/sessions\/[^?]+$/.test(path)) {
+        const match = path.match(/\/api\/supervision\/sessions\/([^?]+)$/);
+        const sessionId = match ? decodeURIComponent(match[1]) : "";
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            message: "ok",
+            data: rewriteSessionDetailId(makeSupervisionDetail(), sessionId),
+            error_code: null,
+            request_id: "req_campaign_test"
+          })
+        };
+      }
+      throw new Error(`Unexpected: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { router } = await renderAppAtRoute(
+      `/results/sandbox?campaign_id=${encodeURIComponent(CAMPAIGN_ID)}`
+    );
+    await screen.findByTestId("campaign-overview");
+
+    // Switch to campaign B
+    router.navigate(
+      `/results/sandbox?campaign_id=${encodeURIComponent(campaignB)}`
+    );
+
+    await waitFor(() => {
+      const search = router.state.location.search;
+      expect(search).toContain(`campaign_id=${encodeURIComponent(campaignB)}`);
+      // Session from campaign A should not persist
+      const sessionA = detailA.agents[0].cases[0].attempts[0].session_id;
+      expect(search).not.toContain(
+        `session_id=${encodeURIComponent(sessionA)}`
+      );
+    });
+  });
+
+  test("stale campaign keeps last successful data with retry button", async () => {
+    const runningDetail = makeCampaignDetail({ status: "running" });
+    mockCampaignApi({
+      sequence: [runningDetail, new Response("down", { status: 503 })]
+    });
+
+    await renderAppAtRoute(
+      `/results/sandbox?campaign_id=${encodeURIComponent(CAMPAIGN_ID)}`
+    );
+
+    expect(
+      await screen.findByTestId("campaign-overview")
+    ).toHaveAttribute("data-evidence-state", "fresh-running");
+
+    await waitFor(
+      () => {
+        expect(screen.getByTestId("campaign-overview")).toHaveAttribute(
+          "data-evidence-state",
+          "stale"
+        );
+      },
+      { timeout: 8000 }
+    );
+
+    expect(
+      screen.getByRole("button", { name: /Retry campaign data/i })
+    ).toBeInTheDocument();
+  }, 20000);
+
+  test("failed campaign stops polling and shows failed status", async () => {
+    const runningDetail = makeCampaignDetail({ status: "running" });
+    const failedDetail = makeCampaignDetail({ status: "failed" });
+    mockCampaignApi({ sequence: [runningDetail, failedDetail] });
+
+    await renderAppAtRoute(
+      `/results/sandbox?campaign_id=${encodeURIComponent(CAMPAIGN_ID)}`
+    );
+
+    await screen.findByTestId("campaign-overview");
+    await waitFor(
+      () => {
+        expect(screen.getByText(/Failed/i)).toBeInTheDocument();
+      },
+      { timeout: 8000 }
+    );
+  }, 20000);
+
+  test("campaign mode has no prohibited command surfaces", async () => {
+    mockCampaignApi({ detail: makeCampaignDetail({ status: "running" }) });
+    const { container } = await renderAppAtRoute(
+      `/results/sandbox?campaign_id=${encodeURIComponent(CAMPAIGN_ID)}`
+    );
+
+    await screen.findByTestId("campaign-overview");
+    const text = container.textContent ?? "";
+    for (const command of [
+      "Start campaign",
+      "Retry attack",
+      "Approve",
+      "Reject",
+      "Cancel campaign",
+      "Edit policy",
+      "Acknowledge"
+    ]) {
+      expect(text).not.toContain(command);
+    }
+  });
+
+  test("completed campaign shows fresh-completed evidence state", async () => {
+    mockCampaignApi({ detail: makeCampaignDetail({ status: "completed" }) });
+    await renderAppAtRoute(
+      `/results/sandbox?campaign_id=${encodeURIComponent(CAMPAIGN_ID)}`
+    );
+
+    expect(
+      await screen.findByTestId("campaign-overview")
+    ).toHaveAttribute("data-evidence-state", "fresh-completed");
+  });
+
+  test("campaign mode renders agent groups in fixed contract order", async () => {
+    mockCampaignApi({ detail: makeCampaignDetail({ status: "running" }) });
+    await renderAppAtRoute(
+      `/results/sandbox?campaign_id=${encodeURIComponent(CAMPAIGN_ID)}`
+    );
+
+    const groups = await screen.findAllByRole("group", { name: /agent:/ });
+    expect(groups).toHaveLength(3);
+    expect(groups[0]).toHaveAccessibleName(/agent:track1:prompt-injection/);
+    expect(groups[1]).toHaveAccessibleName(/agent:track1:tool-hijack/);
+    expect(groups[2]).toHaveAccessibleName(/agent:track1:memory-poison/);
+  });
 });

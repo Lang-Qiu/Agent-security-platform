@@ -138,7 +138,7 @@ export function SupervisionSessionInspector({
   ];
 
   return (
-    <div className="supervision-session-inspector">
+    <div className="supervision-session-inspector" data-testid="supervision-session-inspector">
       <Title level={2}>Session Inspector</Title>
       <Descriptions column={1} size="small" items={items} />
       <div className="supervision-inspector-actions">

@@ -12,6 +12,18 @@ import type {
   SandboxSupervisionSessionSummary,
   SandboxSupervisionToolName
 } from "../../../shared/types/supervision";
+import type {
+  Track1CampaignAgentDetail,
+  Track1CampaignAgentId,
+  Track1CampaignDetail,
+  Track1CampaignSummary
+} from "../../../shared/types/campaign-supervision";
+import {
+  TRACK1_CAMPAIGN_AGENT_IDS,
+  TRACK1_CAMPAIGN_READ_SCHEMA_VERSION
+} from "../../../shared/types/campaign-supervision";
+import { CampaignAgentGroup } from "../components/supervision/CampaignAgentGroup";
+import { CampaignOverviewHeader } from "../components/supervision/CampaignOverviewHeader";
 import { SupervisionFilters } from "../components/supervision/SupervisionFilters";
 import {
   SupervisionOverviewHeader,
@@ -19,7 +31,15 @@ import {
 } from "../components/supervision/SupervisionOverviewHeader";
 import { SupervisionSessionInspector } from "../components/supervision/SupervisionSessionInspector";
 import { SupervisionSessionList } from "../components/supervision/SupervisionSessionList";
+import {
+  useCampaignSupervisionPolling,
+  type CampaignSupervisionData
+} from "../hooks/useCampaignSupervisionPolling";
 import { useSupervisionPolling } from "../hooks/useSupervisionPolling";
+import {
+  getCampaign,
+  type CampaignDataResult
+} from "../services/campaign-supervision-service";
 import {
   getSupervisionSession,
   listSupervisionSessions,
@@ -113,8 +133,346 @@ function pickDefaultSession(
   return sessions[0] ?? null;
 }
 
+// ---------------------------------------------------------------------------
+// Campaign mode helpers (kept outside the component per P5-T4 Step 4)
+// ---------------------------------------------------------------------------
+
+const CAMPAIGN_ID_PATTERN = /^campaign:t1:[0-9a-f]{32}$/;
+
+function parseCampaignId(value: string | null): string | null {
+  if (value === null) return null;
+  return CAMPAIGN_ID_PATTERN.test(value) ? value : null;
+}
+
+function parseCampaignAgentId(
+  value: string | null
+): Track1CampaignAgentId | null {
+  if (value === null) return null;
+  return (TRACK1_CAMPAIGN_AGENT_IDS as readonly string[]).includes(value)
+    ? (value as Track1CampaignAgentId)
+    : null;
+}
+
+function collectCampaignSessionIds(
+  detail: Track1CampaignDetail
+): Set<string> {
+  const ids = new Set<string>();
+  for (const agent of detail.agents) {
+    for (const c of agent.cases) {
+      for (const a of c.attempts) {
+        ids.add(a.session_id);
+      }
+    }
+  }
+  return ids;
+}
+
+function findAgentForSession(
+  detail: Track1CampaignDetail,
+  sessionId: string
+): Track1CampaignAgentDetail | undefined {
+  return detail.agents.find((a) =>
+    a.cases.some((c) => c.attempts.some((at) => at.session_id === sessionId))
+  );
+}
+
+function deriveCampaignSummaryFromDetail(
+  detail: Track1CampaignDetail
+): Track1CampaignSummary {
+  let passedCaseCount = 0;
+  let failedCaseCount = 0;
+  let retryCount = 0;
+  let alertCount = 0;
+  let blockedCount = 0;
+  let askCount = 0;
+
+  for (const agent of detail.agents) {
+    for (const c of agent.cases) {
+      if (c.status === "passed") passedCaseCount++;
+      if (c.status === "failed") failedCaseCount++;
+      if (c.attempt_count === 2) retryCount++;
+      for (const a of c.attempts) {
+        if (a.actual_action === "alert") alertCount++;
+        if (a.actual_action === "deny") blockedCount++;
+        if (a.actual_action === "ask") askCount++;
+      }
+    }
+  }
+
+  const summary: Track1CampaignSummary = {
+    schema_version: TRACK1_CAMPAIGN_READ_SCHEMA_VERSION,
+    campaign_id: detail.campaign_id,
+    status: detail.status,
+    started_at: detail.started_at,
+    updated_at: detail.updated_at,
+    agent_count: 3,
+    case_count: 9,
+    passed_case_count: passedCaseCount,
+    failed_case_count: failedCaseCount,
+    retry_count: retryCount,
+    alert_count: alertCount,
+    blocked_count: blockedCount,
+    ask_count: askCount,
+    evidence_available: detail.status === "completed"
+  };
+
+  return summary;
+}
+
+function pickDefaultCampaignSession(
+  detail: Track1CampaignDetail
+): string | null {
+  // First final attempt in first fixed agent/case order.
+  for (const agent of detail.agents) {
+    for (const c of agent.cases) {
+      const lastAttempt = c.attempts[c.attempts.length - 1];
+      if (lastAttempt) {
+        return lastAttempt.session_id;
+      }
+    }
+  }
+  return null;
+}
+
+function SandboxAlertsPageCampaign(props: {
+  campaignId: string;
+  searchParams: URLSearchParams;
+  setSearchParams: (
+    next: URLSearchParams,
+    options?: { replace?: boolean }
+  ) => void;
+}) {
+  const { campaignId, searchParams, setSearchParams } = props;
+
+  const sessionIdFromUrl = searchParams.get("session_id");
+
+  const loadCampaign = useCallback(
+    async (
+      id: string,
+      signal: AbortSignal
+    ): Promise<CampaignDataResult<CampaignSupervisionData>> => {
+      const result = await getCampaign(id, { signal });
+      if (result.data) {
+        return {
+          data: {
+            summary: deriveCampaignSummaryFromDetail(result.data),
+            detail: result.data
+          },
+          source: result.source,
+          error: result.error
+        };
+      }
+      return { data: null, source: result.source, error: result.error };
+    },
+    []
+  );
+
+  const { campaign, retry: retryCampaign } = useCampaignSupervisionPolling({
+    campaignId,
+    loadCampaign
+  });
+
+  const campaignData = campaign.data;
+  const campaignDetail = campaignData?.detail ?? null;
+  const campaignSummary = campaignData?.summary ?? null;
+
+  const campaignSessionIds = useMemo(() => {
+    if (!campaignDetail) return new Set<string>();
+    return collectCampaignSessionIds(campaignDetail);
+  }, [campaignDetail]);
+
+  const sessionInCampaign =
+    sessionIdFromUrl !== null && campaignSessionIds.has(sessionIdFromUrl);
+  const effectiveSessionId = sessionInCampaign ? sessionIdFromUrl : null;
+
+  // Default session selection when no session_id is in the URL (or the
+  // session_id belongs to the campaign but isn't set yet).
+  useEffect(() => {
+    if (!campaignDetail) return;
+    if (sessionIdFromUrl && sessionInCampaign) return;
+    // If a foreign session_id is present, leave it — the rejection message
+    // is shown and we don't auto-select a replacement.
+    if (sessionIdFromUrl && !sessionInCampaign) return;
+    const defaultSession = pickDefaultCampaignSession(campaignDetail);
+    if (defaultSession) {
+      const next = new URLSearchParams(searchParams);
+      next.set("session_id", defaultSession);
+      const agent = findAgentForSession(campaignDetail, defaultSession);
+      if (agent) {
+        next.set("agent_id", agent.agent_id);
+      }
+      setSearchParams(next, { replace: true });
+    }
+  }, [
+    campaignDetail,
+    sessionIdFromUrl,
+    sessionInCampaign,
+    searchParams,
+    setSearchParams
+  ]);
+
+  // Remove invalid agent_id from URL.
+  useEffect(() => {
+    const agentIdRaw = searchParams.get("agent_id");
+    if (agentIdRaw !== null && !parseCampaignAgentId(agentIdRaw)) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("agent_id");
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, setSearchParams]);
+
+  // Session detail fetch for campaign mode: single fetch with abort + generation
+  // guard. The existing SupervisionSessionInspector is reused.
+  const [sessionDetail, setSessionDetail] =
+    useState<SandboxSupervisionSessionDetail | null>(null);
+  const [sessionDetailLoading, setSessionDetailLoading] = useState(false);
+  const sessionDetailGenRef = useRef(0);
+
+  useEffect(() => {
+    if (!effectiveSessionId) {
+      setSessionDetail(null);
+      setSessionDetailLoading(false);
+      return;
+    }
+    const gen = ++sessionDetailGenRef.current;
+    const controller = new AbortController();
+    setSessionDetailLoading(true);
+
+    getSupervisionSession(effectiveSessionId, { signal: controller.signal })
+      .then((result) => {
+        if (gen !== sessionDetailGenRef.current) return;
+        if (result?.data) {
+          setSessionDetail(result.data);
+        } else {
+          setSessionDetail(null);
+        }
+        setSessionDetailLoading(false);
+      })
+      .catch(() => {
+        if (gen !== sessionDetailGenRef.current) return;
+        setSessionDetail(null);
+        setSessionDetailLoading(false);
+      });
+
+    return () => controller.abort();
+  }, [effectiveSessionId]);
+
+  const selectSession = useCallback(
+    (sessionId: string) => {
+      const next = new URLSearchParams(searchParams);
+      next.set("session_id", sessionId);
+      if (campaignDetail) {
+        const agent = findAgentForSession(campaignDetail, sessionId);
+        if (agent) {
+          next.set("agent_id", agent.agent_id);
+        }
+      }
+      setSearchParams(next);
+    },
+    [searchParams, setSearchParams, campaignDetail]
+  );
+
+  const showCampaignLoading = campaign.loading && !campaignData;
+  const showSessionOutsideCampaign =
+    sessionIdFromUrl !== null && !sessionInCampaign;
+
+  return (
+    <section className="sandbox-alerts-page console-panel campaign-mode">
+      {campaignSummary ? (
+        <CampaignOverviewHeader
+          summary={campaignSummary}
+          source={campaign.source ?? "integration-error"}
+          freshness={campaign.freshness}
+          onRetry={() => {
+            void retryCampaign();
+          }}
+        />
+      ) : showCampaignLoading ? (
+        <div className="campaign-loading">
+          <Paragraph>Loading campaign data...</Paragraph>
+        </div>
+      ) : (
+        <div className="campaign-error">
+          <Paragraph>Campaign data unavailable.</Paragraph>
+          <button
+            type="button"
+            onClick={() => {
+              void retryCampaign();
+            }}
+          >
+            Retry campaign data
+          </button>
+        </div>
+      )}
+
+      {campaignDetail ? (
+        <div className="campaign-workbench">
+          <div className="campaign-agents">
+            {campaignDetail.agents.map((agent) => (
+              <CampaignAgentGroup
+                key={agent.agent_id}
+                agent={agent}
+                selectedSessionId={effectiveSessionId}
+                onSelectSession={selectSession}
+              />
+            ))}
+          </div>
+
+          <aside className="supervision-inspector">
+            {showSessionOutsideCampaign ? (
+              <div className="supervision-inspector-outside-campaign">
+                <Paragraph>
+                  Session is not part of this campaign.
+                </Paragraph>
+              </div>
+            ) : effectiveSessionId ? (
+              sessionDetail ? (
+                <SupervisionSessionInspector detail={sessionDetail} />
+              ) : sessionDetailLoading ? (
+                <div className="supervision-inspector-loading">
+                  <Paragraph>Loading session detail...</Paragraph>
+                </div>
+              ) : (
+                <div className="supervision-inspector-error">
+                  <Paragraph>Session detail unavailable.</Paragraph>
+                </div>
+              )
+            ) : (
+              <div className="supervision-inspector-placeholder">
+                <Paragraph>Select an attempt to inspect.</Paragraph>
+              </div>
+            )}
+          </aside>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export function SandboxAlertsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+
+  const campaignIdRaw = searchParams.get("campaign_id");
+  const campaignId = parseCampaignId(campaignIdRaw);
+
+  // Remove invalid campaign_id from URL (falls back to session mode).
+  useEffect(() => {
+    if (campaignIdRaw !== null && campaignId === null) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("campaign_id");
+      setSearchParams(next, { replace: true });
+    }
+  }, [campaignIdRaw, campaignId, searchParams, setSearchParams]);
+
+  if (campaignId) {
+    return (
+      <SandboxAlertsPageCampaign
+        campaignId={campaignId}
+        searchParams={searchParams}
+        setSearchParams={setSearchParams}
+      />
+    );
+  }
 
   const query = useMemo<SupervisionQuery>(() => {
     return {

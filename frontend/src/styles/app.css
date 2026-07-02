@@ -622,3 +622,31 @@ a {
   overflow-wrap: anywhere;
   font-size: 0.78rem;
 }
+
+/* P5-T4: Campaign mode page layout */
+.campaign-mode .campaign-workbench {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  min-width: 0;
+}
+
+.campaign-mode .campaign-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.campaign-mode .supervision-inspector {
+  min-width: 0;
+}
+
+.campaign-loading,
+.campaign-error {
+  padding: 16px;
+}
+
+.supervision-inspector-outside-campaign {
+  padding: 12px;
+}
