@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import { SANDBOX_SUPERVISION_SCHEMA_VERSION } from "../../../shared/contracts/supervision";
@@ -7,14 +7,14 @@ import type {
   SandboxSupervisionOverview,
   SandboxSupervisionSessionDetail
 } from "../../../shared/types/supervision";
-import type { Track1CampaignDetail } from "../../../shared/types/campaign-supervision";
+import type { Track1CampaignDetail, Track1CampaignSummary } from "../../../shared/types/campaign-supervision";
 import {
   findMockSession,
   makeSupervisionDetail,
   makeSupervisionEvidence,
   makeSupervisionOverview
 } from "../mocks/supervision";
-import { makeCampaignDetail, makeCampaignEvidence } from "../mocks/campaign-supervision";
+import { makeCampaignDetail, makeCampaignEvidence, makeCampaignSummary } from "../mocks/campaign-supervision";
 import { renderAppAtRoute } from "../test/app-test-harness";
 
 // Keep the real service module surface and replace only the two async reads
@@ -1218,17 +1218,44 @@ function rewriteSessionDetailId(
 
 function mockCampaignApi(input: {
   detail?: Track1CampaignDetail;
+  summary?: Track1CampaignSummary;
   sessionDetail?: SandboxSupervisionSessionDetail;
   sequence?: Array<Track1CampaignDetail | Response>;
   failDetailAfter?: number;
   evidenceNotReady?: boolean;
+  failSummary?: boolean;
 } = {}) {
   const detail = input.detail ?? makeCampaignDetail();
+  const baseSummary = input.summary ?? makeCampaignSummary({
+    status: detail.status,
+    campaign_id: detail.campaign_id
+  });
+  // Mutable summary that tracks the last-returned detail's status when
+  // using sequence mode, so the header reflects the current campaign state.
+  let currentSummary: Track1CampaignSummary = baseSummary;
   const sessionDetail = input.sessionDetail ?? makeSupervisionDetail();
   const sequence = input.sequence;
   let detailCallCount = 0;
   const fetchMock = vi.fn(async (resource: string | URL) => {
     const path = String(resource);
+
+    // Campaign list endpoint (must be checked BEFORE the detail endpoint
+    // because the detail regex also matches the base path if not careful).
+    if (path === "/api/supervision/campaigns" || /^\/api\/supervision\/campaigns\?/.test(path)) {
+      if (input.failSummary) {
+        return new Response("summary offline", { status: 503 });
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          success: true,
+          message: "ok",
+          data: [currentSummary],
+          error_code: null,
+          request_id: "req_campaign_test"
+        })
+      };
+    }
 
     // Campaign detail endpoint
     if (/\/api\/supervision\/campaigns\/[^/]+$/.test(path)) {
@@ -1239,6 +1266,12 @@ function mockCampaignApi(input: {
       if (sequence) {
         const item = sequence[Math.min(detailCallCount - 1, sequence.length - 1)];
         if (item instanceof Response) return item;
+        // Update currentSummary to match this detail's status so the list
+        // endpoint returns a consistent summary.
+        currentSummary = makeCampaignSummary({
+          status: item.status,
+          campaign_id: item.campaign_id
+        });
         return {
           ok: true,
           json: async () => ({
@@ -1379,6 +1412,106 @@ describe("REQ-T1-DEMO-010 campaign supervision mode", () => {
     ).toBeInTheDocument();
   });
 
+  test("campaign header shows backend summary counts, not front-end derived counts", async () => {
+    // Backend summary has alert_count=7 — a value that front-end derivation
+    // from actual_action cannot reproduce (the mock detail has only 1 alert).
+    const detail = makeCampaignDetail({ status: "running" });
+    const summary: Track1CampaignSummary = makeCampaignSummary({
+      status: "running",
+      campaign_id: detail.campaign_id,
+      alert_count: 7,
+      blocked_count: 4,
+      ask_count: 3,
+      retry_count: 2,
+      passed_case_count: 5,
+      failed_case_count: 1
+    });
+    mockCampaignApi({ detail, summary });
+
+    await renderAppAtRoute(
+      `/results/sandbox?campaign_id=${encodeURIComponent(CAMPAIGN_ID)}`
+    );
+
+    const header = await screen.findByTestId("campaign-overview");
+    // The alerts count span must show 7 (from backend summary), not 1
+    // (which is what deriveCampaignSummaryFromDetail would compute).
+    const alertsCount = header.querySelector('[data-count="alerts"]');
+    expect(alertsCount?.textContent).toContain("7");
+    const blockedCount = header.querySelector('[data-count="blocked"]');
+    expect(blockedCount?.textContent).toContain("4");
+    const asksCount = header.querySelector('[data-count="asks"]');
+    expect(asksCount?.textContent).toContain("3");
+    const retriesCount = header.querySelector('[data-count="retries"]');
+    expect(retriesCount?.textContent).toContain("2");
+    // Passed: 5 / 9
+    const passed = header.querySelector(".campaign-overview-header__passed");
+    expect(passed?.textContent).toContain("5");
+  });
+
+  test("campaign mode returns integration error when summary is unavailable", async () => {
+    const detail = makeCampaignDetail({ status: "running" });
+    mockCampaignApi({ detail, failSummary: true });
+
+    await renderAppAtRoute(
+      `/results/sandbox?campaign_id=${encodeURIComponent(CAMPAIGN_ID)}`
+    );
+
+    // When the summary endpoint fails, loadCampaign returns integration-error.
+    // The polling hook marks the state as stale with no data. The campaign
+    // overview header must NOT render with fabricated/derived counts.
+    await waitFor(
+      () => {
+        expect(
+          screen.getByText(/Campaign data unavailable/i)
+        ).toBeInTheDocument();
+      },
+      { timeout: 8000 }
+    );
+    // The campaign-overview header must NOT appear — no summary to show.
+    expect(screen.queryByTestId("campaign-overview")).not.toBeInTheDocument();
+  }, 20000);
+
+  test("bidirectional mode switch does not violate Rules of Hooks", async () => {
+    // This test verifies that switching between session and campaign mode
+    // on the same component instance (via URL param change, not remount)
+    // does not trigger React's "Rendered fewer/more hooks" error.
+    const detail = makeCampaignDetail({ status: "running" });
+    mockCampaignApi({ detail });
+
+    // Start in session mode (no campaign_id).
+    const { router } = await renderAppAtRoute("/results/sandbox");
+    // Session mode should render the supervision workbench.
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("supervision-workbench")
+      ).toBeInTheDocument();
+    });
+
+    // Switch to campaign mode via URL navigation (same component instance).
+    await act(async () => {
+      router.navigate(
+        `/results/sandbox?campaign_id=${encodeURIComponent(CAMPAIGN_ID)}`
+      );
+    });
+
+    // Campaign mode should render without a hooks error.
+    expect(
+      await screen.findByTestId("campaign-overview")
+    ).toBeInTheDocument();
+
+    // Switch back to session mode.
+    await act(async () => {
+      router.navigate("/results/sandbox");
+    });
+
+    // Session mode should render again without a hooks error.
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("supervision-workbench")
+      ).toBeInTheDocument();
+    });
+  }, 20000);
+
   test("default selection picks first final attempt in first fixed agent", async () => {
     const detail = makeCampaignDetail({ status: "running" });
     mockCampaignApi({ detail });
@@ -1481,9 +1614,31 @@ describe("REQ-T1-DEMO-010 campaign supervision mode", () => {
       }
     }
 
+    const summaryA = makeCampaignSummary({
+      status: "running",
+      campaign_id: CAMPAIGN_ID
+    });
+    const summaryB = makeCampaignSummary({
+      status: "running",
+      campaign_id: campaignB
+    });
+
     let callCount = 0;
     const fetchMock = vi.fn(async (resource: string | URL) => {
       const path = String(resource);
+      // Campaign list endpoint
+      if (path === "/api/supervision/campaigns" || /^\/api\/supervision\/campaigns\?/.test(path)) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            message: "ok",
+            data: [summaryA, summaryB],
+            error_code: null,
+            request_id: "req_campaign_test"
+          })
+        };
+      }
       if (/\/api\/supervision\/campaigns\/[^/]+$/.test(path)) {
         callCount++;
         const isCampaignB = path.includes(encodeURIComponent(campaignB));

@@ -65,6 +65,15 @@ const CAMPAIGN_QUERY_ORDER: ReadonlyArray<keyof CampaignQuery> = [
 const CAMPAIGNS_ENDPOINT = "/api/supervision/campaigns";
 
 export function serializeCampaignQuery(query: CampaignQuery): string {
+  // Throw on unknown keys at runtime — exact-key normalizer per plan requirement.
+  const allowed = new Set<string>(CAMPAIGN_QUERY_ORDER as readonly string[]);
+  const unknownKeys = Object.keys(query).filter((k) => !allowed.has(k));
+  if (unknownKeys.length > 0) {
+    throw new Error(
+      `Unknown campaign query key(s): ${unknownKeys.join(", ")}`
+    );
+  }
+
   const params = new URLSearchParams();
   for (const key of CAMPAIGN_QUERY_ORDER) {
     const value = query[key];

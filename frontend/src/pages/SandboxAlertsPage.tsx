@@ -15,12 +15,10 @@ import type {
 import type {
   Track1CampaignAgentDetail,
   Track1CampaignAgentId,
-  Track1CampaignDetail,
-  Track1CampaignSummary
+  Track1CampaignDetail
 } from "../../../shared/types/campaign-supervision";
 import {
-  TRACK1_CAMPAIGN_AGENT_IDS,
-  TRACK1_CAMPAIGN_READ_SCHEMA_VERSION
+  TRACK1_CAMPAIGN_AGENT_IDS
 } from "../../../shared/types/campaign-supervision";
 import { CampaignAgentGroup } from "../components/supervision/CampaignAgentGroup";
 import { CampaignOverviewHeader } from "../components/supervision/CampaignOverviewHeader";
@@ -38,6 +36,7 @@ import {
 import { useSupervisionPolling } from "../hooks/useSupervisionPolling";
 import {
   getCampaign,
+  listCampaigns,
   type CampaignDataResult
 } from "../services/campaign-supervision-service";
 import {
@@ -176,49 +175,6 @@ function findAgentForSession(
   );
 }
 
-function deriveCampaignSummaryFromDetail(
-  detail: Track1CampaignDetail
-): Track1CampaignSummary {
-  let passedCaseCount = 0;
-  let failedCaseCount = 0;
-  let retryCount = 0;
-  let alertCount = 0;
-  let blockedCount = 0;
-  let askCount = 0;
-
-  for (const agent of detail.agents) {
-    for (const c of agent.cases) {
-      if (c.status === "passed") passedCaseCount++;
-      if (c.status === "failed") failedCaseCount++;
-      if (c.attempt_count === 2) retryCount++;
-      for (const a of c.attempts) {
-        if (a.actual_action === "alert") alertCount++;
-        if (a.actual_action === "deny") blockedCount++;
-        if (a.actual_action === "ask") askCount++;
-      }
-    }
-  }
-
-  const summary: Track1CampaignSummary = {
-    schema_version: TRACK1_CAMPAIGN_READ_SCHEMA_VERSION,
-    campaign_id: detail.campaign_id,
-    status: detail.status,
-    started_at: detail.started_at,
-    updated_at: detail.updated_at,
-    agent_count: 3,
-    case_count: 9,
-    passed_case_count: passedCaseCount,
-    failed_case_count: failedCaseCount,
-    retry_count: retryCount,
-    alert_count: alertCount,
-    blocked_count: blockedCount,
-    ask_count: askCount,
-    evidence_available: detail.status === "completed"
-  };
-
-  return summary;
-}
-
 function pickDefaultCampaignSession(
   detail: Track1CampaignDetail
 ): string | null {
@@ -253,18 +209,46 @@ function SandboxAlertsPageCampaign(props: {
       id: string,
       signal: AbortSignal
     ): Promise<CampaignDataResult<CampaignSupervisionData>> => {
-      const result = await getCampaign(id, { signal });
-      if (result.data) {
+      // Fetch detail and summary in parallel. The summary comes from the
+      // backend's list endpoint, which computes aggregate counts (alerts,
+      // blocked, asks, retries) using backend semantics — NOT derivable from
+      // the detail DTO's attempt actual_action values.
+      const [detailResult, summaryResult] = await Promise.all([
+        getCampaign(id, { signal }),
+        listCampaigns({}, { signal })
+      ]);
+
+      if (!detailResult.data) {
         return {
-          data: {
-            summary: deriveCampaignSummaryFromDetail(result.data),
-            detail: result.data
-          },
-          source: result.source,
-          error: result.error
+          data: null,
+          source: detailResult.source,
+          error: detailResult.error
         };
       }
-      return { data: null, source: result.source, error: result.error };
+
+      // Find the matching summary by campaign_id.
+      const matchingSummary = summaryResult.data?.find(
+        (s) => s.campaign_id === id
+      );
+
+      if (!matchingSummary) {
+        // Summary unavailable — cannot show authoritative aggregate counts.
+        // Return integration error rather than a front-end derived summary.
+        return {
+          data: null,
+          source: "integration-error",
+          error: summaryResult.error ?? "unavailable"
+        };
+      }
+
+      return {
+        data: {
+          summary: matchingSummary,
+          detail: detailResult.data
+        },
+        source: detailResult.source,
+        error: null
+      };
     },
     []
   );
@@ -479,30 +463,18 @@ function SandboxAlertsPageCampaign(props: {
   );
 }
 
-export function SandboxAlertsPage() {
-  const [searchParams, setSearchParams] = useSearchParams();
-
-  const campaignIdRaw = searchParams.get("campaign_id");
-  const campaignId = parseCampaignId(campaignIdRaw);
-
-  // Remove invalid campaign_id from URL (falls back to session mode).
-  useEffect(() => {
-    if (campaignIdRaw !== null && campaignId === null) {
-      const next = new URLSearchParams(searchParams);
-      next.delete("campaign_id");
-      setSearchParams(next, { replace: true });
-    }
-  }, [campaignIdRaw, campaignId, searchParams, setSearchParams]);
-
-  if (campaignId) {
-    return (
-      <SandboxAlertsPageCampaign
-        campaignId={campaignId}
-        searchParams={searchParams}
-        setSearchParams={setSearchParams}
-      />
-    );
-  }
+// Session-mode subcomponent. Extracted from the top-level SandboxAlertsPage
+// so that switching the campaign_id URL param (which toggles between campaign
+// and session mode) does not change the number of Hooks called by the
+// top-level component — violating React's Rules of Hooks.
+function SandboxAlertsPageSession(props: {
+  searchParams: URLSearchParams;
+  setSearchParams: (
+    next: URLSearchParams,
+    options?: { replace?: boolean }
+  ) => void;
+}) {
+  const { searchParams, setSearchParams } = props;
 
   const query = useMemo<SupervisionQuery>(() => {
     return {
@@ -765,6 +737,7 @@ export function SandboxAlertsPage() {
       ) : displayOverview ? (
         <div
           className={`supervision-workbench mobile-view-${mobileView}`}
+          data-testid="supervision-workbench"
           data-narrow={isNarrow ? "true" : "false"}
         >
           {(!isNarrow || mobileView === "list") && (
@@ -846,5 +819,41 @@ export function SandboxAlertsPage() {
         </div>
       ) : null}
     </section>
+  );
+}
+
+export function SandboxAlertsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const campaignIdRaw = searchParams.get("campaign_id");
+  const campaignId = parseCampaignId(campaignIdRaw);
+
+  // Remove invalid campaign_id from URL (falls back to session mode).
+  // This useEffect is always called regardless of mode, so the top-level
+  // component's Hook count is constant — satisfying React's Rules of Hooks
+  // when the campaign_id URL param is added/removed without a remount.
+  useEffect(() => {
+    if (campaignIdRaw !== null && campaignId === null) {
+      const next = new URLSearchParams(searchParams);
+      next.delete("campaign_id");
+      setSearchParams(next, { replace: true });
+    }
+  }, [campaignIdRaw, campaignId, searchParams, setSearchParams]);
+
+  if (campaignId) {
+    return (
+      <SandboxAlertsPageCampaign
+        campaignId={campaignId}
+        searchParams={searchParams}
+        setSearchParams={setSearchParams}
+      />
+    );
+  }
+
+  return (
+    <SandboxAlertsPageSession
+      searchParams={searchParams}
+      setSearchParams={setSearchParams}
+    />
   );
 }

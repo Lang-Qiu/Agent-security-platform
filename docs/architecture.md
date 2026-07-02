@@ -414,7 +414,7 @@ normalized sandbox result
 - `backend/src/modules/supervision/supervision.controller.ts` exposes three GET routes wrapped in the standard `ApiResponse<T>` envelope.
 - `frontend/src/services/supervision-service.ts` is the only frontend boundary that talks to the supervision API. It tracks three source states: `api`, `integration-error`, and `mock`.
 - `frontend/src/hooks/useSupervisionPolling.ts` polls every three seconds while the page is visible and the selected session is not terminal. It aborts in-flight requests on unmount or session change, surfaces a `stale` freshness signal on failure, and keeps the last successful snapshot.
-- `frontend/src/pages/SandboxAlertsPage.tsx` composes the overview header, filters, session list, and inspector. URL query state (`session_id`, `q`, `status`, `risk_level`, `action`, `scenario_id`, `tool_name`) is the single source of truth for filter and selection state.
+- `frontend/src/pages/SandboxAlertsPage.tsx` composes the overview header, filters, session list, and inspector. URL query state (`session_id`, `q`, `status`, `risk_level`, `action`, `scenario_id`, `tool_name`) is the single source of truth for filter and selection state. The top-level `SandboxAlertsPage` always calls the same hooks (`useSearchParams` + one `useEffect` for campaign_id cleanup) regardless of mode, then delegates to `SandboxAlertsPageCampaign` or `SandboxAlertsPageSession` subcomponents — satisfying React's Rules of Hooks when the `campaign_id` URL param changes without a remount.
 - `frontend/src/components/supervision/SupervisionEventTimeline.tsx` and `SupervisionEventDetails.tsx` render the seven approved event types through an exhaustive discriminated switch. There is no generic object traversal, no `dangerouslySetInnerHTML`, and no raw content rendering.
 - `frontend/src/components/task-detail/SandboxTaskSupervisionSection.tsx` loads the supervision detail by session ID and passes a safe DTO to the presentational `SandboxAlertSection`. The task detail page renders a deep link to `/results/sandbox?session_id=...` for investigation.
 
@@ -693,6 +693,8 @@ existing session-mode URLs and behavior remain backward compatible.
   duplicate campaign contract validation.
 - Query order is exactly `q`, `status`, `scenario_id`, `agent_id`, mirroring
   the backend `CampaignQuery` DTO order so the two sides cannot drift.
+  `serializeCampaignQuery` validates the key set at runtime and throws on
+  unknown keys (exact-key normalizer), rather than silently ignoring them.
 - The evidence endpoint inspects the HTTP status code and `error_code` field
   directly so a `409 CAMPAIGN_EVIDENCE_NOT_READY` is surfaced as the typed
   `not-ready` read state rather than collapsed into `unavailable`.
@@ -703,7 +705,10 @@ existing session-mode URLs and behavior remain backward compatible.
   polling state. It follows the accepted generation-guard + AbortController +
   visibility-listener + error-pause pattern from `useSupervisionPolling`.
   Effects depend on primitive `campaignId` and status values, not whole
-  response objects.
+  response objects. The `isHiddenRef` is initialized from
+  `document.visibilityState` so a hidden-tab mount does not poll until
+  visibility restores. A `terminalStatusRef` prevents polling on visibility
+  restore for `completed`/`failed` campaigns.
 
 ### Reuse of the session inspector
 
@@ -719,9 +724,11 @@ consistency check is honored by all campaign fixtures and mocks.
 
 - `frontend/src/components/supervision/CampaignOverviewHeader.tsx` renders the
   campaign summary, agent/case counts, and aggregate safety counts
-  (alerts, blocks, asks, retries). It emits a `data-evidence-state` marker
-  (`fresh-running` | `fresh-completed` | `stale`) that Phase 6 screenshot
-  capture waits on.
+  (alerts, blocks, asks, retries). The summary comes from the backend list
+  endpoint (`Track1CampaignSummary`), fetched in parallel with the campaign
+  detail — not derived from front-end `actual_action` values. It emits a
+  `data-evidence-state` marker (`fresh-running` | `fresh-completed` | `stale`)
+  that Phase 6 screenshot capture waits on.
 - `frontend/src/components/supervision/CampaignAgentGroup.tsx` renders one
   fixed agent group with its three cases and attempt summaries. It implements
   roving tabindex keyboard navigation across attempt buttons.

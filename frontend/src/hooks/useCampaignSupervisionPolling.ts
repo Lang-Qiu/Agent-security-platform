@@ -92,7 +92,10 @@ export function useCampaignSupervisionPolling(input: {
   const abortRef = useRef<AbortController | null>(null);
   const generationRef = useRef(0);
   const errorPausedRef = useRef(false);
-  const isHiddenRef = useRef(false);
+  const isHiddenRef = useRef(
+    typeof document !== "undefined" && document.visibilityState === "hidden"
+  );
+  const terminalStatusRef = useRef(false);
   const isUnmountedRef = useRef(false);
 
   const loadCampaignRef = useRef(input.loadCampaign);
@@ -120,6 +123,8 @@ export function useCampaignSupervisionPolling(input: {
       if (isUnmountedRef.current) return;
 
       if (result.data) {
+        const isTerminal = TERMINAL_STATUSES.has(result.data.summary.status);
+        terminalStatusRef.current = isTerminal;
         setCampaign({
           data: result.data,
           loading: false,
@@ -130,7 +135,7 @@ export function useCampaignSupervisionPolling(input: {
         });
         errorPausedRef.current = false;
         // Schedule next poll only for non-terminal statuses.
-        if (!TERMINAL_STATUSES.has(result.data.summary.status)) {
+        if (!isTerminal) {
           schedulePollRef.current();
         }
       } else {
@@ -201,11 +206,15 @@ export function useCampaignSupervisionPolling(input: {
   // Campaign ID change effect: abort prior, reset state, load new.
   useEffect(() => {
     isUnmountedRef.current = false;
+    // Sync visibility state on mount / campaign change.
+    isHiddenRef.current =
+      typeof document !== "undefined" && document.visibilityState === "hidden";
     if (!campaignId) {
       // No campaign selected: idle state, no polling.
       abortRef.current?.abort();
       generationRef.current++;
       errorPausedRef.current = false;
+      terminalStatusRef.current = false;
       if (timerRef.current) {
         clearTimeout(timerRef.current);
         timerRef.current = null;
@@ -214,16 +223,19 @@ export function useCampaignSupervisionPolling(input: {
       return;
     }
 
-    // Reset state for the new campaign and load immediately.
+    // Reset state for the new campaign and load immediately (unless hidden).
     abortRef.current?.abort();
     generationRef.current++;
     errorPausedRef.current = false;
+    terminalStatusRef.current = false;
     if (timerRef.current) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
     setCampaign(createLoadingState());
-    poll();
+    if (!isHiddenRef.current) {
+      poll();
+    }
 
     const handleVisibilityChange = () => {
       const wasHidden = isHiddenRef.current;
@@ -238,7 +250,7 @@ export function useCampaignSupervisionPolling(input: {
         }
       } else {
         // Resume only if not stale and not terminal.
-        if (!errorPausedRef.current) {
+        if (!errorPausedRef.current && !terminalStatusRef.current) {
           poll();
         }
       }

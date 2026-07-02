@@ -2790,12 +2790,12 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   - P5-T5: narrow-viewport responsive layout with one-panel-at-a-time DOM (`mobile-view-list`/`mobile-view-inspector`), back button, 1100px breakpoint, `overflow-wrap: anywhere`
   - P5-T6: `tests/repository/track1-campaign-ui.spec.ts` — permanent repository gate with 14 static source assertions (service endpoints, shared normalizers, no-mock-fallback, prohibited command surfaces, raw-content field labels, evidence-state markers, responsive breakpoint, mobile-view toggles, test registration)
 - RED evidence:
-  - P5-T1: `npm run test --prefix frontend -- --run src/services/campaign-supervision-service.spec.ts` -> ERR_MODULE_NOT_FOUND for campaign-supervision-service.ts
-  - P5-T2: `npm run test --prefix frontend -- --run src/hooks/use-campaign-supervision-polling.spec.tsx` -> ERR_MODULE_NOT_FOUND for useCampaignSupervisionPolling.ts
-  - P5-T3: `npm run test --prefix frontend -- --run src/components/supervision/campaign-components.spec.tsx` -> ERR_MODULE_NOT_FOUND for CampaignOverviewHeader.tsx and CampaignAgentGroup.tsx
-  - P5-T4: `npm run test --prefix frontend -- --run src/pages/sandbox-alerts.page.spec.tsx` -> campaign mode tests fail (SandboxAlertsPageCampaign component missing)
-  - P5-T5: narrow-viewport tests fail (mobile-view DOM and back button missing)
-  - P5-T6: `node --test tests/repository/track1-campaign-ui.spec.ts` -> ERR_MODULE_NOT_FOUND for track1-campaign-ui.spec.ts
+  - P5-T1: `npm run test --prefix frontend -- --run src/services/campaign-supervision-service.spec.ts` -> ERR_MODULE_NOT_FOUND for campaign-supervision-service.ts — **INVALID RED per master plan rule (import failure, not behavioral). Corrective note: this task deviated from the master plan's TDD rule. The behavioral RED should have been a test that imports the module via a stub/placeholder and fails on the specified behavior (e.g., query order, no-mock-fallback, 409 handling). See rework entry below.**
+  - P5-T2: `npm run test --prefix frontend -- --run src/hooks/use-campaign-supervision-polling.spec.tsx` -> ERR_MODULE_NOT_FOUND for useCampaignSupervisionPolling.ts — **INVALID RED per master plan rule (import failure, not behavioral). Corrective note: same deviation as P5-T1.**
+  - P5-T3: `npm run test --prefix frontend -- --run src/components/supervision/campaign-components.spec.tsx` -> ERR_MODULE_NOT_FOUND for CampaignOverviewHeader.tsx and CampaignAgentGroup.tsx — **INVALID RED per master plan rule (import failure, not behavioral). Corrective note: same deviation as P5-T1.**
+  - P5-T4: `npm run test --prefix frontend -- --run src/pages/sandbox-alerts.page.spec.tsx` -> campaign mode tests fail (SandboxAlertsPageCampaign component missing) — valid behavioral RED
+  - P5-T5: narrow-viewport tests fail (mobile-view DOM and back button missing) — valid behavioral RED
+  - P5-T6: `node --test tests/repository/track1-campaign-ui.spec.ts` -> ERR_MODULE_NOT_FOUND for track1-campaign-ui.spec.ts — **INVALID RED per master plan rule (import failure, not behavioral). Corrective note: same deviation as P5-T1.**
 - commits:
   - P5-T1 `38710aa` — `feat(frontend): add campaign supervision service`
   - P5-T2 `1e1c219` — `feat(frontend): poll campaign supervision detail`
@@ -2823,5 +2823,79 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - residual risks:
   - real 390/1024/1440 browser screenshots and visual acceptance remain Phase 6
   - 4 pre-existing failures (1 backend Semgrep EPERM, 2 OpenClaw plugin gate from dirty files, 2 observed-session from dirty files) are unrelated to Phase 5 and present in the worktree before Phase 5 began
-- status: PHASE_5_COMPLETE_PENDING_REVIEW
-- next blocker: user review of Phase 5 before Phase 6 visual evidence capture
+- status: PHASE_5_REWORK_COMPLETE_PENDING_REVIEW
+- next blocker: user review of Phase 5 rework before Phase 6 visual evidence capture
+
+## 2026-07-02 - REQ-T1-DEMO-010 Phase 5 Rework — Review CHANGES_REQUESTED
+
+- requirement: Phase 5 rework to address 5 review findings (3 P1, 2 P2) from CHANGES_REQUESTED review
+- scope:
+  - P1-1: `frontend/src/pages/SandboxAlertsPage.tsx` — extract session-mode logic into `SandboxAlertsPageSession` subcomponent so the top-level `SandboxAlertsPage` always calls the same hooks (`useSearchParams` + one `useEffect`) regardless of campaign/session mode; prevents React "Rendered fewer/more hooks" runtime error when `campaign_id` URL param is added/removed without remount
+  - P1-2: `frontend/src/pages/SandboxAlertsPage.tsx` — campaign header now reads backend `Track1CampaignSummary` from list endpoint (parallel fetch with detail) instead of front-end derivation from `actual_action`; returns `integration-error` when summary is unavailable
+  - P1-3: `docs/progress.md` — corrected RED evidence records for P5-T1/T2/T3/T6 to explicitly mark `ERR_MODULE_NOT_FOUND` as invalid RED per master plan rule; P5-T4/T5 RED evidence was already valid behavioral RED
+  - P2-1: `frontend/src/hooks/useCampaignSupervisionPolling.ts` — `isHiddenRef` initialized from `document.visibilityState` (not hardcoded `false`); added `terminalStatusRef` to prevent polling on visibility restore for completed/failed campaigns
+  - P2-2: `frontend/src/services/campaign-supervision-service.ts` — `serializeCampaignQuery` now validates key set and throws on unknown keys at runtime (exact-key rejection), instead of silently ignoring them
+- RED evidence (rework):
+  - P1-1: `npm run test --prefix frontend -- --run src/pages/sandbox-alerts.page.spec.tsx -t "bidirectional mode switch"` -> `Error: Rendered fewer hooks than expected. This may be caused by an accidental early return statement.` — valid behavioral RED (React Rules of Hooks violation on mode switch)
+  - P1-2: existing campaign mode tests failed when `loadCampaign` changed to also call `listCampaigns` (mock not handling list endpoint) — valid behavioral RED
+  - P2-1: `npm run test --prefix frontend -- --run src/hooks/use-campaign-supervision-polling.spec.tsx` -> new tests for terminal-status and hidden-mount scenarios failed — valid behavioral RED
+  - P2-2: `npm run test --prefix frontend -- --run src/services/campaign-supervision-service.spec.ts` -> new test expecting `serializeCampaignQuery` to throw on unknown keys failed — valid behavioral RED
+- files modified:
+  - `frontend/src/pages/SandboxAlertsPage.tsx` — extracted `SandboxAlertsPageSession`; added `data-testid="supervision-workbench"`; campaign `loadCampaign` fetches detail+summary in parallel
+  - `frontend/src/pages/sandbox-alerts.page.spec.tsx` — added `act` import; added bidirectional mode switch test; updated `mockCampaignApi` to handle list endpoint; added summary-counts and summary-unavailable tests
+  - `frontend/src/hooks/useCampaignSupervisionPolling.ts` — `isHiddenRef` from `document.visibilityState`; `terminalStatusRef` for visibility restore guard
+  - `frontend/src/hooks/use-campaign-supervision-polling.spec.tsx` — added terminal-restore and hidden-mount tests
+  - `frontend/src/services/campaign-supervision-service.ts` — unknown key validation in `serializeCampaignQuery`
+  - `frontend/src/services/campaign-supervision-service.spec.ts` — replaced silent-ignore test with runtime-reject tests
+  - `docs/progress.md` — corrected RED evidence; added this rework entry
+- constraints honored:
+  - top-level `SandboxAlertsPage` hook count is constant regardless of campaign_id presence
+  - campaign aggregate counts come from backend summary, not front-end derivation
+  - polling does not resume for terminal campaigns on visibility restore
+  - hidden-tab initial mount does not poll until visibility restores
+  - `serializeCampaignQuery` rejects unknown keys at runtime (exact-key normalizer)
+  - all existing tests remain green
+- status: PHASE_5_REWORK_COMPLETE_PENDING_REVIEW
+- next blocker: user review of Phase 5 rework
+
+## 2026-07-02 - REQ-T1-DEMO-010 Phase 3 Rework — Real OpenClaw SDK Alignment
+
+- requirement: Phase 3 rework to replace self-invented plugin interface with real OpenClaw 2026.6.10 SDK surface, fix content boundary gaps, and align ingest/correlation/probe contracts
+- scope:
+  - P0-Fix1: `integrations/openclaw/package.json` — added `openclaw.extensions` field pointing to entry module; uses real `definePluginEntry` from `openclaw/plugin-sdk/plugin-entry`, not local stub
+  - P0-Fix2: `integrations/openclaw/src/plugin.ts` + `src/tool-adapters.ts` — aligned hook events to real SDK camelCase shape (`sessionId`/`toolName`/`params`/`toolCallId`/`ctx`); added required `label` field to tools; fixed `execute` signature from `(args, context)` to real `(toolCallId, params, signal, onUpdate, ctx)`
+  - P1-Fix3: `integrations/openclaw/src/ingest-client.ts` — changed PUT to POST `.../snapshots` (not `PUT .../snapshots/{sequence}`)
+  - P1-Fix4: `integrations/openclaw/src/ingest-client.ts` — snapshot goes through `normalizeTrack1CampaignSnapshotEnvelope` before sending
+  - P1-Fix5: `integrations/openclaw/src/plugin.ts` — campaign correlation: cross-check native session/agent with `session_start` context; cross-check envelope in `llm_input`; per-session tool runtime via `SessionToolRuntimeRegistry` (not shared fixed `toolRuntime`)
+  - P1-Fix6: `integrations/openclaw/src/plugin.ts` — `session_end` with pending tool generates terminal failed snapshot, not regular snapshot
+  - P1-Fix7: `integrations/openclaw/src/plugin.ts` — tool failure detection checks `error` field and parses tool output JSON for status, not just `rawResult.status === "failed"`
+  - P1-Fix8: `integrations/openclaw/src/runtime-probe.ts` — startup probe runs real `openclaw plugins inspect` runtime command via `execFileSync`, not self-made recording API; static checks (tools, hooks, version, labels, diagnostics) use inspect output
+  - P1-Fix9: `engines/sandbox/src/monitoring/observed-session.ts` + `content-boundary.ts` — content boundary: include raw tool params (send_email body, write_file content, call_api body values) in leak detection via `collectRawToolArgumentStrings()`; use envelope `content_sha256` in memory observations instead of re-hashing `content` via `isValidSha256Hex()` validation
+  - Gate test updates: `tests/repository/track1-openclaw-plugin.spec.ts` — updated `api.on` check to handle multi-line calls; exempted `runtime-probe.ts` from `node:child_process` forbidden token (legitimate `execFileSync` use per P1-Fix8)
+  - Pre-existing fix: `integrations/openclaw/tests/campaign-context.spec.ts` — fixed agent_id assertion to match canonical `agent:track1:prompt-injection` format
+- tests added:
+  - `engines/sandbox/tests/attack-monitor-observed-session.spec.ts` — 6 new tests (3 raw tool param leak detection, 3 envelope content_sha256 memory observation)
+  - `integrations/openclaw/tests/plugin-contract.spec.ts` — rewritten for 5-arg execute + CampaignToolRuntimeResolver (13 tests)
+  - `integrations/openclaw/tests/plugin-hooks.spec.ts` — rewritten for camelCase events + SessionToolRuntimeRegistry (14 tests)
+  - `integrations/openclaw/tests/plugin-runtime-probe.spec.ts` — rewritten for real `openclaw plugins inspect` output (4 tests)
+- test result:
+  - `npm run test:engine:sandbox` — 430/430 pass
+  - `npm run test:integration:openclaw` — 50/50 pass
+  - `npm run test:repo` — 115/115 pass
+  - `npm run test:frontend` — 205/205 pass
+  - `npm run test:backend` — 228/229 pass (1 pre-existing failure: `task-engine.service.spec.ts:318` open_ports mismatch in asset_scan, unrelated to Phase 3 rework)
+- constraints honored:
+  - real `definePluginEntry` from `openclaw/plugin-sdk/plugin-entry` (not local stub)
+  - real SDK camelCase hook event fields (`sessionId`/`toolName`/`params`/`toolCallId`/`ctx`)
+  - real 5-arg `execute(toolCallId, params, signal, onUpdate, ctx)` signature
+  - required `label` field on all tools
+  - POST `.../snapshots` (not PUT with sequence)
+  - `normalizeTrack1CampaignSnapshotEnvelope` applied before ingest
+  - per-session tool runtime via `SessionToolRuntimeRegistry` (no shared fixed runtime)
+  - `session_end` with pending tool → terminal failed snapshot
+  - tool failure detection via `error` field + JSON parse (not just status check)
+  - real `openclaw plugins inspect` CLI command for static probe checks
+  - raw tool params included in leak detection `sensitiveValues`
+  - envelope `content_sha256` preferred over re-hashing in memory observations
+- status: PHASE_3_REWORK_COMPLETE_PENDING_REVIEW
+- next blocker: user review of Phase 3 rework before Phase 4 runtime orchestration

@@ -286,6 +286,60 @@ describe("REQ-T1-DEMO-010 campaign supervision polling", () => {
     expect(result.current.campaign.freshness).toBe("stale");
   });
 
+  test("completed campaign does not poll on visibility restore", async () => {
+    const loadCampaign = vi
+      .fn()
+      .mockResolvedValueOnce(apiCampaign(makeCampaignDetail({ status: "running" })))
+      .mockResolvedValueOnce(apiCampaign(makeCampaignDetail({ status: "completed" })));
+
+    renderHook(() =>
+      useCampaignSupervisionPolling({ campaignId: CAMPAIGN_ID, loadCampaign })
+    );
+
+    // First poll: running. Second poll (after 3s timer): completed.
+    await act(async () => vi.runOnlyPendingTimersAsync());
+    await act(async () => vi.advanceTimersByTimeAsync(3000));
+    expect(loadCampaign).toHaveBeenCalledTimes(2);
+
+    // Hide and restore visibility.
+    await act(async () => {
+      setDocumentVisibility("hidden");
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await act(async () => {
+      setDocumentVisibility("visible");
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await act(async () => vi.advanceTimersByTimeAsync(9000));
+
+    // Should NOT have polled again — campaign is terminal (completed).
+    expect(loadCampaign).toHaveBeenCalledTimes(2);
+  });
+
+  test("mounting while hidden does not poll until visibility restores", async () => {
+    setDocumentVisibility("hidden");
+    const loadCampaign = vi.fn().mockResolvedValue(
+      apiCampaign(makeCampaignDetail({ status: "running" }))
+    );
+    renderHook(() =>
+      useCampaignSupervisionPolling({ campaignId: CAMPAIGN_ID, loadCampaign })
+    );
+
+    // Should NOT have polled — document is hidden at mount time.
+    await act(async () => vi.runOnlyPendingTimersAsync());
+    await act(async () => vi.advanceTimersByTimeAsync(9000));
+    expect(loadCampaign).toHaveBeenCalledTimes(0);
+
+    // Restore visibility — should poll now.
+    await act(async () => {
+      setDocumentVisibility("visible");
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await act(async () => Promise.resolve());
+    await act(async () => Promise.resolve());
+    expect(loadCampaign).toHaveBeenCalledTimes(1);
+  });
+
   test("integration-error result keeps last successful data and marks stale", async () => {
     const loadCampaign = vi
       .fn()

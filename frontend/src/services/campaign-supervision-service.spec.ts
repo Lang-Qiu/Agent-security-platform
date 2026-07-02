@@ -86,15 +86,25 @@ describe("REQ-T1-DEMO-010 campaign supervision service - query serialization", (
     expect(serializeCampaignQuery({})).toBe("");
   });
 
-  test("does not emit unknown keys even if added via cast", () => {
+  test("rejects unknown keys at runtime instead of silently ignoring them", () => {
     const query = {
       q: "needle",
       raw_prompt: "SHOULD_NOT_APPEAR"
     } as unknown as CampaignQuery;
-    const serialized = serializeCampaignQuery(query);
-    expect(serialized).toBe("?q=needle");
-    expect(serialized).not.toContain("raw_prompt");
-    expect(serialized).not.toContain("SHOULD_NOT_APPEAR");
+    expect(() => serializeCampaignQuery(query)).toThrow(
+      /unknown.*campaign.*query.*key/i
+    );
+  });
+
+  test("rejects multiple unknown keys at runtime", () => {
+    const query = {
+      status: "running",
+      evil_field: "x",
+      another_bad: "y"
+    } as unknown as CampaignQuery;
+    expect(() => serializeCampaignQuery(query)).toThrow(
+      /unknown.*campaign.*query.*key/i
+    );
   });
 });
 

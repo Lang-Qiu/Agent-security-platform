@@ -1785,8 +1785,9 @@ Phase 2 public campaign API. No new backend routes are introduced.
 `frontend/src/services/campaign-supervision-service.ts` serializes the
 `CampaignQuery` in the exact order `q`, `status`, `scenario_id`, `agent_id`,
 mirroring the backend `CampaignQuery` DTO so the two sides cannot drift.
-Unknown keys are not representable through the public type. Empty values are
-dropped. IDs are encoded as one path segment via `encodeURIComponent`.
+`serializeCampaignQuery` validates the key set at runtime and throws on
+unknown keys (exact-key normalizer). Empty values are dropped. IDs are
+encoded as one path segment via `encodeURIComponent`.
 
 Example: `{ agent_id: "agent:track1:tool-hijack", scenario_id: "T1-SC-002",
 status: "running", q: "campaign" }` serializes to
