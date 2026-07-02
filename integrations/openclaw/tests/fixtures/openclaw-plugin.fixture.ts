@@ -1,3 +1,6 @@
+// P0-Fix2: Updated fixture for real SDK camelCase hook events and 5-arg tool execute.
+// P1-Fix5: Per-session tool runtime via SessionToolRuntimeRegistry.
+
 import { InMemorySimulatedToolState } from "../../../../engines/sandbox/src/simulated-tools/state.ts";
 import { SimulatedToolExecutor } from "../../../../engines/sandbox/src/simulated-tools/executor.ts";
 import {
@@ -18,22 +21,40 @@ import type {
   MonitorDecisionProvider,
   MonitorDecisionProposal
 } from "../../../../engines/sandbox/src/monitoring/contract.ts";
+import type {
+  CampaignToolRuntime,
+  Track1ToolDefinition,
+  Track1ToolResult
+} from "../../src/tool-adapters.ts";
+import { SessionToolRuntimeRegistry } from "../../src/plugin.ts";
+import type { Track1PluginContext } from "../../src/campaign-context.ts";
+import { normalizeTrack1PluginContext } from "../../src/campaign-context.ts";
 
 // -- recording plugin api -------------------------------------------------
+// P0-Fix2: Updated to match real SDK OpenClawPluginApi surface:
+// - on() handler accepts (event, ctx) — the real SDK passes context as 2nd arg
+// - registerTool() accepts Track1ToolDefinition with label + 5-arg execute
 
 export interface RecordedTool {
   name: string;
+  label: string;
   description: string;
   parameters: {
     additionalProperties: boolean;
     [key: string]: unknown;
   };
-  execute: (args: unknown, context: unknown) => Promise<unknown>;
+  execute: (
+    toolCallId: string,
+    params: unknown,
+    signal: AbortSignal | undefined,
+    onUpdate: ((partialResult: Track1ToolResult) => void) | undefined,
+    ctx: unknown
+  ) => Promise<Track1ToolResult>;
 }
 
 export interface RecordedHook {
   name: string;
-  handler: (event: unknown) => unknown | Promise<unknown>;
+  handler: (event: unknown, ctx: unknown) => unknown | Promise<unknown>;
   options?: { priority?: number; timeoutMs?: number };
 }
 
@@ -43,7 +64,7 @@ export interface RecordingPluginApi {
   registerTool(tool: RecordedTool): void;
   on(
     name: string,
-    handler: (event: unknown) => unknown | Promise<unknown>,
+    handler: (event: unknown, ctx: unknown) => unknown | Promise<unknown>,
     options?: { priority?: number; timeoutMs?: number }
   ): void;
 }
@@ -64,18 +85,9 @@ export function makeRecordingPluginApi(): RecordingPluginApi {
 }
 
 // -- campaign tool runtime ------------------------------------------------
+// Re-exported from tool-adapters.ts for test convenience.
 
-export interface CampaignToolRuntime {
-  campaign_id: string;
-  agent_id: string;
-  attempt_id: string;
-  attempt_index: 1 | 2;
-  session_id: string;
-  scenario_id: string;
-  case_id: string;
-  state: InMemorySimulatedToolState;
-  executor: SimulatedToolExecutor;
-}
+export type { CampaignToolRuntime } from "../../src/tool-adapters.ts";
 
 export function makeCampaignToolRuntime(
   overrides?: Partial<{
@@ -101,7 +113,7 @@ export function makeCampaignToolRuntime(
   });
   return {
     campaign_id: overrides?.campaign_id ?? "campaign:track1:demo-010",
-    agent_id: overrides?.agent_id ?? "agent:track1:openclaw-001",
+    agent_id: overrides?.agent_id ?? "agent:track1:prompt-injection",
     attempt_id: overrides?.attempt_id ?? "attempt:track1:demo-010-001",
     attempt_index: overrides?.attempt_index ?? 1,
     session_id: overrides?.session_id ?? "session:track1:openclaw-001",
@@ -125,7 +137,7 @@ export function nextCallId(): string {
 
 const CAMPAIGN_ID = "campaign:t1:0123456789abcdef0123456789abcdef";
 const ATTEMPT_ID = "attempt:t1-sc-001-c001:1";
-const AGENT_ID = "track1-agent-tool";
+const AGENT_ID = "agent:track1:prompt-injection";
 const SESSION_ID = "session:0123456789abcdef0123456789abcdef";
 const TASK_ID = "task:0123456789abcdef0123456789abcdef";
 
@@ -154,17 +166,8 @@ export function makeCampaignHookContext(
     case_id: string;
     model_ref: string;
   }>
-): {
-  campaign_id: string;
-  attempt_id: string;
-  attempt_index: 1 | 2;
-  agent_id: string;
-  session_id: string;
-  scenario_id: string;
-  case_id: string;
-  model_ref: string;
-} {
-  return {
+): Track1PluginContext {
+  const raw = {
     campaign_id: overrides?.campaign_id ?? CAMPAIGN_ID,
     attempt_id: overrides?.attempt_id ?? ATTEMPT_ID,
     attempt_index: overrides?.attempt_index ?? 1,
@@ -174,6 +177,7 @@ export function makeCampaignHookContext(
     case_id: overrides?.case_id ?? "T1-SC-001-C001",
     model_ref: overrides?.model_ref ?? TRACK1_MODEL_REF_CANONICAL
   };
+  return normalizeTrack1PluginContext(raw);
 }
 
 export function makeTrack1ModelInputEnvelope(
@@ -336,30 +340,32 @@ export function makeIngestSnapshotAck(
 }
 
 // -- P3-T5: native tool event + hook harness ------------------------------
+// P0-Fix2: camelCase event fields matching real SDK PluginHookBeforeToolCallEvent.
 
 export type NativeToolName = "send_email" | "read_file" | "write_file" | "call_api";
 
 export interface NativeToolEvent {
-  session_id: string;
-  call_id: string;
-  tool_name: string;
-  arguments: unknown;
+  // P0-Fix2: camelCase field names matching real SDK
+  sessionId: string;
+  toolCallId: string;
+  toolName: string;
+  params: unknown;
 }
 
 export function makeNativeToolEvent(
   toolName: NativeToolName,
-  overrides?: Partial<{ call_id: string; session_id: string }>
+  overrides?: Partial<{ toolCallId: string; sessionId: string }>
 ): NativeToolEvent {
   const base = {
-    session_id: overrides?.session_id ?? SESSION_ID,
-    call_id: overrides?.call_id ?? "call:native:001"
+    sessionId: overrides?.sessionId ?? SESSION_ID,
+    toolCallId: overrides?.toolCallId ?? "call:native:001"
   };
   switch (toolName) {
     case "send_email":
       return {
         ...base,
-        tool_name: "send_email",
-        arguments: {
+        toolName: "send_email",
+        params: {
           recipient: "reviewer@local.invalid",
           subject: "Status update",
           body: "The portal is operating normally."
@@ -368,14 +374,14 @@ export function makeNativeToolEvent(
     case "read_file":
       return {
         ...base,
-        tool_name: "read_file",
-        arguments: { path: "sandbox://track1/virtual/status.txt" }
+        toolName: "read_file",
+        params: { path: "sandbox://track1/virtual/status.txt" }
       };
     case "write_file":
       return {
         ...base,
-        tool_name: "write_file",
-        arguments: {
+        toolName: "write_file",
+        params: {
           path: "sandbox://track1/virtual/log.txt",
           content: "Entry recorded by observed session"
         }
@@ -383,8 +389,8 @@ export function makeNativeToolEvent(
     case "call_api":
       return {
         ...base,
-        tool_name: "call_api",
-        arguments: { endpoint: "/api/status", method: "GET" }
+        toolName: "call_api",
+        params: { endpoint: "/api/status", method: "GET" }
       };
   }
 }
@@ -446,18 +452,21 @@ export function makePluginRuntimePorts(options?: {
 }
 
 // -- plugin hook harness ---------------------------------------------------
+// P1-Fix5: Uses SessionToolRuntimeRegistry for per-session tool runtime.
+// P0-Fix2: All events use camelCase matching real SDK hook event shapes.
 
 export interface PluginHookHarness {
-  beforeToolCall: (event: unknown) => Promise<Record<string, unknown>>;
-  afterToolCall: (event: unknown) => Promise<Record<string, unknown>>;
-  sessionStart: (event: unknown) => Promise<unknown>;
-  sessionEnd: (event: unknown) => Promise<unknown>;
-  llmInput: (event: unknown) => Promise<unknown>;
-  llmOutput: (event: unknown) => Promise<unknown>;
+  beforeToolCall: (event: unknown, ctx?: unknown) => Promise<Record<string, unknown>>;
+  afterToolCall: (event: unknown, ctx?: unknown) => Promise<Record<string, unknown>>;
+  sessionStart: (event: unknown, ctx?: unknown) => Promise<unknown>;
+  sessionEnd: (event: unknown, ctx?: unknown) => Promise<unknown>;
+  llmInput: (event: unknown, ctx?: unknown) => Promise<unknown>;
+  llmOutput: (event: unknown, ctx?: unknown) => Promise<unknown>;
   readonly toolExecutions: number;
   readonly snapshotsIngested: number;
   readonly snapshots: Track1CampaignSnapshotEnvelope[];
   readonly api: RecordingPluginApi;
+  readonly toolRuntimeRegistry: SessionToolRuntimeRegistry;
 }
 
 export interface PluginHookHarnessOptions {
@@ -465,13 +474,21 @@ export interface PluginHookHarnessOptions {
     api: RecordingPluginApi,
     runtime: {
       ports: PluginRuntimePorts;
-      toolRuntime: CampaignToolRuntime;
+      campaignContext?: Track1PluginContext;
+      toolRuntimeRegistry: SessionToolRuntimeRegistry;
+      createToolRuntime?: (context: Track1PluginContext) => CampaignToolRuntime;
     }
   ) => void;
   action?: MonitorDecisionProposal["action"];
   ingest?: () => Promise<Track1CampaignSnapshotAck>;
   ingestFails?: boolean;
   skipPreArm?: boolean;
+  // Optional: pre-configured tool runtime for test inspection
+  toolRuntime?: CampaignToolRuntime;
+  // P3-ISSUE2: skip campaignContext to test config-only path
+  skipCampaignContext?: boolean;
+  // P3-ISSUE3: override the decision provider (e.g. with REQ-008 provider)
+  providerOverride?: MonitorDecisionProvider;
 }
 
 export async function makePluginHookHarness(
@@ -487,15 +504,28 @@ export async function makePluginHookHarness(
     const originalExecute = tool.execute;
     const wrapped: RecordedTool = {
       ...tool,
-      async execute(args: unknown, context: unknown) {
+      async execute(
+        toolCallId: string,
+        params: unknown,
+        signal: AbortSignal | undefined,
+        onUpdate: ((partialResult: Track1ToolResult) => void) | undefined,
+        ctx: unknown
+      ): Promise<Track1ToolResult> {
         toolExecutions.count += 1;
-        return originalExecute(args, context);
+        return originalExecute(toolCallId, params, signal, onUpdate, ctx);
       }
     };
     originalRegisterTool(wrapped);
   };
 
-  const toolRuntime = makeCampaignToolRuntime();
+  const campaignContext = options.skipCampaignContext ? undefined : makeCampaignHookContext();
+  const toolRuntimeRegistry = new SessionToolRuntimeRegistry();
+
+  // If a pre-configured tool runtime is provided, register it for the session
+  const createToolRuntime = options.toolRuntime
+    ? (_context: Track1PluginContext) => options.toolRuntime!
+    : undefined;
+
   const basePorts = makePluginRuntimePorts({
     action: options.action,
     ingest: options.ingest,
@@ -503,7 +533,7 @@ export async function makePluginHookHarness(
   });
 
   const ports: PluginRuntimePorts = {
-    provider: basePorts.provider,
+    provider: options.providerOverride ?? basePorts.provider,
     now: basePorts.now,
     nextId: basePorts.nextId,
     async ingestSnapshot(envelope) {
@@ -514,7 +544,12 @@ export async function makePluginHookHarness(
     }
   };
 
-  options.register(api, { ports, toolRuntime });
+  options.register(api, {
+    ports,
+    campaignContext,
+    toolRuntimeRegistry,
+    createToolRuntime
+  });
 
   const getHook = (name: string) => {
     const hook = api.hooks.find((h) => h.name === name);
@@ -522,49 +557,71 @@ export async function makePluginHookHarness(
     return hook.handler;
   };
 
-  const invoke = async (name: string, event: unknown) => {
-    return await getHook(name)(event);
+  const invoke = async (name: string, event: unknown, ctx?: unknown) => {
+    return await getHook(name)(event, ctx);
   };
 
+  // Pre-arm with camelCase events matching real SDK shapes
   if (!options.skipPreArm) {
-    const ctx = makeCampaignHookContext();
+    // P3-ISSUE2: When campaignContext is skipped, use the first pre-arm's
+    // own context from the fixture constants directly.
+    const ctx = campaignContext ?? {
+      agent_id: "agent:track1:prompt-injection",
+      session_id: "session:0123456789abcdef0123456789abcdef"
+    };
+    // P0-Fix2: session_start uses { sessionId } + ctx { agentId, sessionId }
     await invoke("session_start", {
-      session_id: ctx.session_id,
-      agent_id: ctx.agent_id,
-      context: ctx
+      sessionId: ctx.session_id
+    }, {
+      agentId: ctx.agent_id,
+      sessionId: ctx.session_id
     });
+
+    // P0-Fix2: llm_input uses { sessionId, envelope }
     await invoke("llm_input", {
-      session_id: ctx.session_id,
+      sessionId: ctx.session_id,
       envelope: makeTrack1ModelInputEnvelope()
+    }, {
+      agentId: ctx.agent_id,
+      sessionId: ctx.session_id
     });
+
+    // P0-Fix2: llm_output uses { sessionId, assistantTexts } or { sessionId, content }
     await invoke("llm_output", {
-      session_id: ctx.session_id,
+      sessionId: ctx.session_id,
       content: "The simulated customer service portal is operating normally.",
-      content_ref: "model://track1/observed/output/001"
+      contentRef: "model://track1/observed/output/001"
+    }, {
+      agentId: ctx.agent_id,
+      sessionId: ctx.session_id
     });
   }
 
   return {
     api,
-    beforeToolCall: (event: unknown) =>
-      invoke("before_tool_call", event) as Promise<Record<string, unknown>>,
-    afterToolCall: (event: unknown) =>
-      invoke("after_tool_call", event) as Promise<Record<string, unknown>>,
-    sessionStart: (event: unknown) => invoke("session_start", event),
-    sessionEnd: (event: unknown) => invoke("session_end", event),
-    llmInput: (event: unknown) => invoke("llm_input", event),
-    llmOutput: (event: unknown) => invoke("llm_output", event),
+    beforeToolCall: (event: unknown, ctx?: unknown) =>
+      invoke("before_tool_call", event, ctx) as Promise<Record<string, unknown>>,
+    afterToolCall: (event: unknown, ctx?: unknown) =>
+      invoke("after_tool_call", event, ctx) as Promise<Record<string, unknown>>,
+    sessionStart: (event: unknown, ctx?: unknown) => invoke("session_start", event, ctx),
+    sessionEnd: (event: unknown, ctx?: unknown) => invoke("session_end", event, ctx),
+    llmInput: (event: unknown, ctx?: unknown) => invoke("llm_input", event, ctx),
+    llmOutput: (event: unknown, ctx?: unknown) => invoke("llm_output", event, ctx),
     get toolExecutions() {
       return toolExecutions.count;
     },
     get snapshotsIngested() {
       return snapshotsIngested.count;
     },
-    snapshots
+    snapshots,
+    toolRuntimeRegistry
   };
 }
 
 // -- P3-T6: runtime probe ports -------------------------------------------
+// P1-Fix8: Probe ports now include `inspect` output simulating the real
+// `openclaw plugins inspect` command. Static checks use this output instead
+// of a self-made recording API.
 
 export type Track1ProbeMutation =
   | "wrong-version"
@@ -576,13 +633,47 @@ export type Track1ProbeMutation =
   | "correlation-missing"
   | "diagnostic-present";
 
+export interface PluginInspectOutput {
+  id: string;
+  name: string;
+  runtime_version: string;
+  tools: Array<{ name: string; label: string }>;
+  hooks: string[];
+  diagnostics: Array<{ code: string; message: string }>;
+}
+
 export interface Track1PluginProbePorts {
+  inspect: PluginInspectOutput;
   ports: PluginRuntimePorts;
   mutation?: Track1ProbeMutation;
 }
 
+export function makeCompleteInspectOutput(): PluginInspectOutput {
+  return {
+    id: "agent-security-track1",
+    name: "Agent Security Track 1",
+    runtime_version: "2026.6.10",
+    tools: [
+      { name: "send_email", label: "Send Email (Track 1 Simulated)" },
+      { name: "read_file", label: "Read File (Track 1 Simulated)" },
+      { name: "write_file", label: "Write File (Track 1 Simulated)" },
+      { name: "call_api", label: "Call API (Track 1 Simulated)" }
+    ],
+    hooks: [
+      "session_start",
+      "session_end",
+      "llm_input",
+      "llm_output",
+      "before_tool_call",
+      "after_tool_call"
+    ],
+    diagnostics: []
+  };
+}
+
 export function makeCompleteRuntimeProbePorts(): Track1PluginProbePorts {
   return {
+    inspect: makeCompleteInspectOutput(),
     ports: makePluginRuntimePorts({ action: "allow" })
   };
 }
@@ -590,7 +681,31 @@ export function makeCompleteRuntimeProbePorts(): Track1PluginProbePorts {
 export function makeProbePorts(
   mutation: Track1ProbeMutation
 ): Track1PluginProbePorts {
+  const inspect = makeCompleteInspectOutput();
+
+  // Apply static mutations to inspect output
+  switch (mutation) {
+    case "wrong-version":
+      inspect.runtime_version = "2026.0.0";
+      break;
+    case "missing-tool":
+      inspect.tools = inspect.tools.filter((t) => t.name !== "call_api");
+      break;
+    case "duplicate-tool":
+      inspect.tools.push({ ...inspect.tools[0]! });
+      break;
+    case "missing-hook":
+      inspect.hooks = inspect.hooks.filter((h) => h !== "session_end");
+      break;
+    case "diagnostic-present":
+      inspect.diagnostics = [{ code: "test_diagnostic", message: "test" }];
+      break;
+    // Dynamic mutations (block-failed, after-not-observed,
+    // correlation-missing) don't modify inspect output
+  }
+
   return {
+    inspect,
     ports: makePluginRuntimePorts({ action: "allow" }),
     mutation
   };
