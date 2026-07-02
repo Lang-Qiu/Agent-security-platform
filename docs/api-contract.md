@@ -1773,3 +1773,93 @@ The fixed runtime command is `openclaw plugins inspect agent-security-track1 --r
 ### Explicit non-goals
 
 The plugin does not expose any new public HTTP route, does not invoke real models or tools, does not manage campaign retry/attempt lifecycle, and does not produce frontend-facing payloads. Real Docker/OpenClaw runtime execution belongs to Phase 4.
+
+## REQ-T1-DEMO-010 Phase 5 Campaign Supervision UI Frontend Contract
+
+Phase 5 adds a read-only campaign supervision mode to the existing
+`/results/sandbox` workbench. It consumes the Phase 1 read contracts and the
+Phase 2 public campaign API. No new backend routes are introduced.
+
+### Campaign service query order
+
+`frontend/src/services/campaign-supervision-service.ts` serializes the
+`CampaignQuery` in the exact order `q`, `status`, `scenario_id`, `agent_id`,
+mirroring the backend `CampaignQuery` DTO so the two sides cannot drift.
+Unknown keys are not representable through the public type. Empty values are
+dropped. IDs are encoded as one path segment via `encodeURIComponent`.
+
+Example: `{ agent_id: "agent:track1:tool-hijack", scenario_id: "T1-SC-002",
+status: "running", q: "campaign" }` serializes to
+`?q=campaign&status=running&scenario_id=T1-SC-002&agent_id=agent%3Atrack1%3Atool-hijack`.
+
+### Campaign read endpoints
+
+| Operation | Method | Path | Normalizer |
+| --- | --- | --- | --- |
+| List campaigns | `GET` | `/api/supervision/campaigns` | `normalizeTrack1CampaignSummary` (per item) |
+| Get campaign | `GET` | `/api/supervision/campaigns/:campaignId` | `normalizeTrack1CampaignDetail` |
+| Get evidence | `GET` | `/api/supervision/campaigns/:campaignId/evidence` | `normalizeTrack1CampaignEvidenceExport` |
+
+### Failure boundary and no-mock-fallback rule
+
+`CampaignDataResult<T>` carries `{ data, source, error }`:
+
+- `source: "api"` — successful API read, data normalized and non-null.
+- `source: "integration-error"` — API failure. `data` is `null`. `error` is
+  one of `"unavailable"` (network/5xx/404/abort), `"invalid"` (malformed
+  envelope or contract violation), or `"not-ready"` (evidence 409).
+- `source: "mock"` — explicit `mock-only` mode only. Never returned by
+  `api-preferred` mode.
+
+`api-preferred` failure never falls back to mock campaign data. A 503/404/abort
+returns `{ data: null, source: "integration-error", error: "unavailable" }`.
+A malformed `200` body returns `error: "invalid"`.
+
+### Evidence not-ready state
+
+The evidence endpoint distinguishes `409 CAMPAIGN_EVIDENCE_NOT_READY` from
+other failures. `requestApiDataWithStatus` collapses all non-200 responses to
+`unavailable`, so the evidence fetch is performed directly and the HTTP status
+code plus `error_code` field are inspected. A 409 with
+`error_code: "CAMPAIGN_EVIDENCE_NOT_READY"` is surfaced as
+`{ data: null, source: "integration-error", error: "not-ready" }`. A 409
+without the canonical error_code remains `unavailable` to avoid spoofing
+not-ready.
+
+### Polling stale semantics
+
+`useCampaignSupervisionPolling` polls every 3000 ms while campaign status is
+`created`, `validating`, `running`, or `collecting`. Polling stops on
+`completed` and `failed` (terminal states).
+
+- Hidden document pauses polling; visibility restore resumes only if the
+  campaign is not stale and not terminal.
+- Failure keeps the last successful data, marks `freshness: "stale"`, and
+  pauses polling. The stale state surfaces in the UI via the
+  `data-evidence-state` marker on `CampaignOverviewHeader` (one of
+  `fresh-running`, `fresh-completed`, `stale`).
+- Explicit `retry()` clears the pause and attempts immediately.
+- Campaign ID change aborts the prior request and resets state. A generation
+  guard prevents late responses for campaign A from overwriting campaign B.
+- Unmount aborts and creates no post-unmount state update. One hook instance
+  owns one visibility listener.
+
+### URL-driven mode selection
+
+Campaign mode is selected only by the normalized `campaign_id` URL parameter
+on `/results/sandbox`. The page validates the ID against
+`/^campaign:t1:[0-9a-f]{32}$/`; invalid IDs are dropped rather than forwarded
+to the API. Existing session-mode URLs (without `campaign_id`) remain backward
+compatible. The `agent_id` URL parameter is validated against the fixed
+`Track1CampaignAgentId` set; invalid agent IDs are removed.
+
+### Read-only boundary
+
+No start, retry, approve, reject, cancel, acknowledge, policy edit, or
+artifact generation control exists in campaign mode. The repository gate
+permanently prohibits these command surfaces.
+
+### Explicit non-goals
+
+Real 390/1024/1440 browser screenshots, visual acceptance, and end-to-end
+campaign orchestration across Docker/OpenClaw runtime belong to Phase 6.

@@ -2778,3 +2778,50 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   - docs state that real Docker/OpenClaw execution belongs to Phase 4
 - status: PHASE_3_COMPLETE_PENDING_REVIEW
 - next blocker: user review of Phase 3 before Phase 4 runtime orchestration
+
+## 2026-07-02 - REQ-T1-DEMO-010 Phase 5 Campaign Supervision UI
+
+- requirement: Track 1 campaign supervision UI — read-only campaign mode on the existing `/results/sandbox` workbench rendering one campaign, three agents, nine cases, attempts, aggregate safety counts, and the existing safe session inspector from normalized API data
+- scope:
+  - P5-T1: `frontend/src/services/campaign-supervision-service.ts` + `frontend/src/mocks/campaign-supervision.ts` — strict campaign read service with no fabricated API success; query order exactly `q`, `status`, `scenario_id`, `agent_id`; evidence 409 `CAMPAIGN_EVIDENCE_NOT_READY` surfaced as typed `not-ready`; `api-preferred` failure returns `integration-error` with `data: null`, never mock fallback
+  - P5-T2: `frontend/src/hooks/useCampaignSupervisionPolling.ts` — race-safe polling with generation guard, AbortController, visibility listener, error-pause; polls every 3000ms for non-terminal statuses, stops on `completed`/`failed`; late response for campaign A cannot overwrite campaign B
+  - P5-T3: `frontend/src/components/supervision/CampaignOverviewHeader.tsx` + `CampaignAgentGroup.tsx` — compact overview header with `data-evidence-state` marker (`fresh-running`/`fresh-completed`/`stale`), fixed agent groups with roving tabindex keyboard navigation
+  - P5-T4: `frontend/src/pages/SandboxAlertsPage.tsx` — URL-driven campaign mode selected by `campaign_id` URL parameter; reuses existing `SupervisionSessionInspector`; default session selection priority `deny` > `ask` > `alert` > first
+  - P5-T5: narrow-viewport responsive layout with one-panel-at-a-time DOM (`mobile-view-list`/`mobile-view-inspector`), back button, 1100px breakpoint, `overflow-wrap: anywhere`
+  - P5-T6: `tests/repository/track1-campaign-ui.spec.ts` — permanent repository gate with 14 static source assertions (service endpoints, shared normalizers, no-mock-fallback, prohibited command surfaces, raw-content field labels, evidence-state markers, responsive breakpoint, mobile-view toggles, test registration)
+- RED evidence:
+  - P5-T1: `npm run test --prefix frontend -- --run src/services/campaign-supervision-service.spec.ts` -> ERR_MODULE_NOT_FOUND for campaign-supervision-service.ts
+  - P5-T2: `npm run test --prefix frontend -- --run src/hooks/use-campaign-supervision-polling.spec.tsx` -> ERR_MODULE_NOT_FOUND for useCampaignSupervisionPolling.ts
+  - P5-T3: `npm run test --prefix frontend -- --run src/components/supervision/campaign-components.spec.tsx` -> ERR_MODULE_NOT_FOUND for CampaignOverviewHeader.tsx and CampaignAgentGroup.tsx
+  - P5-T4: `npm run test --prefix frontend -- --run src/pages/sandbox-alerts.page.spec.tsx` -> campaign mode tests fail (SandboxAlertsPageCampaign component missing)
+  - P5-T5: narrow-viewport tests fail (mobile-view DOM and back button missing)
+  - P5-T6: `node --test tests/repository/track1-campaign-ui.spec.ts` -> ERR_MODULE_NOT_FOUND for track1-campaign-ui.spec.ts
+- commits:
+  - P5-T1 `38710aa` — `feat(frontend): add campaign supervision service`
+  - P5-T2 `1e1c219` — `feat(frontend): poll campaign supervision detail`
+  - P5-T3 `ba8b337` — `feat(frontend): render campaign supervision groups`
+  - P5-T4 `d83413a` — `feat(frontend): add campaign mode to sandbox results`
+  - P5-T5 `bcb68af` — `fix(frontend): harden campaign supervision interaction`
+  - P5-T6 — `test(frontend): gate campaign supervision mode`
+- phase gate (actual counts):
+  - `npm run test:frontend` — 205/205 pass (14 test files); campaign-specific: campaign-supervision-service.spec.ts 28, use-campaign-supervision-polling.spec.tsx 14, campaign-components.spec.tsx 34, sandbox-alerts.page.spec.tsx 41 (15 campaign mode + 26 session mode)
+  - `npm run build --prefix frontend` — pass (3061 modules, 1.25s; chunk-size warning is non-blocking)
+  - `npm run test:shared` — 148/148 pass
+  - `npm run test:backend` — 228/229 pass (1 pre-existing failure: Semgrep `spawn EPERM` in `tests/integration/backend-task-center.api.spec.ts:648`, unrelated to campaign UI)
+  - `npm run test:repo` — 113/115 pass (2 pre-existing Phase 3 OpenClaw failures from uncommitted dirty files `integrations/openclaw/src/plugin.ts` and `integrations/openclaw/src/runtime-probe.ts`, unrelated to campaign UI; campaign UI gate `track1-campaign-ui.spec.ts` 14/14 pass)
+  - `npm run test:engine:sandbox` — 428/430 pass (2 pre-existing Phase 3 observed-session failures from uncommitted dirty files in `engines/sandbox/`, unrelated to campaign UI)
+  - `git diff --check` — clean for Phase 5 files
+- constraints honored:
+  - campaign mode is read-only: no start, retry, approve, reject, cancel, acknowledge, policy edit, or artifact generation control
+  - no raw prompt, model output, tool arguments/results, memory values, credentials, or arbitrary exception text rendered
+  - campaign API failures never masquerade as successful campaign data
+  - agent order and case order come from normalized contracts, not local sorting
+  - effects depend on primitive IDs/statuses, not whole response objects
+  - existing REQ-009 session-mode tests remain green
+  - `data-evidence-state` marker emitted for Phase 6 screenshot capture
+  - 1100px responsive breakpoint honored; no viewport-relative font sizes
+- residual risks:
+  - real 390/1024/1440 browser screenshots and visual acceptance remain Phase 6
+  - 4 pre-existing failures (1 backend Semgrep EPERM, 2 OpenClaw plugin gate from dirty files, 2 observed-session from dirty files) are unrelated to Phase 5 and present in the worktree before Phase 5 began
+- status: PHASE_5_COMPLETE_PENDING_REVIEW
+- next blocker: user review of Phase 5 before Phase 6 visual evidence capture

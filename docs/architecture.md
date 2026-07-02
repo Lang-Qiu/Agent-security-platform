@@ -675,3 +675,82 @@ The following remain outside Phase 3 scope and belong to Phase 4:
 - campaign orchestration, retry, or attempt lifecycle management
 - frontend campaign UI
 - report generation or evidence export
+
+## REQ-T1-DEMO-010 Phase 5 Campaign Supervision UI
+
+Phase 5 extends the existing `/results/sandbox` workbench with a read-only
+campaign mode that renders one Track 1 campaign, its three agents, nine cases,
+attempts, aggregate safety counts, and the existing safe session inspector.
+Campaign mode is selected only by the normalized `campaign_id` URL parameter;
+existing session-mode URLs and behavior remain backward compatible.
+
+### Service and hook ownership
+
+- `frontend/src/services/campaign-supervision-service.ts` owns the strict
+  campaign read service. It reuses `requestApiDataWithStatus` (api-client) and
+  the Phase 1 shared campaign normalizers
+  (`normalizeTrack1CampaignSummary`/`Detail`/`EvidenceExport`). It does not
+  duplicate campaign contract validation.
+- Query order is exactly `q`, `status`, `scenario_id`, `agent_id`, mirroring
+  the backend `CampaignQuery` DTO order so the two sides cannot drift.
+- The evidence endpoint inspects the HTTP status code and `error_code` field
+  directly so a `409 CAMPAIGN_EVIDENCE_NOT_READY` is surfaced as the typed
+  `not-ready` read state rather than collapsed into `unavailable`.
+- `api-preferred` failure returns `integration-error` with `data: null` —
+  never a mock fallback. Explicit `mock-only` mode returns sanitized fixtures
+  tagged with `source: "mock"`.
+- `frontend/src/hooks/useCampaignSupervisionPolling.ts` owns the race-safe
+  polling state. It follows the accepted generation-guard + AbortController +
+  visibility-listener + error-pause pattern from `useSupervisionPolling`.
+  Effects depend on primitive `campaignId` and status values, not whole
+  response objects.
+
+### Reuse of the session inspector
+
+Campaign mode does not introduce a parallel session detail path. The page
+collects session IDs from the normalized campaign detail, selects a default
+session (priority: `deny` > `ask` > `alert` > first), and fetches session
+detail through the existing `getSupervisionSession` service. The existing
+`SupervisionSessionInspector` remains the authority for session detail
+rendering. The shared normalizer's `event.session_id !== summary.session_id`
+consistency check is honored by all campaign fixtures and mocks.
+
+### Header, agent groups, and evidence-state markers
+
+- `frontend/src/components/supervision/CampaignOverviewHeader.tsx` renders the
+  campaign summary, agent/case counts, and aggregate safety counts
+  (alerts, blocks, asks, retries). It emits a `data-evidence-state` marker
+  (`fresh-running` | `fresh-completed` | `stale`) that Phase 6 screenshot
+  capture waits on.
+- `frontend/src/components/supervision/CampaignAgentGroup.tsx` renders one
+  fixed agent group with its three cases and attempt summaries. It implements
+  roving tabindex keyboard navigation across attempt buttons.
+- Agent order and case order come from normalized contracts, not local sorting
+  by display labels.
+
+### Responsive layout and keyboard navigation
+
+- The campaign workbench uses a two-column grid at wide viewport and collapses
+  to a single column at `max-width: 1100px` (the same breakpoint as session
+  mode), ensuring 1024px compact desktop/tablet viewports do not overflow.
+- At narrow viewport, only one panel is rendered at a time (`mobile-view-list`
+  shows the agent list; `mobile-view-inspector` shows the inspector). A back
+  button returns from inspector to list. Selecting a session switches to
+  inspector view.
+- `overflow-wrap: anywhere` prevents long safe IDs from causing horizontal
+  overflow. No viewport-relative (`vw`) font sizes are used.
+
+### Read-only boundary
+
+Campaign mode is read-only. No start, retry, approve, reject, cancel,
+acknowledge, policy edit, or artifact generation control exists. The
+repository gate at `tests/repository/track1-campaign-ui.spec.ts` permanently
+prohibits these command surfaces and raw narrative content field labels.
+
+### Explicit non-goals
+
+The following remain outside Phase 5 scope and belong to Phase 6:
+
+- real 390/1024/1440 browser screenshots and visual acceptance
+- end-to-end campaign orchestration across Docker/OpenClaw runtime
+- report generation or evidence export UI
