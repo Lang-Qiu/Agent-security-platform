@@ -27,7 +27,7 @@ export {
   SANDBOX_SUPERVISION_SCHEMA_VERSION
 } from "../types/supervision.ts";
 
-const SUPERVISION_TOOL_NAMES: readonly SandboxSupervisionToolName[] = [
+export const SUPERVISION_TOOL_NAMES: readonly SandboxSupervisionToolName[] = [
   "send_email",
   "read_file",
   "write_file",
@@ -281,10 +281,11 @@ export function normalizeSandboxSupervisionOverview(
 
 // -- Task 2: content-free detail and evidence contracts -----------------------
 
-const SUPERVISION_STATE_CHANGES = [
+export const SUPERVISION_STATE_CHANGES = [
   "none",
   "outbox_append",
-  "virtual_file_write"
+  "virtual_file_write",
+  "simulated"
 ] as const;
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;

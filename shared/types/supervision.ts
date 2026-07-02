@@ -98,7 +98,8 @@ export interface SandboxSupervisionToolRequestPayload {
 export type SandboxSupervisionStateChange =
   | "none"
   | "outbox_append"
-  | "virtual_file_write";
+  | "virtual_file_write"
+  | "simulated";
 
 export interface SandboxSupervisionToolResultPayload {
   call_id: string;

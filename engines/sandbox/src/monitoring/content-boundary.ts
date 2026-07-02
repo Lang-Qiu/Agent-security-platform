@@ -165,6 +165,36 @@ export function containsMonitorSensitiveValue(
   return false;
 }
 
+// -- raw tool argument extraction (P1-Fix9) --------------------------------
+// Collects all non-empty string values from a simulated tool request's
+// arguments, so that provider proposals echoing raw tool params (e.g.
+// send_email body, write_file content, call_api body values) are detected
+// by the content-boundary leak check.
+
+export function collectRawToolArgumentStrings(
+  request: SimulatedToolRequest
+): string[] {
+  const strings: string[] = [];
+  function collect(v: unknown): void {
+    if (typeof v === "string" && v.length > 0) {
+      strings.push(v);
+    } else if (Array.isArray(v)) {
+      v.forEach(collect);
+    } else if (isPlainObject(v)) {
+      Object.values(v).forEach(collect);
+    }
+  }
+  collect(request.arguments);
+  return strings;
+}
+
+// Validates a 64-hex lowercase SHA-256 string (envelope content_sha256).
+const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
+
+export function isValidSha256Hex(value: unknown): value is string {
+  return typeof value === "string" && SHA256_HEX_PATTERN.test(value);
+}
+
 // -- tool result normalization ---------------------------------------------
 
 const SIMULATED_TOOL_NAMES = ["send_email", "read_file", "write_file", "call_api"] as const;

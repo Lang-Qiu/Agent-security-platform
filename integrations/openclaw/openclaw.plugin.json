@@ -1,0 +1,26 @@
+{
+  "id": "agent-security-track1",
+  "name": "Agent Security Track 1",
+  "version": "1.0.0",
+  "description": "Track 1 campaign supervision plugin",
+  "main": "./src/plugin.ts",
+  "activation": { "onStartup": true },
+  "contracts": {
+    "tools": ["send_email", "read_file", "write_file", "call_api"]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["ingestEndpoint", "ingestToken"],
+    "properties": {
+      "ingestEndpoint": {
+        "type": "string",
+        "default": "http://backend:3001/internal/track1/campaigns"
+      },
+      "ingestToken": {
+        "type": "string",
+        "writeOnly": true
+      }
+    }
+  }
+}

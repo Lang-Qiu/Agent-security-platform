@@ -9,6 +9,8 @@ import type { MonitorRuntimePorts, MonitorDecisionProvider } from "../../../engi
 import { InMemorySimulatedToolState } from "../../../engines/sandbox/src/simulated-tools/state.ts";
 import { SimulatedToolExecutor } from "../../../engines/sandbox/src/simulated-tools/executor.ts";
 import { registerTrack1Tools } from "./tool-adapters.ts";
+import { RuleBasedDecisionProvider } from "../../../engines/sandbox/src/base-filter/provider.ts";
+import { Track1IngestClient } from "./ingest-client.ts";
 import type {
   CampaignToolRuntime,
   CampaignToolRuntimeResolver,
@@ -782,25 +784,16 @@ export function createTrack1PluginEntry(): DefinedPluginEntry {
 
       const toolRuntimeRegistry = new SessionToolRuntimeRegistry();
 
-      // Lazy import to avoid circular dependency at module load
-      // P0 (REQ-008): Use the real RuleBasedDecisionProvider from the sandbox
-      // engine as the production decision provider. The old inline allow-all
-      // stub is removed — all decisions go through the base-filter rule engine.
-      const { RuleBasedDecisionProvider } = await import(
-        "../../../engines/sandbox/src/base-filter/provider.ts"
-      );
       const provider = new RuleBasedDecisionProvider();
+      const ingestClient = new Track1IngestClient(
+        { ingestEndpoint, ingestToken },
+        undefined
+      );
 
       const ports: Track1PluginRuntimePorts = {
         provider,
-        async ingestSnapshot(envelope) {
-          // Construct ingest client lazily
-          const { Track1IngestClient } = await import("./ingest-client.ts");
-          const client = new Track1IngestClient(
-            { ingestEndpoint, ingestToken },
-            undefined
-          );
-          return client.appendSnapshot(envelope);
+        ingestSnapshot(envelope) {
+          return ingestClient.appendSnapshot(envelope);
         }
       };
 
