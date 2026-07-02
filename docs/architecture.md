@@ -455,6 +455,17 @@ REQ-T1-DEMO-010 adds a split-listener backend for Track 1 campaign supervision. 
 - `backend/src/modules/supervision/campaign-supervision.controller.ts` exposes three GET routes wrapped in `ApiResponse<T>`. It validates query parameters via `normalizeCampaignQuery`, which rejects unknown keys, duplicate keys, empty enum values, and control characters.
 - `backend/src/modules/supervision/dto/campaign-query.ts` is the query DTO. It accepts only `q`, `status`, `scenario_id`, and `agent_id`.
 
+### Native OpenClaw plugin
+
+- `integrations/openclaw/src/index.ts` default-exports the real `definePluginEntry` result. `scripts/build.mjs` removes stale output and emits one bundled `dist/index.js`; `openclaw.plugin.json` and the package extension field both point to that compiled entry.
+- The distributable package contains only `dist/index.js`, `openclaw.plugin.json`, and `package.json`. OpenClaw, TypeBox, and esbuild are development-only dependencies, so installing the plugin does not recursively install a second host runtime.
+- The plugin registers four simulated tools (`send_email`, `read_file`, `write_file`, `call_api`) and six typed hooks (`session_start`, `llm_input`, `llm_output`, `before_tool_call`, `after_tool_call`, `session_end`).
+- Production sessions bind campaign identity exactly once from the first normalized `track1-openclaw-input.v1` envelope. Native OpenClaw session/agent identity must agree with the closed campaign, agent, scenario, case, attempt, and session identifiers before the monitor context or tool runtime is mutated.
+- `ObservedMonitoredSession.rebindContext` is atomic and one-shot. It is allowed only before any event or pending model/tool operation and validates the complete session/scenario/case tuple.
+- `before_tool_call` is an acknowledgement barrier: simulated execution is not released until the normalized pre-execution snapshot is accepted. Unknown tools, unavailable monitoring, and invalid correlation fail closed.
+- `session_end` converts an unresolved tool call into a failed tool result and ingests one terminal failed snapshot. Finalization or terminal ingest failure is surfaced as `security_monitor_unavailable`; it is never downgraded to a non-terminal snapshot.
+- `runtime-probe.ts` parses the real `openclaw plugins inspect agent-security-track1 --runtime --json` shape and obtains the runtime version from `openclaw --version`. The probe requires the requested plugin ID, `loaded` status, exact tool/hook sets, runtime `2026.6.10`, and an empty diagnostics array before dynamic hook checks run.
+
 ### Explicit non-goals
 
 The following capabilities remain outside REQ-T1-DEMO-010 scope and must not be added without a new requirement:

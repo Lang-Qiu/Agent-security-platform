@@ -55,6 +55,36 @@ test("REQ-T1-DEMO-010 campaign context rejects malformed input", () => {
   );
 });
 
+test("REQ-T1-DEMO-010 context and envelope reject non-canonical identity mappings", () => {
+  const mutations = [
+    { campaign_id: "campaign:t1:not-hex" },
+    { agent_id: "agent:track1:unknown" },
+    { session_id: "session:short" },
+    { scenario_id: "T1-SC-002" },
+    { case_id: "T1-SC-001-C999" },
+    { attempt_id: "attempt:t1-sc-001-c001:2" }
+  ];
+
+  for (const mutation of mutations) {
+    assert.throws(
+      () =>
+        normalizeTrack1PluginContext({
+          ...makeCampaignHookContext(),
+          ...mutation
+        }),
+      /track1_plugin_context_invalid/
+    );
+    assert.throws(
+      () =>
+        normalizeTrack1ModelInputEnvelope({
+          ...makeTrack1ModelInputEnvelope(),
+          ...mutation
+        }),
+      /track1_model_input_invalid/
+    );
+  }
+});
+
 test("REQ-T1-DEMO-010 campaign context is immutable after normalization", () => {
   const normalized = normalizeTrack1PluginContext(makeCampaignHookContext());
   assert.throws(
@@ -113,4 +143,86 @@ test("REQ-T1-DEMO-010 model input envelope rejects missing required keys", () =>
     () => normalizeTrack1ModelInputEnvelope(withoutPrompt),
     /track1_model_input_invalid/
   );
+});
+
+test("REQ-T1-DEMO-010 model input envelope closes nested memory fields", () => {
+  const valid = makeTrack1ModelInputEnvelope();
+  const invalidEntries = [
+    {
+      memory_entry_id: "memory:track1:001",
+      content_ref: "memory://track1/entry/001",
+      content_sha256: "a".repeat(64),
+      raw_content: "MEMORY_SENTINEL"
+    },
+    {
+      memory_entry_id: "MEMORY_SENTINEL",
+      content_ref: "memory://track1/entry/001",
+      content_sha256: "a".repeat(64)
+    },
+    {
+      memory_entry_id: "memory:track1:001",
+      content_ref: "MEMORY_SENTINEL",
+      content_sha256: "a".repeat(64)
+    },
+    {
+      memory_entry_id: "memory:track1:001",
+      content_ref: "memory://track1/entry/001",
+      content_sha256: "not-a-sha256"
+    }
+  ];
+
+  for (const memoryEntry of invalidEntries) {
+    assert.throws(
+      () =>
+        normalizeTrack1ModelInputEnvelope({
+          ...valid,
+          memory_entries: [memoryEntry]
+        }),
+      /track1_model_input_invalid/
+    );
+  }
+});
+
+test("REQ-T1-DEMO-010 model input envelope accepts planned synthetic memory IDs", () => {
+  const normalized = normalizeTrack1ModelInputEnvelope({
+    ...makeTrack1ModelInputEnvelope(),
+    memory_entries: [
+      {
+        memory_entry_id: "memory:synthetic:001",
+        content_ref: "memory://track1/synthetic/001",
+        content_sha256: "a".repeat(64)
+      }
+    ]
+  });
+
+  assert.equal(
+    normalized.memory_entries[0]?.memory_entry_id,
+    "memory:synthetic:001"
+  );
+});
+
+test("REQ-T1-DEMO-010 model input envelope closes nested tool proposal fields", () => {
+  const valid = makeTrack1ModelInputEnvelope();
+  const invalidProposals = [
+    {
+      tool_name: "write_file",
+      arguments_ref: "arguments://track1/write/001",
+      raw_arguments: "TOOL_SENTINEL"
+    },
+    {
+      tool_name: "write_file",
+      arguments_ref: "TOOL_SENTINEL"
+    }
+  ];
+
+  for (const proposedToolCall of invalidProposals) {
+    assert.throws(
+      () =>
+        normalizeTrack1ModelInputEnvelope({
+          ...valid,
+          proposed_tool_call: proposedToolCall
+        }),
+      /track1_model_input_invalid/
+    );
+  }
 });

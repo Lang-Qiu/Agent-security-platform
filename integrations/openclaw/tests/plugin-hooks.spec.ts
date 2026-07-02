@@ -303,8 +303,13 @@ test("REQ-T1-DEMO-010 session end with pending tool produces terminal failed sna
   // P0-Fix2: camelCase { sessionId }
   await harness.sessionEnd({ sessionId: makeCampaignHookContext().session_id });
 
-  // At least one terminal snapshot should have been ingested
-  assert.ok(harness.snapshotsIngested >= 1);
+  const finalSnapshot = harness.snapshots.at(-1);
+  assert.equal(finalSnapshot?.result.status, "failed");
+  assert.equal(typeof finalSnapshot?.result.finished_at, "string");
+  const toolResults = finalSnapshot?.result.details.events.filter(
+    (event) => event.event_type === "tool_result"
+  );
+  assert.equal(toolResults?.at(-1)?.payload.status, "failed");
 });
 
 test("REQ-T1-DEMO-010 hook errors are stable and contain no raw content", async () => {
@@ -441,6 +446,143 @@ test("REQ-T1-DEMO-010 legitimate config with only ingest fields can process enve
   });
 
   assert.ok(true, "envelope processing with config-only ports succeeded");
+});
+
+test("REQ-T1-DEMO-010 unbound production session requires a campaign envelope", async () => {
+  const ctx = makeCampaignHookContext();
+  const harness = await makePluginHookHarness({
+    register: registerTrack1Plugin,
+    action: "allow",
+    skipPreArm: true,
+    skipCampaignContext: true
+  });
+
+  await harness.sessionStart(
+    { sessionId: ctx.session_id },
+    { agentId: ctx.agent_id, sessionId: ctx.session_id }
+  );
+
+  await assert.rejects(
+    () =>
+      harness.llmInput(
+        {
+          sessionId: ctx.session_id,
+          prompt: "RAW_PROMPT_SENTINEL"
+        },
+        { agentId: ctx.agent_id, sessionId: ctx.session_id }
+      ),
+    (error: unknown) => {
+      const rendered = String(error);
+      return (
+        rendered.includes("track1_plugin_envelope_required") &&
+        !rendered.includes("RAW_PROMPT_SENTINEL")
+      );
+    }
+  );
+});
+
+test("REQ-T1-DEMO-010 rejected identity cannot poison the later valid binding", async () => {
+  const ctx = makeCampaignHookContext();
+  const envelope = makeTrack1ModelInputEnvelope();
+  const harness = await makePluginHookHarness({
+    register: registerTrack1Plugin,
+    action: "allow",
+    skipPreArm: true,
+    skipCampaignContext: true
+  });
+
+  await harness.sessionStart(
+    { sessionId: ctx.session_id },
+    { agentId: ctx.agent_id, sessionId: ctx.session_id }
+  );
+
+  await assert.rejects(
+    () =>
+      harness.llmInput(
+        {
+          sessionId: ctx.session_id,
+          envelope: {
+            ...envelope,
+            agent_id: "agent:track1:tool-hijack"
+          }
+        },
+        { agentId: ctx.agent_id, sessionId: ctx.session_id }
+      ),
+    /track1_model_input_invalid|track1_plugin_envelope_mismatch/
+  );
+
+  await harness.llmInput(
+    { sessionId: ctx.session_id, envelope },
+    { agentId: ctx.agent_id, sessionId: ctx.session_id }
+  );
+  assert.equal(
+    harness.toolRuntimeRegistry.resolveToolRuntime(ctx.session_id)?.agent_id,
+    ctx.agent_id
+  );
+});
+
+test("REQ-T1-DEMO-010 adapter rejection remains non-failed in the event stream", async () => {
+  const ctx = makeCampaignHookContext();
+  const harness = await makePluginHookHarness({
+    register: registerTrack1Plugin,
+    action: "allow"
+  });
+  const event = {
+    ...makeNativeToolEvent("write_file"),
+    params: {
+      path: "C:\\host\\secret.txt",
+      content: "blocked"
+    }
+  };
+
+  await harness.beforeToolCall(event, {
+    agentId: ctx.agent_id,
+    sessionId: ctx.session_id
+  });
+  const tool = harness.api.tools.find((candidate) => candidate.name === "write_file");
+  assert.ok(tool);
+  const adapterResult = await tool.execute(
+    event.toolCallId,
+    event.params,
+    undefined,
+    undefined,
+    { sessionId: ctx.session_id }
+  );
+  assert.equal(
+    (adapterResult.details as { status?: string }).status,
+    "rejected"
+  );
+  await harness.afterToolCall(
+    {
+      sessionId: ctx.session_id,
+      toolCallId: event.toolCallId,
+      toolName: event.toolName,
+      result: adapterResult
+    },
+    { agentId: ctx.agent_id, sessionId: ctx.session_id }
+  );
+
+  const resultEvents = harness.snapshots
+    .at(-1)
+    ?.result.details.events.filter((item) => item.event_type === "tool_result");
+  assert.equal(resultEvents?.at(-1)?.payload.status, "rejected");
+
+  await harness.sessionEnd({ sessionId: ctx.session_id });
+  assert.equal(harness.snapshots.at(-1)?.result.status, "finished");
+});
+
+test("REQ-T1-DEMO-010 session end fails closed when terminal ingest is unavailable", async () => {
+  const ctx = makeCampaignHookContext();
+  const harness = await makePluginHookHarness({
+    register: registerTrack1Plugin,
+    action: "allow",
+    ingestFails: true
+  });
+
+  await assert.rejects(
+    () => harness.sessionEnd({ sessionId: ctx.session_id }),
+    /security_monitor_unavailable/
+  );
 });
 
 // -- P3-ISSUE3: REQ-008 base-filter wiring -----------------------------------

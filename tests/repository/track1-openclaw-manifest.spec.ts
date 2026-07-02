@@ -38,8 +38,9 @@ test("REQ-T1-DEMO-010 manifest pins workspace and runtime versions", () => {
   const pkg = JSON.parse(readText("integrations/openclaw/package.json"));
   assert.equal(pkg.name, "@agent-security-platform/openclaw-integration");
   assert.equal(pkg.private, true);
-  assert.equal(pkg.dependencies.openclaw, "2026.6.10");
-  assert.equal(pkg.dependencies.typebox, "1.1.38");
+  assert.deepEqual(pkg.dependencies ?? {}, {});
+  assert.equal(pkg.devDependencies.openclaw, "2026.6.10");
+  assert.equal(pkg.devDependencies.typebox, "1.1.38");
 });
 
 test("REQ-T1-DEMO-010 manifest fixes three agents and nine cases", () => {

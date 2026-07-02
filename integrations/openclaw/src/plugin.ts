@@ -3,7 +3,6 @@
 // P1-Fix5: Per-session tool runtime via CampaignToolRuntimeResolver.
 
 import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
-import type { DefinedPluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { ObservedMonitoredSession } from "../../../engines/sandbox/src/monitoring/observed-session.ts";
 import type { MonitorRuntimePorts, MonitorDecisionProvider } from "../../../engines/sandbox/src/monitoring/contract.ts";
 import { InMemorySimulatedToolState } from "../../../engines/sandbox/src/simulated-tools/state.ts";
@@ -145,36 +144,23 @@ function createDefaultToolRuntime(context: Track1PluginContext): CampaignToolRun
   };
 }
 
-// P3-ISSUE2: Placeholder context used when no campaign context is provided up front.
-// This is replaced by the actual identity from the llm_input envelope.
-function createDefaultContextPlaceholder(): Track1PluginContext {
-  return Object.freeze({
-    campaign_id: "",
-    attempt_id: "",
-    attempt_index: 1,
-    agent_id: "",
-    session_id: "",
-    scenario_id: "",
-    case_id: "",
-    model_ref: "model://track1/openclaw-demo"
-  });
-}
-
 function buildSnapshotEnvelope(
   state: PluginSessionState,
   result: BaseResult<SandboxRunResultDetails>
 ): Track1CampaignSnapshotEnvelope {
-  // P3-ISSUE2: context may be null before identity binding; guard with fallback.
   const ctx = state.context;
+  if (ctx === null) {
+    throw new Track1PluginHookError("track1_plugin_envelope_required");
+  }
   const withoutHash: Track1CampaignSnapshotWithoutHash = {
     schema_version: TRACK1_CAMPAIGN_SNAPSHOT_SCHEMA_VERSION,
-    campaign_id: ctx?.campaign_id ?? "",
+    campaign_id: ctx.campaign_id,
     campaign_manifest_sha256: TRACK1_CAMPAIGN_MANIFEST_SHA256,
-    agent_id: ctx?.agent_id ?? "",
-    scenario_id: ctx?.scenario_id ?? "",
-    case_id: ctx?.case_id ?? "",
-    attempt_id: ctx?.attempt_id ?? "",
-    attempt_index: ctx?.attempt_index ?? 1,
+    agent_id: ctx.agent_id,
+    scenario_id: ctx.scenario_id,
+    case_id: ctx.case_id,
+    attempt_id: ctx.attempt_id,
+    attempt_index: ctx.attempt_index,
     sequence: state.snapshotSequence,
     previous_snapshot_sha256: state.previousSnapshotSha256,
     observed_at: new Date().toISOString(),
@@ -313,11 +299,12 @@ export function registerTrack1Plugin(
     // Register a placeholder session with null context — llm_input will populate it.
     const effectiveContext = resolvedCampaignContext ?? null;
 
-    // Create per-session tool runtime (P1-Fix5)
-    const toolRuntime = runtime.createToolRuntime
-      ? runtime.createToolRuntime(effectiveContext ?? createDefaultContextPlaceholder())
-      : createDefaultToolRuntime(effectiveContext ?? createDefaultContextPlaceholder());
-    toolRuntimeRegistry.register(sessionId, toolRuntime);
+    if (effectiveContext !== null) {
+      const toolRuntime = runtime.createToolRuntime
+        ? runtime.createToolRuntime(effectiveContext)
+        : createDefaultToolRuntime(effectiveContext);
+      toolRuntimeRegistry.register(sessionId, toolRuntime);
+    }
 
     // Map to MonitorSessionContext
     // P3-ISSUE2: In the production path, identity is not yet known so the
@@ -334,11 +321,15 @@ export function registerTrack1Plugin(
       case_id: resolvedCampaignContext?.case_id ?? ""
     };
 
+    let monitorIdSequence = 0;
     const monitorPorts: MonitorRuntimePorts = {
       now: runtime.ports.now ?? (() => new Date().toISOString()),
       nextId:
         runtime.ports.nextId ??
-        ((kind: string) => `${kind}:${Date.now().toString(36)}`)
+        ((kind: string) => {
+          monitorIdSequence += 1;
+          return `${kind}:${sessionId}:${String(monitorIdSequence).padStart(4, "0")}`;
+        })
     };
 
     const session = new ObservedMonitoredSession(
@@ -363,7 +354,7 @@ export function registerTrack1Plugin(
   // P0-Fix2: camelCase fields from real SDK PluginHookLlmInputEvent.
   // P1-Fix5: Cross-check envelope fields with bound campaign context.
 
-  api.on("llm_input", async (event: unknown, _ctx: unknown) => {
+  api.on("llm_input", async (event: unknown, ctx: unknown) => {
     if (!isPlainObject(event)) {
       throw new Track1PluginHookError("track1_plugin_event_invalid");
     }
@@ -386,6 +377,17 @@ export function registerTrack1Plugin(
     if (isPlainObject(rawEnvelope)) {
       // Normalize and cross-check the envelope (P1-Fix5)
       const envelope = normalizeTrack1ModelInputEnvelope(rawEnvelope);
+      const hookContext = isPlainObject(ctx) ? ctx : {};
+      const hookAgentId = hookContext.agentId;
+      const hookSessionId = hookContext.sessionId;
+
+      if (
+        envelope.session_id !== sessionId ||
+        (isNonEmptyString(hookSessionId) && envelope.session_id !== hookSessionId) ||
+        (isNonEmptyString(hookAgentId) && envelope.agent_id !== hookAgentId)
+      ) {
+        throw new Track1PluginHookError("track1_plugin_envelope_mismatch");
+      }
 
       // P3-ISSUE2: When no campaignContext was provided upfront (production path),
       // bind session identity from the first llm_input envelope.
@@ -427,13 +429,6 @@ export function registerTrack1Plugin(
     // In the production path, both the envelope session_id and the SDK
     // native ctx.agentId must match. If the SDK provides an agentId and
     // the envelope has a different one, reject — prevents identity drift.
-    if (isNonEmptyString(ctxAgentId) && envelope.agent_id !== ctxAgentId) {
-      throw new Track1PluginHookError("track1_plugin_envelope_mismatch");
-    }
-    if (sessionId !== envelope.session_id) {
-      throw new Track1PluginHookError("track1_plugin_envelope_mismatch");
-    }
-
     // Cross-check envelope fields against bound context
       if (
         envelope.campaign_id !== state.context.campaign_id ||
@@ -486,6 +481,9 @@ export function registerTrack1Plugin(
       if (!isNonEmptyString(prompt)) {
         throw new Track1PluginHookError("track1_plugin_event_invalid");
       }
+      if (state.context === null) {
+        throw new Track1PluginHookError("track1_plugin_envelope_required");
+      }
       content = prompt;
       contentRef = `model://track1/input/${state.snapshotSequence}`;
 
@@ -537,6 +535,9 @@ export function registerTrack1Plugin(
     const contentRef = isNonEmptyString(event.contentRef)
       ? (event.contentRef as string)
       : `model://track1/output/${state.snapshotSequence}`;
+    if (state.context === null) {
+      throw new Track1PluginHookError("track1_plugin_envelope_required");
+    }
 
     // observeModelOutput may throw Track1MonitorError on provider failure
     await state.session.observeModelOutput({
@@ -674,9 +675,12 @@ export function registerTrack1Plugin(
     //   "rejected" → monitor status "rejected" (adapter declined, not a failure)
     //   "success" → monitor status "success"
     const toolStatus = detectToolFailure({
-      error: event.error,
+      error: isNonEmptyString(event.error) ? event.error : undefined,
       result: event.result
     });
+    if (state.context === null) {
+      throw new Track1PluginHookError("track1_plugin_envelope_required");
+    }
 
     let status: string;
     if (toolStatus === "failed") {
@@ -744,44 +748,28 @@ export function registerTrack1Plugin(
     // session transitions to "sealed" via failSeal() inside afterTool(), and
     // the subsequent finalize() produces the canonical "failed" terminal state.
     const hasPendingTool = state.pendingToolCallId !== null;
+    if (state.context === null) {
+      throw new Track1PluginHookError("track1_plugin_envelope_required");
+    }
 
     try {
       if (hasPendingTool) {
-        // Emit a failed tool_result so the session has the terminal record
-        // before finalizing. This ensures the ingested snapshot carries the
-        // failure as a terminal state rather than a mid-flight non-terminal.
-        try {
-          const failedObserved = {
-            session_id: state.context.session_id,
-            call_id: state.pendingToolCallId,
-            tool_name: state.pendingToolCallToolName ?? "unknown",
-            status: "failed",
-            result_ref: `simulated-result://${state.pendingToolCallId}/failed`,
-            state_change: "simulated"
-          };
-          const failedSnapshot = state.session.afterTool(failedObserved);
-          await ingestSessionSnapshot(state, failedSnapshot);
-        } catch {
-          // If afterTool fails (e.g. session already sealed), fall back to
-          // finalize attempt below.
-        }
-
-        // P4-ISSUE4: pending tool call has been resolved as failed above,
-        // so finalize() will succeed and produce a terminal result.
-        const finalResult = state.session.finalize();
-        await ingestSessionSnapshot(state, finalResult);
-      } else {
-        const finalResult = state.session.finalize();
-        await ingestSessionSnapshot(state, finalResult);
+        state.session.afterTool({
+          session_id: state.context.session_id,
+          call_id: state.pendingToolCallId,
+          tool_name: state.pendingToolCallToolName ?? "unknown",
+          status: "failed",
+          result_ref: `simulated-result://${state.pendingToolCallId}/failed`,
+          state_change: "simulated"
+        });
       }
+      const finalResult = state.session.finalize();
+      await ingestSessionSnapshot(state, finalResult);
     } catch {
-      // Last resort: try snapshot if finalize threw
-      try {
-        const snapshot = state.session.snapshot();
-        await ingestSessionSnapshot(state, snapshot);
-      } catch {
-        // If even snapshot fails, just mark as ended
-      }
+      state.ended = true;
+      sessions.delete(sessionId);
+      toolRuntimeRegistry.delete(sessionId);
+      throw new Track1PluginHookError("security_monitor_unavailable");
     }
 
     state.ended = true;
@@ -795,7 +783,7 @@ export function registerTrack1Plugin(
 // The register callback receives the real OpenClawPluginApi, which provides
 // pluginConfig for constructing the runtime.
 
-export function createTrack1PluginEntry(): DefinedPluginEntry {
+export function createTrack1PluginEntry() {
   return definePluginEntry({
     id: "agent-security-track1",
     name: "Agent Security Track 1",

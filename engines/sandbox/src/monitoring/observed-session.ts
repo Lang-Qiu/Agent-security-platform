@@ -198,6 +198,7 @@ export class ObservedMonitoredSession {
   // Model stage locked after a deny/ask at model output: further model
   // input is rejected, but the session stays open for tool interception.
   #modelStageLocked = false;
+  #contextRebound = false;
 
   /**
    * P0: Rebind the monitor session context after deferred identity binding.
@@ -215,24 +216,37 @@ export class ObservedMonitoredSession {
    * before observeModelInput().
    */
   rebindContext(partial: Partial<Pick<MonitorSessionContext, "session_id" | "scenario_id" | "case_id">>): void {
-    if (this.#lifecycle !== "open") {
+    if (
+      this.#lifecycle !== "open" ||
+      this.#contextRebound ||
+      this.#events.length > 0 ||
+      this.#pendingInput !== null ||
+      this.#pendingCall !== null
+    ) {
       throw new Track1MonitorError("monitor_state_invalid");
     }
-    if (this.#pendingInput !== null) {
-      throw new Track1MonitorError("monitor_state_invalid");
+    if (
+      !isPlainObject(partial) ||
+      Object.keys(partial).length !== 3 ||
+      !("session_id" in partial) ||
+      !("scenario_id" in partial) ||
+      !("case_id" in partial)
+    ) {
+      throw new Track1MonitorError("monitor_context_invalid");
     }
-    if (partial.session_id !== undefined) {
-      if (!isCorrelationId(partial.session_id)) {
-        throw new Track1MonitorError("monitor_context_invalid");
-      }
-      this.#context.session_id = partial.session_id;
+
+    const rebound = normalizeMonitorSessionContext({
+      ...this.#context,
+      session_id: partial.session_id,
+      scenario_id: partial.scenario_id,
+      case_id: partial.case_id
+    });
+    if (!rebound) {
+      throw new Track1MonitorError("monitor_context_invalid");
     }
-    if (partial.scenario_id !== undefined) {
-      this.#context.scenario_id = partial.scenario_id;
-    }
-    if (partial.case_id !== undefined) {
-      this.#context.case_id = partial.case_id;
-    }
+
+    this.#context = rebound;
+    this.#contextRebound = true;
   }
 
   // Distinguish seal causes: an intercept seal (deny/ask at tool stage) is

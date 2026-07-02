@@ -1613,6 +1613,53 @@ REQ-T1-DEMO-010 adds a split-listener architecture for Track 1 campaign supervis
 
 The split is enforced at the router level: `matchRoute` has no `/internal/` branch, and `matchInternalRoute` recognizes only health plus the four ingest routes.
 
+### Native OpenClaw plugin contract
+
+The installed extension ID is `agent-security-track1`. The package entry is the compiled `dist/index.js`; loading TypeScript source files is not a supported runtime path.
+
+Plugin configuration accepts exactly:
+
+- `ingestEndpoint`: internal campaign base URL, normally `http://backend:3001/internal/track1/campaigns`
+- `ingestToken`: bearer token used by the snapshot client
+
+The OpenClaw host entry must also set
+`plugins.entries.agent-security-track1.hooks.allowConversationAccess=true` so
+the six typed hooks can observe the controlled campaign conversation.
+Campaign/session identity is not accepted from static plugin configuration.
+
+The first `llm_input` for a production session must carry an exact-key
+`track1-openclaw-input.v1` envelope. Its identity fields use the shared closed
+contracts:
+
+- `campaign_id`: `campaign:t1:<32 lowercase hex>`
+- `session_id`: `session:<32 lowercase hex>`
+- `agent_id`, `scenario_id`, and `case_id`: fixed Track 1 values with matching agent/scenario/case ownership
+- `attempt_id`: `attempt:<lowercase case_id>:<attempt_index>`
+- `attempt_index`: `1` or `2`
+
+Nested memory entries contain exactly `memory_entry_id`, `content_ref`, and
+`content_sha256`; nested tool proposals contain exactly `tool_name` and
+`arguments_ref`. References must be whitespace-free URI-like values and hashes
+must be lowercase SHA-256 hex. Unknown nested keys and content-bearing
+sentinels are rejected before monitor state changes.
+
+The four simulated tools return only controlled results. Adapter-level
+`rejected` is recorded as a non-failed tool result; provider/runtime errors are
+recorded as `failed`. Every allowed tool call waits for the pre-execution ingest
+acknowledgement. A terminal snapshot ingest failure rejects `session_end` with
+the stable `security_monitor_unavailable` error.
+
+The startup capability command is fixed:
+
+```text
+openclaw plugins inspect agent-security-track1 --runtime --json
+```
+
+The normalized probe accepts only plugin ID `agent-security-track1`, status
+`loaded`, runtime `2026.6.10`, all four tools, all six hooks, no diagnostics,
+successful unknown-tool blocking, observed tool completion, and correlated
+snapshot acknowledgements.
+
 ### Internal ingest routes (authenticated)
 
 All four internal routes require a `Authorization: Bearer <token>` header. Token comparison is timing-safe (both supplied and expected tokens are SHA-256 hashed before `timingSafeEqual`). The expected token is configured at internal module construction.

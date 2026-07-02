@@ -144,6 +144,20 @@ test("root quality gate delegates to test:all and includes frontend coverage", (
     scripts["test:repo"]?.includes("tests/repository/track1-openclaw-manifest.spec.ts"),
     "repository gate should include Track 1 OpenClaw manifest coverage"
   );
+  assert.ok(
+    scripts["test:repo"]?.includes("tests/repository/track1-openclaw-plugin.spec.ts"),
+    "repository gate should include the Track 1 native plugin coverage"
+  );
+  assert.ok(
+    scripts["test:engine:sandbox"]?.includes(
+      "engines/sandbox/tests/attack-monitor-observed-session.spec.ts"
+    ),
+    "sandbox gate should include split-hook observed session coverage"
+  );
+  assert.ok(
+    scripts["test:all"]?.includes("npm run test:integration:openclaw"),
+    "full gate should include the real OpenClaw integration suite"
+  );
 
   assert.ok(
     scripts["test:repo"]?.includes("tests/repository/track1-supervision-ui.spec.ts"),

@@ -8,8 +8,8 @@
 import { execFileSync } from "node:child_process";
 import { registerTrack1Plugin } from "./plugin.ts";
 import { SessionToolRuntimeRegistry } from "./plugin.ts";
-import type { Track1PluginApi, Track1PluginRuntimePorts } from "./plugin.ts";
-import type { Track1ToolDefinition } from "./tool-adapters.ts";
+import type { Track1PluginRuntimePorts } from "./plugin.ts";
+import type { Track1PluginApi, Track1ToolDefinition } from "./tool-adapters.ts";
 import { normalizeTrack1PluginContext } from "./campaign-context.ts";
 import type { Track1PluginContext } from "./campaign-context.ts";
 import {
@@ -22,10 +22,11 @@ import type { Track1CampaignSnapshotEnvelope } from "../../../shared/types/campa
 export interface PluginInspectOutput {
   readonly id: string;
   readonly name: string;
+  readonly status: string;
   readonly runtime_version: string;
-  readonly tools: ReadonlyArray<{ name: string; label: string }>;
+  readonly tools: ReadonlyArray<{ name: string }>;
   readonly hooks: readonly string[];
-  readonly diagnostics: readonly { code: string; message: string }[];
+  readonly diagnostics: readonly unknown[];
 }
 
 export interface Track1PluginProbeResult {
@@ -62,6 +63,9 @@ export const TRACK1_PLUGIN_PROBE_RESULT_KEYS = Object.freeze([
 export const TRACK1_PLUGIN_PROBE_COMMAND =
   "openclaw plugins inspect agent-security-track1 --runtime --json";
 
+export const TRACK1_PLUGIN_PROBE_EXECUTABLE =
+  process.platform === "win32" ? "openclaw.cmd" : "openclaw";
+
 export const TRACK1_PLUGIN_PROBE_RUNTIME_VERSION = "2026.6.10";
 
 // -- probe input -----------------------------------------------------------
@@ -92,24 +96,72 @@ export interface Track1PluginProbePorts {
  * In production, this is the canonical source of truth for static checks.
  * Tests can supply a canned PluginInspectOutput via Track1PluginProbePorts.
  */
-export function execOpenclawPluginsInspect(): PluginInspectOutput {
-  const stdout = execFileSync(
-    "openclaw",
-    ["plugins", "inspect", "agent-security-track1", "--runtime", "--json"],
-    {
-      encoding: "utf8",
-      timeout: 30_000
-    }
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function normalizeOpenclawPluginInspectOutput(
+  input: unknown,
+  versionOutput: string
+): PluginInspectOutput {
+  const root = isPlainObject(input) ? input : {};
+  const plugin = isPlainObject(root.plugin) ? root.plugin : {};
+  const typedHooks = Array.isArray(root.typedHooks) ? root.typedHooks : [];
+  const toolGroups = Array.isArray(root.tools) ? root.tools : [];
+  const versionMatch = versionOutput.match(/\bOpenClaw\s+(\d{4}\.\d+\.\d+)\b/);
+
+  const hooks = typedHooks.flatMap((entry) =>
+    isPlainObject(entry) && typeof entry.name === "string"
+      ? [entry.name]
+      : []
   );
-  const parsed = JSON.parse(stdout) as Partial<PluginInspectOutput>;
+  const tools = toolGroups.flatMap((entry) =>
+    isPlainObject(entry) && Array.isArray(entry.names)
+      ? entry.names
+          .filter((name): name is string => typeof name === "string")
+          .map((name) => ({ name }))
+      : []
+  );
+
   return {
-    id: String(parsed.id ?? ""),
-    name: String(parsed.name ?? ""),
-    runtime_version: String(parsed.runtime_version ?? ""),
-    tools: Array.isArray(parsed.tools) ? parsed.tools : [],
-    hooks: Array.isArray(parsed.hooks) ? parsed.hooks : [],
-    diagnostics: Array.isArray(parsed.diagnostics) ? parsed.diagnostics : []
+    id: typeof plugin.id === "string" ? plugin.id : "",
+    name: typeof plugin.name === "string" ? plugin.name : "",
+    status: typeof plugin.status === "string" ? plugin.status : "",
+    runtime_version: versionMatch?.[1] ?? "",
+    tools,
+    hooks,
+    diagnostics: Array.isArray(root.diagnostics) ? root.diagnostics : []
   };
+}
+
+function execOpenclaw(args: readonly string[]): string {
+  if (args.some((arg) => !/^[A-Za-z0-9._:-]+$/.test(arg))) {
+    throw new Error("track1_plugin_probe_failed");
+  }
+  const options = {
+    encoding: "utf8" as const,
+    timeout: 30_000
+  };
+  if (process.platform === "win32") {
+    const command = [TRACK1_PLUGIN_PROBE_EXECUTABLE, ...args].join(" ");
+    return execFileSync("cmd.exe", ["/d", "/s", "/c", command], options);
+  }
+  return execFileSync(TRACK1_PLUGIN_PROBE_EXECUTABLE, [...args], options);
+}
+
+export function execOpenclawPluginsInspect(): PluginInspectOutput {
+  const stdout = execOpenclaw([
+    "plugins",
+    "inspect",
+    "agent-security-track1",
+    "--runtime",
+    "--json"
+  ]);
+  const versionOutput = execOpenclaw(["--version"]);
+  return normalizeOpenclawPluginInspectOutput(
+    JSON.parse(stdout) as unknown,
+    versionOutput
+  );
 }
 
 /**
@@ -121,44 +173,48 @@ export function execOpenclawPluginsInspect(): PluginInspectOutput {
  *   const ports = getDefaultProbePorts();
  *   const result = await runTrack1PluginCapabilityProbe(ports);
  *
- * without importing execFileSync or constructing Track1PluginRuntimePorts
- * themselves. The runtime ports use a minimal default decision provider
- * (allow-all) and a no-op ingest snapshot (since the probe verifies hook
- * wiring, not network transport).
- *
- * Note: ingestSnapshot is implemented as a no-op (returns ack with a placeholder
- * hash) rather than constructing a real Track1IngestClient because:
- * 1. Real Track1IngestClient rejects empty ingestToken — and during probe there
- *    is no config-provided token.
- * 2. The probe tests hook wiring, not network transport.
+ * without importing execFileSync or constructing Track1PluginRuntimePorts.
+ * The local probe runtime uses the canonical REQ-008 no-match decision and a
+ * contract-valid correlated acknowledgement without performing network I/O.
  */
-export function getDefaultProbePorts(): Track1PluginProbePorts {
-  const inspect = execOpenclawPluginsInspect();
+export function createTrack1ProbePorts(
+  inspect: PluginInspectOutput,
+  now: () => string = () => new Date().toISOString()
+): Track1PluginProbePorts {
+  let idSequence = 0;
   const ports: Track1PluginRuntimePorts = {
     provider: {
       decide() {
         return {
-          policy_id: "policy://track1/default",
+          policy_id: "policy://track1/base-filter/v1",
           action: "allow",
-          reason_code: "default_allow",
-          reason: "Track 1 default allow",
-          evidence_refs: []
+          reason_code: "base_filter_no_match",
+          reason: "No base filter rule matched",
+          evidence_refs: ["evidence://track1/base-filter/no-match"]
         };
       }
     },
-    async ingestSnapshot(_envelope) {
-      // No-op: probe tests hook wiring, not transport.
-      // Return a synthetic ack so the probe pipeline does not throw.
-      return { snapshot_sha256: "probe-noop", accepted: true };
+    async ingestSnapshot(envelope) {
+      return {
+        schema_version: "track1-campaign-snapshot-ack.v1",
+        campaign_id: envelope.campaign_id,
+        attempt_id: envelope.attempt_id,
+        sequence: envelope.sequence,
+        snapshot_sha256: envelope.snapshot_sha256,
+        accepted_at: now()
+      };
     },
-    now(): string {
-      return new Date().toISOString();
-    },
+    now,
     nextId(kind: string): string {
-      return `${kind}:${Date.now().toString(36)}`;
+      idSequence += 1;
+      return `${kind}:probe:${String(idSequence).padStart(4, "0")}`;
     }
   };
   return { inspect, ports };
+}
+
+export function getDefaultProbePorts(): Track1PluginProbePorts {
+  return createTrack1ProbePorts(execOpenclawPluginsInspect());
 }
 
 // -- error -----------------------------------------------------------------
@@ -207,11 +263,11 @@ function makeProbeRecordingApi(): ProbeRecordingApi {
 // -- probe context ---------------------------------------------------------
 
 const PROBE_CONTEXT_INPUT = Object.freeze({
-  campaign_id: "campaign:track1:probe-001",
-  attempt_id: "attempt:track1:probe-001",
+  campaign_id: "campaign:t1:00000000000000000000000000000001",
+  attempt_id: "attempt:t1-sc-001-c001:1",
   attempt_index: 1 as const,
   agent_id: "agent:track1:prompt-injection",
-  session_id: "session:track1:probe-001",
+  session_id: "session:00000000000000000000000000000001",
   scenario_id: "T1-SC-001",
   case_id: "T1-SC-001-C001",
   model_ref: TRACK1_MODEL_REF_CANONICAL
@@ -280,7 +336,7 @@ function applyDynamicMutation(
       ingestWrapper.ingest = async (envelope) => {
         const defective: Track1CampaignSnapshotEnvelope = {
           ...envelope,
-          campaign_id: ""
+          campaign_id: "" as Track1CampaignSnapshotEnvelope["campaign_id"]
         };
         ingestWrapper.snapshots.push(defective);
         return originalIngest(envelope);
@@ -305,6 +361,16 @@ export async function runTrack1PluginCapabilityProbe(
 
   const toolNames = [...inspect.tools.map((t) => t.name)].sort();
   const hookNames = [...inspect.hooks].sort();
+
+  if (
+    inspect.id !== "agent-security-track1" ||
+    inspect.status !== "loaded"
+  ) {
+    throw new Track1PluginProbeError(
+      "track1_plugin_probe_failed",
+      "plugin identity or load status mismatch"
+    );
+  }
 
   if (new Set(toolNames).size !== toolNames.length) {
     throw new Track1PluginProbeError(
@@ -339,16 +405,6 @@ export async function runTrack1PluginCapabilityProbe(
       "track1_plugin_probe_failed",
       "diagnostics present"
     );
-  }
-
-  // P0-Fix2: Verify all tools have non-empty labels (real SDK requirement)
-  for (const tool of inspect.tools) {
-    if (!tool.label || tool.label.length === 0) {
-      throw new Track1PluginProbeError(
-        "track1_plugin_probe_failed",
-        `tool ${tool.name} missing label`
-      );
-    }
   }
 
   // -- dynamic checks (via recording API) ---------------------------------

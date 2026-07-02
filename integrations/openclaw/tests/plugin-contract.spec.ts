@@ -3,8 +3,10 @@
 // P3-ISSUE1: Compiled JS entry for real OpenClaw plugin install.
 
 import assert from "node:assert/strict";
-import { readFile, stat } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { readFile, readdir, stat } from "node:fs/promises";
 import test from "node:test";
+import { promisify } from "node:util";
 
 import { registerTrack1Tools } from "../src/tool-adapters.ts";
 import type { CampaignToolRuntimeResolver } from "../src/tool-adapters.ts";
@@ -14,6 +16,8 @@ import {
   makeRecordingPluginApi,
   nextCallId
 } from "./fixtures/openclaw-plugin.fixture.ts";
+
+const execFileAsync = promisify(execFile);
 
 // -- helper: wrap a single runtime in a resolver ---------------------------
 // P1-Fix5: registerTrack1Tools now takes a CampaignToolRuntimeResolver
@@ -70,7 +74,7 @@ test("REQ-T1-DEMO-010 manifest has no unknown key and exactly four tool contract
     assert.equal(allowedKeys.has(key), true, `unknown manifest key: ${key}`);
   }
   assert.equal(manifest.id, "agent-security-track1");
-  assert.equal(manifest.main, "./src/plugin.ts");
+  assert.equal(manifest.main, "./dist/index.js");
   const contracts = manifest.contracts as { tools: string[] };
   assert.deepEqual(
     [...contracts.tools].sort(),
@@ -127,20 +131,38 @@ test("REQ-T1-DEMO-010 openclaw.extensions points to compiled JS entry in dist/",
       entry.startsWith("./dist/") || entry.startsWith("dist/"),
       `extension entry must be in dist/, got: ${entry}`
     );
-    // The file must exist on disk
-    const distPath = new URL(`../${entry}`, import.meta.url);
-    const st = await stat(distPath);
-    assert.ok(st.isFile(), `compiled entry must exist: ${entry}`);
-    assert.ok(
-      st.size > 0,
-      `compiled entry must not be empty: ${entry}`
-    );
   }
+  assert.equal(pkg.scripts?.prepack, "npm run build");
+  assert.deepEqual(pkg.files, ["dist", "openclaw.plugin.json"]);
+});
+
+test("REQ-T1-DEMO-010 published bundle has no install-time runtime dependencies", async () => {
+  const pkg = JSON.parse(
+    await readFile(new URL("../package.json", import.meta.url), "utf8")
+  );
+  assert.deepEqual(pkg.dependencies ?? {}, {});
+  assert.equal(pkg.devDependencies.openclaw, "2026.6.10");
+  assert.equal(pkg.devDependencies.typebox, "1.1.38");
+  assert.equal(pkg.devDependencies.esbuild, "0.27.7");
 });
 
 test("REQ-T1-DEMO-010 build script produces valid compiled JS entry", async () => {
+  const integrationRoot = new URL("../", import.meta.url);
+  await execFileAsync(process.execPath, ["scripts/build.mjs"], {
+    cwd: integrationRoot
+  });
+
+  const distUrl = new URL("../dist/index.js", import.meta.url);
+  const st = await stat(distUrl);
+  assert.ok(st.isFile());
+  assert.ok(st.size > 0);
+  assert.deepEqual(
+    (await readdir(new URL("../dist/", import.meta.url))).sort(),
+    ["index.js"]
+  );
+
   const built = await readFile(
-    new URL("../dist/index.js", import.meta.url),
+    distUrl,
     "utf8"
   );
   // The bundle must export the `registerTrack1Plugin` function
@@ -165,6 +187,10 @@ test("REQ-T1-DEMO-010 build script produces valid compiled JS entry", async () =
       `openclaw import must be a bare import statement: ${line}`
     );
   }
+
+  const runtime = await import(`${distUrl.href}?t=${Date.now()}`);
+  assert.equal(typeof runtime.default, "object");
+  assert.equal(typeof runtime.default.register, "function");
 });
 
 // -- forbidden imports -----------------------------------------------------

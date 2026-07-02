@@ -636,6 +636,7 @@ export type Track1ProbeMutation =
 export interface PluginInspectOutput {
   id: string;
   name: string;
+  status: string;
   runtime_version: string;
   tools: Array<{ name: string; label: string }>;
   hooks: string[];
@@ -652,6 +653,7 @@ export function makeCompleteInspectOutput(): PluginInspectOutput {
   return {
     id: "agent-security-track1",
     name: "Agent Security Track 1",
+    status: "loaded",
     runtime_version: "2026.6.10",
     tools: [
       { name: "send_email", label: "Send Email (Track 1 Simulated)" },

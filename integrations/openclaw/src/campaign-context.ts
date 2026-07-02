@@ -1,19 +1,43 @@
 import {
   TRACK1_MODEL_REF_CANONICAL
 } from "../../../shared/types/campaign-ingest.ts";
+import {
+  TRACK1_CAMPAIGN_AGENT_IDS,
+  TRACK1_CASE_IDS,
+  TRACK1_SCENARIO_IDS
+} from "../../../shared/types/campaign-supervision.ts";
+import type {
+  Track1AttemptId,
+  Track1CampaignAgentId,
+  Track1CampaignId,
+  Track1CaseId,
+  Track1ScenarioId,
+  Track1SessionId
+} from "../../../shared/types/campaign-supervision.ts";
 
 // -- public types ----------------------------------------------------------
 
 export interface Track1PluginContext {
-  readonly campaign_id: string;
-  readonly attempt_id: string;
+  readonly campaign_id: Track1CampaignId;
+  readonly attempt_id: Track1AttemptId;
   readonly attempt_index: 1 | 2;
-  readonly agent_id: string;
-  readonly session_id: string;
-  readonly scenario_id: string;
-  readonly case_id: string;
+  readonly agent_id: Track1CampaignAgentId;
+  readonly session_id: Track1SessionId;
+  readonly scenario_id: Track1ScenarioId;
+  readonly case_id: Track1CaseId;
   readonly model_ref: string;
 }
+
+type Track1Identity = Pick<
+  Track1PluginContext,
+  | "campaign_id"
+  | "attempt_id"
+  | "attempt_index"
+  | "agent_id"
+  | "session_id"
+  | "scenario_id"
+  | "case_id"
+>;
 
 export interface Track1ControlledMemoryEntry {
   memory_entry_id: string;
@@ -28,13 +52,13 @@ export interface Track1ControlledToolProposal {
 
 export interface Track1ModelInputEnvelope {
   readonly schema_version: "track1-openclaw-input.v1";
-  readonly campaign_id: string;
-  readonly agent_id: string;
-  readonly attempt_id: string;
+  readonly campaign_id: Track1CampaignId;
+  readonly agent_id: Track1CampaignAgentId;
+  readonly attempt_id: Track1AttemptId;
   readonly attempt_index: 1 | 2;
-  readonly session_id: string;
-  readonly case_id: string;
-  readonly scenario_id: string;
+  readonly session_id: Track1SessionId;
+  readonly case_id: Track1CaseId;
+  readonly scenario_id: Track1ScenarioId;
   readonly user_prompt: string;
   readonly retrieved_content: readonly Track1ControlledMemoryEntry[];
   readonly memory_entries: readonly Track1ControlledMemoryEntry[];
@@ -60,6 +84,70 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const MEMORY_ENTRY_ID_PATTERN =
+  /^memory:[a-z0-9][a-z0-9._-]{0,31}:[a-z0-9][a-z0-9._-]{0,63}$/;
+const SAFE_REF_PATTERN =
+  /^[a-z][a-z0-9+.-]*:\/\/[A-Za-z0-9][A-Za-z0-9._~:/?#@!$&'()*+,;=%-]{0,510}$/;
+
+function isSafeRef(value: unknown): value is string {
+  return typeof value === "string" && SAFE_REF_PATTERN.test(value);
+}
+
+function isCampaignId(value: unknown): value is Track1CampaignId {
+  return typeof value === "string" && /^campaign:t1:[a-f0-9]{32}$/.test(value);
+}
+
+function isSessionId(value: unknown): value is Track1SessionId {
+  return typeof value === "string" && /^session:[a-f0-9]{32}$/.test(value);
+}
+
+function isAgentId(value: unknown): value is Track1CampaignAgentId {
+  return (
+    typeof value === "string" &&
+    (TRACK1_CAMPAIGN_AGENT_IDS as readonly string[]).includes(value)
+  );
+}
+
+function isScenarioId(value: unknown): value is Track1ScenarioId {
+  return (
+    typeof value === "string" &&
+    (TRACK1_SCENARIO_IDS as readonly string[]).includes(value)
+  );
+}
+
+function isCaseId(value: unknown): value is Track1CaseId {
+  return (
+    typeof value === "string" &&
+    (TRACK1_CASE_IDS as readonly string[]).includes(value)
+  );
+}
+
+function hasCanonicalIdentity(
+  value: Record<string, unknown> & { attempt_index: 1 | 2 }
+): value is Record<string, unknown> & Track1Identity {
+  if (
+    !isCampaignId(value.campaign_id) ||
+    !isSessionId(value.session_id) ||
+    !isAgentId(value.agent_id) ||
+    !isScenarioId(value.scenario_id) ||
+    !isCaseId(value.case_id) ||
+    typeof value.attempt_id !== "string"
+  ) {
+    return false;
+  }
+
+  const scenarioIndex = TRACK1_SCENARIO_IDS.indexOf(value.scenario_id);
+  const expectedAgent = TRACK1_CAMPAIGN_AGENT_IDS[scenarioIndex];
+  const expectedAttempt =
+    `attempt:${value.case_id.toLowerCase()}:${value.attempt_index}`;
+  return (
+    value.agent_id === expectedAgent &&
+    value.case_id.startsWith(`${value.scenario_id}-C`) &&
+    value.attempt_id === expectedAttempt
+  );
 }
 
 function hasExactKeys(
@@ -112,9 +200,16 @@ const FORBIDDEN_MODEL_INPUT_FIELDS = [
 function isValidMemoryEntry(value: unknown): value is Track1ControlledMemoryEntry {
   if (!isPlainObject(value)) return false;
   return (
-    isNonEmptyString(value.memory_entry_id) &&
-    isNonEmptyString(value.content_ref) &&
-    isNonEmptyString(value.content_sha256)
+    hasExactKeys(value, [
+      "memory_entry_id",
+      "content_ref",
+      "content_sha256"
+    ]) &&
+    typeof value.memory_entry_id === "string" &&
+    MEMORY_ENTRY_ID_PATTERN.test(value.memory_entry_id) &&
+    isSafeRef(value.content_ref) &&
+    typeof value.content_sha256 === "string" &&
+    SHA256_PATTERN.test(value.content_sha256)
   );
 }
 
@@ -124,11 +219,12 @@ function isValidToolProposal(
   if (value === null) return true;
   if (!isPlainObject(value)) return false;
   return (
+    hasExactKeys(value, ["tool_name", "arguments_ref"]) &&
     (value.tool_name === "send_email" ||
       value.tool_name === "read_file" ||
       value.tool_name === "write_file" ||
       value.tool_name === "call_api") &&
-    isNonEmptyString(value.arguments_ref)
+    isSafeRef(value.arguments_ref)
   );
 }
 
@@ -154,6 +250,9 @@ export function normalizeTrack1PluginContext(
   }
 
   if (value.attempt_index !== 1 && value.attempt_index !== 2) {
+    throw new Track1PluginContextError("track1_plugin_context_invalid");
+  }
+  if (!hasCanonicalIdentity(value as Record<string, unknown> & { attempt_index: 1 | 2 })) {
     throw new Track1PluginContextError("track1_plugin_context_invalid");
   }
 
@@ -184,7 +283,7 @@ export function normalizeTrack1PluginContext(
     scenario_id: value.scenario_id,
     case_id: value.case_id,
     model_ref: value.model_ref
-  });
+  }) as Track1PluginContext;
 }
 
 // -- model input envelope normalization ------------------------------------
@@ -213,6 +312,9 @@ export function normalizeTrack1ModelInputEnvelope(
   }
 
   if (value.attempt_index !== 1 && value.attempt_index !== 2) {
+    throw new Track1PluginContextError("track1_model_input_invalid");
+  }
+  if (!hasCanonicalIdentity(value as Record<string, unknown> & { attempt_index: 1 | 2 })) {
     throw new Track1PluginContextError("track1_model_input_invalid");
   }
 
@@ -244,10 +346,17 @@ export function normalizeTrack1ModelInputEnvelope(
     case_id: value.case_id,
     scenario_id: value.scenario_id,
     user_prompt: value.user_prompt,
-    retrieved_content: Object.freeze([...value.retrieved_content]),
-    memory_entries: Object.freeze([...value.memory_entries]),
+    retrieved_content: Object.freeze(
+      value.retrieved_content.map((entry) => Object.freeze({ ...entry }))
+    ),
+    memory_entries: Object.freeze(
+      value.memory_entries.map((entry) => Object.freeze({ ...entry }))
+    ),
     proposed_tool_call: value.proposed_tool_call
-      ? Object.freeze({ ...value.proposed_tool_call })
+      ? Object.freeze({
+          tool_name: value.proposed_tool_call.tool_name,
+          arguments_ref: value.proposed_tool_call.arguments_ref
+        })
       : null
-  });
+  }) as Track1ModelInputEnvelope;
 }

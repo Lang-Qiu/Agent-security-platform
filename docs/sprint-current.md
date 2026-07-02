@@ -87,6 +87,15 @@ supervision console rather than building a second investigation UI.
 - No production code may be written before the relevant failing test is
   confirmed.
 - Low-level implementation is assigned by the user. Codex produces the task
-  DAG, acceptance criteria, and final diff/report/risk review.
+  DAG and acceptance criteria; Phase 3 review remediation was completed
+  directly after repeated implementation defects exceeded the delegated
+  model's capability.
 - The specification is approved. No implementation starts until the user
   approves the phased implementation plans and assigns the first task.
+
+## Current Phase Status
+
+- Phase 1: complete
+- Phase 2: complete
+- Phase 3: review remediation complete, pending user review
+- Phase 4 and later: not started by this worktree

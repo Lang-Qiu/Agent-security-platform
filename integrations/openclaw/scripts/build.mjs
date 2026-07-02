@@ -4,16 +4,21 @@
 // full dependency tree (shared/contracts, engines/sandbox, etc.) into one file.
 
 import * as esbuild from "esbuild";
+import { mkdir, rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const entry = path.resolve(__dirname, "../src/index.ts");
-const out = path.resolve(__dirname, "../dist/index.js");
+const outdir = path.resolve(__dirname, "../dist");
+
+await rm(outdir, { recursive: true, force: true });
+await mkdir(outdir, { recursive: true });
 
 await esbuild.build({
-  entryPoints: [entry],
-  outfile: out,
+  entryPoints: { index: entry },
+  outdir,
+  entryNames: "[name]",
   bundle: true,
   platform: "node",
   target: "node22",
@@ -24,4 +29,4 @@ await esbuild.build({
   external: ["openclaw", "openclaw/*"],
 });
 
-console.log("Built:", out);
+console.log("Built:", path.join(outdir, "index.js"));

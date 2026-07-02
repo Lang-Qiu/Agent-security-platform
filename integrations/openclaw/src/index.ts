@@ -2,6 +2,8 @@
 // Re-exports the typed plugin registration surface and supporting types.
 // P0-Fix1: Uses real definePluginEntry from openclaw/plugin-sdk/plugin-entry.
 
+export { default } from "./plugin.ts";
+
 export {
   registerTrack1Plugin,
   createTrack1PluginEntry,
@@ -9,7 +11,6 @@ export {
 } from "./plugin.ts";
 
 export type {
-  Track1PluginApi,
   Track1PluginRuntimePorts,
   Track1PluginRuntime
 } from "./plugin.ts";
@@ -20,6 +21,7 @@ export {
 
 export type {
   Track1ToolDefinition,
+  Track1PluginApi,
   Track1ToolParameters,
   Track1ToolExecuteContext,
   Track1ToolResult,
@@ -51,9 +53,12 @@ export type {
 
 export {
   runTrack1PluginCapabilityProbe,
+  createTrack1ProbePorts,
   getDefaultProbePorts,
   execOpenclawPluginsInspect,
+  normalizeOpenclawPluginInspectOutput,
   TRACK1_PLUGIN_PROBE_COMMAND,
+  TRACK1_PLUGIN_PROBE_EXECUTABLE,
   TRACK1_PLUGIN_PROBE_RESULT_KEYS,
   TRACK1_PLUGIN_PROBE_RUNTIME_VERSION
 } from "./runtime-probe.ts";

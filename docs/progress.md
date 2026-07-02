@@ -2670,3 +2670,35 @@ User third review of the R10-R17 rework identified 5 remaining P1 blockers and 2
   - `npm run test:repo` — 92/92 pass
   - `npm run test:shared` — 147/147 pass
   - `npm run test:engine:sandbox` — 391/391 pass
+
+## 2026-07-02 - REQ-T1-DEMO-010 Phase 3 direct review remediation
+
+- requirement: native OpenClaw monitor plugin and real runtime capability probe
+- review result: the delegated implementation still contained release-blocking package, runtime, identity, terminal-state, and test-gate defects, so remediation was completed directly under the Phase 3 requirement
+- fixes:
+  - repaired the out-of-scope `llm_input` identity reference and validated native session/agent identity before mutating monitor or tool-runtime state
+  - made deferred monitor identity binding atomic, complete, pre-observation-only, and exactly once
+  - changed the package to a compiled default-export entry, clean single-file build, three-file publish whitelist, and development-only host/build dependencies
+  - verified a real packed plugin can be installed and inspected by OpenClaw `2026.6.10`
+  - parsed the real inspect JSON shape, checked plugin ID and `loaded` state, read the runtime version from `openclaw --version`, and used a contract-valid correlated probe acknowledgement
+  - wired the production entry to the REQ-008 `RuleBasedDecisionProvider`
+  - closed campaign identity mappings plus nested memory/tool envelope fields before state mutation
+  - kept adapter `rejected` distinct from `failed`; unresolved tool calls now finalize as failed
+  - made terminal finalization and ingest failures fail closed with `security_monitor_unavailable`
+  - registered the OpenClaw integration suite, observed-session suite, and permanent repository gate in root scripts
+  - removed committed generated JavaScript mirrors from TypeScript source directories and added an anti-artifact repository gate
+- tests added or strengthened:
+  - atomic/one-shot monitor rebinding and terminal failed/rejected state tests
+  - exact campaign identity, nested memory/tool boundary, delayed binding, native identity drift, real adapter rejection, and terminal ingest failure tests
+  - real inspect-shape, loaded-plugin identity, correlated acknowledgement, package build/default export, publish contents, and no-generated-JavaScript gates
+- verification:
+  - `npm run test:integration:openclaw` - pass (67/67)
+  - `npm run test:engine:sandbox` - pass (375/375)
+  - `npm run test:repo` - pass (96/96)
+  - `npm run test:shared` - pass (148/148)
+  - `npm run test:frontend` - pass (114/114)
+  - real `npm pack` contents - exactly `dist/index.js`, `openclaw.plugin.json`, and `package.json`
+  - real OpenClaw install/inspect/default capability probe - pass, plugin loaded with 4 tools, 6 hooks, and no plugin diagnostics
+  - `npm run test:backend` - 215/216 pass; the only failure is the pre-existing local Semgrep runner `spawn EPERM` in `backend-task-center.api.spec.ts`
+- status: PHASE_3_REVIEW_REMEDIATION_COMPLETE_PENDING_REVIEW
+- next blocker: user review; Phase 4 was not started
