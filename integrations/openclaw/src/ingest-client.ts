@@ -1,5 +1,6 @@
 import {
-  normalizeTrack1CampaignSnapshotAck
+  normalizeTrack1CampaignSnapshotAck,
+  normalizeTrack1CampaignSnapshotEnvelope
 } from "../../../shared/contracts/campaign-ingest.ts";
 import type {
   Track1CampaignSnapshotAck,
@@ -21,7 +22,7 @@ export class Track1IngestError extends Error {
 
 export interface Track1IngestTransport {
   request(
-    method: "PUT",
+    method: "POST",
     url: URL,
     headers: Readonly<Record<string, string>>,
     body: string,
@@ -88,7 +89,7 @@ function normalizeConfig(value: unknown): Track1IngestConfig {
 
 class NativeFetchTransport implements Track1IngestTransport {
   async request(
-    method: "PUT",
+    method: "POST",
     url: URL,
     headers: Readonly<Record<string, string>>,
     body: string,
@@ -119,28 +120,24 @@ export class Track1IngestClient {
   async appendSnapshot(
     envelope: unknown
   ): Promise<Track1CampaignSnapshotAck> {
-    // Validate the envelope via the shared normalizer to extract safe fields
-    if (!isPlainObject(envelope)) {
+    // P1-Fix4: validate the envelope via the shared normalizer before sending.
+    // This ensures structural correctness (closed-set IDs, hashes, manifest)
+    // is enforced identically at ingest and projector boundaries.
+    const normalized = normalizeTrack1CampaignSnapshotEnvelope(envelope);
+    if (!normalized) {
       throw new Track1IngestError("track1_ingest_failed");
     }
 
-    const campaignId = envelope.campaign_id;
-    const sequence = envelope.sequence;
-    const attemptId = envelope.attempt_id;
-    const snapshotSha256 = envelope.snapshot_sha256;
+    const campaignId = normalized.campaign_id;
+    const sequence = normalized.sequence;
+    const attemptId = normalized.attempt_id;
+    const snapshotSha256 = normalized.snapshot_sha256;
 
-    if (
-      !isNonEmptyString(campaignId) ||
-      typeof sequence !== "number" ||
-      !isNonEmptyString(attemptId) ||
-      !isNonEmptyString(snapshotSha256)
-    ) {
-      throw new Track1IngestError("track1_ingest_failed");
-    }
-
-    // Build the target URL: fixed origin + /{campaign_id}/snapshots/{sequence}
+    // P1-Fix3: POST to .../{campaign_id}/snapshots (no sequence in URL).
+    // The backend assigns sequence authority; the client must not encode it
+    // into the resource path.
     const url = new URL(
-      `${this.#config.ingestEndpoint}/${encodeURIComponent(campaignId)}/snapshots/${sequence}`
+      `${this.#config.ingestEndpoint}/${encodeURIComponent(campaignId)}/snapshots`
     );
 
     const headers: Readonly<Record<string, string>> = Object.freeze({
@@ -148,8 +145,8 @@ export class Track1IngestClient {
       "content-type": "application/json"
     });
 
-    // Serialize the envelope without leaking the token
-    const body = JSON.stringify(envelope);
+    // Serialize the normalized envelope without leaking the token
+    const body = JSON.stringify(normalized);
 
     const controller = new AbortController();
     const timeoutId = setTimeout(
@@ -160,7 +157,7 @@ export class Track1IngestClient {
     let response: { status: number; body: string };
     try {
       response = await this.#transport.request(
-        "PUT",
+        "POST",
         url,
         headers,
         body,

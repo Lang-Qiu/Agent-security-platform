@@ -943,3 +943,444 @@ test("normalizer returns null instead of throwing for null case rows", async () 
     );
   });
 });
+
+// ============================================================================
+// Round 6 RED: closed references, canonical IDs, and status semantics
+// ============================================================================
+
+function addAlertDecisionToAskResult(report: any, resultIndex = 4): void {
+  const result = report.results[resultIndex];
+  const details = result.details;
+  const caseId = report.cases[resultIndex].case_id;
+  const scenarioId = caseId.slice(0, 9);
+  const toolRequest = details.events.find(
+    (event: any) => event.event_type === "tool_request"
+  );
+  assert.ok(toolRequest, "test setup requires a tool_request event");
+
+  const decidedAt = "2026-06-28T00:00:07.000Z";
+  const decision = {
+    decision_id: `decision:${caseId}:009`,
+    subject_event_id: toolRequest.event_id,
+    policy_id: "policy://track1/base-filter/v1",
+    action: "alert",
+    reason_code: "base_filter_sensitive_capability_observed",
+    reason: "Sensitive tool capability was observed",
+    evidence_refs: [
+      "evidence://track1/base-filter/rule/sensitive-capability-observed"
+    ],
+    decided_at: decidedAt
+  };
+
+  details.policy_decisions.push(decision);
+  details.events.push({
+    event_id: `policy-decision:${caseId}:010`,
+    session_id: details.session_id,
+    sequence: details.events.length + 1,
+    occurred_at: decidedAt,
+    source: "policy",
+    evidence_refs: ["evidence://track1/monitor/policy-decision"],
+    scenario_id: scenarioId,
+    case_id: caseId,
+    event_type: "policy_decision",
+    payload: cloneJson(decision)
+  });
+  details.alerts.push({
+    alert_id: `alert:${caseId}:011`,
+    subject_event_id: decision.subject_event_id,
+    decision_id: decision.decision_id,
+    risk_level: "high",
+    category: "monitor_policy_alert",
+    title: "Monitor policy alert",
+    reason: decision.reason,
+    evidence_refs: [...decision.evidence_refs],
+    occurred_at: decidedAt
+  });
+  details.event_count = details.events.length;
+  result.metadata.monitor.decision_count = details.policy_decisions.length;
+  result.status = "finished";
+  result.risk_level = "high";
+  result.summary = "Monitored sandbox session completed";
+}
+
+test("normalizer rejects safe-shaped unapproved model content_ref", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  const modelInput = badResults[0].details.events.find(
+    (event: any) => event.event_type === "model_input"
+  );
+  assert.ok(modelInput, "test setup requires a model_input event");
+  modelInput.payload.content_ref = "raw://sentinelsecret";
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects non-canonical event_id with an approved prefix", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  const caseId = report.cases[0].case_id;
+  badResults[0].details.events[0].event_id =
+    `model-input:${caseId}:rawsentinel`;
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects non-canonical tool call_id with an approved prefix", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  const caseId = report.cases[1].case_id;
+  const details = badResults[1].details;
+  const request = details.events.find(
+    (event: any) => event.event_type === "tool_request"
+  );
+  const result = details.events.find(
+    (event: any) => event.event_type === "tool_result"
+  );
+  assert.ok(request && result, "test setup requires tool request/result events");
+
+  const callId = `call:${caseId}:rawsentinel`;
+  request.payload.call_id = callId;
+  result.payload.call_id = callId;
+  const digest = result.payload.result_ref.split("/").at(-1);
+  result.payload.result_ref = `simulated-result://${callId}/${digest}`;
+  assertSharedResultValid(badResults[1]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects generic URI in tool result_ref", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  const result = badResults[1].details.events.find(
+    (event: any) => event.event_type === "tool_result"
+  );
+  assert.ok(result, "test setup requires a tool_result event");
+  result.payload.result_ref = "raw://toolsecret";
+  assertSharedResultValid(badResults[1]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer requires monitor metadata on every demo result", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  delete badResults[0].metadata;
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects invalid ISO-8601 timezone offsets", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  badResults[0].created_at = "2026-01-01T00:00:00+14:30";
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer follows result-builder alert-over-ask risk precedence", async () => {
+  const report = cloneJson(
+    buildTrack1BaseFilterDemoReport(await runAllTrack1BaseFilterCases())
+  );
+  addAlertDecisionToAskResult(report);
+  assertSharedResultValid(report.results[4]);
+
+  const normalized = normalizeTrack1BaseFilterDemoReport(report);
+  assert.notEqual(normalized, null);
+  assert.equal(normalized!.results[4].risk_level, "high");
+  assert.equal(normalized!.cases[4].actual_action, "ask");
+});
+
+test("normalizer rejects a non-fixed model_ref", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  const modelInput = badResults[0].details.events.find(
+    (event: any) => event.event_type === "model_input"
+  );
+  assert.ok(modelInput, "test setup requires a model_input event");
+  modelInput.payload.model_ref = "raw://modelsecret";
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects non-no-match allow decisions", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  const badCases = cloneJson(report.cases);
+  const { decision, policyEvent } = requireDecisionMirror(badResults[2]);
+
+  decision.reason_code = "raw_allow_reason";
+  decision.reason = "RAW_ALLOW_REASON";
+  decision.evidence_refs = [
+    "evidence://track1/base-filter/rule/explicit-policy-bypass"
+  ];
+  policyEvent.payload = cloneJson(decision);
+  badCases[2].matched_rule_ids = ["explicit-policy-bypass"];
+  assertSharedResultValid(badResults[2]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({
+      ...report,
+      cases: badCases,
+      results: badResults
+    }),
+    null
+  );
+});
+
+test("normalizer rejects inconsistent terminal risk semantics", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  badResults[0].risk_level = "info";
+  badResults[0].summary = "Monitored sandbox session completed";
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects monitor counter mismatches", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  badResults[0].metadata.monitor.decision_count += 99;
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects impossible calendar timestamps", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  badResults[0].created_at = "2026-02-31T99:99:99Z";
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects generic URI in tool target_ref", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  const request = badResults[1].details.events.find(
+    (event: any) => event.event_type === "tool_request"
+  );
+  assert.ok(request, "test setup requires a tool_request event");
+  request.payload.target_ref = "raw://targetsecret";
+  assertSharedResultValid(badResults[1]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects generic URI in tool arguments_ref", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  const request = badResults[1].details.events.find(
+    (event: any) => event.event_type === "tool_request"
+  );
+  assert.ok(request, "test setup requires a tool_request event");
+  request.payload.arguments_ref = "raw://argumentsecret";
+  assertSharedResultValid(badResults[1]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects non-canonical decision_id with an approved prefix", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  const caseId = report.cases[0].case_id;
+  const { decision, policyEvent } = requireDecisionMirror(badResults[0]);
+  const decisionId = `decision:${caseId}:rawsentinel`;
+  decision.decision_id = decisionId;
+  policyEvent.payload.decision_id = decisionId;
+  for (const record of badResults[0].details.blocked_records) {
+    if (record.subject_event_id === decision.subject_event_id) {
+      record.decision_id = decisionId;
+    }
+  }
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects free-form alert presentation fields", async () => {
+  const report = cloneJson(
+    buildTrack1BaseFilterDemoReport(await runAllTrack1BaseFilterCases())
+  );
+  addAlertDecisionToAskResult(report);
+  report.results[4].details.alerts[0].title = "RAW_ALERT_TITLE";
+  report.results[4].details.alerts[0].category = "RAW_ALERT_CATEGORY";
+  assertSharedResultValid(report.results[4]);
+
+  assert.equal(normalizeTrack1BaseFilterDemoReport(report), null);
+});
+
+test("normalizer rejects blocked-record resource_ref output", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  badResults[0].details.blocked_records[0].resource_ref =
+    "raw://blocked-resource";
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects duplicate decision evidence references", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  const { decision, policyEvent } = requireDecisionMirror(badResults[0]);
+  decision.evidence_refs = [
+    ...decision.evidence_refs,
+    decision.evidence_refs[0]
+  ];
+  policyEvent.payload.evidence_refs = [...decision.evidence_refs];
+  for (const record of badResults[0].details.blocked_records) {
+    if (record.decision_id === decision.decision_id) {
+      record.evidence_refs = [...decision.evidence_refs];
+    }
+  }
+  assertSharedResultValid(badResults[0]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});
+
+test("normalizer rejects catalog rules materialized at an unsupported stage", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  const badCases = cloneJson(report.cases);
+  const details = badResults[4].details;
+  const decision = details.policy_decisions.find(
+    (item: any) => item.action === "ask"
+  );
+  const modelOutput = details.events.find(
+    (event: any) => event.event_type === "model_output"
+  );
+  assert.ok(decision && modelOutput, "test setup requires ask and model_output");
+  const policyEvent = details.events.find(
+    (event: any) =>
+      event.event_type === "policy_decision" &&
+      event.payload.decision_id === decision.decision_id
+  );
+  assert.ok(policyEvent, "test setup requires mirrored policy event");
+
+  decision.subject_event_id = modelOutput.event_id;
+  policyEvent.payload.subject_event_id = modelOutput.event_id;
+  badCases[4].terminal_stage = "model_output";
+  assertSharedResultValid(badResults[4]);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({
+      ...report,
+      cases: badCases,
+      results: badResults
+    }),
+    null
+  );
+});
+
+test("normalizer rejects intercepted tool results forged as successful", async () => {
+  const report = buildTrack1BaseFilterDemoReport(
+    await runAllTrack1BaseFilterCases()
+  );
+  const badResults = cloneJson(report.results);
+  const resultWithTool = badResults.find((result: any) =>
+    result.details.events.some(
+      (event: any) => event.event_type === "tool_result"
+    )
+  );
+  assert.ok(resultWithTool, "test setup requires a tool result");
+  const toolResult = resultWithTool.details.events.find(
+    (event: any) => event.event_type === "tool_result"
+  );
+  assert.equal(toolResult.payload.status, "rejected");
+  toolResult.payload.status = "success";
+  toolResult.payload.state_change = "RAW_STATE_CHANGE_SENTINEL";
+  resultWithTool.metadata.monitor.executed_tool_count = 1;
+  resultWithTool.metadata.monitor.intercepted_tool_count = 0;
+  assertSharedResultValid(resultWithTool);
+
+  assert.equal(
+    normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
+    null
+  );
+});

@@ -97,6 +97,8 @@ interface PluginSessionState {
   previousSnapshotSha256: string | null;
   ended: boolean;
   pendingToolCallId: string | null;
+  /** P4-ISSUE4: Track the tool name alongside the call ID for terminal failure */
+  pendingToolCallToolName: string | null;
 }
 
 // -- helpers ---------------------------------------------------------------
@@ -207,6 +209,11 @@ function detectToolFailure(event: {
       if (result.status === "failed" || result.status === "error") {
         return true;
       }
+      // P5-ISSUE5: "rejected" is NOT a tool failure — the tool adapter
+      // rejected the call (e.g. target_not_allowed), and the execution
+      // succeeded at rejecting. It must be recorded as a tool execution
+      // result, not a failure. The rejection_code is preserved in the
+      // result payload so downstream policy can inspect it.
       // Check isError flag (real SDK AfterToolCallResult uses this)
       if (result.isError === true) {
         return true;
@@ -217,7 +224,8 @@ function detectToolFailure(event: {
       try {
         const parsed = JSON.parse(result);
         if (isPlainObject(parsed)) {
-          if (parsed.status === "failed" || parsed.status === "error" || parsed.status === "rejected") {
+          // P5-ISSUE5: "rejected" is also excluded here — same rationale.
+          if (parsed.status === "failed" || parsed.status === "error") {
             return true;
           }
           // Check nested output.status (our tool adapter returns { output: { status: ... } })
@@ -324,7 +332,8 @@ export function registerTrack1Plugin(
       snapshotSequence: 1,
       previousSnapshotSha256: null,
       ended: false,
-      pendingToolCallId: null
+      pendingToolCallId: null,
+      pendingToolCallToolName: null,
     });
   });
 
@@ -397,12 +406,15 @@ export function registerTrack1Plugin(
       });
 
       // Emit controlled memory observations for memory_entries (writes)
+      // P6-ISSUE6: Propagate content_sha256 from the envelope so the monitor
+      // uses the hash from the envelope rather than re-hashing the content_ref.
       for (const entry of envelope.memory_entries) {
         state.session.observeMemoryWrite({
           session_id: state.context.session_id,
           memory_entry_id: entry.memory_entry_id,
           content: entry.content_ref,
-          content_ref: entry.content_ref
+          content_ref: entry.content_ref,
+          content_sha256: entry.content_sha256
         });
       }
 
@@ -412,7 +424,8 @@ export function registerTrack1Plugin(
           session_id: state.context.session_id,
           memory_entry_id: entry.memory_entry_id,
           content: entry.content_ref,
-          content_ref: entry.content_ref
+          content_ref: entry.content_ref,
+          content_sha256: entry.content_sha256
         });
       }
     } else {
@@ -562,6 +575,7 @@ export function registerTrack1Plugin(
 
       // Track pending tool call for session_end terminal failure (P1-Fix6)
       state.pendingToolCallId = toolCallId;
+      state.pendingToolCallToolName = toolName;
 
       return {};
     },
@@ -600,7 +614,9 @@ export function registerTrack1Plugin(
       throw new Track1PluginHookError("track1_plugin_session_not_found");
     }
 
-    // P1-Fix7: Detect tool failure via error field and result JSON parsing
+    // P1-Fix7: Detect tool failure via error field and result JSON parsing.
+    // P5-ISSUE5: Use detectToolFailure() which rejects "rejected" status as
+    // a non-failure — adapter-rejected calls are tool executions, not failures.
     const failed = detectToolFailure({
       error: event.error,
       result: event.result
@@ -626,6 +642,7 @@ export function registerTrack1Plugin(
 
     // Clear pending tool call (P1-Fix6)
     state.pendingToolCallId = null;
+    state.pendingToolCallToolName = null;
   });
 
   // -- session_end ----------------------------------------------------
@@ -647,21 +664,38 @@ export function registerTrack1Plugin(
 
     // P1-Fix6: If there's a pending tool call, finalize() will throw.
     // Generate a terminal failed snapshot instead of a regular snapshot.
+    // P4-ISSUE4: When there IS a pending tool call, finalize() throws
+    // monitor_state_invalid. The previous code fell back to snapshot() which
+    // emits a non-terminal result — not a terminal failure.
+    // Fix: emit a failed tool_result first, then finalize() normally so the
+    // ingested snapshot carries the failure as a terminal state.
     const hasPendingTool = state.pendingToolCallId !== null;
 
     try {
       if (hasPendingTool) {
-        // finalize() will throw monitor_state_invalid due to pending tool.
-        // Instead, build a snapshot (non-terminal) that records the failure.
-        // The ingest will carry the pending-tool state as a failure indicator.
+        // Emit a failed tool_result so the session has the terminal record
+        // before finalizing. This ensures the ingested snapshot carries the
+        // failure as a terminal state rather than a mid-flight non-terminal.
         try {
-          const finalResult = state.session.finalize();
-          await ingestSessionSnapshot(state, finalResult);
+          const failedObserved = {
+            session_id: state.context.session_id,
+            call_id: state.pendingToolCallId,
+            tool_name: state.pendingToolCallToolName ?? "unknown",
+            status: "failed",
+            result_ref: `simulated-result://${state.pendingToolCallId}/failed`,
+            state_change: "simulated"
+          };
+          const failedSnapshot = state.session.afterTool(failedObserved);
+          await ingestSessionSnapshot(state, failedSnapshot);
         } catch {
-          // finalize failed — use snapshot() which allows sealed sessions
-          const snapshot = state.session.snapshot();
-          await ingestSessionSnapshot(state, snapshot);
+          // If afterTool fails (e.g. session already sealed), fall back to
+          // finalize attempt below.
         }
+
+        // P4-ISSUE4: pending tool call has been resolved as failed above,
+        // so finalize() will succeed and produce a terminal result.
+        const finalResult = state.session.finalize();
+        await ingestSessionSnapshot(state, finalResult);
       } else {
         const finalResult = state.session.finalize();
         await ingestSessionSnapshot(state, finalResult);

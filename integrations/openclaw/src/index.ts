@@ -1,14 +1,14 @@
 // Track 1 OpenClaw plugin public entry point.
 // Re-exports the typed plugin registration surface and supporting types.
+// P0-Fix1: Uses real definePluginEntry from openclaw/plugin-sdk/plugin-entry.
 
 export {
   registerTrack1Plugin,
-  definePluginEntry
+  createTrack1PluginEntry,
+  SessionToolRuntimeRegistry
 } from "./plugin.ts";
 
 export type {
-  Track1HookName,
-  Track1HookOptions,
   Track1PluginApi,
   Track1PluginRuntimePorts,
   Track1PluginRuntime
@@ -21,8 +21,10 @@ export {
 export type {
   Track1ToolDefinition,
   Track1ToolParameters,
-  Track1ToolOutput,
-  CampaignToolRuntime
+  Track1ToolExecuteContext,
+  Track1ToolResult,
+  CampaignToolRuntime,
+  CampaignToolRuntimeResolver
 } from "./tool-adapters.ts";
 
 export {
@@ -49,6 +51,7 @@ export type {
 
 export {
   runTrack1PluginCapabilityProbe,
+  execOpenclawPluginsInspect,
   TRACK1_PLUGIN_PROBE_COMMAND,
   TRACK1_PLUGIN_PROBE_RESULT_KEYS,
   TRACK1_PLUGIN_PROBE_RUNTIME_VERSION
@@ -56,5 +59,6 @@ export {
 
 export type {
   Track1PluginProbeResult,
-  Track1PluginProbePorts
+  Track1PluginProbePorts,
+  PluginInspectOutput
 } from "./runtime-probe.ts";

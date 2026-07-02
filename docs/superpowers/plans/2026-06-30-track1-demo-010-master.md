@@ -240,8 +240,17 @@ Must not change:
 - Phase 6 requires Phase 4 runner artifact conventions and Phase 5 stable UI
   readiness markers.
 - Phase 7 is strictly sequential and starts only after Phases 1-6 are accepted.
-- Tasks inside one phase run in listed order unless that phase explicitly marks
-  a parallel pair.
+- Inside a phase, branching paths in that phase's task DAG are the explicit
+  authorization for parallel work once every incoming dependency is accepted.
+  A phase may impose a stricter sequential rule; the Phase 7 rule above
+  overrides its branching task diagram.
+- Before dispatching parallel tasks, their declared writable file sets must be
+  disjoint. Any overlap requires an added dependency edge or exclusive file
+  ownership in the phase plan.
+- Parallel tasks use isolated worktrees or branches. Their commits are
+  integrated, reviewed, and reported serially in listed task order; shared
+  phase-exit registration and documentation changes are never merged
+  concurrently.
 
 ## Phase Completion Contract
 
@@ -258,8 +267,10 @@ Each phase report must include:
 9. risks requiring high-level review;
 10. phase status: `COMPLETE_PENDING_REVIEW`.
 
-The next phase remains blocked until the user or high-level reviewer approves
-the current phase.
+A downstream phase remains blocked until the user or high-level reviewer
+approves every incoming dependency shown in the phase DAG. Numeric phase order
+alone does not block the explicitly authorized Phase 2/Phase 3 or Phase 4/Phase
+5 branches.
 
 ## Cross-Phase Definition of Done
 

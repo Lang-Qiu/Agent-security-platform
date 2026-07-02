@@ -1,20 +1,30 @@
-import { InMemorySimulatedToolState } from "../../../engines/sandbox/src/simulated-tools/state.ts";
-import { SimulatedToolExecutor } from "../../../engines/sandbox/src/simulated-tools/executor.ts";
+// P1-Fix8: Startup probe runs real `openclaw plugins inspect` command output
+// for static checks (tools, hooks, version, labels) instead of a self-made
+// recording API. Dynamic checks still use a minimal recording API to verify
+// hook behavior, but the static shape comes from the real SDK runtime.
+
+import { execFileSync } from "node:child_process";
 import { registerTrack1Plugin } from "./plugin.ts";
-import type {
-  Track1PluginApi,
-  Track1PluginRuntime,
-  Track1HookName,
-  Track1HookOptions
-} from "./plugin.ts";
-import type { CampaignToolRuntime } from "./tool-adapters.ts";
+import { SessionToolRuntimeRegistry } from "./plugin.ts";
+import type { Track1PluginApi, Track1PluginRuntimePorts } from "./plugin.ts";
 import type { Track1ToolDefinition } from "./tool-adapters.ts";
+import { normalizeTrack1PluginContext } from "./campaign-context.ts";
+import type { Track1PluginContext } from "./campaign-context.ts";
 import {
   TRACK1_MODEL_REF_CANONICAL
 } from "../../../shared/types/campaign-ingest.ts";
 import type { Track1CampaignSnapshotEnvelope } from "../../../shared/types/campaign-ingest.ts";
 
 // -- public types ----------------------------------------------------------
+
+export interface PluginInspectOutput {
+  readonly id: string;
+  readonly name: string;
+  readonly runtime_version: string;
+  readonly tools: ReadonlyArray<{ name: string; label: string }>;
+  readonly hooks: readonly string[];
+  readonly diagnostics: readonly { code: string; message: string }[];
+}
 
 export interface Track1PluginProbeResult {
   readonly schema_version: "track1-openclaw-probe.v1";
@@ -52,7 +62,7 @@ export const TRACK1_PLUGIN_PROBE_COMMAND =
 
 export const TRACK1_PLUGIN_PROBE_RUNTIME_VERSION = "2026.6.10";
 
-// -- probe input (mirrors fixture type to avoid circular imports) ----------
+// -- probe input -----------------------------------------------------------
 
 type Track1ProbeMutation =
   | "wrong-version"
@@ -65,8 +75,34 @@ type Track1ProbeMutation =
   | "diagnostic-present";
 
 export interface Track1PluginProbePorts {
-  ports: import("./plugin.ts").Track1PluginRuntimePorts;
+  // P1-Fix8: The parsed output from `openclaw plugins inspect` command.
+  // In production, obtained via execOpenclawPluginsInspect(). In tests,
+  // injected as a canned response.
+  inspect: PluginInspectOutput;
+  ports: Track1PluginRuntimePorts;
   mutation?: Track1ProbeMutation;
+}
+
+// -- real command execution (P1-Fix8) --------------------------------------
+
+export function execOpenclawPluginsInspect(): PluginInspectOutput {
+  const stdout = execFileSync(
+    "openclaw",
+    ["plugins", "inspect", "agent-security-track1", "--runtime", "--json"],
+    {
+      encoding: "utf8",
+      timeout: 30_000
+    }
+  );
+  const parsed = JSON.parse(stdout) as Partial<PluginInspectOutput>;
+  return {
+    id: String(parsed.id ?? ""),
+    name: String(parsed.name ?? ""),
+    runtime_version: String(parsed.runtime_version ?? ""),
+    tools: Array.isArray(parsed.tools) ? parsed.tools : [],
+    hooks: Array.isArray(parsed.hooks) ? parsed.hooks : [],
+    diagnostics: Array.isArray(parsed.diagnostics) ? parsed.diagnostics : []
+  };
 }
 
 // -- error -----------------------------------------------------------------
@@ -80,74 +116,52 @@ class Track1PluginProbeError extends Error {
   }
 }
 
-// -- recording api (source-local, does not import test fixtures) -----------
-
-interface ProbeToolEntry {
-  name: string;
-  execute: (args: unknown, context: unknown) => Promise<unknown>;
-}
+// -- recording api for dynamic checks --------------------------------------
 
 interface ProbeHookEntry {
   name: string;
-  handler: (event: unknown) => unknown | Promise<unknown>;
-  options?: Track1HookOptions;
+  handler: (event: unknown, ctx: unknown) => unknown | Promise<unknown>;
+  options?: { priority?: number; timeoutMs?: number };
 }
 
-interface ProbeRecordingApi {
-  tools: ProbeToolEntry[];
+interface ProbeRecordingApi extends Track1PluginApi {
+  tools: Track1ToolDefinition[];
   hooks: ProbeHookEntry[];
-  registerTool(tool: ProbeToolEntry): void;
-  on(
-    name: Track1HookName,
-    handler: (event: unknown) => unknown | Promise<unknown>,
-    options?: Track1HookOptions
-  ): void;
 }
 
 function makeProbeRecordingApi(): ProbeRecordingApi {
-  const tools: ProbeToolEntry[] = [];
+  const tools: Track1ToolDefinition[] = [];
   const hooks: ProbeHookEntry[] = [];
   return {
     tools,
     hooks,
-    registerTool(tool) {
+    registerTool(tool: Track1ToolDefinition) {
       tools.push(tool);
     },
-    on(name, handler, options) {
+    on(
+      name: string,
+      handler: (event: unknown, ctx: unknown) => unknown | Promise<unknown>,
+      options?: { priority?: number; timeoutMs?: number }
+    ) {
       hooks.push({ name, handler, options });
     }
   };
 }
 
-// -- campaign tool runtime (source-local) ----------------------------------
-
-function makeProbeToolRuntime(): CampaignToolRuntime {
-  const state = new InMemorySimulatedToolState({});
-  return {
-    campaign_id: "campaign:track1:probe-001",
-    agent_id: "agent:track1:probe-001",
-    attempt_id: "attempt:track1:probe-001",
-    attempt_index: 1,
-    session_id: "session:track1:probe-001",
-    scenario_id: "T1-SC-001",
-    case_id: "T1-SC-001-C001",
-    state,
-    executor: new SimulatedToolExecutor(state)
-  };
-}
-
 // -- probe context ---------------------------------------------------------
 
-const PROBE_CONTEXT = Object.freeze({
+const PROBE_CONTEXT_INPUT = Object.freeze({
   campaign_id: "campaign:track1:probe-001",
   attempt_id: "attempt:track1:probe-001",
   attempt_index: 1 as const,
-  agent_id: "agent:track1:probe-001",
+  agent_id: "agent:track1:prompt-injection",
   session_id: "session:track1:probe-001",
   scenario_id: "T1-SC-001",
   case_id: "T1-SC-001-C001",
   model_ref: TRACK1_MODEL_REF_CANONICAL
 });
+
+const PROBE_CONTEXT: Track1PluginContext = normalizeTrack1PluginContext(PROBE_CONTEXT_INPUT);
 
 const EXPECTED_TOOLS = Object.freeze([
   "call_api",
@@ -178,9 +192,9 @@ function deepEqual(a: readonly string[], b: readonly string[]): boolean {
   return a.every((v, i) => v === b[i]);
 }
 
-// -- mutation application --------------------------------------------------
+// -- mutation application (dynamic only) -----------------------------------
 
-function applyMutation(
+function applyDynamicMutation(
   api: ProbeRecordingApi,
   mutation: Track1ProbeMutation | undefined,
   ingestWrapper: {
@@ -191,21 +205,6 @@ function applyMutation(
   if (!mutation) return;
 
   switch (mutation) {
-    case "missing-tool": {
-      const idx = api.tools.findIndex((t) => t.name === "call_api");
-      if (idx >= 0) api.tools.splice(idx, 1);
-      break;
-    }
-    case "duplicate-tool": {
-      const tool = api.tools.find((t) => t.name === "send_email");
-      if (tool) api.tools.push({ ...tool });
-      break;
-    }
-    case "missing-hook": {
-      const idx = api.hooks.findIndex((h) => h.name === "session_end");
-      if (idx >= 0) api.hooks.splice(idx, 1);
-      break;
-    }
     case "block-failed": {
       const hook = api.hooks.find((h) => h.name === "before_tool_call");
       if (hook) {
@@ -223,8 +222,6 @@ function applyMutation(
     case "correlation-missing": {
       const originalIngest = ingestWrapper.ingest;
       ingestWrapper.ingest = async (envelope) => {
-        // Strip correlation to simulate a defective plugin that does not
-        // propagate campaign correlation into snapshots.
         const defective: Track1CampaignSnapshotEnvelope = {
           ...envelope,
           campaign_id: ""
@@ -234,10 +231,8 @@ function applyMutation(
       };
       break;
     }
-    case "wrong-version":
-    case "diagnostic-present":
-      // Handled in result construction / final checks
-      break;
+    // Static mutations (wrong-version, missing-tool, duplicate-tool,
+    // missing-hook, diagnostic-present) are handled in static checks above.
   }
 }
 
@@ -246,10 +241,65 @@ function applyMutation(
 export async function runTrack1PluginCapabilityProbe(
   input: Track1PluginProbePorts
 ): Promise<Track1PluginProbeResult> {
-  const { ports, mutation } = input;
+  const { inspect, ports, mutation } = input;
+
+  // -- static checks (from `openclaw plugins inspect` output) -------------
+  // P1-Fix8: These checks verify the real SDK runtime's view of the plugin,
+  // not a self-made recording API.
+
+  const toolNames = [...inspect.tools.map((t) => t.name)].sort();
+  const hookNames = [...inspect.hooks].sort();
+
+  if (new Set(toolNames).size !== toolNames.length) {
+    throw new Track1PluginProbeError(
+      "track1_plugin_probe_failed",
+      "duplicate tool detected"
+    );
+  }
+
+  if (!deepEqual(toolNames, [...EXPECTED_TOOLS])) {
+    throw new Track1PluginProbeError(
+      "track1_plugin_probe_failed",
+      "tool set mismatch"
+    );
+  }
+
+  if (!deepEqual(hookNames, [...EXPECTED_HOOKS])) {
+    throw new Track1PluginProbeError(
+      "track1_plugin_probe_failed",
+      "hook set mismatch"
+    );
+  }
+
+  if (inspect.runtime_version !== TRACK1_PLUGIN_PROBE_RUNTIME_VERSION) {
+    throw new Track1PluginProbeError(
+      "track1_plugin_probe_failed",
+      "runtime version mismatch"
+    );
+  }
+
+  if (inspect.diagnostics.length > 0) {
+    throw new Track1PluginProbeError(
+      "track1_plugin_probe_failed",
+      "diagnostics present"
+    );
+  }
+
+  // P0-Fix2: Verify all tools have non-empty labels (real SDK requirement)
+  for (const tool of inspect.tools) {
+    if (!tool.label || tool.label.length === 0) {
+      throw new Track1PluginProbeError(
+        "track1_plugin_probe_failed",
+        `tool ${tool.name} missing label`
+      );
+    }
+  }
+
+  // -- dynamic checks (via recording API) ---------------------------------
+  // These verify the plugin's hook behavior: before_tool_call blocks unknown
+  // tools, after_tool_call observes results, and snapshots carry correlation.
 
   const api = makeProbeRecordingApi();
-  const toolRuntime = makeProbeToolRuntime();
 
   const snapshots: Track1CampaignSnapshotEnvelope[] = [];
   const ingestWrapper = {
@@ -260,69 +310,28 @@ export async function runTrack1PluginCapabilityProbe(
     }
   };
 
-  const wrappedPorts = {
+  const wrappedPorts: Track1PluginRuntimePorts = {
     ...ports,
     async ingestSnapshot(envelope: Track1CampaignSnapshotEnvelope) {
       return ingestWrapper.ingest(envelope);
     }
   };
 
-  const runtime: Track1PluginRuntime = {
+  const toolRuntimeRegistry = new SessionToolRuntimeRegistry();
+
+  registerTrack1Plugin(api, {
     ports: wrappedPorts,
-    toolRuntime
-  };
+    campaignContext: PROBE_CONTEXT,
+    toolRuntimeRegistry
+  });
 
-  registerTrack1Plugin(api as unknown as Track1PluginApi, runtime);
+  applyDynamicMutation(api, mutation, ingestWrapper);
 
-  applyMutation(api, mutation, ingestWrapper);
-
-  // -- static checks -------------------------------------------------------
-
-  const toolNames = [...api.tools.map((t) => t.name)].sort();
-  const hookNames = [...api.hooks.map((h) => h.name)].sort();
-
-  if (new Set(toolNames).size !== toolNames.length) {
-    throw new Track1PluginProbeError(
-      "track1_plugin_probe_failed",
-      "duplicate tool detected"
-    );
-  }
-
-  if (!deepEqual(toolNames, EXPECTED_TOOLS)) {
-    throw new Track1PluginProbeError(
-      "track1_plugin_probe_failed",
-      "tool set mismatch"
-    );
-  }
-
-  if (!deepEqual(hookNames, EXPECTED_HOOKS)) {
-    throw new Track1PluginProbeError(
-      "track1_plugin_probe_failed",
-      "hook set mismatch"
-    );
-  }
-
-  // -- version check -------------------------------------------------------
-
-  if (mutation === "wrong-version") {
-    throw new Track1PluginProbeError(
-      "track1_plugin_probe_failed",
-      "runtime version mismatch"
-    );
-  }
-
-  // -- diagnostic check ----------------------------------------------------
-
-  if (mutation === "diagnostic-present") {
-    throw new Track1PluginProbeError(
-      "track1_plugin_probe_failed",
-      "diagnostics present"
-    );
-  }
-
-  // -- dynamic test --------------------------------------------------------
+  // -- dynamic test sequence (camelCase events) ---------------------------
 
   const sessionId = PROBE_CONTEXT.session_id;
+  const ctx = { agentId: PROBE_CONTEXT.agent_id, sessionId };
+
   const getHook = (name: string) => {
     const hook = api.hooks.find((h) => h.name === name);
     if (!hook) {
@@ -335,45 +344,50 @@ export async function runTrack1PluginCapabilityProbe(
   };
 
   // Start session
-  await getHook("session_start")({
-    session_id: sessionId,
-    agent_id: PROBE_CONTEXT.agent_id,
-    context: PROBE_CONTEXT
-  });
+  await getHook("session_start")({ sessionId }, ctx);
 
   // LLM input
-  await getHook("llm_input")({
-    session_id: sessionId,
-    envelope: {
-      schema_version: "track1-openclaw-input.v1",
-      campaign_id: PROBE_CONTEXT.campaign_id,
-      agent_id: PROBE_CONTEXT.agent_id,
-      attempt_id: PROBE_CONTEXT.attempt_id,
-      attempt_index: PROBE_CONTEXT.attempt_index,
-      session_id: PROBE_CONTEXT.session_id,
-      case_id: PROBE_CONTEXT.case_id,
-      scenario_id: PROBE_CONTEXT.scenario_id,
-      user_prompt: "Probe: what is the portal status?",
-      retrieved_content: [],
-      memory_entries: [],
-      proposed_tool_call: null
-    }
-  });
+  await getHook("llm_input")(
+    {
+      sessionId,
+      envelope: {
+        schema_version: "track1-openclaw-input.v1",
+        campaign_id: PROBE_CONTEXT.campaign_id,
+        agent_id: PROBE_CONTEXT.agent_id,
+        attempt_id: PROBE_CONTEXT.attempt_id,
+        attempt_index: PROBE_CONTEXT.attempt_index,
+        session_id: PROBE_CONTEXT.session_id,
+        case_id: PROBE_CONTEXT.case_id,
+        scenario_id: PROBE_CONTEXT.scenario_id,
+        user_prompt: "Probe: what is the portal status?",
+        retrieved_content: [],
+        memory_entries: [],
+        proposed_tool_call: null
+      }
+    },
+    ctx
+  );
 
   // LLM output
-  await getHook("llm_output")({
-    session_id: sessionId,
-    content: "The portal is operating normally.",
-    content_ref: "model://track1/probe/output/001"
-  });
+  await getHook("llm_output")(
+    {
+      sessionId,
+      content: "The portal is operating normally.",
+      contentRef: "model://track1/probe/output/001"
+    },
+    ctx
+  );
 
   // before_tool_call: unknown tool must block
-  const unknownResult = await getHook("before_tool_call")({
-    session_id: sessionId,
-    call_id: "call:probe:unknown",
-    tool_name: "unknown_tool",
-    arguments: {}
-  });
+  const unknownResult = await getHook("before_tool_call")(
+    {
+      sessionId,
+      toolCallId: "call:probe:unknown",
+      toolName: "unknown_tool",
+      params: {}
+    },
+    ctx
+  );
   const beforeToolBlocked = isBlocked(unknownResult);
 
   if (!beforeToolBlocked) {
@@ -384,31 +398,34 @@ export async function runTrack1PluginCapabilityProbe(
   }
 
   // before_tool_call: known tool should allow (and ingest)
-  const snapshotsBeforeAllow = snapshots.length;
-  const allowResult = await getHook("before_tool_call")({
-    session_id: sessionId,
-    call_id: "call:probe:write",
-    tool_name: "write_file",
-    arguments: {
-      path: "sandbox://probe/test.txt",
-      content: "probe"
-    }
-  });
+  const allowResult = await getHook("before_tool_call")(
+    {
+      sessionId,
+      toolCallId: "call:probe:write",
+      toolName: "write_file",
+      params: {
+        path: "sandbox://probe/test.txt",
+        content: "probe"
+      }
+    },
+    ctx
+  );
 
-  // If allow was converted to block (e.g., ingest failure), we still
-  // verify after_tool_call observation separately below.
   const allowBlocked = isBlocked(allowResult);
 
   // after_tool_call: should ingest a snapshot
   const snapshotsBeforeAfter = snapshots.length;
   if (!allowBlocked) {
     try {
-      await getHook("after_tool_call")({
-        session_id: sessionId,
-        call_id: "call:probe:write",
-        tool_name: "write_file",
-        result: { status: "success" }
-      });
+      await getHook("after_tool_call")(
+        {
+          sessionId,
+          toolCallId: "call:probe:write",
+          toolName: "write_file",
+          result: { status: "success" }
+        },
+        ctx
+      );
     } catch {
       // after_tool_call may throw if session was ended; observation is
       // determined by whether a snapshot was ingested.
@@ -425,9 +442,7 @@ export async function runTrack1PluginCapabilityProbe(
 
   // session_end
   try {
-    await getHook("session_end")({
-      session_id: sessionId
-    });
+    await getHook("session_end")({ sessionId }, ctx);
   } catch {
     // session_end may fail if already ended; that's acceptable
   }

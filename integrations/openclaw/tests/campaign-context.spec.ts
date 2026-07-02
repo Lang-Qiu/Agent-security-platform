@@ -14,7 +14,7 @@ import {
 
 test("REQ-T1-DEMO-010 campaign context normalizes valid hook context", () => {
   const normalized = normalizeTrack1PluginContext(makeCampaignHookContext());
-  assert.equal(normalized.agent_id, "track1-agent-tool");
+  assert.equal(normalized.agent_id, "agent:track1:prompt-injection");
   assert.equal(normalized.campaign_id, "campaign:t1:0123456789abcdef0123456789abcdef");
   assert.equal(normalized.attempt_index, 1);
 });

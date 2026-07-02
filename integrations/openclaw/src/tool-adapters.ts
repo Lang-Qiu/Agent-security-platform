@@ -11,7 +11,11 @@ import type {
   SimulatedToolRejectedResult
 } from "../../../engines/sandbox/src/simulated-tools/contract.ts";
 
-// -- plugin api shape ------------------------------------------------------
+// -- public types ----------------------------------------------------------
+// P0-Fix2: Tool definition aligned to the real OpenClaw SDK AnyAgentTool
+// shape. Real SDK requires `label` and uses execute(toolCallId, params,
+// signal, onUpdate, ctx) — the 5th ctx param carries session identity for
+// per-session tool runtime lookup (P1-Fix5).
 
 export interface Track1ToolParameters {
   additionalProperties: false;
@@ -20,22 +24,48 @@ export interface Track1ToolParameters {
   properties: Record<string, unknown>;
 }
 
+export interface Track1ToolExecuteContext {
+  sessionId?: string;
+  agentId?: string;
+  sessionKey?: string;
+  runId?: string;
+  toolName?: string;
+  toolCallId?: string;
+}
+
+export interface Track1ToolResult {
+  content: Array<{ type: "text"; text: string }>;
+  details: unknown;
+  terminate?: boolean;
+}
+
 export interface Track1ToolDefinition {
   name: string;
+  label: string;
   description: string;
   parameters: Track1ToolParameters;
-  execute: (args: unknown, context: unknown) => Promise<Track1ToolOutput>;
+  execute: (
+    toolCallId: string,
+    params: unknown,
+    signal?: AbortSignal,
+    onUpdate?: ((partialResult: Track1ToolResult) => void) | undefined,
+    ctx?: Track1ToolExecuteContext
+  ) => Promise<Track1ToolResult>;
 }
 
 export interface Track1PluginApi {
   registerTool(tool: Track1ToolDefinition): void;
-}
-
-export interface Track1ToolOutput {
-  content: Array<{ type: "text"; text: string }>;
+  on(
+    name: string,
+    handler: (event: unknown, ctx: unknown) => unknown | Promise<unknown>,
+    options?: { priority?: number; timeoutMs?: number }
+  ): void;
 }
 
 // -- campaign-local runtime -----------------------------------------------
+// P1-Fix5: Per-session tool runtime. Each session gets its own
+// InMemorySimulatedToolState + SimulatedToolExecutor instead of sharing
+// one fixed runtime across all sessions.
 
 export interface CampaignToolRuntime {
   campaign_id: string;
@@ -49,10 +79,8 @@ export interface CampaignToolRuntime {
   executor: SimulatedToolExecutor;
 }
 
-// -- call context ----------------------------------------------------------
-
-interface ToolCallContext {
-  call_id?: string;
+export interface CampaignToolRuntimeResolver {
+  resolveToolRuntime(sessionId: string): CampaignToolRuntime | undefined;
 }
 
 // -- safe output helpers ---------------------------------------------------
@@ -61,15 +89,14 @@ function safeJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function buildOutput(payload: unknown): Track1ToolOutput {
+function buildResult(payload: unknown): Track1ToolResult {
   return {
-    content: [{ type: "text", text: safeJson(payload) }]
+    content: [{ type: "text", text: safeJson(payload) }],
+    details: payload
   };
 }
 
 function successPayload(result: SimulatedToolSuccessResult): unknown {
-  // Emit stable status and safe refs only; strip raw arguments/output bodies.
-  // Tool-specific safe output fields are allow-listed below.
   const safeOutput = buildSafeOutput(result);
   return {
     call_id: result.call_id,
@@ -117,11 +144,11 @@ function rejectedPayload(result: SimulatedToolRejectedResult): unknown {
   };
 }
 
-function buildToolOutput(result: SimulatedToolResult): Track1ToolOutput {
+function buildToolResult(result: SimulatedToolResult): Track1ToolResult {
   if (result.status === "simulated_success") {
-    return buildOutput(successPayload(result));
+    return buildResult(successPayload(result));
   }
-  return buildOutput(rejectedPayload(result));
+  return buildResult(rejectedPayload(result));
 }
 
 // -- request builder -------------------------------------------------------
@@ -164,18 +191,6 @@ function buildRequest(
         arguments: args as { endpoint: string; method: "GET" | "POST" }
       };
   }
-}
-
-function extractCallId(context: unknown): string {
-  if (
-    typeof context === "object" &&
-    context !== null &&
-    typeof (context as ToolCallContext).call_id === "string" &&
-    (context as ToolCallContext).call_id!.length > 0
-  ) {
-    return (context as ToolCallContext).call_id!;
-  }
-  return `call:openclaw:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 // -- tool definitions ------------------------------------------------------
@@ -221,72 +236,100 @@ const CALL_API_PARAMETERS: Track1ToolParameters = {
 };
 
 // -- registration ----------------------------------------------------------
+// P1-Fix5: registerTrack1Tools now takes a runtime resolver so each tool
+// execute can look up the per-session runtime via ctx.sessionId.
 
 export function registerTrack1Tools(
   api: Track1PluginApi,
-  runtime: CampaignToolRuntime
+  resolver: CampaignToolRuntimeResolver
 ): void {
   api.registerTool({
     name: "send_email",
+    label: "Send Email (Track 1 Simulated)",
     description: "Append an email to the campaign-local simulated outbox",
     parameters: SEND_EMAIL_PARAMETERS,
-    async execute(args, context) {
-      const request = buildRequest(
-        runtime,
-        "send_email",
-        extractCallId(context),
-        args
-      );
+    async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+      const runtime = resolveRuntime(resolver, ctx, toolCallId);
+      const request = buildRequest(runtime, "send_email", toolCallId, params);
       const result = runtime.executor.execute(request);
-      return buildToolOutput(result);
+      return buildToolResult(result);
     }
   });
 
   api.registerTool({
     name: "read_file",
+    label: "Read File (Track 1 Simulated)",
     description: "Read from the campaign-local virtual file namespace",
     parameters: READ_FILE_PARAMETERS,
-    async execute(args, context) {
-      const request = buildRequest(
-        runtime,
-        "read_file",
-        extractCallId(context),
-        args
-      );
+    async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+      const runtime = resolveRuntime(resolver, ctx, toolCallId);
+      const request = buildRequest(runtime, "read_file", toolCallId, params);
       const result = runtime.executor.execute(request);
-      return buildToolOutput(result);
+      return buildToolResult(result);
     }
   });
 
   api.registerTool({
     name: "write_file",
+    label: "Write File (Track 1 Simulated)",
     description: "Write to the campaign-local virtual file namespace",
     parameters: WRITE_FILE_PARAMETERS,
-    async execute(args, context) {
-      const request = buildRequest(
-        runtime,
-        "write_file",
-        extractCallId(context),
-        args
-      );
+    async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+      const runtime = resolveRuntime(resolver, ctx, toolCallId);
+      const request = buildRequest(runtime, "write_file", toolCallId, params);
       const result = runtime.executor.execute(request);
-      return buildToolOutput(result);
+      return buildToolResult(result);
     }
   });
 
   api.registerTool({
     name: "call_api",
+    label: "Call API (Track 1 Simulated)",
     description: "Resolve a campaign-local mock API route",
     parameters: CALL_API_PARAMETERS,
-    async execute(args, context) {
-      const request = buildRequest(
-        runtime,
-        "call_api",
-        extractCallId(context),
-        args
-      );
+    async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+      const runtime = resolveRuntime(resolver, ctx, toolCallId);
+      const request = buildRequest(runtime, "call_api", toolCallId, params);
       const result = runtime.executor.execute(request);
-      return buildToolOutput(result);
+      return buildToolResult(result);
     }
   });
+}
+
+// -- runtime resolution ----------------------------------------------------
+
+function resolveRuntime(
+  resolver: CampaignToolRuntimeResolver,
+  ctx: Track1ToolExecuteContext | undefined,
+  toolCallId: string
+): CampaignToolRuntime {
+  // P1-Fix5: prefer ctx.sessionId (passed by the real SDK runtime as the
+  // 5th execute arg). Fall back to toolCallId-based lookup if the host
+  // passes only 4 args (older SDK type declaration).
+  const sessionId = ctx?.sessionId ?? resolveSessionByToolCallId(toolCallId);
+  if (!sessionId) {
+    throw new Error("track1_tool_session_not_found");
+  }
+  const runtime = resolver.resolveToolRuntime(sessionId);
+  if (!runtime) {
+    throw new Error("track1_tool_runtime_not_found");
+  }
+  return runtime;
+}
+
+// Per-plugin toolCallId → sessionId fallback map, populated by
+// before_tool_call when it allows a tool call. This is only used when
+// the SDK runtime does not pass ctx as the 5th execute argument.
+const toolCallSessionMap = new Map<string, string>();
+
+export function registerToolCallSession(toolCallId: string, sessionId: string): void {
+  toolCallSessionMap.set(toolCallId, sessionId);
+}
+
+export function clearToolCallSession(toolCallId: string): void {
+  toolCallSessionMap.delete(toolCallId);
+}
+
+function resolveSessionByToolCallId(toolCallId: string): string | undefined {
+  return toolCallSessionMap.get(toolCallId);
 }

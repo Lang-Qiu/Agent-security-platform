@@ -11,8 +11,9 @@ import {
 
 // -- happy path ------------------------------------------------------------
 
-test("REQ-T1-DEMO-010 ingest client requires authenticated matching acknowledgement", async () => {
+test("REQ-T1-DEMO-010 ingest client POSTs snapshot without sequence in URL", async () => {
   const calls: Array<{
+    method: string;
     url: string;
     headers: Readonly<Record<string, string>>;
     body: string;
@@ -21,8 +22,7 @@ test("REQ-T1-DEMO-010 ingest client requires authenticated matching acknowledgem
     makeCampaignPluginConfig(),
     {
       async request(method, url, headers, body) {
-        assert.equal(method, "PUT");
-        calls.push({ url: url.href, headers, body });
+        calls.push({ method, url: url.href, headers, body });
         return {
           status: 202,
           body: JSON.stringify(makeIngestSnapshotAck())
@@ -34,13 +34,35 @@ test("REQ-T1-DEMO-010 ingest client requires authenticated matching acknowledgem
   const envelope = makeCampaignSnapshotEnvelope();
   const ack = await client.appendSnapshot(envelope);
   assert.equal(ack.sequence, 1);
+  // P1-Fix3: must be POST, URL must NOT include sequence suffix
+  assert.equal(calls[0]?.method, "POST");
   assert.equal(
     calls[0]?.url,
-    "http://backend:3001/internal/track1/campaigns/campaign%3At1%3A0123456789abcdef0123456789abcdef/snapshots/1"
+    "http://backend:3001/internal/track1/campaigns/campaign%3At1%3A0123456789abcdef0123456789abcdef/snapshots"
   );
   assert.match(calls[0]?.headers.authorization ?? "", /^Bearer [A-Za-z0-9_-]+$/);
   assert.equal(calls[0]?.headers["content-type"], "application/json");
   assert.equal(calls[0]?.body.includes("SECRET_SENTINEL"), false);
+});
+
+// P1-Fix4: envelope must pass normalizeTrack1CampaignSnapshotEnvelope before sending
+
+test("REQ-T1-DEMO-010 ingest client rejects envelope that fails shared normalization", async () => {
+  const client = new Track1IngestClient(makeCampaignPluginConfig(), {
+    async request() {
+      return { status: 202, body: JSON.stringify(makeIngestSnapshotAck()) };
+    }
+  });
+  // Tamper with a field the shared normalizer validates (scenario_id must be
+  // from the fixed TRACK1_SCENARIO_IDS set)
+  const badEnvelope = {
+    ...makeCampaignSnapshotEnvelope(),
+    scenario_id: "FOREIGN-SCENARIO"
+  };
+  await assert.rejects(
+    () => client.appendSnapshot(badEnvelope),
+    /track1_ingest_failed/
+  );
 });
 
 // -- fail-closed without token / backend leak ------------------------------

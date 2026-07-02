@@ -611,6 +611,16 @@ test("REQ-T1-SUPERVISION-UI-009 rejects invalid tool state-change or status valu
   assert.equal(module.normalizeSandboxSupervisionEventView(badStatusInput), null);
 });
 
+test("REQ-T1-DEMO-010 accepts the simulated tool state-change at the shared boundary", async () => {
+  const module = await loadContract() as any;
+  const input = makeEventView("tool_result");
+  (input.payload as any).state_change = "simulated";
+
+  const normalized = module.normalizeSandboxSupervisionEventView(input);
+
+  assert.equal(normalized?.payload.state_change, "simulated");
+});
+
 test("REQ-T1-SUPERVISION-UI-009 rejects arbitrary payload keys on view records", async () => {
   const module = await loadContract() as any;
 

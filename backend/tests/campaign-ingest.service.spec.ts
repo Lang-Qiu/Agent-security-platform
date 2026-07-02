@@ -2134,10 +2134,17 @@ test("REQ-T1-DEMO-010 rejects tool_name not in approved closed set", async () =>
 // CAMPAIGN_SNAPSHOT_INVALID, blocking Phase 3 from entering Campaign ingest.
 
 test("REQ-T1-DEMO-010 accepts tool_result with state_change=simulated from Phase 3", async () => {
-  const { service, repository } = await makeStartedService();
+  const repository = makeRepository();
+  const taskRepository = new InMemoryTaskRepository();
+  const { CampaignIngestService } = await loadServiceModule();
+  const service = new CampaignIngestService(repository, taskRepository);
+  service.startCampaign(makeCampaignStartEnvelope());
   const baseSnapshot = makeCampaignSnapshotForCase(0, 1, 1, null);
   const { calculateTrack1SnapshotSha256 } = await import(
     "../../shared/contracts/campaign-ingest.ts"
+  );
+  const { SupervisionService } = await import(
+    "../src/modules/supervision/supervision.service.ts"
   );
 
   // Add a tool_result event with state_change="simulated" — this is what
@@ -2180,6 +2187,18 @@ test("REQ-T1-DEMO-010 accepts tool_result with state_change=simulated from Phase
 
   const stored = repository.findById(FIXED_CAMPAIGN_ID);
   assert.ok(stored, "snapshot with state_change=simulated must be accepted");
+
+  const detail = new SupervisionService(taskRepository).getSessionDetail(
+    baseSnapshot.result.details.session_id!
+  );
+  const projectedToolResult = detail.events.find(
+    (event) => event.event_type === "tool_result"
+  );
+  assert.equal(
+    projectedToolResult?.payload.state_change,
+    "simulated",
+    "public supervision detail must preserve the accepted closed-set value"
+  );
 });
 
 // R33 (Phase 2 rework review 4 P1 #3): constant projection makes R26's

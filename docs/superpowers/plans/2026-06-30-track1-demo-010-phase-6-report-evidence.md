@@ -58,11 +58,17 @@ flowchart LR
   T1 --> T3
   T1 --> T4
   T3 --> T5
+  T4 --> T5
   T2 --> T6
-  T4 --> T6
   T5 --> T6
   T6 --> T7
 ```
+
+After P6-T1 is accepted, P6-T2, P6-T3, and P6-T4 are the authorized parallel
+wave. P6-T5 starts only after both P6-T3 and P6-T4 are accepted. This gives
+P6-T4 exclusive ownership of the first `deploy/track1/compose.track1.yml`
+change and P6-T5 exclusive ownership of the subsequent change; they must never
+write or merge that file concurrently.
 
 | Task | Deliverable | Commit |
 | --- | --- | --- |
@@ -736,6 +742,8 @@ git commit -m "feat(track1): capture campaign UI evidence"
 ```
 
 ## P6-T5: Digest-Pinned Deterministic PDF Builder
+
+**Dependencies:** P6-T3 and P6-T4.
 
 **Files:**
 

@@ -10,7 +10,14 @@ import type {
   SandboxToolResultPayload
 } from "../../../../shared/types/sandbox.ts";
 import type { BaseResult, SandboxRunResultDetails } from "../../../../shared/types/result.ts";
-import { sha256MonitorValue, createFrozenMonitorSnapshot, createToolArgumentsRef, createToolTargetRef } from "./content-boundary.ts";
+import {
+  sha256MonitorValue,
+  createFrozenMonitorSnapshot,
+  createToolArgumentsRef,
+  createToolTargetRef,
+  collectRawToolArgumentStrings,
+  isValidSha256Hex
+} from "./content-boundary.ts";
 import {
   Track1MonitorError,
   MONITOR_FAIL_CLOSED_PROPOSAL,
@@ -72,6 +79,9 @@ export interface ObservedMemoryValue {
   memory_entry_id: string;
   content: string;
   content_ref: string;
+  // P1-Fix9: optional envelope-provided content_sha256. When present, the
+  // monitor uses this hash directly instead of re-hashing `content`.
+  content_sha256?: string;
 }
 
 // -- default runtime ports -------------------------------------------------
@@ -535,9 +545,12 @@ export class ObservedMonitoredSession {
     }
 
     // Reject proposals echoing raw model/tool content
+    // P1-Fix9: include raw tool param strings (e.g. send_email body,
+    // write_file content, call_api body values) in leak detection.
     const sensitiveValues = [
       this.#latestPair.input.content,
-      this.#latestPair.output.content
+      this.#latestPair.output.content,
+      ...collectRawToolArgumentStrings(normalizedRequest)
     ].filter((v) => v.length > 0);
     if (
       sensitiveValues.some(
@@ -687,9 +700,22 @@ export class ObservedMonitoredSession {
       throw new Track1MonitorError("monitor_state_invalid");
     }
 
+    // P1-Fix9: accept both the legacy 4-key shape and the envelope 5-key
+    // shape (with content_sha256). The envelope-provided content_sha256, when
+    // present and valid, is used directly instead of re-hashing `content`.
+    const REQUIRED_MEMORY_KEYS = ["session_id", "memory_entry_id", "content", "content_ref"] as const;
+    const hasEnvelopeSha256 =
+      isPlainObject(value) &&
+      Object.prototype.hasOwnProperty.call(value, "content_sha256");
+
     if (
       !isPlainObject(value) ||
-      !hasExactKeys(value, ["session_id", "memory_entry_id", "content", "content_ref"])
+      !hasExactKeys(
+        value,
+        hasEnvelopeSha256
+          ? [...REQUIRED_MEMORY_KEYS, "content_sha256"]
+          : REQUIRED_MEMORY_KEYS
+      )
     ) {
       this.#seal();
       throw new Track1MonitorError("monitor_model_request_invalid");
@@ -706,7 +732,16 @@ export class ObservedMonitoredSession {
       throw new Track1MonitorError("monitor_model_request_invalid");
     }
 
-    const sha256 = sha256MonitorValue(value.content);
+    // P1-Fix9: prefer envelope content_sha256 over re-hashing
+    const envelopeSha256 = hasEnvelopeSha256
+      ? (value as { content_sha256: unknown }).content_sha256
+      : undefined;
+    if (envelopeSha256 !== undefined && !isValidSha256Hex(envelopeSha256)) {
+      this.#seal();
+      throw new Track1MonitorError("monitor_model_request_invalid");
+    }
+
+    const sha256 = envelopeSha256 ?? sha256MonitorValue(value.content);
     const payload: SandboxMemoryPayload = {
       memory_entry_id: value.memory_entry_id,
       content_ref: value.content_ref,

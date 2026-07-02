@@ -88,12 +88,16 @@ flowchart LR
 
 ## Shared Phase Test Fixtures
 
-Create in P3-T1 and extend without changing existing exports:
+Fixture ownership is exclusive:
 
-```text
-engines/sandbox/tests/fixtures/observed-monitor.fixture.ts
-integrations/openclaw/tests/fixtures/openclaw-plugin.fixture.ts
-```
+- P3-T1 creates
+  `engines/sandbox/tests/fixtures/observed-monitor.fixture.ts`.
+- P3-T3 creates
+  `integrations/openclaw/tests/fixtures/openclaw-plugin.fixture.ts`.
+- Later dependent tasks may extend the fixture owned by their accepted
+  predecessor without changing existing exports.
+- P3-T4 does not create or modify either shared fixture, so it may run in
+  parallel with the P3-T1 -> P3-T2 branch and P3-T3.
 
 The engine fixture must export fresh factories:
 

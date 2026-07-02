@@ -354,8 +354,30 @@ function isSafeRuleId(value: string): boolean {
 const ISO_8601_REGEX =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(Z|[+-]\d{2}:\d{2})$/;
 
-const SAFE_REF_PATTERN =
-  /^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s<>"{}|\\^`\x00-\x1f\x7f?&#]+$/;
+const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
+const FILTER_CONTEXT_REF_PATTERN =
+  /^filter-context:\/\/track1\/sha256\/([a-f0-9]{64})$/;
+const SHA256_REF_PATTERN = /^sha256:\/\/([a-f0-9]{64})$/;
+const SIMULATED_TARGET_REF_PATTERN =
+  /^simulated-target:\/\/(send_email|read_file|write_file|call_api)\/([a-f0-9]{64})$/;
+const FIXED_MODEL_REF = "fixture-model://track1/deterministic";
+const FIXED_MODEL_OUTPUT_REF = "fixture://track1/model-output/deterministic";
+
+const EVENT_ID_PREFIXES: Record<string, string> = {
+  model_input: "model-input",
+  model_output: "model-output",
+  tool_request: "tool-request",
+  tool_result: "tool-result",
+  policy_decision: "policy-decision"
+};
+
+const EVENT_SOURCES: Record<string, string> = {
+  model_input: "agent",
+  model_output: "model",
+  tool_request: "agent",
+  tool_result: "tool",
+  policy_decision: "policy"
+};
 
 function isValidCalendarDate(isoString: string): boolean {
   const m = ISO_8601_REGEX.exec(isoString);
@@ -366,9 +388,21 @@ function isValidCalendarDate(isoString: string): boolean {
   const hour = parseInt(m[4], 10);
   const min = parseInt(m[5], 10);
   const sec = parseInt(m[6], 10);
+  const zone = m[7];
   if (month < 1 || month > 12) return false;
   if (day < 1) return false;
   if (hour > 23 || min > 59 || sec > 59) return false;
+  if (zone !== "Z") {
+    const zoneHour = parseInt(zone.slice(1, 3), 10);
+    const zoneMinute = parseInt(zone.slice(4, 6), 10);
+    if (
+      zoneHour > 14 ||
+      zoneMinute > 59 ||
+      (zoneHour === 14 && zoneMinute !== 0)
+    ) {
+      return false;
+    }
+  }
   const daysInMonth = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   if (month === 2) {
     const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
@@ -379,7 +413,6 @@ function isValidCalendarDate(isoString: string): boolean {
 }
 
 const FIXED_RESULT_SUMMARIES = new Set([
-  "Monitored sandbox session failed",
   "Monitored sandbox session blocked",
   "Monitored sandbox session completed"
 ]);
@@ -392,11 +425,9 @@ const MONITOR_EVIDENCE_REFS: Record<string, readonly string[]> = {
   policy_decision: ["evidence://track1/monitor/policy-decision"]
 };
 
-const REPLAY_EVIDENCE_PREFIX = "evidence://track1/";
-
 const RESULT_BASE_KEYS: readonly string[] = [
   "task_id", "task_type", "engine_type", "status", "risk_level",
-  "summary", "details", "created_at", "updated_at", "finished_at"
+  "summary", "details", "created_at", "updated_at", "finished_at", "metadata"
 ];
 
 const MONITOR_METADATA_KEYS: readonly string[] = [
@@ -405,16 +436,57 @@ const MONITOR_METADATA_KEYS: readonly string[] = [
   "provider_failure_count"
 ];
 
+function hasExactKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[]
+): boolean {
+  const actual = Object.keys(value).sort();
+  const sortedExpected = [...expected].sort();
+  return (
+    actual.length === sortedExpected.length &&
+    actual.every((key, index) => key === sortedExpected[index])
+  );
+}
+
+function isCanonicalSequencedId(
+  value: string,
+  prefix: string,
+  caseId: string
+): boolean {
+  const expectedPrefix = `${prefix}:${caseId}:`;
+  return (
+    value.startsWith(expectedPrefix) &&
+    /^\d{3}$/.test(value.slice(expectedPrefix.length))
+  );
+}
+
+function isCanonicalResultRef(value: string, callId: string): boolean {
+  const prefix = `simulated-result://${callId}/`;
+  return (
+    value.startsWith(prefix) &&
+    SHA256_HEX_PATTERN.test(value.slice(prefix.length))
+  );
+}
+
+type CatalogRuleMetadata = {
+  reason: string;
+  reason_code: string;
+  action: string;
+  rule_id: string;
+  stages: readonly ("model_output" | "tool_request")[];
+};
+
 function buildCatalogReasonMap(
   catalog: readonly Track1FilterRule[]
-): Map<string, { reason: string; reason_code: string; action: string; rule_id: string }> {
-  const map = new Map<string, { reason: string; reason_code: string; action: string; rule_id: string }>();
+): Map<string, CatalogRuleMetadata> {
+  const map = new Map<string, CatalogRuleMetadata>();
   for (const rule of catalog) {
     map.set(rule.rule_id, {
       reason: rule.reason,
       reason_code: rule.reason_code,
       action: rule.action,
-      rule_id: rule.rule_id
+      rule_id: rule.rule_id,
+      stages: [...rule.stages]
     });
   }
   return map;
@@ -423,16 +495,12 @@ function buildCatalogReasonMap(
 function validateDemoResult(
   nr: BaseResult<SandboxRunResultDetails>,
   caseId: string,
-  catalogRuleMap: Map<string, { reason: string; reason_code: string; action: string; rule_id: string }>
+  catalogRuleMap: Map<string, CatalogRuleMetadata>
 ): boolean {
   // -- 1. Exact key set --
-  const hasMetadata = "metadata" in nr;
-  const nrKeys = Object.keys(nr).sort();
-  const expectedKeys = hasMetadata
-    ? [...RESULT_BASE_KEYS, "metadata"].sort()
-    : [...RESULT_BASE_KEYS].sort();
-  if (nrKeys.length !== expectedKeys.length) return false;
-  if (!nrKeys.every((k, i) => k === expectedKeys[i])) return false;
+  if (!hasExactKeys(nr as unknown as Record<string, unknown>, RESULT_BASE_KEYS)) {
+    return false;
+  }
 
   // -- 1b. Summary is a fixed monitor value --
   if (!FIXED_RESULT_SUMMARIES.has(nr.summary)) return false;
@@ -479,14 +547,14 @@ function validateDemoResult(
     expectedRisk = "high";
     expectedSummary = "Monitored sandbox session blocked";
     expectedBlocked = true;
-  } else if (hasAsk) {
-    expectedStatus = "finished";
-    expectedRisk = "medium";
-    expectedSummary = "Monitored sandbox session completed";
-    expectedBlocked = false;
   } else if (hasAlert) {
     expectedStatus = "finished";
     expectedRisk = "high";
+    expectedSummary = "Monitored sandbox session completed";
+    expectedBlocked = false;
+  } else if (hasAsk) {
+    expectedStatus = "finished";
+    expectedRisk = "medium";
     expectedSummary = "Monitored sandbox session completed";
     expectedBlocked = false;
   } else {
@@ -512,74 +580,135 @@ function validateDemoResult(
   }
 
   // ---- 7. Metadata shape and counter validation ----
-  if (hasMetadata) {
-    const meta = nr.metadata as Record<string, unknown>;
-    if (!isPlainObject(meta)) return false;
-    const metaKeys = Object.keys(meta).sort();
-    if (metaKeys.length !== 1 || metaKeys[0] !== "monitor") return false;
-    const mon = meta.monitor as Record<string, unknown>;
-    if (!isPlainObject(mon)) return false;
-    const monKeys = Object.keys(mon).sort();
-    const sortedMonKeys = [...MONITOR_METADATA_KEYS].sort();
-    if (monKeys.length !== sortedMonKeys.length) return false;
-    for (let i = 0; i < sortedMonKeys.length; i++) {
-      if (monKeys[i] !== sortedMonKeys[i]) return false;
-    }
-    if (mon.schema_version !== "track1-monitor.v1") return false;
-    // Counters must match actual event/decision counts
-    const modelInputCount = (details.events ?? []).filter((e) => e.event_type === "model_input").length;
-    const toolRequestCount = (details.events ?? []).filter((e) => e.event_type === "tool_request").length;
-    const decisionCount = decisions.length;
-    const executedCount = (details.events ?? []).filter(
-      (e) => e.event_type === "tool_result" && (e.payload as any)?.status === "success"
-    ).length;
-    const interceptedCount = (details.events ?? []).filter(
-      (e) => e.event_type === "tool_result" && (e.payload as any)?.status === "rejected"
-    ).length;
-    if (mon.model_call_count !== modelInputCount) return false;
-    if (mon.tool_call_count !== toolRequestCount) return false;
-    if (mon.decision_count !== decisionCount) return false;
-    if (mon.executed_tool_count !== executedCount) return false;
-    if (mon.intercepted_tool_count !== interceptedCount) return false;
-    // provider_failure_count: finite non-negative integer (cannot cross-validate without provider state)
-    if (typeof mon.provider_failure_count !== "number" || !Number.isInteger(mon.provider_failure_count)
-        || mon.provider_failure_count < 0 || !Number.isFinite(mon.provider_failure_count)) return false;
-  }
+  const meta = nr.metadata as Record<string, unknown>;
+  if (!isPlainObject(meta) || !hasExactKeys(meta, ["monitor"])) return false;
+  const mon = meta.monitor as Record<string, unknown>;
+  if (!isPlainObject(mon) || !hasExactKeys(mon, MONITOR_METADATA_KEYS)) return false;
+  if (mon.schema_version !== "track1-monitor.v1") return false;
+  // Counters must match actual event/decision counts.
+  const modelInputCount = details.events.filter((e) => e.event_type === "model_input").length;
+  const toolRequestCount = details.events.filter((e) => e.event_type === "tool_request").length;
+  const decisionCount = decisions.length;
+  const executedCount = details.events.filter(
+    (e) => e.event_type === "tool_result" && (e.payload as any)?.status === "success"
+  ).length;
+  const interceptedCount = details.events.filter(
+    (e) => e.event_type === "tool_result" && (e.payload as any)?.status === "rejected"
+  ).length;
+  if (mon.model_call_count !== modelInputCount) return false;
+  if (mon.tool_call_count !== toolRequestCount) return false;
+  if (mon.decision_count !== decisionCount) return false;
+  if (mon.executed_tool_count !== executedCount) return false;
+  if (mon.intercepted_tool_count !== interceptedCount) return false;
+  if (mon.provider_failure_count !== 0) return false;
 
-  // -- 8. Closed payload reference validation --
-  const FIXED_MODEL_REF = "fixture-model://track1/deterministic";
-  const CANONICAL_ID_PREFIXES = ["task:", "session:", "model-input:", "model-output:",
-    "tool-request:", "tool-result:", "policy-decision:", "decision:",
-    "blocked-record:", "alert:", "call:", "memory-write:", "memory-read:"];
+  // -- 8. Closed event, identifier, and payload validation --
+  const expectedCallId = `call:${caseId}`;
+  const toolRequests = new Map<string, { tool_name: string }>();
   for (const evt of details.events) {
     const p = evt.payload as Record<string, unknown>;
-    // model_ref must be the fixed value
-    if (typeof (p as any)?.model_ref === "string" && (p as any).model_ref !== FIXED_MODEL_REF) return false;
-    // content_ref must use safe-ref grammar
-    if (typeof p?.content_ref === "string" && !SAFE_REF_PATTERN.test(p.content_ref)) return false;
-    // Tool refs: target_ref, arguments_ref, result_ref, call_id
-    if (typeof (p as any)?.target_ref === "string" && !SAFE_REF_PATTERN.test((p as any).target_ref)) return false;
-    if (typeof (p as any)?.arguments_ref === "string" && !SAFE_REF_PATTERN.test((p as any).arguments_ref)) return false;
-    if (typeof (p as any)?.result_ref === "string" && !SAFE_REF_PATTERN.test((p as any).result_ref)) return false;
-    // All *_id fields must use canonical prefixes or safe refs
-    for (const [key, val] of Object.entries(p as Record<string, unknown>)) {
-      if (key.endsWith("_id") && typeof val === "string") {
-        const hasCanonicalPrefix = CANONICAL_ID_PREFIXES.some((pfx) => val.startsWith(pfx));
-        const isSafeRef = SAFE_REF_PATTERN.test(val);
-        if (!hasCanonicalPrefix && !isSafeRef) return false;
+    const eventIdPrefix = EVENT_ID_PREFIXES[evt.event_type];
+    if (!eventIdPrefix) return false;
+    if (!isCanonicalSequencedId(evt.event_id, eventIdPrefix, caseId)) return false;
+    if (evt.source !== EVENT_SOURCES[evt.event_type]) return false;
+
+    switch (evt.event_type) {
+      case "model_input": {
+        if (!hasExactKeys(p, ["model_ref", "content_ref", "content_sha256"])) {
+          return false;
+        }
+        if (p.model_ref !== FIXED_MODEL_REF || typeof p.content_ref !== "string") {
+          return false;
+        }
+        const match = FILTER_CONTEXT_REF_PATTERN.exec(p.content_ref);
+        if (!match || match[1] !== p.content_sha256) return false;
+        break;
       }
+      case "model_output": {
+        if (!hasExactKeys(p, ["model_ref", "content_ref", "content_sha256"])) {
+          return false;
+        }
+        if (
+          p.model_ref !== FIXED_MODEL_REF ||
+          p.content_ref !== FIXED_MODEL_OUTPUT_REF ||
+          typeof p.content_sha256 !== "string" ||
+          !SHA256_HEX_PATTERN.test(p.content_sha256)
+        ) {
+          return false;
+        }
+        break;
+      }
+      case "tool_request": {
+        if (!hasExactKeys(p, ["call_id", "tool_name", "target_ref", "arguments_ref"])) {
+          return false;
+        }
+        if (
+          p.call_id !== expectedCallId ||
+          typeof p.tool_name !== "string" ||
+          typeof p.target_ref !== "string" ||
+          typeof p.arguments_ref !== "string"
+        ) {
+          return false;
+        }
+        const targetMatch = SIMULATED_TARGET_REF_PATTERN.exec(p.target_ref);
+        const argumentsMatch = SHA256_REF_PATTERN.exec(p.arguments_ref);
+        if (
+          !targetMatch ||
+          !argumentsMatch ||
+          targetMatch[1] !== p.tool_name ||
+          targetMatch[2] !== argumentsMatch[1]
+        ) {
+          return false;
+        }
+        toolRequests.set(expectedCallId, { tool_name: p.tool_name });
+        break;
+      }
+      case "tool_result": {
+        if (!hasExactKeys(p, ["call_id", "tool_name", "status", "result_ref", "state_change"])) {
+          return false;
+        }
+        if (
+          p.call_id !== expectedCallId ||
+          typeof p.tool_name !== "string" ||
+          typeof p.result_ref !== "string" ||
+          !isCanonicalResultRef(p.result_ref, expectedCallId)
+        ) {
+          return false;
+        }
+        const request = toolRequests.get(expectedCallId);
+        if (!request || request.tool_name !== p.tool_name) return false;
+        if (p.status !== "rejected" || p.state_change !== "none") return false;
+        break;
+      }
+      case "policy_decision":
+        break;
+      default:
+        return false;
     }
   }
-  // All decision/alert/blocked-record IDs must be canonical or safe refs
+
+  // Every decision and outcome identifier is bound to this fixed case.
   for (const d of decisions) {
-    if (!CANONICAL_ID_PREFIXES.some((pfx) => d.decision_id.startsWith(pfx))) return false;
-    if (!SAFE_REF_PATTERN.test(d.policy_id)) return false;
+    if (!isCanonicalSequencedId(d.decision_id, "decision", caseId)) return false;
+    if (!details.events.some((event) => event.event_id === d.subject_event_id)) {
+      return false;
+    }
   }
   for (const a of alerts) {
-    if (!CANONICAL_ID_PREFIXES.some((pfx) => a.alert_id.startsWith(pfx))) return false;
+    if (!isCanonicalSequencedId(a.alert_id, "alert", caseId)) return false;
+    if (
+      a.risk_level !== "high" ||
+      a.category !== "monitor_policy_alert" ||
+      a.title !== "Monitor policy alert"
+    ) {
+      return false;
+    }
   }
   for (const b of blockedRecords) {
-    if (!CANONICAL_ID_PREFIXES.some((pfx) => b.blocked_record_id.startsWith(pfx))) return false;
+    if (!isCanonicalSequencedId(b.blocked_record_id, "blocked-record", caseId)) {
+      return false;
+    }
+    if ("resource_ref" in b) return false;
   }
 
   // -- 9. Decision reason/reason_code/action must match catalog --
@@ -595,9 +724,25 @@ function validateDemoResult(
       continue;
     }
 
+    const subjectEvent = details.events.find(
+      (event) => event.event_id === d.subject_event_id
+    );
+    if (
+      !subjectEvent ||
+      (subjectEvent.event_type !== "model_output" &&
+        subjectEvent.event_type !== "tool_request")
+    ) {
+      return false;
+    }
+    const decisionStage = subjectEvent.event_type;
+
     // Non-allow decisions: must reference catalog rules
     // Must not contain no-match evidence
     if (d.evidence_refs.includes(NO_MATCH_EVIDENCE_REF)) return false;
+    if (new Set(d.evidence_refs).size !== d.evidence_refs.length) return false;
+    for (let index = 1; index < d.evidence_refs.length; index++) {
+      if (d.evidence_refs[index] <= d.evidence_refs[index - 1]) return false;
+    }
     // Must have at least one catalog rule reference
     let hasRuleRef = false;
     for (const ref of d.evidence_refs) {
@@ -606,6 +751,7 @@ function validateDemoResult(
         const ruleId = m[1];
         const ruleMeta = catalogRuleMap.get(ruleId);
         if (!ruleMeta) return false; // unknown rule ID
+        if (!ruleMeta.stages.includes(decisionStage)) return false;
         hasRuleRef = true;
       } else {
         return false; // unparseable evidence ref in base-filter decision
@@ -614,7 +760,7 @@ function validateDemoResult(
     if (!hasRuleRef) return false;
 
     // reason and reason_code must match the winning rule
-    const referencedRules: { reason: string; reason_code: string; action: string; rule_id: string }[] = [];
+    const referencedRules: CatalogRuleMetadata[] = [];
     for (const ref of d.evidence_refs) {
       const m = RULE_EVIDENCE_PATTERN.exec(ref);
       if (m) {
@@ -641,20 +787,10 @@ function validateDemoResult(
 
   // -- 10. Event evidence_refs --
   for (const evt of details.events) {
-    const et = evt.event_type;
-    if (et === "memory_write" || et === "memory_read") {
-      for (const ref of evt.evidence_refs) {
-        if (!ref.startsWith(REPLAY_EVIDENCE_PREFIX)) return false;
-        if (!SAFE_REF_PATTERN.test(ref)) return false;
-      }
-    } else if (MONITOR_EVIDENCE_REFS[et]) {
-      const approved = MONITOR_EVIDENCE_REFS[et];
-      if (evt.evidence_refs.length !== approved.length) return false;
-      for (let i = 0; i < approved.length; i++) {
-        if (evt.evidence_refs[i] !== approved[i]) return false;
-      }
-    } else {
-      return false; // unknown event type
+    const approved = MONITOR_EVIDENCE_REFS[evt.event_type];
+    if (!approved || evt.evidence_refs.length !== approved.length) return false;
+    for (let i = 0; i < approved.length; i++) {
+      if (evt.evidence_refs[i] !== approved[i]) return false;
     }
   }
 
@@ -662,6 +798,9 @@ function validateDemoResult(
   for (const alert of alerts) {
     const dec = decisions.find((d: any) => d.decision_id === alert.decision_id);
     if (!dec) return false;
+    if (alerts.filter((item) => item.decision_id === dec.decision_id).length !== 1) {
+      return false;
+    }
     if (alert.subject_event_id !== dec.subject_event_id) return false;
     if (alert.reason !== dec.reason) return false;
     if (alert.evidence_refs.length !== dec.evidence_refs.length) return false;
@@ -672,6 +811,9 @@ function validateDemoResult(
   for (const br of blockedRecords) {
     const dec = decisions.find((d: any) => d.decision_id === br.decision_id);
     if (!dec) return false;
+    if (blockedRecords.filter((item) => item.decision_id === dec.decision_id).length !== 1) {
+      return false;
+    }
     if (br.subject_event_id !== dec.subject_event_id) return false;
     if (br.reason !== dec.reason) return false;
     if (br.evidence_refs.length !== dec.evidence_refs.length) return false;
