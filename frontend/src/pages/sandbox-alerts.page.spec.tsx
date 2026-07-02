@@ -1224,6 +1224,7 @@ function mockCampaignApi(input: {
   failDetailAfter?: number;
   evidenceNotReady?: boolean;
   failSummary?: boolean;
+  extraSummaries?: Track1CampaignSummary[];
 } = {}) {
   const detail = input.detail ?? makeCampaignDetail();
   const baseSummary = input.summary ?? makeCampaignSummary({
@@ -1245,12 +1246,23 @@ function mockCampaignApi(input: {
       if (input.failSummary) {
         return new Response("summary offline", { status: 503 });
       }
+      // When extraSummaries is provided, simulate a backend with >50 campaigns
+      // by returning only summaries whose campaign_id matches the q filter.
+      // Without the q filter, return only the first 50 (the backend ROW_LIMIT).
+      const url = new URL(path, "http://test");
+      const q = url.searchParams.get("q");
+      const allSummaries = input.extraSummaries
+        ? [currentSummary, ...input.extraSummaries]
+        : [currentSummary];
+      const matched = q
+        ? allSummaries.filter((s) => s.campaign_id.includes(q))
+        : allSummaries.slice(0, 50);
       return {
         ok: true,
         json: async () => ({
           success: true,
           message: "ok",
-          data: [currentSummary],
+          data: matched,
           error_code: null,
           request_id: "req_campaign_test"
         })
@@ -1469,6 +1481,86 @@ describe("REQ-T1-DEMO-010 campaign supervision mode", () => {
     );
     // The campaign-overview header must NOT appear — no summary to show.
     expect(screen.queryByTestId("campaign-overview")).not.toBeInTheDocument();
+  }, 20000);
+
+  test("campaign summary query uses q filter so deep links work beyond 50-cap", async () => {
+    // Simulate a backend with >50 campaigns. Without the q filter, the
+    // target campaign's summary would be beyond the 50-row limit and
+    // unavailable. With q=id, the backend returns only the matching summary.
+    const detail = makeCampaignDetail({ status: "running" });
+    const targetSummary = makeCampaignSummary({
+      status: "running",
+      campaign_id: detail.campaign_id
+    });
+    // Generate 60 extra summaries with different campaign IDs that sort
+    // BEFORE the target so the target is beyond the 50-row cap.
+    const extraSummaries: Track1CampaignSummary[] = Array.from(
+      { length: 60 },
+      (_, i) =>
+        makeCampaignSummary({
+          status: "running",
+          campaign_id: `campaign:t1:${String(i).padStart(32, "0")}`
+        })
+    );
+    // Place target at the END so without q, it's beyond the 50-row cap.
+    const allSummaries = [...extraSummaries, targetSummary];
+    const fetchMock = vi.fn(async (resource: string | URL) => {
+      const path = String(resource);
+      if (
+        path === "/api/supervision/campaigns" ||
+        /^\/api\/supervision\/campaigns\?/.test(path)
+      ) {
+        const url = new URL(path, "http://test");
+        const q = url.searchParams.get("q");
+        const matched = q
+          ? allSummaries.filter((s) => s.campaign_id.includes(q))
+          : allSummaries.slice(0, 50);
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            message: "ok",
+            data: matched,
+            error_code: null,
+            request_id: "req_campaign_test"
+          })
+        };
+      }
+      if (/\/api\/supervision\/campaigns\/[^/]+$/.test(path)) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            message: "ok",
+            data: detail,
+            error_code: null,
+            request_id: "req_campaign_test"
+          })
+        };
+      }
+      throw new Error(`Unexpected: ${path}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await renderAppAtRoute(
+      `/results/sandbox?campaign_id=${encodeURIComponent(CAMPAIGN_ID)}`
+    );
+
+    // The campaign-overview header must render — the q filter found it
+    // even though it's beyond the 50-row cap.
+    expect(
+      await screen.findByTestId("campaign-overview")
+    ).toBeInTheDocument();
+
+    // Verify the list request included q=CAMPAIGN_ID.
+    const listCalls = fetchMock.mock.calls.filter(
+      ([resource]) =>
+        typeof resource === "string" &&
+        /^\/api\/supervision\/campaigns\?/.test(resource)
+    );
+    expect(listCalls.length).toBeGreaterThan(0);
+    const lastListUrl = String(listCalls[listCalls.length - 1][0]);
+    expect(lastListUrl).toContain(`q=${encodeURIComponent(CAMPAIGN_ID)}`);
   }, 20000);
 
   test("bidirectional mode switch does not violate Rules of Hooks", async () => {
@@ -1797,8 +1889,10 @@ describe("REQ-T1-DEMO-010 campaign supervision mode", () => {
     const backButton = await screen.findByRole("button", {
       name: /Back to campaign cases/i
     });
+    // Use findByTestId (async) instead of getByTestId (sync) to avoid a race
+    // where the back button appears before the inspector DOM has rendered.
     expect(
-      screen.getByTestId("supervision-session-inspector")
+      await screen.findByTestId("supervision-session-inspector")
     ).toBeInTheDocument();
     expect(
       screen.queryByTestId("campaign-agent-list")
@@ -1808,11 +1902,13 @@ describe("REQ-T1-DEMO-010 campaign supervision mode", () => {
     fireEvent.click(backButton);
 
     expect(
-      screen.getByTestId("campaign-agent-list")
+      await screen.findByTestId("campaign-agent-list")
     ).toBeInTheDocument();
-    expect(
-      screen.queryByTestId("supervision-session-inspector")
-    ).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("supervision-session-inspector")
+      ).not.toBeInTheDocument();
+    });
 
     // Click an attempt to switch back to inspector view.
     fireEvent.click(

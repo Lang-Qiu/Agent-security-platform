@@ -2837,12 +2837,12 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   - P2-2: `frontend/src/services/campaign-supervision-service.ts` — `serializeCampaignQuery` now validates key set and throws on unknown keys at runtime (exact-key rejection), instead of silently ignoring them
 - RED evidence (rework):
   - P1-1: `npm run test --prefix frontend -- --run src/pages/sandbox-alerts.page.spec.tsx -t "bidirectional mode switch"` -> `Error: Rendered fewer hooks than expected. This may be caused by an accidental early return statement.` — valid behavioral RED (React Rules of Hooks violation on mode switch)
-  - P1-2: existing campaign mode tests failed when `loadCampaign` changed to also call `listCampaigns` (mock not handling list endpoint) — valid behavioral RED
+  - P1-2: The new test `campaign header shows backend summary counts, not front-end derived counts` asserts `alert_count=7` from the backend summary. On the old implementation (which used `deriveCampaignSummaryFromDetail` computing counts from `actual_action`), this assertion would fail because the derived count was 1, not 7. The behavioral RED is: old front-end derivation cannot reproduce backend-computed aggregate counts. (Note: the initial test run also produced test-fixture failures from the mock not handling the list endpoint, but the behavioral RED is the summary-count assertion mismatch, not the fixture error.)
   - P2-1: `npm run test --prefix frontend -- --run src/hooks/use-campaign-supervision-polling.spec.tsx` -> new tests for terminal-status and hidden-mount scenarios failed — valid behavioral RED
   - P2-2: `npm run test --prefix frontend -- --run src/services/campaign-supervision-service.spec.ts` -> new test expecting `serializeCampaignQuery` to throw on unknown keys failed — valid behavioral RED
 - files modified:
-  - `frontend/src/pages/SandboxAlertsPage.tsx` — extracted `SandboxAlertsPageSession`; added `data-testid="supervision-workbench"`; campaign `loadCampaign` fetches detail+summary in parallel
-  - `frontend/src/pages/sandbox-alerts.page.spec.tsx` — added `act` import; added bidirectional mode switch test; updated `mockCampaignApi` to handle list endpoint; added summary-counts and summary-unavailable tests
+  - `frontend/src/pages/SandboxAlertsPage.tsx` — extracted `SandboxAlertsPageSession`; added `data-testid="supervision-workbench"`; campaign `loadCampaign` fetches detail+summary in parallel; summary query uses `q: id` filter to bypass 50-row cap
+  - `frontend/src/pages/sandbox-alerts.page.spec.tsx` — added `act` import; added bidirectional mode switch test; updated `mockCampaignApi` to handle list endpoint with q-filter; added summary-counts, summary-unavailable, and 50-cap deep-link tests; fixed narrow-viewport test race (getByTestId -> findByTestId)
   - `frontend/src/hooks/useCampaignSupervisionPolling.ts` — `isHiddenRef` from `document.visibilityState`; `terminalStatusRef` for visibility restore guard
   - `frontend/src/hooks/use-campaign-supervision-polling.spec.tsx` — added terminal-restore and hidden-mount tests
   - `frontend/src/services/campaign-supervision-service.ts` — unknown key validation in `serializeCampaignQuery`
@@ -2851,9 +2851,11 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - constraints honored:
   - top-level `SandboxAlertsPage` hook count is constant regardless of campaign_id presence
   - campaign aggregate counts come from backend summary, not front-end derivation
+  - summary query uses `q: id` filter to locate target campaign beyond 50-row cap
   - polling does not resume for terminal campaigns on visibility restore
   - hidden-tab initial mount does not poll until visibility restores
   - `serializeCampaignQuery` rejects unknown keys at runtime (exact-key normalizer)
+  - narrow-viewport tests use async queries to avoid race conditions
   - all existing tests remain green
 - status: PHASE_5_REWORK_COMPLETE_PENDING_REVIEW
 - next blocker: user review of Phase 5 rework

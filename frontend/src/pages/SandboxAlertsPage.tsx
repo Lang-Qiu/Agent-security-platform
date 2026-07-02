@@ -212,10 +212,12 @@ function SandboxAlertsPageCampaign(props: {
       // Fetch detail and summary in parallel. The summary comes from the
       // backend's list endpoint, which computes aggregate counts (alerts,
       // blocked, asks, retries) using backend semantics — NOT derivable from
-      // the detail DTO's attempt actual_action values.
+      // the detail DTO's attempt actual_action values. Pass the campaign ID
+      // as the `q` filter so the backend returns the target summary even
+      // when more than 50 campaigns exist (the backend ROW_LIMIT).
       const [detailResult, summaryResult] = await Promise.all([
         getCampaign(id, { signal }),
-        listCampaigns({}, { signal })
+        listCampaigns({ q: id }, { signal })
       ]);
 
       if (!detailResult.data) {
