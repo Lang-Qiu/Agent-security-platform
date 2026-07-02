@@ -650,3 +650,34 @@ a {
 .supervision-inspector-outside-campaign {
   padding: 12px;
 }
+
+.campaign-mobile-back {
+  display: none;
+}
+
+@media (max-width: 1100px) {
+  .campaign-mode .campaign-workbench {
+    grid-template-columns: 1fr;
+  }
+
+  .campaign-mode .campaign-workbench.mobile-view-inspector .campaign-agents {
+    display: none;
+  }
+
+  .campaign-mode .campaign-workbench.mobile-view-list .supervision-inspector {
+    display: none;
+  }
+
+  .campaign-mobile-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 8px;
+    padding: 4px 8px;
+    border: none;
+    background: transparent;
+    color: var(--console-accent, #1677ff);
+    cursor: pointer;
+    font-size: 14px;
+  }
+}

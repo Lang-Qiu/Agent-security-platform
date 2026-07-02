@@ -245,6 +245,8 @@ function SandboxAlertsPageCampaign(props: {
   const { campaignId, searchParams, setSearchParams } = props;
 
   const sessionIdFromUrl = searchParams.get("session_id");
+  const isNarrow = useNarrowViewport();
+  const [mobileView, setMobileView] = useState<"list" | "inspector">("list");
 
   const loadCampaign = useCallback(
     async (
@@ -368,9 +370,20 @@ function SandboxAlertsPageCampaign(props: {
         }
       }
       setSearchParams(next);
+      setMobileView("inspector");
     },
     [searchParams, setSearchParams, campaignDetail]
   );
+
+  // Sync mobile view when session_id changes from external sources (deep
+  // links, default selection, campaign switch).
+  useEffect(() => {
+    setMobileView(effectiveSessionId ? "inspector" : "list");
+  }, [effectiveSessionId]);
+
+  const handleMobileBack = useCallback(() => {
+    setMobileView("list");
+  }, []);
 
   const showCampaignLoading = campaign.loading && !campaignData;
   const showSessionOutsideCampaign =
@@ -406,43 +419,60 @@ function SandboxAlertsPageCampaign(props: {
       )}
 
       {campaignDetail ? (
-        <div className="campaign-workbench">
-          <div className="campaign-agents">
-            {campaignDetail.agents.map((agent) => (
-              <CampaignAgentGroup
-                key={agent.agent_id}
-                agent={agent}
-                selectedSessionId={effectiveSessionId}
-                onSelectSession={selectSession}
-              />
-            ))}
-          </div>
+        <div
+          className={`campaign-workbench mobile-view-${mobileView}`}
+          data-narrow={isNarrow ? "true" : "false"}
+        >
+          {(!isNarrow || mobileView === "list") && (
+            <div className="campaign-agents" data-testid="campaign-agent-list">
+              {campaignDetail.agents.map((agent) => (
+                <CampaignAgentGroup
+                  key={agent.agent_id}
+                  agent={agent}
+                  selectedSessionId={effectiveSessionId}
+                  onSelectSession={selectSession}
+                />
+              ))}
+            </div>
+          )}
 
-          <aside className="supervision-inspector">
-            {showSessionOutsideCampaign ? (
-              <div className="supervision-inspector-outside-campaign">
-                <Paragraph>
-                  Session is not part of this campaign.
-                </Paragraph>
-              </div>
-            ) : effectiveSessionId ? (
-              sessionDetail ? (
-                <SupervisionSessionInspector detail={sessionDetail} />
-              ) : sessionDetailLoading ? (
-                <div className="supervision-inspector-loading">
-                  <Paragraph>Loading session detail...</Paragraph>
+          {(!isNarrow || mobileView === "inspector") && (
+            <aside className="supervision-inspector">
+              {isNarrow && effectiveSessionId && (
+                <button
+                  type="button"
+                  className="campaign-mobile-back"
+                  onClick={handleMobileBack}
+                  aria-label="Back to campaign cases"
+                >
+                  &larr; Back to cases
+                </button>
+              )}
+              {showSessionOutsideCampaign ? (
+                <div className="supervision-inspector-outside-campaign">
+                  <Paragraph>
+                    Session is not part of this campaign.
+                  </Paragraph>
                 </div>
+              ) : effectiveSessionId ? (
+                sessionDetail ? (
+                  <SupervisionSessionInspector detail={sessionDetail} />
+                ) : sessionDetailLoading ? (
+                  <div className="supervision-inspector-loading">
+                    <Paragraph>Loading session detail...</Paragraph>
+                  </div>
+                ) : (
+                  <div className="supervision-inspector-error">
+                    <Paragraph>Session detail unavailable.</Paragraph>
+                  </div>
+                )
               ) : (
-                <div className="supervision-inspector-error">
-                  <Paragraph>Session detail unavailable.</Paragraph>
+                <div className="supervision-inspector-placeholder">
+                  <Paragraph>Select an attempt to inspect.</Paragraph>
                 </div>
-              )
-            ) : (
-              <div className="supervision-inspector-placeholder">
-                <Paragraph>Select an attempt to inspect.</Paragraph>
-              </div>
-            )}
-          </aside>
+              )}
+            </aside>
+          )}
         </div>
       ) : null}
     </section>

@@ -1628,4 +1628,87 @@ describe("REQ-T1-DEMO-010 campaign supervision mode", () => {
     expect(groups[1]).toHaveAccessibleName(/agent:track1:tool-hijack/);
     expect(groups[2]).toHaveAccessibleName(/agent:track1:memory-poison/);
   });
+
+  test("REQ-T1-DEMO-010 narrow campaign mode renders one active panel at a time", async () => {
+    setNarrowViewport(true);
+    const detail = makeCampaignDetail({ status: "running" });
+    mockCampaignApi({ detail });
+    await renderAppAtRoute(
+      `/results/sandbox?campaign_id=${encodeURIComponent(CAMPAIGN_ID)}`
+    );
+
+    // At narrow viewport, default session auto-selection switches to
+    // inspector view. Wait for the back button as the inspector indicator.
+    const backButton = await screen.findByRole("button", {
+      name: /Back to campaign cases/i
+    });
+    expect(
+      screen.getByTestId("supervision-session-inspector")
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("campaign-agent-list")
+    ).not.toBeInTheDocument();
+
+    // Back button returns to the agent list.
+    fireEvent.click(backButton);
+
+    expect(
+      screen.getByTestId("campaign-agent-list")
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("supervision-session-inspector")
+    ).not.toBeInTheDocument();
+
+    // Click an attempt to switch back to inspector view.
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /Inspect T1-SC-001-C001 attempt 1/
+      })
+    );
+
+    expect(
+      await screen.findByTestId("supervision-session-inspector")
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("campaign-agent-list")
+    ).not.toBeInTheDocument();
+  }, 20000);
+
+  test("REQ-T1-DEMO-010 narrow campaign back button preserves campaign_id in URL", async () => {
+    setNarrowViewport(true);
+    const detail = makeCampaignDetail({ status: "running" });
+    mockCampaignApi({ detail });
+    const { router } = await renderAppAtRoute(
+      `/results/sandbox?campaign_id=${encodeURIComponent(CAMPAIGN_ID)}`
+    );
+
+    // Wait for inspector view (auto-selection fires).
+    const backButton = await screen.findByRole("button", {
+      name: /Back to campaign cases/i
+    });
+
+    // Click back — campaign_id must remain in URL.
+    fireEvent.click(backButton);
+
+    await waitFor(() => {
+      expect(router.state.location.search).toContain(
+        `campaign_id=${encodeURIComponent(CAMPAIGN_ID)}`
+      );
+    });
+  }, 20000);
+
+  test("REQ-T1-DEMO-010 wide campaign mode shows both panels simultaneously", async () => {
+    setNarrowViewport(false);
+    const detail = makeCampaignDetail({ status: "running" });
+    mockCampaignApi({ detail });
+    await renderAppAtRoute(
+      `/results/sandbox?campaign_id=${encodeURIComponent(CAMPAIGN_ID)}`
+    );
+
+    // At wide viewport, both panels should be present after auto-selection.
+    await screen.findByTestId("supervision-session-inspector");
+    expect(
+      screen.getByTestId("campaign-agent-list")
+    ).toBeInTheDocument();
+  }, 20000);
 });
