@@ -69,7 +69,10 @@ export interface ObservedToolResult {
   session_id: string;
   call_id: string;
   tool_name: SimulatedToolName;
-  status: "success" | "failed";
+  // P1-ISSUE12: Three-tier status — "rejected" is a valid terminal state
+  // when the tool adapter declines the call (e.g. target_not_allowed).
+  // "failed" is for tool-threw errors.
+  status: "success" | "failed" | "rejected";
   result_ref: string;
   state_change: "none" | "simulated";
 }
@@ -703,6 +706,8 @@ export class ObservedMonitoredSession {
     // P1-ISSUE12: Three-tier status — "rejected" passes through from the
     // tool adapter (target_not_allowed, etc.) and is preserved in the event
     // stream for downstream policy inspection.
+    // P1-FIX: When status is "failed", seal the session as failed so that
+    // finalize() produces a terminal "failed" state rather than "finished".
     const payload: SandboxToolResultPayload = {
       call_id: r.call_id as string,
       tool_name: r.tool_name as string,
@@ -715,6 +720,12 @@ export class ObservedMonitoredSession {
     // Clear pending call and volatile latest pair
     this.#pendingCall = null;
     this.#latestPair = null;
+
+    // P1: status "failed" triggers failSeal so the terminal finalize() result
+    // carries "failed" rather than "finished".
+    if (payload.status === "failed") {
+      this.#failSeal();
+    }
 
     return this.#buildNonTerminalResult();
   }
@@ -828,10 +839,46 @@ export class ObservedMonitoredSession {
     // Sealed sessions: an intercept seal (deny/ask at tool stage) can be
     // finalized to produce the canonical blocked result. A failure seal
     // (provider throw, correlation mismatch, malformed input) is a hard
-    // error and finalize must reject.
+    // error and finalize must reject — EXCEPT when the failure originated
+    // from a tool_result with status "failed", in which case finalize
+    // produces a terminal "failed" result.
     if (this.#lifecycle === "sealed") {
-      if (this.#failed) {
+      if (this.#failed && this.#pendingCall !== null) {
+        // Hard failure: provider throw, correlation error, or state
+        // mismatch with an unfinalized pending call — this is unrecoverable.
+        this.#clearVolatile();
         throw new Track1MonitorError("monitor_state_invalid");
+      }
+      if (this.#failed && this.#pendingCall === null && this.#pendingInput === null) {
+        // P1-FIX: Tool_result with status "failed" triggered #failSeal().
+        // This is a terminal failure — #failed is true and #pendingCall
+        // was already cleared by afterTool. Build the result with
+        // failed: true so the snapshot carries "failed" status.
+        const finalTimestamp = this.#ports.now();
+        const metadata: Track1MonitorMetadata = {
+          schema_version: "track1-monitor.v1",
+          model_call_count: this.#modelCallCount,
+          tool_call_count: this.#toolCallCount,
+          decision_count: this.#decisionCount,
+          executed_tool_count: this.#executedToolCount,
+          intercepted_tool_count: this.#interceptedToolCount,
+          provider_failure_count: this.#providerFailureCount
+        };
+        const failedResult = buildMonitorResult({
+          context: this.#context,
+          events: [...this.#events],
+          decisions: [...this.#decisions],
+          alerts: [...this.#alerts],
+          blockedRecords: [...this.#blockedRecords],
+          metadata,
+          firstTimestamp: this.#firstTimestamp,
+          finalTimestamp,
+          failed: true
+        });
+        this.#clearVolatile();
+        this.#lifecycle = "finalized";
+        this.#cachedResult = failedResult;
+        return failedResult;
       }
       if (this.#pendingInput !== null || this.#pendingCall !== null) {
         this.#clearVolatile();

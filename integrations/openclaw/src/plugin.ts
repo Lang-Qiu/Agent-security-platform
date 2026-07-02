@@ -224,6 +224,14 @@ function detectToolFailure(event: {
       if (result.isError === true) {
         return "failed";
       }
+      // P1-FIX: Real tool adapters return { content, details: { status: "rejected" } }
+      if (
+        isPlainObject(result.details) &&
+        (result.details.status === "rejected" ||
+          result.details.status === "failed")
+      ) {
+        return result.details.status === "rejected" ? "rejected" : "failed";
+      }
     }
     // 3. Parse string result as JSON and check for status
     if (typeof result === "string") {
@@ -402,9 +410,31 @@ export function registerTrack1Plugin(
           scenario_id: boundContext.scenario_id,
           case_id: boundContext.case_id
         });
+
+        // P0: Rebuild the tool runtime with the now-known identity.
+        // The session_start placeholder did not have campaign identity, so
+        // tool operations that depend on campaign_id/agent_id/session_id
+        // would have been operating on placeholder values.  After rebinding,
+        // re-create the tool runtime with the real context and register it
+        // under the same sessionId.
+        const updatedToolRuntime = runtime.createToolRuntime
+          ? runtime.createToolRuntime(boundContext)
+          : createDefaultToolRuntime(boundContext);
+        toolRuntimeRegistry.register(sessionId, updatedToolRuntime);
       }
 
-      // Cross-check envelope fields against bound context
+      // P1: Envelope identity cross-validated against native hook context.
+    // In the production path, both the envelope session_id and the SDK
+    // native ctx.agentId must match. If the SDK provides an agentId and
+    // the envelope has a different one, reject — prevents identity drift.
+    if (isNonEmptyString(ctxAgentId) && envelope.agent_id !== ctxAgentId) {
+      throw new Track1PluginHookError("track1_plugin_envelope_mismatch");
+    }
+    if (sessionId !== envelope.session_id) {
+      throw new Track1PluginHookError("track1_plugin_envelope_mismatch");
+    }
+
+    // Cross-check envelope fields against bound context
       if (
         envelope.campaign_id !== state.context.campaign_id ||
         envelope.agent_id !== state.context.agent_id ||

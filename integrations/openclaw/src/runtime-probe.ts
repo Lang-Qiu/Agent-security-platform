@@ -123,14 +123,17 @@ export function execOpenclawPluginsInspect(): PluginInspectOutput {
  *
  * without importing execFileSync or constructing Track1PluginRuntimePorts
  * themselves. The runtime ports use a minimal default decision provider
- * (allow-all) and the real ingest endpoint from plugin config.
+ * (allow-all) and a no-op ingest snapshot (since the probe verifies hook
+ * wiring, not network transport).
+ *
+ * Note: ingestSnapshot is implemented as a no-op (returns ack with a placeholder
+ * hash) rather than constructing a real Track1IngestClient because:
+ * 1. Real Track1IngestClient rejects empty ingestToken — and during probe there
+ *    is no config-provided token.
+ * 2. The probe tests hook wiring, not network transport.
  */
 export function getDefaultProbePorts(): Track1PluginProbePorts {
   const inspect = execOpenclawPluginsInspect();
-  // Production runtime ports — allow-all provider + real ingest endpoint.
-  // The ingest endpoint is resolved lazily inside the probe's ingestSnapshot.
-  // For the probe sequence, allow-all is correct: the probe tests the
-  // plugin's hook wiring, not the decision provider's rules.
   const ports: Track1PluginRuntimePorts = {
     provider: {
       decide() {
@@ -143,13 +146,10 @@ export function getDefaultProbePorts(): Track1PluginProbePorts {
         };
       }
     },
-    async ingestSnapshot(envelope) {
-      const { Track1IngestClient } = await import("./ingest-client.ts");
-      const client = new Track1IngestClient(
-        { ingestEndpoint: "http://backend:3001/internal/track1/campaigns", ingestToken: "" },
-        undefined
-      );
-      return client.appendSnapshot(envelope);
+    async ingestSnapshot(_envelope) {
+      // No-op: probe tests hook wiring, not transport.
+      // Return a synthetic ack so the probe pipeline does not throw.
+      return { snapshot_sha256: "probe-noop", accepted: true };
     },
     now(): string {
       return new Date().toISOString();
