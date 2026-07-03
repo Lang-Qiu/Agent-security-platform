@@ -269,10 +269,20 @@ export async function runTrack1OpenClawCampaign(
 
       const classification = observation.retry_classification ?? "success";
 
+      // Validate that final_action matches expected_action from manifest
+      if (classification === "success") {
+        if (observation.final_action !== caseEntry.expected_action) {
+          // Backend marked as success but action doesn't match expectation
+          throw new Error(
+            `track1_action_mismatch: expected ${caseEntry.expected_action}, got ${observation.final_action}`
+          );
+        }
+      }
+
       // Check if retry is needed and allowed
       if (attempt_index === 1) {
         if (classification === "success") {
-          // Success on first attempt
+          // Success on first attempt (action already validated above)
           finalObservation = observation;
           break;
         } else if (RETRYABLE_REASONS.has(classification)) {

@@ -33,6 +33,7 @@ interface MockPortsOptions {
   backendActualAction?: string;
   campaignCreationFails?: boolean;
   awaitFailsFor?: string[];
+  returnSuccessWithWrongAction?: boolean;
   caseObservations?: Record<
     string,
     Array<{
@@ -161,9 +162,33 @@ function makeCampaignRunnerPorts(
       const obs = caseObs?.[attemptIndex - 1];
 
       attemptCounter++;
+
+      // Test scenario: backend claims success but returns wrong action
+      if (options.returnSuccessWithWrongAction) {
+        return {
+          attempt_id: input.attempt_id,
+          final_action: "allow", // Wrong - manifest expects "deny"
+          observation_complete: true,
+          retry_classification: "success"
+        };
+      }
+
+      // Default: match expected_action from manifest for each case
+      const expectedActions: Record<string, string> = {
+        "T1-SC-001-C001": "deny",
+        "T1-SC-001-C002": "deny",
+        "T1-SC-001-C003": "allow",
+        "T1-SC-002-C001": "deny",
+        "T1-SC-002-C002": "ask",
+        "T1-SC-002-C003": "deny",
+        "T1-SC-003-C001": "ask",
+        "T1-SC-003-C002": "deny",
+        "T1-SC-003-C003": "allow"
+      };
+
       return {
         attempt_id: input.attempt_id,
-        final_action: obs?.final_action ?? options.backendActualAction ?? "deny",
+        final_action: obs?.final_action ?? options.backendActualAction ?? expectedActions[input.case_id] ?? "deny",
         observation_complete: true,
         retry_classification: obs?.retry_classification ?? "success"
       };
@@ -234,20 +259,43 @@ test("REQ-T1-DEMO-010 campaign runner uses unique campaign/attempt/session IDs w
 // -- Step 2: backend evidence authority RED ----------------------------------
 
 test("REQ-T1-DEMO-010 runner derives action only from normalized backend observation", async () => {
+  // This test verifies that runner uses backend's final_action, not CLI output
+  // We need to provide correct expected_actions per case for validation to pass
   const ports = makeCampaignRunnerPorts({
-    cliClaimedAction: "allow",
-    backendActualAction: "deny"
+    cliClaimedAction: "allow", // Ignored (would be in CLI output)
+    caseObservations: {
+      "T1-SC-001-C001": [{ final_action: "deny", retry_classification: "success" }],
+      "T1-SC-001-C002": [{ final_action: "deny", retry_classification: "success" }],
+      "T1-SC-001-C003": [{ final_action: "allow", retry_classification: "success" }],
+      "T1-SC-002-C001": [{ final_action: "deny", retry_classification: "success" }],
+      "T1-SC-002-C002": [{ final_action: "ask", retry_classification: "success" }],
+      "T1-SC-002-C003": [{ final_action: "deny", retry_classification: "success" }],
+      "T1-SC-003-C001": [{ final_action: "ask", retry_classification: "success" }],
+      "T1-SC-003-C002": [{ final_action: "deny", retry_classification: "success" }],
+      "T1-SC-003-C003": [{ final_action: "allow", retry_classification: "success" }]
+    }
   });
   const summary = await runTrack1OpenClawCampaign(ports);
 
   assert.equal(summary.final_actions["T1-SC-001-C001"], "deny");
+  assert.equal(summary.final_actions["T1-SC-001-C003"], "allow");
+  // Verify cliClaimedAction never appears in progress events
   assert.equal(
     JSON.stringify(ports.progressEvents).includes("cliClaimedAction"),
     false
   );
-  assert.equal(
-    JSON.stringify(ports.progressEvents).includes("allow"),
-    false
+});
+
+test("REQ-T1-DEMO-010 runner rejects success classification when action mismatches expected", async () => {
+  const ports = makeCampaignRunnerPorts({
+    returnSuccessWithWrongAction: true
+  });
+
+  // Backend will return retry_classification: success but final_action: allow
+  // when manifest expects deny - this should be rejected
+  await assert.rejects(
+    () => runTrack1OpenClawCampaign(ports),
+    /track1_action_mismatch/
   );
 });
 
