@@ -16,7 +16,7 @@ services:
     environment:
       - TRACK1_BACKEND_URL=http://backend:3000
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--spider", "http://localhost:3000/health"]
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -41,7 +41,7 @@ services:
       - TRACK1_INGEST_TOKEN=${TRACK1_INGEST_TOKEN}
       - NODE_ENV=production
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--spider", "http://localhost:3000/health"]
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -61,7 +61,8 @@ services:
       - OPENCLAW_MODEL_BASE_URL=${OPENCLAW_MODEL_BASE_URL}
       - OPENCLAW_MODEL_API_KEY=${OPENCLAW_MODEL_API_KEY}
       - OPENCLAW_MODEL_ID=${OPENCLAW_MODEL_ID}
-      - OPENCLAW_CONFIG_PATH=/app/config
+      - OPENCLAW_CONFIG_PATH=/app/config/openclaw.json5
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-dev-token}
       - TRACK1_INGEST_TOKEN=${TRACK1_INGEST_TOKEN}
     volumes:
       # Read-only mounts for cases and configuration
@@ -72,7 +73,7 @@ services:
       - /workspace
       - /run/track1
       - /tmp/openclaw
-    command: ["openclaw", "gateway", "--port", "19001"]
+    command: ["openclaw", "gateway", "--port", "19001", "--bind", "auto"]
     healthcheck:
       test: ["CMD", "openclaw", "health"]
       interval: 15s
@@ -101,6 +102,8 @@ services:
       # Read-only mount for campaign manifest and cases
       - ../../samples/track1:/app/samples/track1:ro
       - ../../scripts/track1:/app/scripts/track1:ro
+      - ../../engines:/app/engines:ro
+      - ../../integrations:/app/integrations:ro
     depends_on:
       backend:
         condition: service_healthy
