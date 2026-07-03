@@ -47,6 +47,7 @@ const ingestBaseUrl =
   process.env.TRACK1_INGEST_BASE_URL ??
   "http://localhost:3001/internal/track1";
 const ingestToken = process.env.TRACK1_INGEST_TOKEN!;
+const publicApiBaseUrl = process.env.TRACK1_BACKEND_URL; // Optional, defaults to derived URL
 
 // Progress callback for logging
 function progressCallback(event: Track1SafeProgressEvent): void {
@@ -66,6 +67,7 @@ function progressCallback(event: Track1SafeProgressEvent): void {
 const ports = createProductionPorts({
   ingestBaseUrl,
   ingestToken,
+  publicApiBaseUrl,
   progressCallback
 });
 
