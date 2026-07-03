@@ -31,10 +31,13 @@ COPY integrations/openclaw/scripts /app/plugin/scripts
 
 # Install plugin dependencies and build
 WORKDIR /app/plugin
-RUN npm install --omit=dev && npm run build
+RUN npm install && npm run build
 
 # Pack and install plugin globally
 RUN npm pack && npm install --global agent-security-platform-openclaw-integration-*.tgz
+
+# Clean up plugin build artifacts and devDependencies to reduce image size
+RUN rm -rf /app/plugin/node_modules /app/plugin/src /app/plugin/scripts
 
 # Copy OpenClaw configuration
 WORKDIR /app
