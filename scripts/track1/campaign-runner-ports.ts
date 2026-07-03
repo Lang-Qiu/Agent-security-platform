@@ -35,6 +35,7 @@ import { invokeOpenClawAgent } from "./openclaw-command.ts";
 interface ProductionPortsConfig {
   ingestBaseUrl: string;
   ingestToken: string;
+  publicApiBaseUrl?: string; // For querying campaign status
   progressCallback?: (event: Track1SafeProgressEvent) => void;
 }
 
@@ -102,10 +103,23 @@ class NodeEphemeralMessagePort implements EphemeralMessagePort {
   }
 }
 
+// Helper to infer retry classification from case detail
+function inferRetryClassification(caseDetail: any): Track1AttemptObservation["retry_classification"] {
+  // For now, return a generic failure classification
+  // Future: parse from case metadata or backend response
+  if (caseDetail.status === "failed") {
+    return "ingest_failed";
+  }
+  return "success";
+}
+
 export function createProductionPorts(
   config: ProductionPortsConfig
 ): Track1CampaignRunnerPorts {
-  const { ingestBaseUrl, ingestToken, progressCallback } = config;
+  const { ingestBaseUrl, ingestToken, publicApiBaseUrl, progressCallback } = config;
+
+  // Default public API URL - derived from ingest URL
+  const apiBaseUrl = publicApiBaseUrl ?? ingestBaseUrl.replace(/:\d+\/.*$/, ":3000/api");
 
   const processPort = new NodeProcessPort();
   const ephemeralMessagePort = new NodeEphemeralMessagePort();
@@ -159,37 +173,85 @@ export function createProductionPorts(
     async awaitAttempt(
       input: Track1AttemptAwaitRequest
     ): Promise<Track1AttemptObservation> {
-      // Poll the backend for attempt observation
+      // Poll backend supervision API for attempt completion
       const maxAttempts = 120; // 10 minutes with 5s intervals
       let attempts = 0;
 
       while (attempts < maxAttempts) {
         attempts++;
 
+        // Query campaign detail to get attempt status
         const response = await fetch(
-          `${ingestBaseUrl}/attempts/${input.attempt_id}`,
+          `${apiBaseUrl}/supervision/campaigns/${input.campaign_id}`,
           {
             method: "GET",
             headers: {
-              "Authorization": `Bearer ${ingestToken}`
+              "Content-Type": "application/json"
             }
           }
         );
 
         if (!response.ok) {
           throw new Error(
-            `Failed to fetch attempt observation: ${response.status} ${response.statusText}`
+            `Failed to fetch campaign detail: ${response.status} ${response.statusText}`
           );
         }
 
-        const data = await response.json();
+        const apiResponse = await response.json();
 
-        // Check if observation is ready (has final_action or retry_classification)
-        if (data.final_action !== null || data.retry_classification !== null) {
-          return data as Track1AttemptObservation;
+        // Extract campaign detail from ApiResponse wrapper
+        if (!apiResponse.success || !apiResponse.data) {
+          throw new Error("Invalid API response structure");
         }
 
-        // Wait 5 seconds before next poll
+        const campaignDetail = apiResponse.data;
+
+        // Navigate: campaign -> agents -> cases -> attempts
+        const agent = campaignDetail.agents?.find(
+          (a: any) => a.agent_id === input.agent_id
+        );
+        if (!agent) {
+          throw new Error(`Agent ${input.agent_id} not found in campaign detail`);
+        }
+
+        const caseDetail = agent.cases?.find(
+          (c: any) => c.case_id === input.case_id
+        );
+        if (!caseDetail) {
+          throw new Error(`Case ${input.case_id} not found in agent detail`);
+        }
+
+        const attemptSummary = caseDetail.attempts?.find(
+          (a: any) => a.attempt_id === input.attempt_id
+        );
+        if (!attemptSummary) {
+          // Attempt not yet registered, wait and retry
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          continue;
+        }
+
+        // Check if attempt is complete (passed or failed)
+        if (attemptSummary.status === "passed") {
+          return {
+            attempt_id: input.attempt_id,
+            final_action: attemptSummary.policy_action!,
+            observation_complete: true,
+            retry_classification: "success"
+          };
+        }
+
+        if (attemptSummary.status === "failed") {
+          // Parse retry_classification from case status or use generic failure
+          const retryClassification = inferRetryClassification(caseDetail);
+          return {
+            attempt_id: input.attempt_id,
+            final_action: attemptSummary.policy_action ?? "deny",
+            observation_complete: true,
+            retry_classification: retryClassification
+          };
+        }
+
+        // Attempt still running, wait and retry
         await new Promise((resolve) => setTimeout(resolve, 5000));
       }
 
