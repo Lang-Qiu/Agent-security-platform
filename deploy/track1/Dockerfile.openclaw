@@ -24,20 +24,26 @@ RUN npm ci --omit=dev --ignore-scripts
 RUN npm install --global openclaw@2026.6.10
 
 # Build and install Phase 3 plugin
-COPY integrations/openclaw/package.json /app/plugin/package.json
-COPY integrations/openclaw/openclaw.plugin.json /app/plugin/openclaw.plugin.json
-COPY integrations/openclaw/src /app/plugin/src
-COPY integrations/openclaw/scripts /app/plugin/scripts
+# Copy plugin source
+COPY integrations/openclaw/package.json /app/integrations/openclaw/package.json
+COPY integrations/openclaw/openclaw.plugin.json /app/integrations/openclaw/openclaw.plugin.json
+COPY integrations/openclaw/src /app/integrations/openclaw/src
+COPY integrations/openclaw/scripts /app/integrations/openclaw/scripts
+
+# Copy shared dependencies required by plugin (must match relative import paths)
+COPY shared /app/shared
+COPY engines/sandbox/src /app/engines/sandbox/src
 
 # Install plugin dependencies and build
-WORKDIR /app/plugin
+WORKDIR /app/integrations/openclaw
 RUN npm install && npm run build
 
 # Pack and install plugin globally
 RUN npm pack && npm install --global agent-security-platform-openclaw-integration-*.tgz
 
-# Clean up plugin build artifacts and devDependencies to reduce image size
-RUN rm -rf /app/plugin/node_modules /app/plugin/src /app/plugin/scripts
+# Clean up plugin build artifacts and dependencies to reduce image size
+WORKDIR /app
+RUN rm -rf /app/integrations /app/shared /app/engines
 
 # Copy OpenClaw configuration
 WORKDIR /app
