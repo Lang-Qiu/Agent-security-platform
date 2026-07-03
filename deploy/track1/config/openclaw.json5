@@ -33,6 +33,7 @@
 
   // Gateway authentication
   "gateway": {
+    "mode": "local",
     "auth": {
       "tokens": {
         "${OPENCLAW_GATEWAY_TOKEN}": {

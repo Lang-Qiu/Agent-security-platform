@@ -45,7 +45,7 @@ echo
 
 # Step 1: Start infrastructure (backend, frontend, OpenClaw)
 echo "Step 1: Starting infrastructure..."
-docker-compose -f "$COMPOSE_FILE" --profile track1 up -d backend frontend openclaw
+docker-compose -f "$COMPOSE_FILE" --env-file deploy/track1/.env --profile track1 up -d backend frontend openclaw-gateway
 
 echo "Waiting for services to be ready..."
 sleep 10
@@ -68,7 +68,7 @@ if curl -sf http://localhost:3002/health > /dev/null 2>&1; then
 else
   echo "❌"
   echo "OpenClaw health check failed. Check logs:"
-  echo "  docker-compose -f $COMPOSE_FILE logs openclaw"
+  echo "  docker-compose -f $COMPOSE_FILE logs openclaw-gateway"
   exit 1
 fi
 
@@ -79,7 +79,7 @@ echo
 # Step 2: Run campaign in runner container
 echo "Step 2: Running Track 1 campaign..."
 echo "======================================================================"
-docker-compose -f "$COMPOSE_FILE" --profile track1 run --rm runner
+docker-compose -f "$COMPOSE_FILE" --env-file deploy/track1/.env --profile track1 run --rm campaign-runner
 
 RUNNER_EXIT=$?
 
@@ -100,8 +100,8 @@ else
   echo "❌ Campaign failed (exit code: $RUNNER_EXIT)"
   echo
   echo "Check logs:"
-  echo "  docker-compose -f $COMPOSE_FILE logs runner"
+  echo "  docker-compose -f $COMPOSE_FILE logs campaign-runner"
   echo "  docker-compose -f $COMPOSE_FILE logs backend"
-  echo "  docker-compose -f $COMPOSE_FILE logs openclaw"
+  echo "  docker-compose -f $COMPOSE_FILE logs openclaw-gateway"
   exit 1
 fi

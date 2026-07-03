@@ -44,7 +44,7 @@ Write-Host ""
 
 # Step 1: Start infrastructure
 Write-Host "Step 1: Starting infrastructure..."
-docker-compose -f $COMPOSE_FILE --profile track1 up -d backend frontend openclaw
+docker-compose -f $COMPOSE_FILE --env-file deploy/track1/.env --profile track1 up -d backend frontend openclaw-gateway
 
 Write-Host "Waiting for services to be ready..."
 Start-Sleep -Seconds 10
@@ -77,7 +77,7 @@ try {
 } catch {
   Write-Host "❌" -ForegroundColor Red
   Write-Host "OpenClaw health check failed. Check logs:"
-  Write-Host "  docker-compose -f $COMPOSE_FILE logs openclaw"
+  Write-Host "  docker-compose -f $COMPOSE_FILE logs openclaw-gateway"
   exit 1
 }
 
@@ -88,7 +88,7 @@ Write-Host ""
 # Step 2: Run campaign
 Write-Host "Step 2: Running Track 1 campaign..."
 Write-Host "======================================================================"
-docker-compose -f $COMPOSE_FILE --profile track1 run --rm runner
+docker-compose -f $COMPOSE_FILE --env-file deploy/track1/.env --profile track1 run --rm campaign-runner
 $RUNNER_EXIT = $LASTEXITCODE
 
 Write-Host "======================================================================"
@@ -108,8 +108,8 @@ if ($RUNNER_EXIT -eq 0) {
   Write-Host "❌ Campaign failed (exit code: $RUNNER_EXIT)" -ForegroundColor Red
   Write-Host ""
   Write-Host "Check logs:"
-  Write-Host "  docker-compose -f $COMPOSE_FILE logs runner"
+  Write-Host "  docker-compose -f $COMPOSE_FILE logs campaign-runner"
   Write-Host "  docker-compose -f $COMPOSE_FILE logs backend"
-  Write-Host "  docker-compose -f $COMPOSE_FILE logs openclaw"
+  Write-Host "  docker-compose -f $COMPOSE_FILE logs openclaw-gateway"
   exit 1
 }
