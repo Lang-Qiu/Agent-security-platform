@@ -11,7 +11,8 @@
   // via the plugin, not through this gateway config.
 
   gateway: {
-    port: 19001
+    port: 19001,
+    mode: "local"
   },
 
   plugins: {
