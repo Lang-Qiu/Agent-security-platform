@@ -1715,7 +1715,7 @@ The campaign detail never copies raw result content into the response. Attempt s
 
 - `campaign_id`, `agent_id`, `scenario_id`, `case_id` (fixed association IDs)
 - `attempt_id`, `attempt_index`, `session_id`, `task_id` (identifier reuse)
-- `status`, `actual_action` (derived from policy decisions)
+- `status`, `policy_action`, `report_summary` (derived from policy decisions)
 - `started_at`, `updated_at` (timestamps)
 
 The following fields are never present in attempt summaries: `events`, `policy_decisions`, `alerts`, `blocked_records`, `result`.
