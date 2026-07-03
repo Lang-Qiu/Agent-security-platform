@@ -190,7 +190,7 @@ test("REQ-T1-DEMO-010 model input envelope accepts planned synthetic memory IDs"
       {
         memory_entry_id: "memory:synthetic:001",
         content: "Synthetic attack payload for retrieval injection",
-        content_sha256: "a".repeat(64)
+        content_sha256: "c7a621b717940ca5ddaee8740868cfc8a3abad1bb174d77ac83d9b846af7dc94"
       }
     ]
   });

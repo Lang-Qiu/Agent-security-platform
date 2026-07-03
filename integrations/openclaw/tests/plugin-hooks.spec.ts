@@ -126,14 +126,14 @@ test("REQ-T1-DEMO-010 input-only envelope has controlled memory observations", a
       {
         memory_entry_id: "memory:track1:001",
         content: "Injected memory payload for write observation",
-        content_sha256: "a".repeat(64)
+        content_sha256: "1c357348f8d29b9f033d946c29aed8db61e3bf7bd2a1c38ae85fb7ddbf6d5530"
       }
     ],
     retrieved_content: [
       {
         memory_entry_id: "memory:track1:002",
         content: "Retrieved memory payload for read observation",
-        content_sha256: "b".repeat(64)
+        content_sha256: "5174316226e490e8bf488af20834c62b7f0fe2af95e4ab450ac848de1b56d8d5"
       }
     ]
   };

@@ -7,7 +7,7 @@
 
 import { randomBytes, createHash } from "node:crypto";
 import { spawn } from "node:child_process";
-import { writeFile, unlink } from "node:fs/promises";
+import { writeFile, unlink, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -70,12 +70,12 @@ class NodeProcessPort implements ProcessPort {
       });
 
       child.on("close", (code, signal) => {
-        const stdout = Buffer.concat(stdoutChunks);
-        const stderr = Buffer.concat(stderrChunks);
+        const stdout = Buffer.concat(stdoutChunks).toString("utf8");
+        const stderr = Buffer.concat(stderrChunks).toString("utf8");
 
         resolve({
           exitCode: code,
-          signal: signal ?? undefined,
+          signalCode: signal ?? null,
           stdout,
           stderr
         });
@@ -126,7 +126,7 @@ export function createProductionPorts(
 
   return {
     async preflight(): Promise<Track1PreflightResult> {
-      return await runTrack1Preflight();
+      return await runTrack1Preflight(environment, { processPort, ephemeralMessagePort });
     },
 
     async createCampaign(input: Track1CampaignStartEnvelope): Promise<void> {
@@ -156,7 +156,36 @@ export function createProductionPorts(
       attempt_index: 1 | 2;
       session_id: string;
     }): Promise<Track1CompiledPrompt> {
-      return await compileTrack1CasePrompt(input);
+      // Load manifest to find case entry
+      const manifestPath = join(import.meta.dirname, "../../samples/track1/openclaw/campaign.v1.json");
+      const manifestBytes = await readFile(manifestPath);
+      const manifest = JSON.parse(manifestBytes.toString("utf8"));
+
+      // Find case entry
+      const caseEntry = manifest.cases.find((c: any) => c.case_id === input.case_id);
+      if (!caseEntry) {
+        throw new Error(`Case ${input.case_id} not found in manifest`);
+      }
+
+      // Load canonical case bytes
+      const caseFilePath = join(import.meta.dirname, "../..", caseEntry.case_ref);
+      const canonicalCaseBytes = await readFile(caseFilePath);
+
+      // Call compiler with all required data
+      return compileTrack1CasePrompt({
+        manifest_entry: {
+          case_id: caseEntry.case_id,
+          scenario_id: caseEntry.scenario_id,
+          case_sha256: caseEntry.case_sha256,
+          expected_action: caseEntry.expected_action
+        },
+        canonical_case_bytes: canonicalCaseBytes,
+        campaign_id: input.campaign_id,
+        agent_id: input.agent_id,
+        attempt_id: input.attempt_id,
+        attempt_index: input.attempt_index,
+        session_id: input.session_id
+      });
     },
 
     async invokeAgent(
