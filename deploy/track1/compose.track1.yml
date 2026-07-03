@@ -32,8 +32,6 @@ services:
     expose:
       - "3000"
       - "3001"
-    expose:
-      - "3001"
     networks:
       - track1-public
       - track1-ingest
