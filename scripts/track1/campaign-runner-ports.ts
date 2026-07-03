@@ -6,6 +6,10 @@
  */
 
 import { randomBytes, createHash } from "node:crypto";
+import { spawn } from "node:child_process";
+import { writeFile, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   Track1CampaignRunnerPorts,
   Track1SafeProgressEvent
@@ -14,15 +18,18 @@ import type { Track1PreflightResult } from "./preflight.ts";
 import type { Track1CompiledPrompt } from "./case-prompt.ts";
 import type {
   OpenClawAgentInvocation,
-  SafeOpenClawInvocationResult
+  SafeOpenClawInvocationResult,
+  ProcessPort,
+  EphemeralMessagePort,
+  ProcessHandle
 } from "./openclaw-command.ts";
 import type {
   Track1CampaignStartEnvelope,
   Track1CampaignFinalizeEnvelope
 } from "../../shared/types/campaign-ingest.ts";
 import type { Track1AttemptObservation, Track1AttemptAwaitRequest } from "./campaign-runner.ts";
-import { runPreflight } from "./preflight.ts";
-import { compilePromptForCase } from "./case-prompt.ts";
+import { runTrack1Preflight } from "./preflight.ts";
+import { compileTrack1CasePrompt } from "./case-prompt.ts";
 import { invokeOpenClawAgent } from "./openclaw-command.ts";
 
 interface ProductionPortsConfig {
@@ -31,14 +38,81 @@ interface ProductionPortsConfig {
   progressCallback?: (event: Track1SafeProgressEvent) => void;
 }
 
+// Production implementation of ProcessPort using Node.js child_process
+class NodeProcessPort implements ProcessPort {
+  async spawn(
+    executable: string,
+    args: readonly string[],
+    options: Readonly<{
+      shell: false;
+      env: Readonly<Record<string, string>>;
+      stdio: readonly ["ignore", "pipe", "pipe"];
+      timeout?: number;
+    }>
+  ): Promise<ProcessHandle> {
+    return new Promise((resolve, reject) => {
+      const child = spawn(executable, args as string[], {
+        shell: options.shell,
+        env: options.env as Record<string, string>,
+        stdio: options.stdio as ["ignore", "pipe", "pipe"],
+        timeout: options.timeout
+      });
+
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
+
+      child.stdout?.on("data", (chunk) => stdoutChunks.push(chunk));
+      child.stderr?.on("data", (chunk) => stderrChunks.push(chunk));
+
+      child.on("error", (error) => {
+        reject(error);
+      });
+
+      child.on("close", (code, signal) => {
+        const stdout = Buffer.concat(stdoutChunks);
+        const stderr = Buffer.concat(stderrChunks);
+
+        resolve({
+          exitCode: code,
+          signal: signal ?? undefined,
+          stdout,
+          stderr
+        });
+      });
+    });
+  }
+}
+
+// Production implementation of EphemeralMessagePort using temporary files
+class NodeEphemeralMessagePort implements EphemeralMessagePort {
+  async withFile<T>(
+    path: string,
+    bytes: Uint8Array,
+    run: () => Promise<T>
+  ): Promise<T> {
+    const fullPath = join(tmpdir(), path);
+    await writeFile(fullPath, bytes);
+    try {
+      return await run();
+    } finally {
+      await unlink(fullPath).catch(() => {
+        // Ignore cleanup errors
+      });
+    }
+  }
+}
+
 export function createProductionPorts(
   config: ProductionPortsConfig
 ): Track1CampaignRunnerPorts {
   const { ingestBaseUrl, ingestToken, progressCallback } = config;
 
+  const processPort = new NodeProcessPort();
+  const ephemeralMessagePort = new NodeEphemeralMessagePort();
+
   return {
     async preflight(): Promise<Track1PreflightResult> {
-      return await runPreflight();
+      return await runTrack1Preflight();
     },
 
     async createCampaign(input: Track1CampaignStartEnvelope): Promise<void> {
@@ -68,13 +142,18 @@ export function createProductionPorts(
       attempt_index: 1 | 2;
       session_id: string;
     }): Promise<Track1CompiledPrompt> {
-      return await compilePromptForCase(input);
+      return await compileTrack1CasePrompt(input);
     },
 
     async invokeAgent(
       input: OpenClawAgentInvocation
     ): Promise<SafeOpenClawInvocationResult> {
-      return await invokeOpenClawAgent(input);
+      return await invokeOpenClawAgent(
+        input,
+        process.env,
+        processPort,
+        ephemeralMessagePort
+      );
     },
 
     async awaitAttempt(
