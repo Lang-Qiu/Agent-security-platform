@@ -14,7 +14,7 @@ import type {
   Track1CampaignRunnerPorts,
   Track1SafeProgressEvent
 } from "./campaign-runner.ts";
-import type { Track1PreflightResult } from "./preflight.ts";
+import type { Track1PreflightResult, Track1PreflightPorts } from "./preflight.ts";
 import type { Track1CompiledPrompt } from "./case-prompt.ts";
 import type {
   OpenClawAgentInvocation,
@@ -124,9 +124,65 @@ export function createProductionPorts(
   const processPort = new NodeProcessPort();
   const ephemeralMessagePort = new NodeEphemeralMessagePort();
 
+  // Create preflight ports adapter
+  const preflightPorts: Track1PreflightPorts = {
+    async inspectDocker() {
+      const result = await processPort.spawn("docker", ["compose", "version", "--format", "json"], {
+        shell: false,
+        env: process.env as Record<string, string>,
+        stdio: ["ignore", "pipe", "pipe"] as const
+      });
+      return { compose_v2: result.exitCode === 0 };
+    },
+    async inspectOpenClaw() {
+      const result = await processPort.spawn("openclaw", ["version", "--json"], {
+        shell: false,
+        env: process.env as Record<string, string>,
+        stdio: ["ignore", "pipe", "pipe"] as const
+      });
+      if (result.exitCode !== 0) {
+        throw new Error("OpenClaw version check failed");
+      }
+      const parsed = JSON.parse(result.stdout);
+      return { version: parsed.version, integrity: parsed.integrity };
+    },
+    async probePlugin() {
+      const result = await processPort.spawn(
+        "openclaw",
+        ["plugins", "inspect", "--runtime", "--json", "agent-security-track1"],
+        {
+          shell: false,
+          env: process.env as Record<string, string>,
+          stdio: ["ignore", "pipe", "pipe"] as const
+        }
+      );
+      if (result.exitCode !== 0) {
+        throw new Error("Plugin probe failed");
+      }
+      return JSON.parse(result.stdout);
+    },
+    async checkBackend() {
+      try {
+        const publicRes = await fetch(`${apiBaseUrl.replace("/api", "")}/health`);
+        const internalRes = await fetch(`${ingestBaseUrl.replace(/\/internal\/.*$/, "")}/health`);
+        return {
+          public_ready: publicRes.ok,
+          internal_ready: internalRes.ok
+        };
+      } catch {
+        return { public_ready: false, internal_ready: false };
+      }
+    },
+    async loadManifest() {
+      const manifestPath = join(import.meta.dirname, "../../samples/track1/openclaw/campaign.v1.json");
+      const content = await readFile(manifestPath, "utf8");
+      return JSON.parse(content);
+    }
+  };
+
   return {
     async preflight(): Promise<Track1PreflightResult> {
-      return await runTrack1Preflight(environment, { processPort, ephemeralMessagePort });
+      return await runTrack1Preflight(process.env, preflightPorts);
     },
 
     async createCampaign(input: Track1CampaignStartEnvelope): Promise<void> {
@@ -174,8 +230,10 @@ export function createProductionPorts(
       // Call compiler with all required data
       return compileTrack1CasePrompt({
         manifest_entry: {
+          agent_id: input.agent_id,
           case_id: caseEntry.case_id,
           scenario_id: caseEntry.scenario_id,
+          case_ref: caseEntry.case_ref,
           case_sha256: caseEntry.case_sha256,
           expected_action: caseEntry.expected_action
         },

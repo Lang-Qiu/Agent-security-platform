@@ -152,7 +152,10 @@ const ALLOWED_ENV_KEYS = [
   "OPENCLAW_MODEL_BASE_URL",
   "OPENCLAW_MODEL_API_KEY",
   "OPENCLAW_MODEL_ID",
+  "OPENCLAW_GATEWAY_TOKEN",
+  "TRACK1_OPENCLAW_GATEWAY_URL",
   "TRACK1_INGEST_TOKEN",
+  "TRACK1_INGEST_BASE_URL",
   "PATH",
   "HOME",
   "USER",
@@ -218,16 +221,21 @@ export async function invokeOpenClawAgent(
 
   const allowlistEnv = buildAllowlistEnv(environment);
 
-  const args = [
+  // Build args array with optional gateway URL
+  const args: string[] = [
     "agent",
     "--agent",
     validated.agent_id,
     "--session-key",
-    validated.session_key,
-    "--message",
-    messageJson,
-    "--json"
-  ] as const;
+    validated.session_key
+  ];
+
+  // Add gateway URL if specified (for container deployment)
+  if (allowlistEnv.TRACK1_OPENCLAW_GATEWAY_URL) {
+    args.push("--gateway", allowlistEnv.TRACK1_OPENCLAW_GATEWAY_URL);
+  }
+
+  args.push("--message", messageJson, "--json");
 
   const result = await ephemeralMessagePort.withFile(
     validated.prompt.relative_tmpfs_path,

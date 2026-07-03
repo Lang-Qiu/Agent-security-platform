@@ -2,28 +2,48 @@
   // OpenClaw Gateway Configuration for Track 1 Phase 4
   // Enables conversation-level hook access for plugin monitoring
 
-  gateway: {
-    mode: "local",
+  "wizard": {
+    "lastRunAt": "2026-07-03T06:00:00.000Z",
+    "lastRunVersion": "2026.6.10",
+    "lastRunCommand": "gateway",
+    "lastRunMode": "local"
+  },
 
-    // Authentication configuration
-    authentication: {
-      // For Phase 4, use simple token auth
-      // Phase 7 will need proper credential management
-      method: "token",
-      tokens: {
-        "dev-token": {
-          scope: "full",
-          description: "Development token for Phase 4 containers"
+  // Model configuration - use environment variables for security
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "anthropic": {
+        "baseUrl": "https://api.anthropic.com/v1",
+        "apiKey": "${ANTHROPIC_API_KEY}",
+        "api": "anthropic",
+        "models": [
+          {
+            "id": "claude-opus-4-20250514",
+            "name": "Claude Opus 4",
+            "reasoning": true,
+            "input": ["text", "images"],
+            "contextWindow": 200000,
+            "maxTokens": 16384
+          }
+        ]
+      }
+    }
+  },
+
+  // Gateway authentication
+  "gateway": {
+    "auth": {
+      "tokens": {
+        "${OPENCLAW_GATEWAY_TOKEN}": {
+          "scope": "full",
+          "description": "Track 1 campaign runner token"
         }
       }
     },
-
-    // Hook configuration - allow conversation access for llm_input/llm_output
-    hooks: {
-      allowConversationAccess: true,
-
-      // Enable monitoring of model inputs and outputs
-      enabledHooks: [
+    "hooks": {
+      "allowConversationAccess": true,
+      "enabled": [
         "llm_input",
         "llm_output",
         "tool_use_before",
@@ -33,46 +53,23 @@
   },
 
   // Plugin configuration
-  plugins: {
-    // Track 1 security campaign plugin
+  "plugins": {
     "agent-security-track1": {
-      enabled: true,
-      path: "/app/integrations/openclaw",
-
-      // Plugin-specific configuration
-      config: {
-        // Track 1 scenarios
-        scenarios: ["T1-SC-001", "T1-SC-002", "T1-SC-003"],
-
-        // Policy enforcement
-        enforcement: {
-          mode: "monitor", // Phase 4: monitor only, no blocking
-          reportViolations: true
-        }
+      "enabled": true,
+      "path": "/app/integrations/openclaw",
+      "config": {
+        "ingestBaseUrl": "${TRACK1_INGEST_BASE_URL}",
+        "ingestToken": "${TRACK1_INGEST_TOKEN}",
+        "mode": "monitor"
       }
     }
   },
 
-  // Model proxy configuration
-  model: {
-    // Proxy to external model API
-    provider: "external",
-
-    // Rate limiting (optional)
-    rateLimit: {
-      enabled: false
-    }
-  },
-
-  // Logging configuration
-  logging: {
-    level: "info",
-    format: "json",
-
-    // Log hook invocations
-    logHooks: true,
-
-    // Log model interactions
-    logModelCalls: true
+  // Logging
+  "logging": {
+    "level": "info",
+    "format": "json",
+    "hooks": true,
+    "modelCalls": true
   }
 }
