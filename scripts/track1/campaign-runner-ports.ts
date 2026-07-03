@@ -289,6 +289,49 @@ export function createProductionPorts(
       );
     },
 
+    async recordCampaign(
+      input: Track1CampaignCreateEnvelope
+    ): Promise<void> {
+      const response = await fetch(`${ingestBaseUrl}/campaigns`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${ingestToken}`
+        },
+        body: JSON.stringify(input)
+      });
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new Error(
+          `Failed to record campaign: ${response.status} ${response.statusText}${text ? `: ${text}` : ""}`
+        );
+      }
+    },
+
+    async recordAttempt(
+      input: Track1AttemptRecordEnvelope
+    ): Promise<void> {
+      const response = await fetch(
+        `${ingestBaseUrl}/campaigns/${input.campaign_id}/attempts`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${ingestToken}`
+          },
+          body: JSON.stringify(input)
+        }
+      );
+
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        throw new Error(
+          `Failed to record attempt: ${response.status} ${response.statusText}${text ? `: ${text}` : ""}`
+        );
+      }
+    },
+
     async finalizeCampaign(
       input: Track1CampaignFinalizeEnvelope
     ): Promise<void> {
