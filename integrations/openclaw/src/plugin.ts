@@ -459,8 +459,8 @@ export function registerTrack1Plugin(
         state.session.observeMemoryWrite({
           session_id: state.context.session_id,
           memory_entry_id: entry.memory_entry_id,
-          content: entry.content_ref,
-          content_ref: entry.content_ref,
+          content: entry.content,
+          content_ref: `memory://${entry.memory_entry_id}`,
           content_sha256: entry.content_sha256
         });
       }
@@ -470,8 +470,8 @@ export function registerTrack1Plugin(
         state.session.observeMemoryRead({
           session_id: state.context.session_id,
           memory_entry_id: entry.memory_entry_id,
-          content: entry.content_ref,
-          content_ref: entry.content_ref,
+          content: entry.content,
+          content_ref: `memory://${entry.memory_entry_id}`,
           content_sha256: entry.content_sha256
         });
       }

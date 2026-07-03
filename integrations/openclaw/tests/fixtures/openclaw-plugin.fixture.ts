@@ -196,17 +196,17 @@ export function makeTrack1ModelInputEnvelope(
   user_prompt: string;
   retrieved_content: readonly {
     memory_entry_id: string;
-    content_ref: string;
+    content: string;
     content_sha256: string;
   }[];
   memory_entries: readonly {
     memory_entry_id: string;
-    content_ref: string;
+    content: string;
     content_sha256: string;
   }[];
   proposed_tool_call: {
     tool_name: "send_email" | "read_file" | "write_file" | "call_api";
-    arguments_ref: string;
+    arguments: string;
   } | null;
 } {
   return {

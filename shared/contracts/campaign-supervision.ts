@@ -580,18 +580,18 @@ function normalizeTrack1CampaignCaseDetail(
 
   // P1-2 rework: case status/action consistency, mirroring the case summary
   // rule. A case detail carries its own status and the attempts' statuses; the
-  // final attempt's actual_action is the case outcome.
-  // passed  -> final attempt actual_action must equal expected_action (not null)
-  // failed  -> final attempt actual_action must not be null
-  // running -> no constraint on actual_action (may be null mid-flight)
+  // final attempt's policy_action is the case outcome.
+  // passed  -> final attempt policy_action must equal expected_action (not null)
+  // failed  -> final attempt policy_action must not be null
+  // running -> no constraint on policy_action (may be null mid-flight)
   const finalAttempt = normalizedAttempts[normalizedAttempts.length - 1];
   if (input.status === "passed") {
-    if (finalAttempt.actual_action === null) return null;
-    if (finalAttempt.actual_action !== input.expected_action) return null;
+    if (finalAttempt.policy_action === null) return null;
+    if (finalAttempt.policy_action !== input.expected_action) return null;
     // P1-1 rework 2: the final attempt status must also be "passed".
     if (finalAttempt.status !== "passed") return null;
   } else if (input.status === "failed") {
-    if (finalAttempt.actual_action === null) return null;
+    if (finalAttempt.policy_action === null) return null;
     // P1-1 rework 2: the final attempt status must also be "failed".
     if (finalAttempt.status !== "failed") return null;
   } else if (input.status === "running") {

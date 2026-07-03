@@ -189,7 +189,7 @@ test("REQ-T1-DEMO-010 model input envelope accepts planned synthetic memory IDs"
     memory_entries: [
       {
         memory_entry_id: "memory:synthetic:001",
-        content_ref: "memory://track1/synthetic/001",
+        content: "Synthetic attack payload for retrieval injection",
         content_sha256: "a".repeat(64)
       }
     ]
@@ -206,12 +206,13 @@ test("REQ-T1-DEMO-010 model input envelope closes nested tool proposal fields", 
   const invalidProposals = [
     {
       tool_name: "write_file",
-      arguments_ref: "arguments://track1/write/001",
+      arguments: '{"path": "/etc/passwd", "content": "attack"}',
       raw_arguments: "TOOL_SENTINEL"
     },
     {
       tool_name: "write_file",
-      arguments_ref: "TOOL_SENTINEL"
+      arguments: "TOOL_SENTINEL",
+      extra_field: "should_reject"
     }
   ];
 

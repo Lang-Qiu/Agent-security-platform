@@ -190,7 +190,8 @@ function makeValidCampaignDetail() {
         session_id: sessionId,
         task_id: taskId,
         status: "passed",
-        actual_action: expectedAction,
+        policy_action: expectedAction,
+        report_summary: "1 " + expectedAction,
         started_at: "2026-06-30T00:00:00.000Z",
         updated_at: "2026-06-30T00:00:01.000Z"
       };
@@ -414,7 +415,7 @@ test("REQ-T1-DEMO-010 rejects case detail passed when actual_action != expected_
   // expected_action is "deny" for T1-SC-001-C001
   c.status = "passed";
   c.attempts[0].status = "passed";
-  c.attempts[0].actual_action = "allow"; // mismatch with expected "deny"
+  c.attempts[0].policy_action = "allow"; // mismatch with expected "deny"
   assert.equal(normalizeTrack1CampaignDetail(detail), null);
 });
 
@@ -423,7 +424,7 @@ test("REQ-T1-DEMO-010 rejects case detail with passed status but null actual_act
   const c = detail.agents[0].cases[0];
   c.status = "passed";
   c.attempts[0].status = "passed";
-  c.attempts[0].actual_action = null;
+  c.attempts[0].policy_action = null;
   assert.equal(normalizeTrack1CampaignDetail(detail), null);
 });
 
@@ -432,7 +433,7 @@ test("REQ-T1-DEMO-010 rejects case detail with failed status but null actual_act
   const c = detail.agents[0].cases[0];
   c.status = "failed";
   c.attempts[0].status = "failed";
-  c.attempts[0].actual_action = null;
+  c.attempts[0].policy_action = null;
   assert.equal(normalizeTrack1CampaignDetail(detail), null);
 });
 
@@ -524,7 +525,7 @@ test("REQ-T1-DEMO-010 rejects case detail passed when final attempt is failed", 
   // case is "passed" but its only attempt is "failed"
   c.status = "passed";
   c.attempts[0].status = "failed";
-  c.attempts[0].actual_action = c.expected_action; // satisfy action rule
+  c.attempts[0].policy_action = c.expected_action; // satisfy action rule
   assert.equal(normalizeTrack1CampaignDetail(detail), null);
 });
 
@@ -533,7 +534,7 @@ test("REQ-T1-DEMO-010 rejects case detail failed when final attempt is passed", 
   const c = detail.agents[0].cases[0];
   c.status = "failed";
   c.attempts[0].status = "passed";
-  c.attempts[0].actual_action = c.expected_action;
+  c.attempts[0].policy_action = c.expected_action;
   assert.equal(normalizeTrack1CampaignDetail(detail), null);
 });
 
@@ -542,7 +543,7 @@ test("REQ-T1-DEMO-010 rejects case detail running when final attempt is passed",
   const c = detail.agents[0].cases[0];
   c.status = "running";
   c.attempts[0].status = "passed";
-  c.attempts[0].actual_action = c.expected_action;
+  c.attempts[0].policy_action = c.expected_action;
   assert.equal(normalizeTrack1CampaignDetail(detail), null);
 });
 
@@ -558,7 +559,7 @@ test("REQ-T1-DEMO-010 rejects agent detail completed when a case is running", ()
   detail.agents[0].status = "completed";
   detail.agents[0].cases[0].status = "running";
   detail.agents[0].cases[0].attempts[0].status = "running";
-  detail.agents[0].cases[0].attempts[0].actual_action = null;
+  detail.agents[0].cases[0].attempts[0].policy_action = null;
   assert.equal(normalizeTrack1CampaignDetail(detail), null);
 });
 
@@ -623,8 +624,8 @@ test("REQ-T1-DEMO-010 rejects second attempt after passed first attempt", () => 
   // first attempt passed, but there's a second attempt — invalid
   c.attempt_count = 2;
   c.attempts = [
-    { ...c.attempts[0], status: "passed", actual_action: c.expected_action },
-    { ...c.attempts[0], attempt_id: `attempt:${c.case_id.toLowerCase()}:2`, attempt_index: 2, session_id: "session:feedface0000000000000000feedface", status: "failed" }
+    { ...c.attempts[0], status: "passed", policy_action: c.expected_action, report_summary: "1 " + c.expected_action },
+    { ...c.attempts[0], attempt_id: `attempt:${c.case_id.toLowerCase()}:2`, attempt_index: 2, session_id: "session:feedface0000000000000000feedface", status: "failed", report_summary: "1 deny" }
   ];
   c.status = "failed";
   assert.equal(normalizeTrack1CampaignDetail(detail), null);
@@ -636,8 +637,8 @@ test("REQ-T1-DEMO-010 accepts second attempt only after failed first attempt", (
   // first attempt failed, second attempt passed — valid retry scenario
   c.attempt_count = 2;
   c.attempts = [
-    { ...c.attempts[0], status: "failed", actual_action: "deny" },
-    { ...c.attempts[0], attempt_id: `attempt:${c.case_id.toLowerCase()}:2`, attempt_index: 2, session_id: "session:feedface0000000000000000feedface", status: "passed", actual_action: c.expected_action }
+    { ...c.attempts[0], status: "failed", policy_action: "deny", report_summary: "1 deny" },
+    { ...c.attempts[0], attempt_id: `attempt:${c.case_id.toLowerCase()}:2`, attempt_index: 2, session_id: "session:feedface0000000000000000feedface", status: "passed", policy_action: c.expected_action, report_summary: "1 " + c.expected_action }
   ];
   c.status = "passed";
   assert.ok(normalizeTrack1CampaignDetail(detail));
@@ -649,8 +650,8 @@ test("REQ-T1-DEMO-010 rejects second attempt after running first attempt", () =>
   // first attempt still running, but second attempt exists — invalid
   c.attempt_count = 2;
   c.attempts = [
-    { ...c.attempts[0], status: "running", actual_action: null },
-    { ...c.attempts[0], attempt_id: `attempt:${c.case_id.toLowerCase()}:2`, attempt_index: 2, session_id: "session:feedface0000000000000000feedface", status: "running", actual_action: null }
+    { ...c.attempts[0], status: "running", policy_action: null, report_summary: "no decisions" },
+    { ...c.attempts[0], attempt_id: `attempt:${c.case_id.toLowerCase()}:2`, attempt_index: 2, session_id: "session:feedface0000000000000000feedface", status: "running", policy_action: null, report_summary: "no decisions" }
   ];
   c.status = "running";
   detail.agents[0].status = "running";
