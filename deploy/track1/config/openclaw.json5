@@ -1,0 +1,78 @@
+{
+  // OpenClaw Gateway Configuration for Track 1 Phase 4
+  // Enables conversation-level hook access for plugin monitoring
+
+  gateway: {
+    mode: "local",
+
+    // Authentication configuration
+    authentication: {
+      // For Phase 4, use simple token auth
+      // Phase 7 will need proper credential management
+      method: "token",
+      tokens: {
+        "dev-token": {
+          scope: "full",
+          description: "Development token for Phase 4 containers"
+        }
+      }
+    },
+
+    // Hook configuration - allow conversation access for llm_input/llm_output
+    hooks: {
+      allowConversationAccess: true,
+
+      // Enable monitoring of model inputs and outputs
+      enabledHooks: [
+        "llm_input",
+        "llm_output",
+        "tool_use_before",
+        "tool_use_after"
+      ]
+    }
+  },
+
+  // Plugin configuration
+  plugins: {
+    // Track 1 security campaign plugin
+    "agent-security-track1": {
+      enabled: true,
+      path: "/app/integrations/openclaw",
+
+      // Plugin-specific configuration
+      config: {
+        // Track 1 scenarios
+        scenarios: ["T1-SC-001", "T1-SC-002", "T1-SC-003"],
+
+        // Policy enforcement
+        enforcement: {
+          mode: "monitor", // Phase 4: monitor only, no blocking
+          reportViolations: true
+        }
+      }
+    }
+  },
+
+  // Model proxy configuration
+  model: {
+    // Proxy to external model API
+    provider: "external",
+
+    // Rate limiting (optional)
+    rateLimit: {
+      enabled: false
+    }
+  },
+
+  // Logging configuration
+  logging: {
+    level: "info",
+    format: "json",
+
+    // Log hook invocations
+    logHooks: true,
+
+    // Log model interactions
+    logModelCalls: true
+  }
+}

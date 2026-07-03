@@ -9,8 +9,6 @@ services:
     build:
       context: ../..
       dockerfile: deploy/track1/Dockerfile.frontend
-    ports:
-      - "3000:3000"
     networks:
       - track1-public
     environment:
@@ -29,8 +27,9 @@ services:
     build:
       context: ../..
       dockerfile: deploy/track1/Dockerfile.backend
+    ports:
+      - "3000:3000"
     expose:
-      - "3000"
       - "3001"
     networks:
       - track1-public
@@ -62,12 +61,18 @@ services:
       - OPENCLAW_MODEL_API_KEY=${OPENCLAW_MODEL_API_KEY}
       - OPENCLAW_MODEL_ID=${OPENCLAW_MODEL_ID}
       - OPENCLAW_CONFIG_PATH=/app/config/openclaw.json5
-      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN:-dev-token}
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}
       - TRACK1_INGEST_TOKEN=${TRACK1_INGEST_TOKEN}
     volumes:
-      # Read-only mounts for cases and configuration
-      - ../../samples/track1/cases:/app/cases:ro
-      - ../../integrations/openclaw/config:/app/config:ro
+      # Read-only mount for OpenClaw gateway configuration
+      - ../../deploy/track1/config:/app/config:ro
+      - ../../integrations/openclaw/config:/app/integrations/openclaw/config:ro
+      # Read-only mount for samples including cases
+      - ../../samples/track1/cases:/app/samples/track1/cases:ro
+      - ../../samples/track1/openclaw:/app/samples/track1/openclaw:ro
+      # Read-only mount for scripts and engines (accessed by runner)
+      - ../../scripts/track1:/app/scripts/track1:ro
+      - ../../engines:/app/engines:ro
     tmpfs:
       # Ephemeral storage for workspace, sessions, and transient messages
       - /workspace

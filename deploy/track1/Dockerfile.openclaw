@@ -45,9 +45,10 @@ RUN npm pack && npm install --global agent-security-platform-openclaw-integratio
 WORKDIR /app
 RUN rm -rf /app/integrations /app/shared /app/engines
 
-# Copy OpenClaw configuration
+# Copy OpenClaw gateway configuration
 WORKDIR /app
-COPY integrations/openclaw/config/ /app/config/
+RUN mkdir -p /app/config
+COPY deploy/track1/config/openclaw.json5 /app/config/openclaw.json5
 
 # Create tmpfs mount points
 RUN mkdir -p /run/track1/workspace /tmp/openclaw/sessions /run/track1/messages

@@ -1,14 +1,20 @@
-# Track 1 Campaign Runner - Placeholder for Phase 7
+# Track 1 Campaign Runner - Executable runner for Phase 4
 FROM node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90
+
+# Install system dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates \
+      git && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy TypeScript runner and dependencies
-COPY scripts/track1 /app/scripts/track1
+# Install OpenClaw exact version globally (needed for openclaw agent command)
+RUN npm install --global openclaw@2026.6.10
+
+# Copy TypeScript runner dependencies (volumes will provide scripts at runtime)
 COPY shared /app/shared
 COPY package.json /app/
 
-# Phase 4 scope: skeleton that exits with "Phase 7 pending"
-RUN echo 'console.log("[runner] Phase 4 skeleton - credentialed execution pending Phase 7"); process.exit(1);' > /app/runner.js
-
-CMD ["node", "/app/runner.js"]
+CMD ["node", "--experimental-strip-types", "scripts/track1/run-openclaw-campaign.ts"]
