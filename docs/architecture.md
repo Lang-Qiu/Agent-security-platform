@@ -676,6 +676,121 @@ The following remain outside Phase 3 scope and belong to Phase 4:
 - frontend campaign UI
 - report generation or evidence export
 
+## REQ-T1-DEMO-010 Phase 4 Real OpenClaw Runtime Orchestration
+
+Phase 4 adds the fixed-manifest campaign runner and the pinned Docker Compose
+environment that can execute the real OpenClaw runtime without exposing
+arbitrary commands, paths, tools, model fallbacks, or host-persisted
+transcripts. Credentialed cloud-model execution remains a Phase 7 gate; Phase
+4 delivers the orchestration, oracle-free prompt compilation, shell-free
+process invocation, retry state machine, closed runtime configuration, and
+Compose topology, all proven with an offline gate that makes zero cloud-model
+requests.
+
+### Strict environment and preflight
+
+- `scripts/track1/environment.ts` exports `normalizeTrack1CloudModelConfig`,
+  a pure normalizer over an injected environment snapshot (never reads
+  `process.env` directly). It rejects a non-HTTPS base URL, embedded
+  credentials, query/fragment/non-default-port/`..`-traversal base URLs, a
+  malformed `provider/model-id` grammar, an empty API key, and an ingest
+  token shorter than 32 bytes.
+- `scripts/track1/preflight.ts` exports `runTrack1Preflight`, which runs
+  Docker Compose v2, exact OpenClaw version/integrity, the real plugin
+  capability probe, both backend health surfaces, and the manifest SHA-256
+  check in that fixed order, stopping at the first failure. The returned
+  `Track1PreflightResult` never contains the API key, ingest token, or any
+  raw environment value.
+
+### Hash-verified input-only prompt compiler
+
+- `scripts/track1/case-prompt.ts` exports `compileTrack1CasePrompt`. It
+  verifies the exact canonical case bytes against the manifest-pinned
+  SHA-256, validates campaign/agent/session identifiers and
+  agent/scenario/case correlation, and emits only an input-only
+  `Track1ModelInputEnvelope` — `expected_outcome`, the policy oracle, and any
+  report metadata never enter the compiled bytes. Output is canonical UTF-8
+  JSON with one trailing LF, and the same input always produces
+  byte-identical output.
+
+### Shell-free OpenClaw command port
+
+- `scripts/track1/openclaw-command.ts` exports `invokeOpenClawAgent`, which
+  spawns exactly `openclaw agent --agent <id> --session-key <key>
+  --message-file <path> --json` with `shell: false` and an allowlisted
+  environment. Raw stdout/stderr are drained transiently, capped at 1 MiB,
+  and never survive into the returned `SafeOpenClawInvocationResult` or any
+  thrown error. Non-zero exit, signal termination, malformed JSON, oversized
+  output, and protocol/session-key/agent mismatches all fail closed with
+  stable error codes.
+
+### Fixed three-agent/nine-case campaign state machine
+
+- `scripts/track1/campaign-runner.ts` exports `runTrack1OpenClawCampaign`.
+  It runs preflight, creates one campaign, then executes the three fixed
+  agents in manifest order and each agent's three cases in case-ID order.
+  Every attempt gets a fresh session key and session ID. The final action
+  for each case comes exclusively from the injected `awaitAttempt` port's
+  normalized observation — never from CLI-claimed text.
+- Retry classification is closed: `provider_transport_failed`,
+  `model_protocol_invalid`, `expected_tool_request_missing`, and
+  `derived_action_mismatch` permit exactly one retry with a fresh attempt ID
+  and session; every other reason (`preflight_failed`, `plugin_probe_failed`,
+  `ingest_failed`, `correlation_invalid`, `real_side_effect_detected`,
+  `content_boundary_violated`, `manifest_invalid`) is terminal. A second
+  failed attempt is always terminal. Attempt 1 remains in the finalize
+  envelope's attempt list even when attempt 2 succeeds.
+- Progress events and the returned summary contain only safe IDs, ordinal
+  counts, and fixed reason codes.
+
+### Closed OpenClaw runtime configuration and pinned image
+
+- `integrations/openclaw/config/agents.json5` fixes the three agent
+  IDs/scenario assignments; `integrations/openclaw/config/openclaw.json5`
+  allows only the four plugin tools, disables every built-in shell/process/
+  filesystem-write/browser/node/messaging/network/MCP/channel capability,
+  disables skills/marketplace/third-party plugins, points the workspace and
+  session store at tmpfs paths, disables transcript persistence, and enables
+  sensitive tool-log redaction.
+- `deploy/track1/Dockerfile.openclaw` pins `node:22.19.0-bookworm-slim` by
+  digest, installs the exact `openclaw@2026.6.10` package, and verifies
+  `openclaw --version` at build time. No `ARG` accepts a credential.
+
+### Compose topology
+
+- `deploy/track1/compose.track1.yml` adds a `track1` profile with
+  `openclaw-gateway`, `campaign-runner`, `backend`, and `frontend`. The
+  backend publishes only the public `3000` port; the internal ingest port
+  `3001` is `expose`-only. `openclaw-gateway` and `campaign-runner` publish
+  no host port. OpenClaw workspace/session/message paths are tmpfs; all
+  bind-mounted source is read-only. Three isolated networks
+  (`track1-public`, `track1-ingest`, `track1-model-egress`) keep the
+  frontend off the ingest network. Docker Compose alone cannot enforce
+  hostname-level egress for the model endpoint; that requires deployment
+  firewall policy in addition to the validated HTTPS URL.
+
+### Ordinary offline runtime gate
+
+- `scripts/track1/offline-runtime-gate.ts` exports
+  `runTrack1OfflineRuntimeGate`, which builds the pinned image, verifies
+  the exact OpenClaw version, inspects the real plugin runtime, and runs the
+  dynamic capability probe — all without any agent/model invocation. Root
+  `npm run test:track1:openclaw` runs the Phase 3 integration suite plus the
+  full Phase 4 unit/repository suite.
+- `scripts/track1/run-openclaw-campaign.ts` is the fixed, argument-free
+  operator entrypoint (`npm run demo:track1:openclaw`). It runs the real
+  preflight checks and, because the Phase 6 evidence pipeline is not yet
+  wired, always exits non-zero with the fixed `track1_evidence_unavailable`
+  code after a successful preflight.
+
+### Explicit non-goals
+
+The following remain outside Phase 4 scope and belong to later phases:
+
+- credentialed real cloud-model campaign execution (Phase 7)
+- evidence capture, report generation, and artifact manifest (Phase 6)
+- campaign supervision UI (Phase 5, already delivered independently)
+
 ## REQ-T1-DEMO-010 Phase 5 Campaign Supervision UI
 
 Phase 5 extends the existing `/results/sandbox` workbench with a read-only

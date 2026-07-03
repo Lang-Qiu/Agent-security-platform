@@ -2901,3 +2901,129 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   - envelope `content_sha256` preferred over re-hashing in memory observations
 - status: PHASE_3_REWORK_COMPLETE_PENDING_REVIEW
 - next blocker: user review of Phase 3 rework before Phase 4 runtime orchestration
+
+## 2026-07-04 - REQ-T1-DEMO-010 Phase 4 Real OpenClaw Runtime Orchestration
+
+- requirement: rebuild Phase 4 from the approved plan on this branch after an
+  earlier attempt on a separate worktree/branch (`codex/track1-phase4-runtime`)
+  drifted from the plan (hardcoded single `"main"` agent, in-memory
+  `minimal-backend.js` stub, placeholder `policy_action: "allow"`, an unresolved
+  ingest/supervision 404 bug, and no accepted `PHASE_4_COMPLETE_PENDING_REVIEW`
+  report). That branch/worktree is left untouched; this Phase 4 implementation
+  is a from-scratch rebuild on `codex/track1-requirements-spec`.
+- commits (task order):
+  - `71079d0` P4-T1 `feat(track1): validate OpenClaw campaign environment`
+  - `96240cf` P4-T2 `feat(track1): compile oracle-free case prompts`
+  - `cd7875d` P4-T3 `feat(track1): add fixed OpenClaw command port`
+  - `871c33e` P4-T4 `feat(track1): orchestrate OpenClaw campaign`
+  - `cfab22c` P4-T5 `test(track1): enforce campaign retry semantics`
+  - `ea0c446` P4-T6 `build(track1): pin OpenClaw safety runtime`
+  - `da89fc1` P4-T7 `build(track1): compose OpenClaw demo runtime`
+  - P4-T8 `test(track1): gate offline OpenClaw runtime` (this commit)
+- scope:
+  - `scripts/track1/environment.ts` — pure `normalizeTrack1CloudModelConfig`
+    normalizer over an injected environment snapshot; rejects non-HTTPS,
+    embedded credentials, query/fragment/non-default-port/`..`-traversal base
+    URLs, malformed `provider/model-id` grammar, empty API key, and an ingest
+    token under 32 bytes
+  - `scripts/track1/preflight.ts` — `runTrack1Preflight` runs
+    docker → openclaw → plugin → backend → manifest in fixed order, stopping
+    at first failure; result never carries the API key/ingest token
+  - `scripts/track1/case-prompt.ts` — `compileTrack1CasePrompt` verifies
+    canonical case bytes against the manifest SHA-256, validates
+    campaign/agent/session correlation, and emits only the input-only
+    `Track1ModelInputEnvelope` (never `expected_outcome`/oracle/report
+    metadata) as canonical UTF-8 with one trailing LF; byte-deterministic
+  - `scripts/track1/openclaw-command.ts` — `invokeOpenClawAgent` spawns the
+    exact fixed `openclaw agent --agent <id> --session-key <key>
+    --message-file <path> --json` command with `shell: false` and an
+    allowlisted environment; discards raw stdout/stderr; caps output at
+    1 MiB; rejects non-zero exit, signal termination, malformed/extra-key
+    protocol JSON, and agent/session mismatches
+  - `scripts/track1/campaign-runner.ts` — `runTrack1OpenClawCampaign`
+    executes the fixed 3-agent/9-case order, derives every final action only
+    from the injected `awaitAttempt` observation (never CLI text), and
+    implements the closed one-retry state machine (4 retryable reasons,
+    7 terminal reasons); attempt 1 remains visible in the finalize envelope
+    even when attempt 2 succeeds; a second failure is always terminal
+  - `integrations/openclaw/config/agents.json5` +
+    `integrations/openclaw/config/openclaw.json5` — fixed 3-agent config;
+    closed tool allowlist (4 tools only); every built-in
+    shell/process/filesystem-write/browser/node/messaging/network/MCP/channel
+    capability disabled; skills/marketplace/third-party plugins disabled;
+    tmpfs workspace/session paths; transcript persistence disabled; sensitive
+    tool-log redaction enabled
+  - `deploy/track1/Dockerfile.openclaw` — pins
+    `node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90`,
+    installs exact `openclaw@2026.6.10`, verifies `openclaw --version` at
+    build time; no `ARG` accepts a credential
+  - `deploy/track1/compose.track1.yml` + `deploy/track1/README.md` — `track1`
+    profile with `openclaw-gateway`, `campaign-runner`, `backend`, `frontend`;
+    backend publishes only public `3000`, internal `3001` is `expose`-only;
+    `openclaw-gateway`/`campaign-runner` publish no host port; tmpfs
+    OpenClaw state; read-only bind mounts; three isolated networks
+    (`track1-public`, `track1-ingest`, `track1-model-egress`) keep frontend
+    off the ingest network
+  - `scripts/track1/offline-runtime-gate.ts` — `runTrack1OfflineRuntimeGate`
+    builds the pinned image, checks the exact OpenClaw version, inspects the
+    real plugin runtime, and runs the dynamic capability probe with zero
+    agent/model invocations
+  - `scripts/track1/run-openclaw-campaign.ts` — fixed argument-free operator
+    entrypoint (`npm run demo:track1:openclaw`); rejects any CLI argument;
+    runs real preflight against `process.env`; exits non-zero with the fixed
+    `track1_evidence_unavailable` code after a successful preflight, because
+    the Phase 6 evidence pipeline is not yet wired
+  - `package.json` — added `demo:track1:openclaw`,
+    `test:track1:openclaw:unit`, `test:track1:openclaw` root scripts
+  - `docs/architecture.md`, `docs/api-contract.md` — Phase 4 sections added
+- RED evidence (all genuine — module/behavior did not exist before implementation):
+  - P4-T1: `node --experimental-strip-types --experimental-test-isolation=none --test tests/track1/openclaw-preflight.spec.ts` -> `Cannot find module '.../scripts/track1/environment.ts'`
+  - P4-T2: same command against `case-prompt.spec.ts` -> module not found
+  - P4-T3: same command against `openclaw-command.spec.ts` -> module not found
+  - P4-T4: same command against `openclaw-campaign-runner.spec.ts` -> module not found
+  - P4-T5: `openclaw-campaign-retry.spec.ts` written against the already-implemented P4-T4 state machine; ran GREEN on first execution because the retry loop was implemented as part of the P4-T4 state machine design (single `for (attemptIndex of [1,2])` loop handling both retryable-continue and terminal-break in one pass) — no separate retry RED was observed; this is a deviation from the plan's expectation of a distinct P4-T5 RED phase and is flagged below
+  - P4-T6: `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/track1-openclaw-runtime-config.spec.ts` -> `ENOENT` on `integrations/openclaw/config/openclaw.json5`
+  - P4-T7: same command against `track1-compose.spec.ts` -> `ENOENT` on `deploy/track1/compose.track1.yml`
+  - P4-T8: same command against `openclaw-offline-runtime.spec.ts` -> module not found
+- GREEN gates (actual):
+  - `test:track1:openclaw` (67 tests): 67/67 pass
+  - `test:shared`: 148/148 pass
+  - `test:repo`: 115/115 pass
+  - `test:integration:openclaw`: 55/55 pass
+  - `test:engine:sandbox`: 430/430 pass
+  - `test:backend`: 228/229 pass (1 pre-existing failure: `task-engine.service.spec.ts` — `task engine service maps tasks into initial result and risk summary shells without leaking engine internals`; reproduced before any Phase 4 change, unrelated to Track 1)
+  - real image build: `docker build -f deploy/track1/Dockerfile.openclaw ...` succeeds; `docker run --rm agent-security-track1-openclaw:2026.6.10 --version` reports exactly `OpenClaw 2026.6.10 (aa69b12)`
+  - rendered Compose config validated with dummy env vars via `docker-compose -f deploy/track1/compose.track1.yml --profile track1 config`: only `backend` publishes a host port (`3000:3000`), no secret literal appears outside the injected environment substitution
+  - `test:frontend`: 211/212 pass (1 pre-existing flaky failure: `stale state shows last success and retry recovers`, a fetch-mock timing test unrelated to Track 1 or any file touched in Phase 4 — no `frontend/` file was modified in this phase)
+- deviations from the plan:
+  - P4-T5 has no distinct RED because its retry logic was implemented inside
+    the P4-T4 state machine rather than as a separate later addition; the
+    P4-T5 commit is test-only (`openclaw-campaign-retry.spec.ts`) covering the
+    already-implemented retry matrix. Flagging for review rather than
+    fabricating an artificial RED.
+  - `scripts/track1/run-openclaw-campaign.ts` composes only the preflight
+    ports for real; the full campaign-runner ports (`invokeAgent`,
+    `compilePrompt`, `awaitAttempt`, backend ingest wiring) are not composed
+    for a real end-to-end run in this task, because Phase 2's backend ingest
+    HTTP client wiring and Phase 6's evidence pipeline are out of this task's
+    scope. The entrypoint intentionally fails closed with
+    `track1_evidence_unavailable` after preflight succeeds, per plan intent
+    ("Before Phase 6, a completed campaign still exits non-zero with fixed
+    `track1_evidence_unavailable`").
+  - the `.json5` config files are written as strict JSON (a valid JSON5
+    subset) and parsed with `JSON.parse` rather than adding a new `json5`
+    npm dependency; no JSON5-only syntax (comments, trailing commas,
+    unquoted keys) is used.
+- content-boundary sentinel result: no raw model/tool/provider content,
+  credential, or ingest token appears in any Phase 4 test assertion, error
+  message, or committed source file (verified by the OpenClaw-port stdout/
+  stderr-discard tests and the preflight safe-key test).
+- risks requiring high-level review:
+  - the credentialed real campaign run (Phase 7) and the evidence/report
+    pipeline (Phase 6) are still not implemented; `run-openclaw-campaign.ts`
+    cannot complete a real campaign yet by design
+  - the separate `codex/track1-phase4-runtime` worktree/branch still holds an
+    earlier, non-conforming Phase 4 attempt; it has not been merged, deleted,
+    or reconciled with this rebuild — a decision on that branch is pending
+- status: PHASE_4_COMPLETE_PENDING_REVIEW
+- next blocker: user review of Phase 4 before Phase 6 report/evidence pipeline

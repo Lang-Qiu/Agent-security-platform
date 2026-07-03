@@ -1774,6 +1774,86 @@ The fixed runtime command is `openclaw plugins inspect agent-security-track1 --r
 
 The plugin does not expose any new public HTTP route, does not invoke real models or tools, does not manage campaign retry/attempt lifecycle, and does not produce frontend-facing payloads. Real Docker/OpenClaw runtime execution belongs to Phase 4.
 
+## REQ-T1-DEMO-010 Phase 4 Real OpenClaw Runtime Orchestration Surface
+
+Phase 4 adds no new public or internal HTTP route. It adds a fixed operator
+CLI, an internal campaign runner state machine, and a shell-free OpenClaw
+process invocation port, all consuming the Phase 1 shared contracts and the
+Phase 2 internal ingest routes established by earlier phases.
+
+### Operator CLI
+
+```text
+npm run demo:track1:openclaw
+```
+
+The entrypoint `scripts/track1/run-openclaw-campaign.ts` accepts no
+arguments — any argument fails closed with `track1_entrypoint_arguments_not_supported`.
+Required environment variables (`OPENCLAW_MODEL_BASE_URL`,
+`OPENCLAW_MODEL_API_KEY`, `OPENCLAW_MODEL_ID`, `TRACK1_INGEST_TOKEN`) are
+validated by `scripts/track1/environment.ts` before any preflight check
+runs. Fixed safe stdout lines are `status=<value>`; the entrypoint never
+prints a raw environment value, provider response, or exception message.
+
+### Campaign runner ports (internal, not HTTP)
+
+`scripts/track1/campaign-runner.ts` exports `Track1CampaignRunnerPorts`, an
+injected-port interface (`preflight`, `createCampaign`, `compilePrompt`,
+`invokeAgent`, `awaitAttempt`, `finalizeCampaign`, `now`, `randomHex32`,
+`progress`). Production wiring composes these ports over the existing Phase 2
+internal ingest client and the Phase 4 OpenClaw command port — no new route
+is exposed. `awaitAttempt` is the sole source of a case's final action; the
+runner never trusts CLI-claimed text.
+
+### OpenClaw command port contract
+
+`scripts/track1/openclaw-command.ts` exports `invokeOpenClawAgent`. The
+production port spawns exactly:
+
+```text
+openclaw agent --agent <fixed-agent-id> --session-key <runner-generated-key> --message-file /run/track1/messages/<derived-attempt-id>.json --json
+```
+
+with `shell: false` and an allowlisted environment
+(`OPENCLAW_MODEL_BASE_URL`, `OPENCLAW_MODEL_API_KEY`, `OPENCLAW_MODEL_ID`,
+`PATH`, `HOME`). The safe result contains only `exit_code`, `agent_id`,
+`session_key_sha256`, and `protocol_valid` — never raw stdout/stderr, model
+text, or provider content.
+
+### Retry classification (closed)
+
+| Reason | Retryable |
+| --- | --- |
+| `provider_transport_failed` | yes |
+| `model_protocol_invalid` | yes |
+| `expected_tool_request_missing` | yes |
+| `derived_action_mismatch` | yes |
+| `preflight_failed` | no |
+| `plugin_probe_failed` | no |
+| `ingest_failed` | no |
+| `correlation_invalid` | no |
+| `real_side_effect_detected` | no |
+| `content_boundary_violated` | no |
+| `manifest_invalid` | no |
+
+At most one retry per case. A second failure of any reason is terminal for
+the whole campaign.
+
+### Offline runtime gate
+
+`npm run test:track1:openclaw` runs the Phase 3 integration suite plus the
+full Phase 4 unit/repository suite (`test:track1:openclaw:unit`), including
+`scripts/track1/offline-runtime-gate.ts`'s `runTrack1OfflineRuntimeGate`,
+which builds the pinned image, checks the exact OpenClaw version, inspects
+the real plugin runtime, and runs the dynamic capability probe — zero
+cloud-model or agent invocations.
+
+### Explicit non-goals
+
+Phase 4 does not execute a real credentialed cloud-model campaign (Phase 7),
+does not generate evidence or reports (Phase 6), and does not add or modify
+any backend HTTP route.
+
 ## REQ-T1-DEMO-010 Phase 5 Campaign Supervision UI Frontend Contract
 
 Phase 5 adds a read-only campaign supervision mode to the existing
