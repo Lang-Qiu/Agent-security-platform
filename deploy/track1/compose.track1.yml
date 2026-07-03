@@ -61,7 +61,7 @@ services:
       - OPENCLAW_MODEL_BASE_URL=${OPENCLAW_MODEL_BASE_URL}
       - OPENCLAW_MODEL_API_KEY=${OPENCLAW_MODEL_API_KEY}
       - OPENCLAW_MODEL_ID=${OPENCLAW_MODEL_ID}
-      - OPENCLAW_CONFIG_DIR=/app/config
+      - OPENCLAW_CONFIG_PATH=/app/config
       - TRACK1_INGEST_TOKEN=${TRACK1_INGEST_TOKEN}
     volumes:
       # Read-only mounts for cases and configuration
@@ -90,7 +90,8 @@ services:
     networks:
       - track1-ingest
     environment:
-      - TRACK1_BACKEND_INGEST_URL=http://backend:3001
+      - TRACK1_INGEST_BASE_URL=http://backend:3001/internal/track1
+      - TRACK1_BACKEND_URL=http://backend:3000/api
       - TRACK1_INGEST_TOKEN=${TRACK1_INGEST_TOKEN}
       - TRACK1_OPENCLAW_GATEWAY_URL=http://openclaw-gateway:19001
       - OPENCLAW_MODEL_BASE_URL=${OPENCLAW_MODEL_BASE_URL}
