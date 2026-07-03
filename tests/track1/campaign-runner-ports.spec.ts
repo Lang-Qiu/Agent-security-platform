@@ -53,24 +53,69 @@ test("randomHex32 generates unique values", () => {
   assert.equal(values.size, 100, "Should generate 100 unique values");
 });
 
+test("preflight returns structured result", async () => {
+  const ports = createProductionPorts(testConfig);
+
+  // This requires Docker, OpenClaw, and backend to be running
+  // Skip if not in integration environment
+  const hasDocker = process.env.CI || process.env.INTEGRATION_TEST;
+  if (!hasDocker) {
+    console.log("⊘ Skipping preflight test (requires Docker/OpenClaw/backend)");
+    return;
+  }
+
+  const result = await ports.preflight();
+
+  // Validate result structure
+  assert.ok(result.docker, "Should have docker info");
+  assert.ok(result.openclaw, "Should have openclaw info");
+  assert.ok(result.backend, "Should have backend info");
+  assert.ok(result.manifest, "Should have manifest info");
+  assert.ok(typeof result.docker.compose_v2 === "boolean");
+  assert.ok(typeof result.openclaw.version === "string");
+});
+
 test("compilePrompt requires case_id field", async () => {
   const ports = createProductionPorts(testConfig);
+  const randomHex = ports.randomHex32();
 
   await assert.rejects(
     async () => {
       await ports.compilePrompt({
-        campaign_id: "campaign:t1:abc123",
+        campaign_id: `campaign:t1:${randomHex}`,
         agent_id: "agent:track1:prompt-injection",
         scenario_id: "T1-SC-001",
         case_id: "T1-SC-001-NONEXISTENT", // Non-existent case
-        attempt_id: "attempt:001",
+        attempt_id: "attempt:t1-sc-001-nonexistent:1",
         attempt_index: 1,
-        session_id: "session:001"
+        session_id: `session:${ports.randomHex32()}`
       });
     },
     /not found in manifest/,
     "Should reject when case is not found in manifest"
   );
+});
+
+test("compilePrompt successfully compiles valid case", async () => {
+  const ports = createProductionPorts(testConfig);
+
+  const result = await ports.compilePrompt({
+    campaign_id: `campaign:t1:${ports.randomHex32()}`,
+    agent_id: "agent:track1:prompt-injection",
+    scenario_id: "T1-SC-001",
+    case_id: "T1-SC-001-C001", // Valid case from manifest
+    attempt_id: "attempt:t1-sc-001-c001:1",
+    attempt_index: 1,
+    session_id: `session:${ports.randomHex32()}`
+  });
+
+  // Validate compiled prompt structure (Track1CompiledPrompt interface)
+  assert.equal(result.case_id, "T1-SC-001-C001");
+  assert.equal(result.scenario_id, "T1-SC-001");
+  assert.ok(result.relative_tmpfs_path.startsWith("/run/track1/"));
+  assert.ok(result.content_sha256.match(/^[0-9a-f]{64}$/), "Should have valid SHA-256");
+  assert.ok(result.utf8 instanceof Uint8Array, "Should have Uint8Array");
+  assert.ok(result.utf8.length > 0, "Should have non-empty content");
 });
 
 test("recordCampaign sends campaign data to ingest API", async () => {

@@ -225,7 +225,8 @@ export function createProductionPorts(
 
       // Load canonical case bytes
       const caseFilePath = join(import.meta.dirname, "../..", caseEntry.case_ref);
-      const canonicalCaseBytes = await readFile(caseFilePath);
+      const fileBuffer = await readFile(caseFilePath);
+      const canonicalCaseBytes = new Uint8Array(fileBuffer);
 
       // Call compiler with all required data
       return compileTrack1CasePrompt({
