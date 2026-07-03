@@ -267,15 +267,16 @@ export async function runTrack1OpenClawCampaign(
         final_action: observation.final_action
       });
 
-      const classification = observation.retry_classification ?? "success";
+      let classification = observation.retry_classification ?? "success";
 
       // Validate that final_action matches expected_action from manifest
+      // If backend marked as success but action doesn't match, override to derived_action_mismatch
       if (classification === "success") {
         if (observation.final_action !== caseEntry.expected_action) {
           // Backend marked as success but action doesn't match expectation
-          throw new Error(
-            `track1_action_mismatch: expected ${caseEntry.expected_action}, got ${observation.final_action}`
-          );
+          // Override classification to trigger retry (if on attempt 1) or failure (if on attempt 2)
+          classification = "derived_action_mismatch";
+          console.warn(`[Runner] Action mismatch: expected ${caseEntry.expected_action}, got ${observation.final_action} for case ${case_id} attempt ${attempt_index}`);
         }
       }
 
