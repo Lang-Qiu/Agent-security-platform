@@ -1,0 +1,104 @@
+name: track1
+
+networks:
+  track1-public:
+  track1-ingest:
+  track1-model-egress:
+
+services:
+  openclaw-gateway:
+    profiles: ["track1"]
+    build:
+      context: ../..
+      dockerfile: deploy/track1/Dockerfile.openclaw
+    environment:
+      OPENCLAW_MODEL_BASE_URL: ${OPENCLAW_MODEL_BASE_URL}
+      OPENCLAW_MODEL_API_KEY: ${OPENCLAW_MODEL_API_KEY}
+      OPENCLAW_MODEL_ID: ${OPENCLAW_MODEL_ID}
+    volumes:
+      - ../../integrations/openclaw/config/openclaw.json5:/app/config/openclaw.json5:ro
+      - ../../integrations/openclaw/config/agents.json5:/app/config/agents.json5:ro
+    tmpfs:
+      - /run/track1
+      - /tmp/openclaw
+      - /workspace
+    networks:
+      - track1-ingest
+      - track1-model-egress
+    healthcheck:
+      test: ["CMD", "openclaw", "--version"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    profiles: ["track1"]
+    image: node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90
+    working_dir: /app
+    command:
+      [
+        "node",
+        "--experimental-strip-types",
+        "backend/src/main.ts"
+      ]
+    environment:
+      PORT: "3000"
+      INTERNAL_PORT: "3001"
+      INTERNAL_BIND_HOST: "0.0.0.0"
+      TRACK1_INGEST_TOKEN: ${TRACK1_INGEST_TOKEN}
+    volumes:
+      - ../..:/app:ro
+    ports:
+      - "3000:3000"
+    expose:
+      - "3001"
+    networks:
+      - track1-public
+      - track1-ingest
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  campaign-runner:
+    profiles: ["track1"]
+    image: node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90
+    working_dir: /app
+    command:
+      [
+        "node",
+        "--experimental-strip-types",
+        "scripts/track1/run-openclaw-campaign.ts"
+      ]
+    environment:
+      OPENCLAW_MODEL_BASE_URL: ${OPENCLAW_MODEL_BASE_URL}
+      OPENCLAW_MODEL_API_KEY: ${OPENCLAW_MODEL_API_KEY}
+      OPENCLAW_MODEL_ID: ${OPENCLAW_MODEL_ID}
+      TRACK1_INGEST_TOKEN: ${TRACK1_INGEST_TOKEN}
+      TRACK1_INGEST_BASE_URL: "http://backend:3001/internal/track1"
+      TRACK1_BACKEND_URL: "http://backend:3000"
+      TRACK1_OPENCLAW_GATEWAY_URL: "http://openclaw-gateway:19001"
+    volumes:
+      - ../..:/app:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      openclaw-gateway:
+        condition: service_healthy
+    networks:
+      - track1-ingest
+      - track1-model-egress
+
+  frontend:
+    profiles: ["track1"]
+    image: node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90
+    working_dir: /app/frontend
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+    volumes:
+      - ../../frontend:/app/frontend:ro
+    networks:
+      - track1-public
+    depends_on:
+      backend:
+        condition: service_healthy
