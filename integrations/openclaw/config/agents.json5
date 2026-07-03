@@ -1,0 +1,20 @@
+{
+  "schema_version": "track1-openclaw-agents.v1",
+  "agents": [
+    {
+      "id": "agent:track1:prompt-injection",
+      "scenario_id": "T1-SC-001",
+      "model": "${OPENCLAW_MODEL_ID}"
+    },
+    {
+      "id": "agent:track1:tool-hijack",
+      "scenario_id": "T1-SC-002",
+      "model": "${OPENCLAW_MODEL_ID}"
+    },
+    {
+      "id": "agent:track1:memory-poison",
+      "scenario_id": "T1-SC-003",
+      "model": "${OPENCLAW_MODEL_ID}"
+    }
+  ]
+}

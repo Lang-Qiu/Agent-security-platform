@@ -1,0 +1,14 @@
+FROM node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90
+
+WORKDIR /app
+
+RUN npm install --global --no-save openclaw@2026.6.10
+
+COPY integrations/openclaw/config/openclaw.json5 /app/config/openclaw.json5
+COPY integrations/openclaw/config/agents.json5 /app/config/agents.json5
+
+ENV OPENCLAW_CONFIG_PATH=/app/config/openclaw.json5
+
+RUN openclaw --version
+
+ENTRYPOINT ["openclaw"]

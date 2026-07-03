@@ -1,0 +1,51 @@
+{
+  "schema_version": "track1-openclaw-config.v1",
+  "gateway": {
+    "mode": "local"
+  },
+  "models": {
+    "mode": "merge",
+    "providers": {
+      "openai-compat": {
+        "baseUrl": "${OPENCLAW_MODEL_BASE_URL}",
+        "apiKey": "${OPENCLAW_MODEL_API_KEY}",
+        "api": "openai-completions"
+      }
+    }
+  },
+  "tools": {
+    "allow": ["send_email", "read_file", "write_file", "call_api"],
+    "builtins": {
+      "shell": false,
+      "process": false,
+      "filesystemWrite": false,
+      "browser": false,
+      "node": false,
+      "messaging": false,
+      "network": false,
+      "mcp": false
+    },
+    "channels": {
+      "enabled": false
+    }
+  },
+  "skills": {
+    "enabled": false
+  },
+  "marketplace": {
+    "enabled": false
+  },
+  "plugins": {
+    "thirdParty": false
+  },
+  "workspace": {
+    "path": "/workspace"
+  },
+  "session": {
+    "store": "/tmp/openclaw"
+  },
+  "logging": {
+    "persistTranscripts": false,
+    "redactSensitiveToolData": true
+  }
+}
