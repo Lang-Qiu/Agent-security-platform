@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   TRACK1_MODEL_REF_CANONICAL
 } from "../../../shared/types/campaign-ingest.ts";
@@ -199,7 +200,8 @@ const FORBIDDEN_MODEL_INPUT_FIELDS = [
 
 function isValidMemoryEntry(value: unknown): value is Track1ControlledMemoryEntry {
   if (!isPlainObject(value)) return false;
-  return (
+
+  const hasCorrectShape = (
     hasExactKeys(value, [
       "memory_entry_id",
       "content",
@@ -211,6 +213,15 @@ function isValidMemoryEntry(value: unknown): value is Track1ControlledMemoryEntr
     typeof value.content_sha256 === "string" &&
     SHA256_PATTERN.test(value.content_sha256)
   );
+
+  if (!hasCorrectShape) return false;
+
+  // Verify content_sha256 matches SHA-256(content)
+  const computedHash = createHash("sha256")
+    .update(value.content, "utf8")
+    .digest("hex");
+
+  return computedHash === value.content_sha256;
 }
 
 function isValidToolProposal(
