@@ -398,7 +398,8 @@ const ATTEMPT_KEYS = [
   "session_id",
   "task_id",
   "status",
-  "actual_action",
+  "policy_action",
+  "report_summary",
   "started_at",
   "updated_at"
 ] as const;
@@ -474,9 +475,10 @@ function normalizeTrack1CampaignAttempt(
   if (!isTaskId(input.task_id)) return null;
   // P2-3: attempts use a separate status set that excludes "pending".
   if (!isOneOf(TRACK1_CAMPAIGN_ATTEMPT_STATUSES, input.status)) return null;
-  if (input.actual_action !== null) {
-    if (!isOneOf(SANDBOX_POLICY_ACTIONS, input.actual_action)) return null;
+  if (input.policy_action !== null) {
+    if (!isOneOf(SANDBOX_POLICY_ACTIONS, input.policy_action)) return null;
   }
+  if (typeof input.report_summary !== "string") return null;
   if (!isStrictIso8601(input.started_at)) return null;
   if (!isStrictIso8601(input.updated_at)) return null;
 
@@ -493,7 +495,8 @@ function normalizeTrack1CampaignAttempt(
     session_id: input.session_id,
     task_id: input.task_id,
     status: input.status,
-    actual_action: input.actual_action,
+    policy_action: input.policy_action,
+    report_summary: input.report_summary,
     started_at: input.started_at,
     updated_at: input.updated_at
   };

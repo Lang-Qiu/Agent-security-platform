@@ -46,6 +46,32 @@ function projectionInvalid(message: string): DomainError {
   return new DomainError(message, "CAMPAIGN_PROJECTION_INVALID", 500);
 }
 
+function deriveReportSummary(
+  decisions: readonly { action: SandboxPolicyAction }[] | undefined
+): string {
+  if (!decisions || decisions.length === 0) return "no decisions";
+
+  const counts: Record<SandboxPolicyAction, number> = {
+    allow: 0,
+    alert: 0,
+    ask: 0,
+    deny: 0
+  };
+
+  for (const d of decisions) {
+    counts[d.action]++;
+  }
+
+  // Build summary in severity order: deny, ask, alert, allow
+  const parts: string[] = [];
+  if (counts.deny > 0) parts.push(`${counts.deny} deny`);
+  if (counts.ask > 0) parts.push(`${counts.ask} ask`);
+  if (counts.alert > 0) parts.push(`${counts.alert} alert`);
+  if (counts.allow > 0) parts.push(`${counts.allow} allow`);
+
+  return parts.join(", ");
+}
+
 function deriveHighestAction(
   decisions: readonly { action: SandboxPolicyAction }[] | undefined
 ): SandboxPolicyAction | null {
@@ -151,7 +177,8 @@ export function projectTrack1Campaign(
 
       for (const attempt of attempts) {
         const details = attempt.result.details as SandboxRunResultDetails;
-        const actualAction = deriveHighestAction(details.policy_decisions);
+        const policyAction = deriveHighestAction(details.policy_decisions);
+        const reportSummary = deriveReportSummary(details.policy_decisions);
         const attemptStartedAt = attempt.result.created_at;
         const attemptUpdatedAt = attempt.result.updated_at;
         attemptUpdatedTimes.push(attemptUpdatedAt);
@@ -166,7 +193,8 @@ export function projectTrack1Campaign(
           session_id: attempt.session_id,
           task_id: attempt.task_id,
           status: attempt.status,
-          actual_action: actualAction,
+          policy_action: policyAction,
+          report_summary: reportSummary,
           started_at: attemptStartedAt,
           updated_at: attemptUpdatedAt
         });

@@ -154,7 +154,8 @@ export interface Track1CampaignAttemptSummary {
   session_id: string;
   task_id: string;
   status: Track1CampaignAttemptStatus;
-  actual_action: SandboxPolicyAction | null;
+  policy_action: SandboxPolicyAction | null; // Highest-severity policy decision
+  report_summary: string; // Human-readable classification distribution (e.g., "3 deny, 2 alert")
   started_at: string;
   updated_at: string;
 }
