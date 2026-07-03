@@ -292,11 +292,17 @@ test("REQ-T1-DEMO-010 runner rejects success classification when action mismatch
   });
 
   // Backend will return retry_classification: success but final_action: allow
-  // when manifest expects deny - this should be rejected
+  // when manifest expects deny.
+  // P0-3 fix: This now triggers derived_action_mismatch classification override,
+  // which causes retry on attempt 1, then terminal failure on attempt 2.
   await assert.rejects(
     () => runTrack1OpenClawCampaign(ports),
-    /track1_action_mismatch/
+    /track1_campaign_failed/
   );
+
+  // Verify that retry happened (2 attempts for the mismatched case)
+  const firstCaseAttempts = ports.attemptsFor("T1-SC-001-C001");
+  assert.equal(firstCaseAttempts.length, 2, "Should have retried after action mismatch");
 });
 
 test("REQ-T1-DEMO-010 preflight failure creates no campaign and invokes no agent", async () => {
