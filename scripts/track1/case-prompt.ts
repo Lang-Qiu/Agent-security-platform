@@ -191,7 +191,7 @@ export function compileTrack1CasePrompt(input: unknown): Track1CompiledPrompt {
   const retrievedEntries: Track1ControlledMemoryEntry[] = fixture.input.retrieved_content.map(
     (content, index) => ({
       memory_entry_id: `memory:track1-retrieved:${String(index + 1).padStart(3, "0")}`,
-      content_ref: `case://track1/${lowerCaseId}/retrieved/${String(index + 1).padStart(3, "0")}`,
+      content: content,
       content_sha256: createHash("sha256").update(content, "utf8").digest("hex")
     })
   );
@@ -199,7 +199,7 @@ export function compileTrack1CasePrompt(input: unknown): Track1CompiledPrompt {
   const memoryEntries: Track1ControlledMemoryEntry[] = fixture.input.memory_entries.map(
     (entry) => ({
       memory_entry_id: `memory:track1-memory:${entry.memory_id}`,
-      content_ref: `case://track1/${lowerCaseId}/memory/${entry.memory_id}`,
+      content: entry.content,
       content_sha256: createHash("sha256").update(entry.content, "utf8").digest("hex")
     })
   );
@@ -209,7 +209,7 @@ export function compileTrack1CasePrompt(input: unknown): Track1CompiledPrompt {
       ? null
       : {
           tool_name: fixture.input.proposed_tool_call.tool_name,
-          arguments_ref: `case://track1/${lowerCaseId}/proposed-tool-call`
+          arguments: JSON.stringify(fixture.input.proposed_tool_call.arguments)
         };
 
   let envelope;

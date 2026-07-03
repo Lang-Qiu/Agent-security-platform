@@ -29,8 +29,9 @@ services:
     build:
       context: ../..
       dockerfile: deploy/track1/Dockerfile.backend
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
+      - "3001"
     expose:
       - "3001"
     networks:
@@ -63,6 +64,7 @@ services:
       - OPENCLAW_MODEL_API_KEY=${OPENCLAW_MODEL_API_KEY}
       - OPENCLAW_MODEL_ID=${OPENCLAW_MODEL_ID}
       - OPENCLAW_CONFIG_DIR=/app/config
+      - TRACK1_INGEST_TOKEN=${TRACK1_INGEST_TOKEN}
     volumes:
       # Read-only mounts for cases and configuration
       - ../../samples/track1/cases:/app/cases:ro
@@ -72,9 +74,9 @@ services:
       - /workspace
       - /run/track1
       - /tmp/openclaw
-    command: ["openclaw", "gateway", "--config", "/app/config/openclaw.json5"]
+    command: ["openclaw", "gateway", "--port", "19001"]
     healthcheck:
-      test: ["CMD", "openclaw", "ping"]
+      test: ["CMD", "openclaw", "health"]
       interval: 15s
       timeout: 5s
       retries: 3
@@ -92,7 +94,7 @@ services:
     environment:
       - TRACK1_BACKEND_INGEST_URL=http://backend:3001
       - TRACK1_INGEST_TOKEN=${TRACK1_INGEST_TOKEN}
-      - TRACK1_OPENCLAW_GATEWAY_URL=http://openclaw-gateway:8080
+      - TRACK1_OPENCLAW_GATEWAY_URL=http://openclaw-gateway:19001
       - OPENCLAW_MODEL_BASE_URL=${OPENCLAW_MODEL_BASE_URL}
       - OPENCLAW_MODEL_API_KEY=${OPENCLAW_MODEL_API_KEY}
       - OPENCLAW_MODEL_ID=${OPENCLAW_MODEL_ID}

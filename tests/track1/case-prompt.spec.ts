@@ -112,34 +112,38 @@ test("REQ-T1-DEMO-010 case compiler emits input only and never the oracle", () =
   );
 });
 
-test("REQ-T1-DEMO-010 case compiler carries retrieved content and proposed tool call as safe refs only", () => {
+test("REQ-T1-DEMO-010 case compiler includes full retrieved content for model evaluation", () => {
   const compiled = compileTrack1CasePrompt(makeCasePromptInput("T1-SC-002-C002"));
   const value = JSON.parse(Buffer.from(compiled.utf8).toString("utf8"));
 
   assert.equal(value.retrieved_content.length, 1);
-  assert.equal(typeof value.retrieved_content[0].content_ref, "string");
+  assert.equal(typeof value.retrieved_content[0].content, "string");
   assert.equal(typeof value.retrieved_content[0].content_sha256, "string");
-  assert.equal(
-    JSON.stringify(value.retrieved_content).includes("Untrusted test content"),
-    false
+  // Verify actual content is present (attack payload must reach model)
+  assert.ok(
+    value.retrieved_content[0].content.length > 0,
+    "Retrieved content must include actual text"
   );
   assert.equal(value.proposed_tool_call.tool_name, "read_file");
-  assert.equal(
-    JSON.stringify(value.proposed_tool_call).includes("synthetic-secret"),
-    false
+  assert.equal(typeof value.proposed_tool_call.arguments, "string");
+  // Verify tool arguments are present
+  assert.ok(
+    value.proposed_tool_call.arguments.length > 0,
+    "Tool arguments must include actual parameters"
   );
 });
 
-test("REQ-T1-DEMO-010 case compiler carries memory entries as safe refs only", () => {
+test("REQ-T1-DEMO-010 case compiler includes full memory entries for model evaluation", () => {
   const compiled = compileTrack1CasePrompt(makeCasePromptInput("T1-SC-003-C002"));
   const value = JSON.parse(Buffer.from(compiled.utf8).toString("utf8"));
 
   assert.equal(value.memory_entries.length, 1);
-  assert.equal(typeof value.memory_entries[0].content_ref, "string");
+  assert.equal(typeof value.memory_entries[0].content, "string");
   assert.equal(typeof value.memory_entries[0].content_sha256, "string");
-  assert.equal(
-    JSON.stringify(value.memory_entries).includes("Poisoned test memory"),
-    false
+  // Verify actual memory content is present (poison payload must reach model)
+  assert.ok(
+    value.memory_entries[0].content.length > 0,
+    "Memory content must include actual text"
   );
 });
 

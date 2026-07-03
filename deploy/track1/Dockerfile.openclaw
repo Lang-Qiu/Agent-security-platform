@@ -23,14 +23,18 @@ RUN npm ci --omit=dev --ignore-scripts
 # Install OpenClaw exact version globally
 RUN npm install --global openclaw@2026.6.10
 
-# Copy Phase 3 plugin (pre-built dist)
+# Build and install Phase 3 plugin
 COPY integrations/openclaw/package.json /app/plugin/package.json
 COPY integrations/openclaw/openclaw.plugin.json /app/plugin/openclaw.plugin.json
-COPY integrations/openclaw/dist /app/plugin/dist
+COPY integrations/openclaw/src /app/plugin/src
+COPY integrations/openclaw/scripts /app/plugin/scripts
 
-# Pack and install plugin globally (skip prepack since dist is pre-built)
+# Install plugin dependencies and build
 WORKDIR /app/plugin
-RUN npm pack --ignore-scripts && npm install --global agent-security-platform-openclaw-integration-*.tgz
+RUN npm install --omit=dev && npm run build
+
+# Pack and install plugin globally
+RUN npm pack && npm install --global agent-security-platform-openclaw-integration-*.tgz
 
 # Copy OpenClaw configuration
 WORKDIR /app

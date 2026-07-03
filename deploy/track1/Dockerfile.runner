@@ -1,0 +1,14 @@
+# Track 1 Campaign Runner - Placeholder for Phase 7
+FROM node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90
+
+WORKDIR /app
+
+# Copy TypeScript runner and dependencies
+COPY scripts/track1 /app/scripts/track1
+COPY shared /app/shared
+COPY package.json /app/
+
+# Phase 4 scope: skeleton that exits with "Phase 7 pending"
+RUN echo 'console.log("[runner] Phase 4 skeleton - credentialed execution pending Phase 7"); process.exit(1);' > /app/runner.js
+
+CMD ["node", "/app/runner.js"]

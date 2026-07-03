@@ -1,0 +1,15 @@
+# Track 1 Frontend - Placeholder for Phase 5
+FROM node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90
+
+WORKDIR /app
+
+# Phase 4 scope: skeleton service that responds to health checks
+RUN npm install express@4.21.2
+
+RUN echo 'const express = require("express"); \
+const app = express(); \
+app.get("/health", (req, res) => res.json({ status: "ok" })); \
+app.listen(3000, () => console.log("Frontend placeholder listening on 3000"));' > server.js
+
+EXPOSE 3000
+CMD ["node", "server.js"]

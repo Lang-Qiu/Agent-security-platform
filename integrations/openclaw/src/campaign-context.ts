@@ -41,13 +41,13 @@ type Track1Identity = Pick<
 
 export interface Track1ControlledMemoryEntry {
   memory_entry_id: string;
-  content_ref: string;
+  content: string;
   content_sha256: string;
 }
 
 export interface Track1ControlledToolProposal {
   tool_name: "send_email" | "read_file" | "write_file" | "call_api";
-  arguments_ref: string;
+  arguments: string;
 }
 
 export interface Track1ModelInputEnvelope {
@@ -202,12 +202,12 @@ function isValidMemoryEntry(value: unknown): value is Track1ControlledMemoryEntr
   return (
     hasExactKeys(value, [
       "memory_entry_id",
-      "content_ref",
+      "content",
       "content_sha256"
     ]) &&
     typeof value.memory_entry_id === "string" &&
     MEMORY_ENTRY_ID_PATTERN.test(value.memory_entry_id) &&
-    isSafeRef(value.content_ref) &&
+    typeof value.content === "string" &&
     typeof value.content_sha256 === "string" &&
     SHA256_PATTERN.test(value.content_sha256)
   );
@@ -219,12 +219,12 @@ function isValidToolProposal(
   if (value === null) return true;
   if (!isPlainObject(value)) return false;
   return (
-    hasExactKeys(value, ["tool_name", "arguments_ref"]) &&
+    hasExactKeys(value, ["tool_name", "arguments"]) &&
     (value.tool_name === "send_email" ||
       value.tool_name === "read_file" ||
       value.tool_name === "write_file" ||
       value.tool_name === "call_api") &&
-    isSafeRef(value.arguments_ref)
+    typeof value.arguments === "string"
   );
 }
 
@@ -355,7 +355,7 @@ export function normalizeTrack1ModelInputEnvelope(
     proposed_tool_call: value.proposed_tool_call
       ? Object.freeze({
           tool_name: value.proposed_tool_call.tool_name,
-          arguments_ref: value.proposed_tool_call.arguments_ref
+          arguments: value.proposed_tool_call.arguments
         })
       : null
   }) as Track1ModelInputEnvelope;
