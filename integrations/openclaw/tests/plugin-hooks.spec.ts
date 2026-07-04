@@ -38,6 +38,7 @@ test("REQ-T1-DEMO-010 plugin registers each required typed hook exactly once", (
     api.hooks.map((hook) => hook.name).sort(),
     [
       "after_tool_call",
+      "agent_end",
       "before_tool_call",
       "llm_input",
       "llm_output",
@@ -45,7 +46,7 @@ test("REQ-T1-DEMO-010 plugin registers each required typed hook exactly once", (
       "session_start"
     ]
   );
-  assert.equal(new Set(api.hooks.map((hook) => hook.name)).size, 6);
+  assert.equal(new Set(api.hooks.map((hook) => hook.name)).size, 7);
   const before = api.hooks.find((hook) => hook.name === "before_tool_call");
   assert.deepEqual(before?.options, { priority: 100, timeoutMs: 10_000 });
 });
@@ -462,11 +463,12 @@ test("REQ-T1-DEMO-010 config with only ingestEndpoint/ingestToken completes regi
   // Registration succeeded — no track1_plugin_context_invalid thrown
   assert.ok(true, "registration with config-only ports succeeded");
 
-  // The six hooks should still be registered
+  // The direct CLI lifecycle adds agent_end to the six session/tool hooks.
   assert.deepEqual(
     api.hooks.map((hook) => hook.name).sort(),
     [
       "after_tool_call",
+      "agent_end",
       "before_tool_call",
       "llm_input",
       "llm_output",
@@ -526,6 +528,179 @@ test("REQ-T1-DEMO-010 real SDK prompt binds the campaign envelope through a runt
   });
 
   assert.ok(true, "real SDK prompt established the canonical campaign identity");
+});
+
+test("REQ-T1-DEMO-010 real CLI lifecycle lazily starts from timestamped llm_input and finalizes on agent_end", async () => {
+  const context = makeCampaignHookContext();
+  const runtimeSessionId = context.session_id.replace(/^session:/, "session-");
+  const runtimeContext = {
+    agentId: "agent-track1-prompt-injection",
+    sessionId: runtimeSessionId,
+    sessionKey: "session-key:0123456789abcdef0123456789abcdef"
+  };
+  const harness = await makePluginHookHarness({
+    register: registerTrack1Plugin,
+    action: "allow",
+    skipPreArm: true,
+    skipCampaignContext: true
+  });
+
+  await harness.llmInput(
+    {
+      runId: "run-real-cli-001",
+      sessionId: runtimeSessionId,
+      provider: "openai-compat",
+      model: "provider/model-safe",
+      prompt:
+        `[Sat 2026-07-05 09:30 GMT+8] ` +
+        JSON.stringify(makeTrack1ModelInputEnvelope()),
+      historyMessages: [],
+      imagesCount: 0,
+      tools: []
+    },
+    runtimeContext
+  );
+  await harness.llmOutput(
+    {
+      runId: "run-real-cli-001",
+      sessionId: runtimeSessionId,
+      provider: "openai-compat",
+      model: "provider/model-safe",
+      assistantTexts: ["The controlled portal is operating normally."]
+    },
+    runtimeContext
+  );
+
+  const agentEnd = harness.api.hooks.find(
+    (hook) => hook.name === "agent_end"
+  );
+  assert.ok(agentEnd);
+  await agentEnd.handler(
+    {
+      runId: "run-real-cli-001",
+      messages: [],
+      success: true
+    },
+    runtimeContext
+  );
+
+  assert.equal(harness.snapshotsIngested, 1);
+  assert.equal(
+    harness.snapshots[0]?.result.details?.session_id,
+    context.session_id
+  );
+  assert.equal(harness.snapshots[0]?.result.status, "finished");
+});
+
+test("REQ-T1-DEMO-010 failed real CLI lifecycle ingests a terminal failed snapshot", async () => {
+  const context = makeCampaignHookContext();
+  const runtimeSessionId = context.session_id.replace(/^session:/, "session-");
+  const runtimeContext = {
+    agentId: "agent-track1-prompt-injection",
+    sessionId: runtimeSessionId,
+    sessionKey: "session-key:0123456789abcdef0123456789abcdef"
+  };
+  const harness = await makePluginHookHarness({
+    register: registerTrack1Plugin,
+    action: "allow",
+    skipPreArm: true,
+    skipCampaignContext: true
+  });
+
+  await harness.llmInput(
+    {
+      runId: "run-real-cli-failed",
+      sessionId: runtimeSessionId,
+      provider: "openai-compat",
+      model: "provider/model-safe",
+      prompt: JSON.stringify(makeTrack1ModelInputEnvelope()),
+      historyMessages: [],
+      imagesCount: 0,
+      tools: []
+    },
+    runtimeContext
+  );
+
+  const agentEnd = harness.api.hooks.find(
+    (hook) => hook.name === "agent_end"
+  );
+  assert.ok(agentEnd);
+  await agentEnd.handler(
+    {
+      runId: "run-real-cli-failed",
+      messages: [],
+      success: false,
+      error: "RAW_PROVIDER_FAILURE_MUST_NOT_PERSIST"
+    },
+    runtimeContext
+  );
+
+  assert.equal(harness.snapshotsIngested, 1);
+  assert.equal(harness.snapshots[0]?.result.status, "failed");
+  assert.equal(
+    JSON.stringify(harness.snapshots).includes(
+      "RAW_PROVIDER_FAILURE_MUST_NOT_PERSIST"
+    ),
+    false
+  );
+});
+
+test("REQ-T1-DEMO-010 terminal ingest failure is not swallowed by agent_end", async () => {
+  const context = makeCampaignHookContext();
+  const runtimeSessionId = context.session_id.replace(/^session:/, "session-");
+  const runtimeContext = {
+    agentId: "agent-track1-prompt-injection",
+    sessionId: runtimeSessionId,
+    sessionKey: "session-key:0123456789abcdef0123456789abcdef"
+  };
+  const harness = await makePluginHookHarness({
+    register: registerTrack1Plugin,
+    action: "allow",
+    ingestFails: true,
+    skipPreArm: true,
+    skipCampaignContext: true
+  });
+
+  await harness.llmInput(
+    {
+      runId: "run-real-cli-ingest-failed",
+      sessionId: runtimeSessionId,
+      provider: "openai-compat",
+      model: "provider/model-safe",
+      prompt: JSON.stringify(makeTrack1ModelInputEnvelope()),
+      historyMessages: [],
+      imagesCount: 0,
+      tools: []
+    },
+    runtimeContext
+  );
+  await harness.llmOutput(
+    {
+      runId: "run-real-cli-ingest-failed",
+      sessionId: runtimeSessionId,
+      provider: "openai-compat",
+      model: "provider/model-safe",
+      assistantTexts: ["Controlled output"]
+    },
+    runtimeContext
+  );
+
+  const agentEnd = harness.api.hooks.find(
+    (hook) => hook.name === "agent_end"
+  );
+  assert.ok(agentEnd);
+  await assert.rejects(
+    () =>
+      agentEnd.handler(
+        {
+          runId: "run-real-cli-ingest-failed",
+          messages: [],
+          success: true
+        },
+        runtimeContext
+      ),
+    /security_monitor_unavailable/
+  );
 });
 
 // -- P3-ISSUE3: REQ-008 base-filter wiring -----------------------------------

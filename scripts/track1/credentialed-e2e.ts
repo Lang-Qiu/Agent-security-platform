@@ -1,4 +1,5 @@
 const REQUIRED_HOOKS = [
+  "agent_end",
   "session_start",
   "llm_input",
   "llm_output",

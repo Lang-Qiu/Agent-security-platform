@@ -1725,12 +1725,18 @@ Phase 3 adds the OpenClaw plugin integration layer that observes native hooks an
 
 ### Native hook registration
 
-`integrations/openclaw/src/plugin.ts` exports `registerTrack1Plugin` and `definePluginEntry`. It registers exactly six typed hooks via `api.on`:
+`integrations/openclaw/src/plugin.ts` exports `registerTrack1Plugin` and `definePluginEntry`. It registers exactly seven typed hooks via `api.on`:
 
-- `session_start`, `llm_input`, `llm_output`, `after_tool_call`, `session_end` (default options)
+- `session_start`, `llm_input`, `llm_output`, `after_tool_call`, `agent_end`, `session_end` (default options)
 - `before_tool_call` with `{ priority: 100, timeoutMs: 10_000 }`
 
 Legacy `registerHook` is permanently prohibited.
+
+The direct `openclaw agent` harness does not emit a per-run `session_start` or
+`session_end`. On that path, `llm_input` lazily binds the canonical campaign
+identity from the normalized input envelope, and `agent_end` is the terminal
+attempt boundary. Session-oriented OpenClaw paths continue to use
+`session_start` and `session_end`.
 
 ### Acknowledgement barrier and fail-closed semantics
 
@@ -1757,7 +1763,7 @@ Unknown tools are blocked with `{ block: true, blockReason: "tool_not_permitted"
 - `plugin_id` (`"agent-security-track1"`)
 - `runtime_version` (`"2026.6.10"`)
 - `tool_names` (sorted: `call_api`, `read_file`, `send_email`, `write_file`)
-- `hook_names` (sorted: six canonical hooks)
+- `hook_names` (sorted: seven canonical hooks)
 - `before_tool_blocked` (`true`)
 - `after_tool_observed` (`true`)
 - `correlation_ready` (`true`)

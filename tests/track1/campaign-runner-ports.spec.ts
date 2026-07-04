@@ -119,6 +119,7 @@ test("REQ-T1-DEMO-010 production preflight checks the actual public and internal
       diagnostics: []
     },
     typedHooks: [
+      "agent_end",
       "session_start",
       "session_end",
       "llm_input",

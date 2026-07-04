@@ -367,7 +367,7 @@ structure and content:
       "order": 2,
       "title": "真实基础设施链路",
       "evaluator_question": "构建、部署、健康检查和插件加载是否形成可验证链路？",
-      "presenter_guidance": "依次展示版本锁定、容器拓扑、双监听健康状态，以及 OpenClaw 原生插件的四个工具和六类 hook 加载结果。",
+      "presenter_guidance": "依次展示版本锁定、容器拓扑、双监听健康状态，以及 OpenClaw 原生插件的四个工具和七类 hook 加载结果。",
       "target_surface": "review:runtime-readiness",
       "duration_seconds": 45
     },
@@ -676,7 +676,7 @@ Create `docs/track1/review-demo-content.md` with these sections and facts:
    到工具调用与持续记忆，演示仅使用授权环境、受控用例和模拟工具。
 2. **真实基础设施链路（45 秒）**  
    展示固定版本构建、容器部署、双监听健康检查，以及 OpenClaw 插件四个
-   工具、六类 hook 的加载验证。
+   工具、七类 hook 的加载验证。
 3. **三 Agent 九用例战役监督（60 秒）**  
    展示 campaign 总览、Agent 分组、用例状态、尝试次数和安全动作。所有
    数值都从规范化证据读取，不写死在内容目录。

@@ -22,6 +22,7 @@ test("REQ-T1-DEMO-010 startup capability probe accepts only the complete native 
     tool_names: ["call_api", "read_file", "send_email", "write_file"],
     hook_names: [
       "after_tool_call",
+      "agent_end",
       "before_tool_call",
       "llm_input",
       "llm_output",

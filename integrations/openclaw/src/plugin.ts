@@ -91,7 +91,7 @@ class Track1PluginHookError extends Error {
 
 interface PluginSessionState {
   session: ObservedMonitoredSession;
-  context: Track1PluginContext | null;
+  context: Track1PluginContext;
   ingest: (
     envelope: Track1CampaignSnapshotEnvelope
   ) => Promise<Track1CampaignSnapshotAck>;
@@ -130,6 +130,42 @@ const BLOCK_SECURITY_UNAVAILABLE = Object.freeze({
   blockReason: "security_monitor_unavailable"
 });
 
+const OPENCLAW_BOUNDARY_PREFIX =
+  /^\[[A-Za-z]{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2}[^\]\r\n]{0,128}\] /;
+
+function toRuntimeSessionId(sessionId: string): string {
+  return sessionId.replace(/^session:/, "session-");
+}
+
+function toRuntimeAgentId(agentId: string): string {
+  return agentId.replaceAll(":", "-");
+}
+
+function runtimeIdentityMatches(
+  runtimeValue: string,
+  canonicalValue: string,
+  convert: (value: string) => string
+): boolean {
+  return runtimeValue === canonicalValue || runtimeValue === convert(canonicalValue);
+}
+
+function parseModelInputEnvelope(
+  event: Record<string, unknown>
+): ReturnType<typeof normalizeTrack1ModelInputEnvelope> {
+  if (isPlainObject(event.envelope)) {
+    return normalizeTrack1ModelInputEnvelope(event.envelope);
+  }
+  if (!isNonEmptyString(event.prompt)) {
+    throw new Track1PluginHookError("track1_plugin_event_invalid");
+  }
+  const prompt = event.prompt.replace(OPENCLAW_BOUNDARY_PREFIX, "");
+  try {
+    return normalizeTrack1ModelInputEnvelope(JSON.parse(prompt));
+  } catch {
+    throw new Track1PluginHookError("track1_plugin_event_invalid");
+  }
+}
+
 function createDefaultToolRuntime(context: Track1PluginContext): CampaignToolRuntime {
   const state = new InMemorySimulatedToolState({});
   return {
@@ -145,36 +181,20 @@ function createDefaultToolRuntime(context: Track1PluginContext): CampaignToolRun
   };
 }
 
-// P3-ISSUE2: Placeholder context used when no campaign context is provided up front.
-// This is replaced by the actual identity from the llm_input envelope.
-function createDefaultContextPlaceholder(): Track1PluginContext {
-  return Object.freeze({
-    campaign_id: "",
-    attempt_id: "",
-    attempt_index: 1,
-    agent_id: "",
-    session_id: "",
-    scenario_id: "",
-    case_id: "",
-    model_ref: "model://track1/openclaw-demo"
-  });
-}
-
 function buildSnapshotEnvelope(
   state: PluginSessionState,
   result: BaseResult<SandboxRunResultDetails>
 ): Track1CampaignSnapshotEnvelope {
-  // P3-ISSUE2: context may be null before identity binding; guard with fallback.
   const ctx = state.context;
   const withoutHash: Track1CampaignSnapshotWithoutHash = {
     schema_version: TRACK1_CAMPAIGN_SNAPSHOT_SCHEMA_VERSION,
-    campaign_id: ctx?.campaign_id ?? "",
+    campaign_id: ctx.campaign_id,
     campaign_manifest_sha256: TRACK1_CAMPAIGN_MANIFEST_SHA256,
-    agent_id: ctx?.agent_id ?? "",
-    scenario_id: ctx?.scenario_id ?? "",
-    case_id: ctx?.case_id ?? "",
-    attempt_id: ctx?.attempt_id ?? "",
-    attempt_index: ctx?.attempt_index ?? 1,
+    agent_id: ctx.agent_id,
+    scenario_id: ctx.scenario_id,
+    case_id: ctx.case_id,
+    attempt_id: ctx.attempt_id,
+    attempt_index: ctx.attempt_index,
     sequence: state.snapshotSequence,
     previous_snapshot_sha256: state.previousSnapshotSha256,
     observed_at: new Date().toISOString(),
@@ -250,6 +270,7 @@ export function registerTrack1Plugin(
   runtime: Track1PluginRuntime
 ): void {
   const sessions = new Map<string, PluginSessionState>();
+  const pendingSessionStarts = new Set<string>();
   const { campaignContext, toolRuntimeRegistry } = runtime;
 
   // P3-ISSUE2: campaignContext may be undefined (production path). When
@@ -260,13 +281,105 @@ export function registerTrack1Plugin(
   // P1-Fix5: Register tools with the per-session resolver.
   registerTrack1Tools(api, toolRuntimeRegistry);
 
+  const createBoundSession = (
+    runtimeSessionId: string,
+    context: Track1PluginContext
+  ): PluginSessionState => {
+    if (sessions.has(runtimeSessionId)) {
+      throw new Track1PluginHookError("track1_plugin_session_exists");
+    }
+    const toolRuntime = runtime.createToolRuntime
+      ? runtime.createToolRuntime(context)
+      : createDefaultToolRuntime(context);
+    toolRuntimeRegistry.register(runtimeSessionId, toolRuntime);
+    const monitorPorts: MonitorRuntimePorts = {
+      now: runtime.ports.now ?? (() => new Date().toISOString()),
+      nextId:
+        runtime.ports.nextId ??
+        ((kind: string) => `${kind}:${Date.now().toString(36)}`)
+    };
+    const state: PluginSessionState = {
+      session: new ObservedMonitoredSession(
+        {
+          task_id: context.session_id.replace(/^session:/, "task:"),
+          session_id: context.session_id,
+          model_ref: context.model_ref,
+          scenario_id: context.scenario_id,
+          case_id: context.case_id
+        },
+        runtime.ports.provider,
+        monitorPorts
+      ),
+      context,
+      ingest: runtime.ports.ingestSnapshot,
+      snapshotSequence: 1,
+      previousSnapshotSha256: null,
+      ended: false,
+      pendingToolCallId: null,
+      pendingToolCallToolName: null
+    };
+    sessions.set(runtimeSessionId, state);
+    pendingSessionStarts.delete(runtimeSessionId);
+    return state;
+  };
+
+  const finalizeBoundSession = async (
+    runtimeSessionId: string,
+    failed: boolean
+  ): Promise<void> => {
+    const state = sessions.get(runtimeSessionId);
+    if (!state || state.ended) {
+      throw new Track1PluginHookError("track1_plugin_session_not_found");
+    }
+    try {
+      if (state.pendingToolCallId !== null) {
+        try {
+          const failedSnapshot = state.session.afterTool({
+            session_id: state.context.session_id,
+            call_id: state.pendingToolCallId,
+            tool_name: state.pendingToolCallToolName ?? "unknown",
+            status: "failed",
+            result_ref:
+              `simulated-result://${state.pendingToolCallId}/failed`,
+            state_change: "simulated"
+          });
+          await ingestSessionSnapshot(state, failedSnapshot);
+        } catch {
+          // The finalization attempt below remains fail-closed.
+        }
+      }
+      if (failed) {
+        await ingestSessionSnapshot(state, state.session.fail());
+        return;
+      }
+      const finalResult = state.session.finalize();
+      await ingestSessionSnapshot(state, finalResult);
+    } catch {
+      let recoveredFailedSnapshot = false;
+      try {
+        const snapshot = state.session.snapshot();
+        if (snapshot.status === "failed") {
+          await ingestSessionSnapshot(state, snapshot);
+          recoveredFailedSnapshot = true;
+        }
+      } catch {
+        // No raw provider or model error crosses the plugin boundary.
+      }
+      if (!recoveredFailedSnapshot) {
+        throw new Track1PluginHookError("security_monitor_unavailable");
+      }
+    } finally {
+      state.ended = true;
+      sessions.delete(runtimeSessionId);
+      pendingSessionStarts.delete(runtimeSessionId);
+      toolRuntimeRegistry.delete(runtimeSessionId);
+    }
+  };
+
   // -- session_start --------------------------------------------------
   // P0-Fix2: camelCase event fields from real SDK PluginHookSessionStartEvent.
 
   api.on("session_start", async (event: unknown, ctx: unknown) => {
-    if (process.env.TRACK1_DEBUG_HOOKS === "1") {
-      process.stderr.write(`TRACK1_DEBUG session_start event=${JSON.stringify(event)} ctx=${JSON.stringify(ctx)}\n`);
-    }
     if (!isPlainObject(event)) {
       throw new Track1PluginHookError("track1_plugin_event_invalid");
     }
@@ -284,122 +397,106 @@ export function registerTrack1Plugin(
 
     if (resolvedCampaignContext) {
       // Cross-check: ctx.agentId must match bound campaign context's agent_id
-      if (isNonEmptyString(ctxAgentId) && ctxAgentId !== resolvedCampaignContext.agent_id) {
+      if (
+        isNonEmptyString(ctxAgentId) &&
+        !runtimeIdentityMatches(
+          ctxAgentId,
+          resolvedCampaignContext.agent_id,
+          toRuntimeAgentId
+        )
+      ) {
         throw new Track1PluginHookError("track1_plugin_agent_mismatch");
       }
 
       // Cross-check: event.sessionId must match bound campaign context's session_id
-      if (sessionId !== resolvedCampaignContext.session_id) {
+      if (
+        !runtimeIdentityMatches(
+          sessionId,
+          resolvedCampaignContext.session_id,
+          toRuntimeSessionId
+        )
+      ) {
         throw new Track1PluginHookError("track1_plugin_session_mismatch");
       }
     }
 
-    if (sessions.has(sessionId)) {
+    if (sessions.has(sessionId) || pendingSessionStarts.has(sessionId)) {
       throw new Track1PluginHookError("track1_plugin_session_exists");
     }
 
-    // P3-ISSUE2: In the production path, defer context binding until llm_input.
-    // Register a placeholder session with null context — llm_input will populate it.
-    const effectiveContext = resolvedCampaignContext ?? null;
-
-    // Create per-session tool runtime (P1-Fix5)
-    const toolRuntime = runtime.createToolRuntime
-      ? runtime.createToolRuntime(effectiveContext ?? createDefaultContextPlaceholder())
-      : createDefaultToolRuntime(effectiveContext ?? createDefaultContextPlaceholder());
-    toolRuntimeRegistry.register(sessionId, toolRuntime);
-
-    // Map to MonitorSessionContext
-    const monitorContext = {
-      task_id: sessionId.replace(/^session:/, "task:"),
-      session_id: resolvedCampaignContext?.session_id ?? sessionId,
-      model_ref: resolvedCampaignContext?.model_ref ?? "model://track1/openclaw-demo",
-      scenario_id: resolvedCampaignContext?.scenario_id,
-      case_id: resolvedCampaignContext?.case_id
-    };
-
-    const monitorPorts: MonitorRuntimePorts = {
-      now: runtime.ports.now ?? (() => new Date().toISOString()),
-      nextId:
-        runtime.ports.nextId ??
-        ((kind: string) => `${kind}:${Date.now().toString(36)}`)
-    };
-
-    const session = new ObservedMonitoredSession(
-      monitorContext,
-      runtime.ports.provider,
-      monitorPorts
-    );
-
-    sessions.set(sessionId, {
-      session,
-      context: effectiveContext,
-      ingest: runtime.ports.ingestSnapshot,
-      snapshotSequence: 1,
-      previousSnapshotSha256: null,
-      ended: false,
-      pendingToolCallId: null,
-      pendingToolCallToolName: null,
-    });
+    // The direct agent harness may omit session_start entirely. When this
+    // hook is present without an upfront context, reserve the runtime id and
+    // bind the canonical identity from llm_input.
+    if (resolvedCampaignContext) {
+      createBoundSession(sessionId, resolvedCampaignContext);
+    } else {
+      pendingSessionStarts.add(sessionId);
+    }
   });
 
   // -- llm_input ------------------------------------------------------
   // P0-Fix2: camelCase fields from real SDK PluginHookLlmInputEvent.
   // P1-Fix5: Cross-check envelope fields with bound campaign context.
 
-  api.on("llm_input", async (event: unknown, _ctx: unknown) => {
-    if (process.env.TRACK1_DEBUG_HOOKS === "1") {
-      process.stderr.write(`TRACK1_DEBUG llm_input event=${JSON.stringify(event)}\n`);
-    }
+  api.on("llm_input", async (event: unknown, ctx: unknown) => {
     if (!isPlainObject(event)) {
       throw new Track1PluginHookError("track1_plugin_event_invalid");
     }
-    const sessionId = event.sessionId;
-    if (!isNonEmptyString(sessionId)) {
+    const runtimeSessionId = event.sessionId;
+    if (!isNonEmptyString(runtimeSessionId)) {
       throw new Track1PluginHookError("track1_plugin_event_invalid");
     }
-    const state = sessions.get(sessionId);
-    if (!state || state.ended) {
-      throw new Track1PluginHookError("track1_plugin_session_not_found");
+    const envelope = parseModelInputEnvelope(event);
+    const boundContext = normalizeTrack1PluginContext({
+      campaign_id: envelope.campaign_id,
+      attempt_id: envelope.attempt_id,
+      attempt_index: envelope.attempt_index,
+      agent_id: envelope.agent_id,
+      session_id: envelope.session_id,
+      scenario_id: envelope.scenario_id,
+      case_id: envelope.case_id,
+      model_ref: TRACK1_MODEL_REF_CANONICAL
+    });
+    if (
+      !runtimeIdentityMatches(
+        runtimeSessionId,
+        boundContext.session_id,
+        toRuntimeSessionId
+      )
+    ) {
+      throw new Track1PluginHookError("track1_plugin_session_mismatch");
     }
-
-    // Tests may supply the Track 1 extension field directly. The real SDK
-    // supplies only `prompt`, so production must parse the same canonical
-    // envelope from that prompt before any observation or identity binding.
-    let rawEnvelope = event.envelope;
-    if (!isPlainObject(rawEnvelope) && isNonEmptyString(event.prompt)) {
-      try {
-        const parsedPrompt = JSON.parse(event.prompt);
-        if (isPlainObject(parsedPrompt)) {
-          rawEnvelope = parsedPrompt;
-        }
-      } catch {
-        // A non-envelope prompt is handled by the closed fallback below.
-      }
+    const ctxObject = isPlainObject(ctx) ? ctx : {};
+    if (
+      isNonEmptyString(ctxObject.sessionId) &&
+      ctxObject.sessionId !== runtimeSessionId
+    ) {
+      throw new Track1PluginHookError("track1_plugin_session_mismatch");
+    }
+    if (
+      isNonEmptyString(ctxObject.agentId) &&
+      !runtimeIdentityMatches(
+        ctxObject.agentId,
+        boundContext.agent_id,
+        toRuntimeAgentId
+      )
+    ) {
+      throw new Track1PluginHookError("track1_plugin_agent_mismatch");
+    }
+    const state =
+      sessions.get(runtimeSessionId) ??
+      createBoundSession(runtimeSessionId, boundContext);
+    if (state.ended) {
+      throw new Track1PluginHookError("track1_plugin_session_not_found");
     }
     let content: string;
     let contentRef: string;
 
-    if (isPlainObject(rawEnvelope)) {
-      // Normalize and cross-check the envelope (P1-Fix5)
-      const envelope = normalizeTrack1ModelInputEnvelope(rawEnvelope);
+    {
 
       // P3-ISSUE2: When no campaignContext was provided upfront (production path),
       // bind session identity from the first llm_input envelope.
       // This is only done once — subsequent envelopes must match.
-      if (state.context === null) {
-        const boundContext = normalizeTrack1PluginContext({
-          campaign_id: envelope.campaign_id,
-          attempt_id: envelope.attempt_id,
-          attempt_index: envelope.attempt_index,
-          agent_id: envelope.agent_id,
-          session_id: envelope.session_id,
-          scenario_id: envelope.scenario_id,
-          case_id: envelope.case_id,
-          model_ref: TRACK1_MODEL_REF_CANONICAL
-        });
-        state.context = boundContext;
-      }
-
       // Cross-check envelope fields against bound context
       if (
         envelope.campaign_id !== state.context.campaign_id ||
@@ -456,20 +553,6 @@ export function registerTrack1Plugin(
           content_sha256: entry.content_sha256
         });
       }
-    } else {
-      // Fallback: use SDK prompt field directly
-      const prompt = event.prompt;
-      if (!isNonEmptyString(prompt) || state.context === null) {
-        throw new Track1PluginHookError("track1_plugin_event_invalid");
-      }
-      content = prompt;
-      contentRef = `model://track1/input/${state.snapshotSequence}`;
-
-      state.session.observeModelInput({
-        session_id: state.context.session_id,
-        content,
-        content_ref: contentRef
-      });
     }
   });
 
@@ -673,6 +756,24 @@ export function registerTrack1Plugin(
     state.pendingToolCallToolName = null;
   });
 
+  // -- agent_end ------------------------------------------------------
+  // `openclaw agent` uses the harness lifecycle and does not emit
+  // session_start/session_end for each direct run. agent_end is therefore
+  // the authoritative per-attempt terminal boundary for the campaign CLI.
+
+  api.on("agent_end", async (event: unknown, ctx: unknown) => {
+    if (
+      !isPlainObject(event) ||
+      typeof event.success !== "boolean" ||
+      !Array.isArray(event.messages) ||
+      !isPlainObject(ctx) ||
+      !isNonEmptyString(ctx.sessionId)
+    ) {
+      throw new Track1PluginHookError("track1_plugin_event_invalid");
+    }
+    await finalizeBoundSession(ctx.sessionId, event.success === false);
+  });
+
   // -- session_end ----------------------------------------------------
   // P1-Fix6: session_end with pending tool must generate terminal failed snapshot.
 
@@ -685,62 +786,7 @@ export function registerTrack1Plugin(
       throw new Track1PluginHookError("track1_plugin_event_invalid");
     }
 
-    const state = sessions.get(sessionId);
-    if (!state || state.ended) {
-      throw new Track1PluginHookError("track1_plugin_session_not_found");
-    }
-
-    // P1-Fix6: If there's a pending tool call, finalize() will throw.
-    // Generate a terminal failed snapshot instead of a regular snapshot.
-    // P4-ISSUE4: When there IS a pending tool call, finalize() throws
-    // monitor_state_invalid. The previous code fell back to snapshot() which
-    // emits a non-terminal result — not a terminal failure.
-    // Fix: emit a failed tool_result first, then finalize() normally so the
-    // ingested snapshot carries the failure as a terminal state.
-    const hasPendingTool = state.pendingToolCallId !== null;
-
-    try {
-      if (hasPendingTool) {
-        // Emit a failed tool_result so the session has the terminal record
-        // before finalizing. This ensures the ingested snapshot carries the
-        // failure as a terminal state rather than a mid-flight non-terminal.
-        try {
-          const failedObserved = {
-            session_id: state.context.session_id,
-            call_id: state.pendingToolCallId,
-            tool_name: state.pendingToolCallToolName ?? "unknown",
-            status: "failed",
-            result_ref: `simulated-result://${state.pendingToolCallId}/failed`,
-            state_change: "simulated"
-          };
-          const failedSnapshot = state.session.afterTool(failedObserved);
-          await ingestSessionSnapshot(state, failedSnapshot);
-        } catch {
-          // If afterTool fails (e.g. session already sealed), fall back to
-          // finalize attempt below.
-        }
-
-        // P4-ISSUE4: pending tool call has been resolved as failed above,
-        // so finalize() will succeed and produce a terminal result.
-        const finalResult = state.session.finalize();
-        await ingestSessionSnapshot(state, finalResult);
-      } else {
-        const finalResult = state.session.finalize();
-        await ingestSessionSnapshot(state, finalResult);
-      }
-    } catch {
-      // Last resort: try snapshot if finalize threw
-      try {
-        const snapshot = state.session.snapshot();
-        await ingestSessionSnapshot(state, snapshot);
-      } catch {
-        // If even snapshot fails, just mark as ended
-      }
-    }
-
-    state.ended = true;
-    sessions.delete(sessionId);
-    toolRuntimeRegistry.delete(sessionId);
+    await finalizeBoundSession(sessionId, false);
   });
 }
 

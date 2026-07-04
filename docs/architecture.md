@@ -652,8 +652,9 @@ Phase 3 adds the OpenClaw plugin integration layer that wires the engine-private
 
 ### Typed native hook wiring and acknowledgement barrier
 
-- `integrations/openclaw/src/plugin.ts` exports `registerTrack1Plugin` and `definePluginEntry`. It registers exactly six native hooks: `session_start`, `llm_input`, `llm_output`, `before_tool_call` (with `{ priority: 100, timeoutMs: 10_000 }`), `after_tool_call`, and `session_end`.
-- Plugin session state is isolated by `session_id` via a `Map<string, PluginSessionState>`. Duplicate `session_start` or `session_end` are rejected.
+- `integrations/openclaw/src/plugin.ts` exports `registerTrack1Plugin` and `definePluginEntry`. It registers exactly seven native hooks: `session_start`, `llm_input`, `llm_output`, `before_tool_call` (with `{ priority: 100, timeoutMs: 10_000 }`), `after_tool_call`, `agent_end`, and `session_end`.
+- Plugin session state is isolated by runtime `session_id` via a `Map<string, PluginSessionState>`. Session-oriented flows bind at `session_start`; the direct `openclaw agent` harness binds lazily from the timestamp-wrapped `llm_input` envelope because it emits no per-run `session_start`. Runtime-safe `session-<hex>` and canonical `session:<hex>` identities are cross-checked rather than treated as interchangeable arbitrary strings.
+- `agent_end` is the direct CLI terminal boundary. A successful event finalizes the monitor result; a failed event emits a terminal failed result without retaining the provider error. Session-oriented flows continue to terminate through `session_end`.
 - `before_tool_call` implements the acknowledgement barrier: for `allow`/`alert`, the snapshot must be ingested before the handler returns. Ingest failure converts `allow`/`alert` into `{ block: true, blockReason: "security_monitor_unavailable" }`.
 - `deny`/`ask` never reach tool execution; they return `{ block: true, blockReason: "policy_denied" | "policy_ask_required" }`.
 - Unknown tools are blocked with `tool_not_permitted` before touching the adapter.
@@ -950,5 +951,54 @@ new backend route, DTO, or write path was introduced.
 
 ### Explicit non-goals
 
-Electron/executable packaging, a report-artifact download/preview API, and
-any second investigation UI remain out of scope for this slice.
+A report-artifact download/preview API and any second investigation UI
+remain out of scope for this slice. Electron/executable packaging was out of
+scope for this slice and is covered separately by
+[REQ-T1-DEMO-011](#req-t1-demo-011-electron-desktop-package).
+
+## REQ-T1-DEMO-011 Electron Desktop Package
+
+`electron/` is a new pnpm workspace package that packages the `/review-demo`
+tour (and the console it lives in) as a Windows desktop executable. It is an
+orchestration shell around the existing backend and frontend — it introduces
+no new backend route, DTO, or write path, and no new frontend page.
+
+- **Embedded backend, not Docker.** `electron/src/main.mjs` spawns
+  `backend/src/main.ts` as a plain Node child process
+  (`ELECTRON_RUN_AS_NODE=1` + `--experimental-strip-types`, the same flags
+  `deploy/track1/Dockerfile.backend` uses). The backend is in-memory with no
+  database dependency (`backend/src/runtime-dependencies.ts`), so this is a
+  faithful, unmodified reuse of the existing production entrypoint — Docker,
+  OpenClaw, and the campaign-runner are not required to view the tour.
+- **Random ingest token per launch.** The internal ingest token is generated
+  via `crypto.randomBytes(24)` (48 hex chars) at each app start, always well
+  over the `CampaignIngestController`'s 32-character minimum. It is never
+  hardcoded and never leaves the local machine (the internal server binds to
+  `127.0.0.1` only).
+- **Auto-seeded demo campaign.** `electron/src/seed-demo-campaign.ts` builds
+  a fixed 9-case campaign (matching `TRACK1_CASE_EXPECTED_ACTIONS`) using the
+  same shared normalizers (`calculateTrack1SnapshotSha256`,
+  `normalizeBaseResult`, `getTrack1CaseExpectedAction`) the real campaign
+  runner and backend enforce, then posts start → 9 snapshots → finalize →
+  evidence to the internal API. It runs once per launch as its own child
+  process (so it works without type-stripping support in the Electron main
+  process itself) and is idempotent — a 409 on the start call is treated as
+  "already seeded" on relaunch.
+- **Static + proxy server for the frontend build.** `electron/src/
+  static-proxy-server.mjs` serves the built `frontend/dist` and proxies
+  `/api/*` and `/health` to the embedded backend, mirroring
+  `frontend/vite.config.mjs`'s dev-time proxy behavior so the built output
+  needs no code changes to run outside the Vite dev server. Unknown
+  extensionless paths fall back to `index.html` for client-side routing.
+- **Window target.** The `BrowserWindow` loads `/review-demo` directly so
+  the desktop app opens straight into the guided tour.
+- **Packaging.** `electron/package.json`'s `build` block configures
+  electron-builder for a Windows portable target; `electron` and
+  `electron-builder` are pinned to exact versions (`43.0.0` / `26.15.3`).
+  `npm run package:win` (inside `electron/`) builds the frontend, then runs
+  `electron-builder --win portable`.
+
+### Explicit non-goals
+
+Auto-update, code signing, and non-Windows targets are out of scope for this
+slice.

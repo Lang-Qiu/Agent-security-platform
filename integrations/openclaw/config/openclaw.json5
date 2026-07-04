@@ -34,17 +34,6 @@
     "$include": "./agents.json5"
   },
   "tools": {
-    // "profile": "minimal" resolves to the built-in CORE_TOOL_PROFILES.minimal
-    // allowlist, which only ever contains OpenClaw's own core tools (e.g.
-    // session_status) — it never includes plugin-registered tools. "allow"
-    // is a *separate*, additional restriction on top of the profile's
-    // allowlist, not a way to widen it. Widening a profile to include
-    // plugin tools requires "alsoAllow", which the profile resolver merges
-    // into the profile's allow list (see resolveEffectiveToolPolicy /
-    // mergeAlsoAllowPolicy in openclaw's tool-policy module). Without this,
-    // the gateway rejects every agent run with "No callable tools remain
-    // after resolving explicit tool allowlist" because none of
-    // send_email/read_file/write_file/call_api are core tools.
     "profile": "minimal",
     "alsoAllow": ["send_email", "read_file", "write_file", "call_api"]
   },

@@ -663,6 +663,7 @@ export function makeCompleteInspectOutput(): PluginInspectOutput {
       { name: "call_api", label: "Call API (Track 1 Simulated)" }
     ],
     hooks: [
+      "agent_end",
       "session_start",
       "session_end",
       "llm_input",

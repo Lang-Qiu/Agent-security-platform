@@ -34,10 +34,11 @@ test("REQ-T1-DEMO-010 OpenClaw config exposes only three agents and four tools",
 
   // Real OpenClaw 2026.6.10 schema has no `tools.builtins`/`tools.channels`
   // keys; the closed tool surface is enforced via `tools.profile: "minimal"`
-  // (denies every built-in tool) plus an explicit plugin-tool allowlist.
-  const tools = config.tools as { profile: string; allow: string[] };
+  // (denies every built-in tool) plus the SDK-supported plugin-tool widening
+  // field. `allow` would only narrow the selected core profile.
+  const tools = config.tools as { profile: string; alsoAllow: string[] };
   assert.equal(tools.profile, "minimal");
-  assert.deepEqual(tools.allow.slice().sort(), [
+  assert.deepEqual(tools.alsoAllow.slice().sort(), [
     "call_api",
     "read_file",
     "send_email",

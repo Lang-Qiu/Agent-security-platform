@@ -2745,7 +2745,7 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   - P3-T2: extended `observed-session.ts` with pre-tool decision and post-tool result state machine, pending-call tracking, and tool stage lifecycle guards
   - P3-T3: `integrations/openclaw/openclaw.plugin.json` + `src/tool-adapters.ts` — strict manifest (no unknown keys, four tool contracts, closed configSchema with writeOnly token) and four campaign-local simulated tool adapters with safe JSON output
   - P3-T4: `integrations/openclaw/src/campaign-context.ts` + `src/ingest-client.ts` — closed campaign context normalizer (rejects oracle fields, correlation drift, extra/missing keys) and authenticated ingest client (fixed endpoint, Bearer token, AbortController timeout, ack validation, no token/body leak)
-  - P3-T5: `integrations/openclaw/src/plugin.ts` + `src/index.ts` — typed native hook wiring (`registerTrack1Plugin`, `definePluginEntry`) registering six hooks, with acknowledgement barrier (ingest before allow/alert returns), fail-closed semantics (deny/ask/unknown/ingest-failure), session state isolation by session_id, and content boundary (no raw arguments retained)
+  - P3-T5: `integrations/openclaw/src/plugin.ts` + `src/index.ts` — typed native hook wiring (`registerTrack1Plugin`, `definePluginEntry`) registering seven hooks, with acknowledgement barrier (ingest before allow/alert returns), fail-closed semantics (deny/ask/unknown/ingest-failure), session state isolation by session_id, and content boundary (no raw arguments retained)
   - P3-T6: `integrations/openclaw/src/runtime-probe.ts` + `tests/repository/track1-openclaw-plugin.spec.ts` — startup capability probe with fixed-shape result (nine canonical keys), permanent repository gates (definePluginEntry presence, typed api.on usage, no legacy registerHook, exact manifest/dependency pins, forbidden side-effect token scan, oracle isolation, root test script registration)
 - RED evidence:
   - P3-T1: `node --test engines/sandbox/tests/attack-monitor-observed-session.spec.ts` -> ERR_MODULE_NOT_FOUND for observed-session.ts
@@ -2769,7 +2769,7 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   - `npm run test:backend` — 228 pass, 1 pre-existing failure (Semgrep EPERM in backend-task-center.api.spec.ts:648, unrelated to campaign ingest)
 - constraints honored:
   - no raw-content sentinel appears in snapshots, errors, or logs
-  - plugin registers exactly four tools and six required native hooks
+  - plugin registers exactly four tools and seven required native hooks
   - policy and ingest acknowledgement both occur before tool execution
   - hook errors are stable strings with no raw context/model/arguments/result/provider/backend body
   - decision paths cannot read campaign oracle fields (campaign.v1, expected_action, expected_outcome)
@@ -3338,3 +3338,143 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/track1-review-demo-ui.spec.ts`: 10/10 pass
   - `npm run test --prefix frontend`: 221/221 pass (no regression)
 - status: REVIEW_DEMO_UI_CASES_COMPLETE
+
+## 2026-07-04 - REQ-T1-DEMO-011 Electron Desktop Package
+
+- requirement: user explicitly requested an Electron executable ("我需要一个
+  Electron 可执行文件") after the review-demo UI landed. Scoping questions
+  (asked via AskUserQuestion) resolved to: embed the backend as a child
+  process (not a "point at an external server" shell), and auto-seed a
+  fixed demo campaign on launch so `/review-demo` always has data to show.
+- scope:
+  - new pnpm workspace package `electron/` (added to `pnpm-workspace.yaml`)
+  - `electron/src/main.mjs`: main process. Spawns `backend/src/main.ts` as a
+    plain Node child process (`ELECTRON_RUN_AS_NODE=1` +
+    `--experimental-strip-types`), waits for `/health`, runs
+    `seed-demo-campaign.ts` as its own child process, starts the
+    static+proxy server, opens a `BrowserWindow` on `/review-demo`. Ingest
+    token is `crypto.randomBytes(24)` per launch, never hardcoded.
+  - `electron/src/wait-for-health.mjs`: polls a URL until 200 or timeout
+  - `electron/src/static-proxy-server.mjs`: serves `frontend/dist` and
+    proxies `/api/*` + `/health` to the embedded backend; exposes pure
+    `decideRouteKind`/`resolveStaticFilePath` helpers for unit testing
+  - `electron/src/seed-demo-campaign.ts`: builds a fixed 9-case campaign
+    (start → 9 snapshots → finalize → evidence) reusing
+    `calculateTrack1SnapshotSha256`, `normalizeBaseResult`,
+    `getTrack1CaseExpectedAction` from `shared/contracts` and
+    `shared/types` — the same validation a real OpenClaw-produced campaign
+    goes through. Idempotent (409 on relaunch is swallowed). Has a CLI
+    entrypoint so it can run as a standalone child process.
+  - `electron/package.json`: `main.mjs` entry, pinned exact
+    `electron@43.0.0` / `electron-builder@26.15.3`, `build.win.target:
+    portable`, `package:win` script
+  - `tests/repository/track1-electron-app.spec.ts`: permanent gate —
+    workspace registration, package.json wiring, pinned versions, no
+    hardcoded/short ingest token, seed script reuses shared contracts,
+    test:repo registration
+  - registered `electron/tests/*.spec.ts` under a new `test:electron`
+    script, added to `test:all`
+- RED evidence:
+  - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/track1-electron-app.spec.ts`
+    before registering the new gate in `test:repo`: 7/8 pass, 1 fail for the
+    intended reason ("test:repo script must include
+    track1-electron-app.spec.ts")
+  - `electron/tests/seed-demo-campaign.spec.ts` initially failed
+    ("snapshot for T1-SC-001-C002 must normalize") because the snapshot
+    builder used a running global `sequence` counter across all 9 cases;
+    fixed to `sequence: 1` per case, since each case is an independent
+    attempt with its own hash chain (mirrors the existing pattern in
+    `backend/tests/fixtures/track1-campaign.fixture.ts`)
+- GREEN evidence:
+  - `electron/tests/*.spec.ts` (wait-for-health, static-proxy-server,
+    seed-demo-campaign): 14/14 pass, both via direct `node
+    --experimental-strip-types --test` and via `pnpm --filter
+    @agent-security-platform/electron test`
+  - `tests/repository/track1-electron-app.spec.ts`: 8/8 pass
+  - `npm run test:repo`: 145/145 pass (no regression)
+  - real integration smoke test (not just unit tests): started
+    `backend/src/main.ts` on ports 47100/47101 with a real 42-char token
+    (no Docker), ran `seed-demo-campaign.ts` against it, confirmed via
+    `curl` that `/api/supervision/campaigns` showed the seeded campaign
+    with `status: "completed"`, `passed_case_count: 9`,
+    `evidence_available: true`, and every case's `actual_action` matching
+    `TRACK1_CASE_EXPECTED_ACTIONS`
+  - built `frontend/dist` via `pnpm --filter @agent-security-platform/frontend
+    build`, started `static-proxy-server.mjs` against the running backend,
+    confirmed via `curl` that `/`, `/review-demo` (client-route fallback),
+    `/health` (proxied), `/api/supervision/campaigns` (proxied), and a JS
+    asset (correct `content-type`) all returned the expected responses
+  - installed real `electron@43.0.0` + `electron-builder@26.15.3` via
+    `pnpm install --filter @agent-security-platform/electron`; launched the
+    actual packaged main process (`electron .`) in the background and
+    confirmed via `netstat`/`curl` that the real Electron process spawned
+    the backend and static-proxy server exactly as in the standalone smoke
+    test, serving the seeded campaign through the same ports
+  - all smoke-test processes and temporary files were killed/deleted after
+    verification; none were committed
+- environment constraint (not a code defect): this session runs in a
+  headless sandbox with no attached display, so the `BrowserWindow` itself
+  could not be visually confirmed to render — Electron's renderer process
+  exits/crashes without a display surface. Everything up to and including
+  the `BrowserWindow.loadURL` call (backend boot, demo seeding, static+proxy
+  serving) was verified against the real running process. Also: the
+  Electron binary download defaults to GitHub's release CDN, which was
+  unreachable from this sandbox — verified functional using
+  `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/` instead; a
+  real Windows desktop with normal internet access should not hit this.
+- documentation:
+  - `docs/architecture.md`: added a new "REQ-T1-DEMO-011 Electron Desktop
+    Package" section; updated the REQ-T1-DEMO-010 non-goals note now that
+    Electron packaging is covered separately
+- unchanged:
+  - no backend route, DTO, or shared contract change — `main.mjs` only
+    spawns the existing `backend/src/main.ts` entrypoint unmodified
+  - no change to `/review-demo` or any other frontend page
+- status: ELECTRON_APP_ORCHESTRATION_COMPLETE
+- next dependency: on a real Windows machine with internet access, run
+  `pnpm --filter @agent-security-platform/electron package:win` to produce
+  the actual `.exe` portable build under `electron/release/`, and do a
+  visual smoke test of the `BrowserWindow` (not possible from this
+  headless sandbox)
+
+## 2026-07-05 - REQ-T1-DEMO-010 real CLI hook lifecycle repair
+
+- root cause:
+  - direct `openclaw agent` runs emit `llm_input`, `llm_output`, and
+    `agent_end`, but no per-run `session_start` or `session_end`;
+  - the real input prompt is timestamp-prefixed and uses runtime-safe
+    `session-<hex>` / `agent-...` identities while the Track 1 envelope keeps
+    canonical colon-delimited identities.
+- RED evidence:
+  - the real CLI lifecycle test failed with
+    `track1_plugin_session_not_found` before lazy binding and `agent_end`
+    registration;
+  - the external runtime failure test failed because the monitor had no
+    terminal failure operation and the plugin projected the run as `running`;
+  - report and review-demo tests failed because they still documented six
+    hooks.
+- implementation:
+  - lazily bind and cross-check canonical campaign identity at `llm_input`;
+  - strip only the bounded OpenClaw timestamp wrapper before strict envelope
+    normalization;
+  - register `agent_end` as the direct CLI terminal hook while retaining
+    session-oriented start/end support;
+  - add a terminal monitor `fail()` operation and ensure
+    `agent_end.success=false` never persists the provider error;
+  - remove `TRACK1_DEBUG_HOOKS` and update probe, acceptance, report,
+    architecture, API, and review-demo hook contracts from six to seven.
+- GREEN evidence:
+  - focused monitor/plugin lifecycle: 64/64 pass;
+  - `test:track1:openclaw`: 142/142 pass;
+  - `test:track1:acceptance`: 12/12 pass;
+  - `test:track1:report`: 33/33 pass;
+  - repository/shared/sandbox gates pass, with sandbox now 432/432;
+  - frontend: 221/221 pass;
+  - focused backend supervision API: 16/16 pass.
+- runtime evidence:
+  - rebuilt gateway and runner images contain the lazy-binding and
+    `agent_end` fix;
+  - the final terminal-failure addition still requires one image rebuild;
+  - no new credentialed 9-case result or accepted baseline exists yet.
+- status: BUG_8_CODE_COMPLETE_REAL_CAMPAIGN_PENDING
+- requirement status: REQ-T1-DEMO-010_IN_PROGRESS

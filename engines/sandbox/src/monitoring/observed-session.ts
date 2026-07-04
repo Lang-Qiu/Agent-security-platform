@@ -775,6 +775,15 @@ export class ObservedMonitoredSession {
     return this.#buildNonTerminalResult();
   }
 
+  fail(): BaseResult<SandboxRunResultDetails> {
+    if (this.#lifecycle === "finalized") {
+      throw new Track1MonitorError("monitor_state_invalid");
+    }
+    this.#clearVolatile();
+    this.#failSeal();
+    return this.#buildNonTerminalResult();
+  }
+
   // -- finalization --------------------------------------------------------
 
   finalize(): BaseResult<SandboxRunResultDetails> {

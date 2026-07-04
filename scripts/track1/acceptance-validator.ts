@@ -64,6 +64,7 @@ const ACTION_PRIORITY: Readonly<Record<SandboxPolicyAction, number>> = {
   deny: 3
 };
 const REQUIRED_HOOKS = [
+  "agent_end",
   "session_start",
   "llm_input",
   "llm_output",

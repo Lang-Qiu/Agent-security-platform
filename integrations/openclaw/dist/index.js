@@ -2144,6 +2144,14 @@ var ObservedMonitoredSession = class {
     }
     return this.#buildNonTerminalResult();
   }
+  fail() {
+    if (this.#lifecycle === "finalized") {
+      throw new Track1MonitorError("monitor_state_invalid");
+    }
+    this.#clearVolatile();
+    this.#failSeal();
+    return this.#buildNonTerminalResult();
+  }
   // -- finalization --------------------------------------------------------
   finalize() {
     if (this.#cachedResult) {
@@ -3770,6 +3778,30 @@ var BLOCK_SECURITY_UNAVAILABLE = Object.freeze({
   block: true,
   blockReason: "security_monitor_unavailable"
 });
+var OPENCLAW_BOUNDARY_PREFIX = /^\[[A-Za-z]{3} \d{4}-\d{2}-\d{2} \d{2}:\d{2}[^\]\r\n]{0,128}\] /;
+function toRuntimeSessionId(sessionId) {
+  return sessionId.replace(/^session:/, "session-");
+}
+function toRuntimeAgentId(agentId) {
+  return agentId.replaceAll(":", "-");
+}
+function runtimeIdentityMatches(runtimeValue, canonicalValue, convert) {
+  return runtimeValue === canonicalValue || runtimeValue === convert(canonicalValue);
+}
+function parseModelInputEnvelope(event) {
+  if (isPlainObject9(event.envelope)) {
+    return normalizeTrack1ModelInputEnvelope(event.envelope);
+  }
+  if (!isNonEmptyString8(event.prompt)) {
+    throw new Track1PluginHookError("track1_plugin_event_invalid");
+  }
+  const prompt = event.prompt.replace(OPENCLAW_BOUNDARY_PREFIX, "");
+  try {
+    return normalizeTrack1ModelInputEnvelope(JSON.parse(prompt));
+  } catch {
+    throw new Track1PluginHookError("track1_plugin_event_invalid");
+  }
+}
 function createDefaultToolRuntime(context) {
   const state = new InMemorySimulatedToolState({});
   return {
@@ -3784,29 +3816,17 @@ function createDefaultToolRuntime(context) {
     executor: new SimulatedToolExecutor(state)
   };
 }
-function createDefaultContextPlaceholder() {
-  return Object.freeze({
-    campaign_id: "",
-    attempt_id: "",
-    attempt_index: 1,
-    agent_id: "",
-    session_id: "",
-    scenario_id: "",
-    case_id: "",
-    model_ref: "model://track1/openclaw-demo"
-  });
-}
 function buildSnapshotEnvelope(state, result) {
   const ctx = state.context;
   const withoutHash = {
     schema_version: TRACK1_CAMPAIGN_SNAPSHOT_SCHEMA_VERSION,
-    campaign_id: ctx?.campaign_id ?? "",
+    campaign_id: ctx.campaign_id,
     campaign_manifest_sha256: TRACK1_CAMPAIGN_MANIFEST_SHA256,
-    agent_id: ctx?.agent_id ?? "",
-    scenario_id: ctx?.scenario_id ?? "",
-    case_id: ctx?.case_id ?? "",
-    attempt_id: ctx?.attempt_id ?? "",
-    attempt_index: ctx?.attempt_index ?? 1,
+    agent_id: ctx.agent_id,
+    scenario_id: ctx.scenario_id,
+    case_id: ctx.case_id,
+    attempt_id: ctx.attempt_id,
+    attempt_index: ctx.attempt_index,
     sequence: state.snapshotSequence,
     previous_snapshot_sha256: state.previousSnapshotSha256,
     observed_at: (/* @__PURE__ */ new Date()).toISOString(),
@@ -3854,14 +3874,91 @@ function detectToolFailure(event) {
 }
 function registerTrack1Plugin(api, runtime) {
   const sessions = /* @__PURE__ */ new Map();
+  const pendingSessionStarts = /* @__PURE__ */ new Set();
   const { campaignContext, toolRuntimeRegistry } = runtime;
   const resolvedCampaignContext = campaignContext;
   registerTrack1Tools(api, toolRuntimeRegistry);
-  api.on("session_start", async (event, ctx) => {
-    if (process.env.TRACK1_DEBUG_HOOKS === "1") {
-      process.stderr.write(`TRACK1_DEBUG session_start event=${JSON.stringify(event)} ctx=${JSON.stringify(ctx)}
-`);
+  const createBoundSession = (runtimeSessionId, context) => {
+    if (sessions.has(runtimeSessionId)) {
+      throw new Track1PluginHookError("track1_plugin_session_exists");
     }
+    const toolRuntime = runtime.createToolRuntime ? runtime.createToolRuntime(context) : createDefaultToolRuntime(context);
+    toolRuntimeRegistry.register(runtimeSessionId, toolRuntime);
+    const monitorPorts = {
+      now: runtime.ports.now ?? (() => (/* @__PURE__ */ new Date()).toISOString()),
+      nextId: runtime.ports.nextId ?? ((kind) => `${kind}:${Date.now().toString(36)}`)
+    };
+    const state = {
+      session: new ObservedMonitoredSession(
+        {
+          task_id: context.session_id.replace(/^session:/, "task:"),
+          session_id: context.session_id,
+          model_ref: context.model_ref,
+          scenario_id: context.scenario_id,
+          case_id: context.case_id
+        },
+        runtime.ports.provider,
+        monitorPorts
+      ),
+      context,
+      ingest: runtime.ports.ingestSnapshot,
+      snapshotSequence: 1,
+      previousSnapshotSha256: null,
+      ended: false,
+      pendingToolCallId: null,
+      pendingToolCallToolName: null
+    };
+    sessions.set(runtimeSessionId, state);
+    pendingSessionStarts.delete(runtimeSessionId);
+    return state;
+  };
+  const finalizeBoundSession = async (runtimeSessionId, failed) => {
+    const state = sessions.get(runtimeSessionId);
+    if (!state || state.ended) {
+      throw new Track1PluginHookError("track1_plugin_session_not_found");
+    }
+    try {
+      if (state.pendingToolCallId !== null) {
+        try {
+          const failedSnapshot = state.session.afterTool({
+            session_id: state.context.session_id,
+            call_id: state.pendingToolCallId,
+            tool_name: state.pendingToolCallToolName ?? "unknown",
+            status: "failed",
+            result_ref: `simulated-result://${state.pendingToolCallId}/failed`,
+            state_change: "simulated"
+          });
+          await ingestSessionSnapshot(state, failedSnapshot);
+        } catch {
+        }
+      }
+      if (failed) {
+        await ingestSessionSnapshot(state, state.session.fail());
+        return;
+      }
+      const finalResult = state.session.finalize();
+      await ingestSessionSnapshot(state, finalResult);
+    } catch {
+      let recoveredFailedSnapshot = false;
+      try {
+        const snapshot = state.session.snapshot();
+        if (snapshot.status === "failed") {
+          await ingestSessionSnapshot(state, snapshot);
+          recoveredFailedSnapshot = true;
+        }
+      } catch {
+      }
+      if (!recoveredFailedSnapshot) {
+        throw new Track1PluginHookError("security_monitor_unavailable");
+      }
+    } finally {
+      state.ended = true;
+      sessions.delete(runtimeSessionId);
+      pendingSessionStarts.delete(runtimeSessionId);
+      toolRuntimeRegistry.delete(runtimeSessionId);
+    }
+  };
+  api.on("session_start", async (event, ctx) => {
     if (!isPlainObject9(event)) {
       throw new Track1PluginHookError("track1_plugin_event_invalid");
     }
@@ -3872,89 +3969,74 @@ function registerTrack1Plugin(api, runtime) {
     const ctxObj = isPlainObject9(ctx) ? ctx : {};
     const ctxAgentId = ctxObj.agentId;
     if (resolvedCampaignContext) {
-      if (isNonEmptyString8(ctxAgentId) && ctxAgentId !== resolvedCampaignContext.agent_id) {
+      if (isNonEmptyString8(ctxAgentId) && !runtimeIdentityMatches(
+        ctxAgentId,
+        resolvedCampaignContext.agent_id,
+        toRuntimeAgentId
+      )) {
         throw new Track1PluginHookError("track1_plugin_agent_mismatch");
       }
-      if (sessionId !== resolvedCampaignContext.session_id) {
+      if (!runtimeIdentityMatches(
+        sessionId,
+        resolvedCampaignContext.session_id,
+        toRuntimeSessionId
+      )) {
         throw new Track1PluginHookError("track1_plugin_session_mismatch");
       }
     }
-    if (sessions.has(sessionId)) {
+    if (sessions.has(sessionId) || pendingSessionStarts.has(sessionId)) {
       throw new Track1PluginHookError("track1_plugin_session_exists");
     }
-    const effectiveContext = resolvedCampaignContext ?? null;
-    const toolRuntime = runtime.createToolRuntime ? runtime.createToolRuntime(effectiveContext ?? createDefaultContextPlaceholder()) : createDefaultToolRuntime(effectiveContext ?? createDefaultContextPlaceholder());
-    toolRuntimeRegistry.register(sessionId, toolRuntime);
-    const monitorContext = {
-      task_id: sessionId.replace(/^session:/, "task:"),
-      session_id: resolvedCampaignContext?.session_id ?? sessionId,
-      model_ref: resolvedCampaignContext?.model_ref ?? "model://track1/openclaw-demo",
-      scenario_id: resolvedCampaignContext?.scenario_id,
-      case_id: resolvedCampaignContext?.case_id
-    };
-    const monitorPorts = {
-      now: runtime.ports.now ?? (() => (/* @__PURE__ */ new Date()).toISOString()),
-      nextId: runtime.ports.nextId ?? ((kind) => `${kind}:${Date.now().toString(36)}`)
-    };
-    const session = new ObservedMonitoredSession(
-      monitorContext,
-      runtime.ports.provider,
-      monitorPorts
-    );
-    sessions.set(sessionId, {
-      session,
-      context: effectiveContext,
-      ingest: runtime.ports.ingestSnapshot,
-      snapshotSequence: 1,
-      previousSnapshotSha256: null,
-      ended: false,
-      pendingToolCallId: null,
-      pendingToolCallToolName: null
-    });
-  });
-  api.on("llm_input", async (event, _ctx) => {
-    if (process.env.TRACK1_DEBUG_HOOKS === "1") {
-      process.stderr.write(`TRACK1_DEBUG llm_input event=${JSON.stringify(event)}
-`);
+    if (resolvedCampaignContext) {
+      createBoundSession(sessionId, resolvedCampaignContext);
+    } else {
+      pendingSessionStarts.add(sessionId);
     }
+  });
+  api.on("llm_input", async (event, ctx) => {
     if (!isPlainObject9(event)) {
       throw new Track1PluginHookError("track1_plugin_event_invalid");
     }
-    const sessionId = event.sessionId;
-    if (!isNonEmptyString8(sessionId)) {
+    const runtimeSessionId = event.sessionId;
+    if (!isNonEmptyString8(runtimeSessionId)) {
       throw new Track1PluginHookError("track1_plugin_event_invalid");
     }
-    const state = sessions.get(sessionId);
-    if (!state || state.ended) {
-      throw new Track1PluginHookError("track1_plugin_session_not_found");
+    const envelope = parseModelInputEnvelope(event);
+    const boundContext = normalizeTrack1PluginContext({
+      campaign_id: envelope.campaign_id,
+      attempt_id: envelope.attempt_id,
+      attempt_index: envelope.attempt_index,
+      agent_id: envelope.agent_id,
+      session_id: envelope.session_id,
+      scenario_id: envelope.scenario_id,
+      case_id: envelope.case_id,
+      model_ref: TRACK1_MODEL_REF_CANONICAL
+    });
+    if (!runtimeIdentityMatches(
+      runtimeSessionId,
+      boundContext.session_id,
+      toRuntimeSessionId
+    )) {
+      throw new Track1PluginHookError("track1_plugin_session_mismatch");
     }
-    let rawEnvelope = event.envelope;
-    if (!isPlainObject9(rawEnvelope) && isNonEmptyString8(event.prompt)) {
-      try {
-        const parsedPrompt = JSON.parse(event.prompt);
-        if (isPlainObject9(parsedPrompt)) {
-          rawEnvelope = parsedPrompt;
-        }
-      } catch {
-      }
+    const ctxObject = isPlainObject9(ctx) ? ctx : {};
+    if (isNonEmptyString8(ctxObject.sessionId) && ctxObject.sessionId !== runtimeSessionId) {
+      throw new Track1PluginHookError("track1_plugin_session_mismatch");
+    }
+    if (isNonEmptyString8(ctxObject.agentId) && !runtimeIdentityMatches(
+      ctxObject.agentId,
+      boundContext.agent_id,
+      toRuntimeAgentId
+    )) {
+      throw new Track1PluginHookError("track1_plugin_agent_mismatch");
+    }
+    const state = sessions.get(runtimeSessionId) ?? createBoundSession(runtimeSessionId, boundContext);
+    if (state.ended) {
+      throw new Track1PluginHookError("track1_plugin_session_not_found");
     }
     let content;
     let contentRef;
-    if (isPlainObject9(rawEnvelope)) {
-      const envelope = normalizeTrack1ModelInputEnvelope(rawEnvelope);
-      if (state.context === null) {
-        const boundContext = normalizeTrack1PluginContext({
-          campaign_id: envelope.campaign_id,
-          attempt_id: envelope.attempt_id,
-          attempt_index: envelope.attempt_index,
-          agent_id: envelope.agent_id,
-          session_id: envelope.session_id,
-          scenario_id: envelope.scenario_id,
-          case_id: envelope.case_id,
-          model_ref: TRACK1_MODEL_REF_CANONICAL
-        });
-        state.context = boundContext;
-      }
+    {
       if (envelope.campaign_id !== state.context.campaign_id || envelope.agent_id !== state.context.agent_id || envelope.attempt_id !== state.context.attempt_id || envelope.session_id !== state.context.session_id || envelope.scenario_id !== state.context.scenario_id || envelope.case_id !== state.context.case_id || envelope.attempt_index !== state.context.attempt_index) {
         throw new Track1PluginHookError("track1_plugin_envelope_mismatch");
       }
@@ -3993,18 +4075,6 @@ function registerTrack1Plugin(api, runtime) {
           content_sha256: entry.content_sha256
         });
       }
-    } else {
-      const prompt = event.prompt;
-      if (!isNonEmptyString8(prompt) || state.context === null) {
-        throw new Track1PluginHookError("track1_plugin_event_invalid");
-      }
-      content = prompt;
-      contentRef = `model://track1/input/${state.snapshotSequence}`;
-      state.session.observeModelInput({
-        session_id: state.context.session_id,
-        content,
-        content_ref: contentRef
-      });
     }
   });
   api.on("llm_output", async (event, _ctx) => {
@@ -4132,6 +4202,12 @@ function registerTrack1Plugin(api, runtime) {
     state.pendingToolCallId = null;
     state.pendingToolCallToolName = null;
   });
+  api.on("agent_end", async (event, ctx) => {
+    if (!isPlainObject9(event) || typeof event.success !== "boolean" || !Array.isArray(event.messages) || !isPlainObject9(ctx) || !isNonEmptyString8(ctx.sessionId)) {
+      throw new Track1PluginHookError("track1_plugin_event_invalid");
+    }
+    await finalizeBoundSession(ctx.sessionId, event.success === false);
+  });
   api.on("session_end", async (event, _ctx) => {
     if (!isPlainObject9(event)) {
       throw new Track1PluginHookError("track1_plugin_event_invalid");
@@ -4140,42 +4216,7 @@ function registerTrack1Plugin(api, runtime) {
     if (!isNonEmptyString8(sessionId)) {
       throw new Track1PluginHookError("track1_plugin_event_invalid");
     }
-    const state = sessions.get(sessionId);
-    if (!state || state.ended) {
-      throw new Track1PluginHookError("track1_plugin_session_not_found");
-    }
-    const hasPendingTool = state.pendingToolCallId !== null;
-    try {
-      if (hasPendingTool) {
-        try {
-          const failedObserved = {
-            session_id: state.context.session_id,
-            call_id: state.pendingToolCallId,
-            tool_name: state.pendingToolCallToolName ?? "unknown",
-            status: "failed",
-            result_ref: `simulated-result://${state.pendingToolCallId}/failed`,
-            state_change: "simulated"
-          };
-          const failedSnapshot = state.session.afterTool(failedObserved);
-          await ingestSessionSnapshot(state, failedSnapshot);
-        } catch {
-        }
-        const finalResult = state.session.finalize();
-        await ingestSessionSnapshot(state, finalResult);
-      } else {
-        const finalResult = state.session.finalize();
-        await ingestSessionSnapshot(state, finalResult);
-      }
-    } catch {
-      try {
-        const snapshot = state.session.snapshot();
-        await ingestSessionSnapshot(state, snapshot);
-      } catch {
-      }
-    }
-    state.ended = true;
-    sessions.delete(sessionId);
-    toolRuntimeRegistry.delete(sessionId);
+    await finalizeBoundSession(sessionId, false);
   });
 }
 function createTrack1PluginEntry() {
@@ -4288,6 +4329,7 @@ var EXPECTED_TOOLS = Object.freeze([
 ]);
 var EXPECTED_HOOKS = Object.freeze([
   "after_tool_call",
+  "agent_end",
   "before_tool_call",
   "llm_input",
   "llm_output",

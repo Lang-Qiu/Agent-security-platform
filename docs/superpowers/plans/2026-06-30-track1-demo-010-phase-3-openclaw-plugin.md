@@ -1203,7 +1203,7 @@ Phase 3 is complete only when:
 
 1. all six task commits exist in order;
 2. focused RED evidence was captured before each implementation;
-3. the plugin registers exactly four tools and six required native hooks;
+3. the plugin registers exactly four tools and seven required native hooks;
 4. policy and ingest acknowledgement both occur before tool execution;
 5. no raw-content sentinel appears in snapshots, errors, or logs;
 6. engine, shared, repository, backend, and OpenClaw integration gates have

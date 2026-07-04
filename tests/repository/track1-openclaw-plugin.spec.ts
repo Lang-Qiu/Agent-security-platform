@@ -15,6 +15,7 @@ const EXPECTED_TOOLS = [
 
 const EXPECTED_HOOKS = [
   "after_tool_call",
+  "agent_end",
   "before_tool_call",
   "llm_input",
   "llm_output",

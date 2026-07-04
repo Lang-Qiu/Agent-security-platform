@@ -33,6 +33,7 @@ export interface Track1PluginProbeResult {
   readonly tool_names: readonly ["call_api", "read_file", "send_email", "write_file"];
   readonly hook_names: readonly [
     "after_tool_call",
+    "agent_end",
     "before_tool_call",
     "llm_input",
     "llm_output",
@@ -172,6 +173,7 @@ const EXPECTED_TOOLS = Object.freeze([
 
 const EXPECTED_HOOKS = Object.freeze([
   "after_tool_call",
+  "agent_end",
   "before_tool_call",
   "llm_input",
   "llm_output",

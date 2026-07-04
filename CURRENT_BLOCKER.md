@@ -1,13 +1,34 @@
 # 当前最高优先级阻塞项（REQ-T1-DEMO-010 真实凭据验证）
 
-**状态更新时间：** 2026-07-04
+**状态更新时间：** 2026-07-05
 **负责需求：** REQ-T1-DEMO-010（详见 `docs/sprint-current.md`）
 **用户明确要求：** 真实凭据运行、基线提升和最新镜像构建尚未发生前，不得将 REQ-010 标记为完成。
 
 ## 结论先说
 
-Track 1 的 9 案例真实凭据端到端campaign 目前**跑不通**，卡在 OpenClaw 插件的 `llm_input` / `llm_output`
-钩子调用阶段。这是当前唯一需要解决才能让"全流程跑通"的阻塞项，优先级高于其它一切事项。
+Bug #8 的代码根因已经定位并修复：`openclaw agent` 直连 harness 不会为每次调用发送
+`session_start` / `session_end`，而是在带时间前缀的 `llm_input` 后发送 `agent_end`。插件现在
+从 `llm_input` 延迟绑定规范 campaign 身份，严格映射 `session-<hex>` 与
+`session:<hex>`，并以 `agent_end` 作为直连 CLI 的终态边界。
+
+本地回归和新镜像构建已经通过。当前唯一剩余阻塞是使用授权凭据重新执行完整 9-case
+campaign、独立验收并提升 baseline；在这三步完成前不得把 REQ-010 标记为完成。
+
+## 2026-07-05 Bug #8 修复证据
+
+- 新增真实 CLI 生命周期回归：无 `session_start`、时间戳包装 prompt、runtime-safe agent/session
+  identity、`agent_end` 终止，验证 canonical session 关联与终态 snapshot。
+- 新增失败终态回归：`agent_end.success=false` 必须生成 `failed` 结果，且 provider error
+  不得进入 snapshot。
+- 插件能力契约由 6 个 hook 更新为 7 个：
+  `session_start`、`llm_input`、`llm_output`、`before_tool_call`、
+  `after_tool_call`、`agent_end`、`session_end`。
+- 已移除临时 `TRACK1_DEBUG_HOOKS` 源码和 Compose 透传。
+- `test:track1:openclaw`：142/142 pass。
+- `test:track1:acceptance`：12/12 pass。
+- `test:track1:report`：33/33 pass。
+- 新 gateway/runner 镜像已构建；镜像 bundle 含 `agent_end` 与延迟绑定实现。
+- 尚未取得新的真实 9-case 结果，因此本文件以下 Bug #8 日志保留为历史诊断证据。
 
 ## 已修复的前置 bug（为到达当前阻塞点铺路）
 
@@ -27,7 +48,7 @@ Track 1 的 9 案例真实凭据端到端campaign 目前**跑不通**，卡在 O
 以上 3 个修复均已补充回归测试并通过（`tests/track1/campaign-runner-ports.spec.ts`、
 `tests/track1/openclaw-command.spec.ts`）。
 
-## 当前阻塞：Bug #8 — OpenClaw 插件钩子在真实 gateway 中失败
+## 历史阻塞诊断：Bug #8 — OpenClaw 插件钩子在真实 gateway 中失败
 
 修复 Bug #5/#6/#7 后，真实 9 案例 campaign 现在可以推进到：
 `case_started → compilePrompt(成功) → invokeAgent(成功，CLI 返回合法协议) → attempt_invoked`，
@@ -48,11 +69,11 @@ Gateway 日志显示根因在插件钩子内部：
 `normalizeTrack1ModelInputEnvelope()`（`integrations/openclaw/src/campaign-context.ts`），解析
 完全成功——说明不是 envelope 格式不匹配的问题。
 
-当前怀疑方向：真实 OpenClaw SDK 传给 `session_start` / `llm_input` 钩子的 `event`/`ctx` 对象实际
-形状，跟 `integrations/openclaw/src/plugin.ts` 里假设的字段名/结构不一致（例如 `event.sessionId`
-的大小写、字段名，或者 `session_start` 注册时用的 key 和 `llm_input` 查找时用的 key 不一致）。
+最终确认的根因不是字段大小写，而是 direct agent harness 的生命周期语义：
+它不发送每次调用对应的 `session_start` / `session_end`，并会给 `llm_input.prompt` 增加时间前缀。
+同时，CLI runtime session 使用 `session-<hex>`，而 Track 1 规范身份使用 `session:<hex>`。
 
-### 已加入但尚未产出结果的调试手段
+### 历史调试手段（已移除）
 
 `integrations/openclaw/src/plugin.ts` 里 `session_start`（约 266 行）和 `llm_input`
 （约 350 行）钩子处理函数中，临时加入了受 `TRACK1_DEBUG_HOOKS=1` 环境变量控制的调试日志
@@ -64,22 +85,18 @@ Gateway 日志显示根因在插件钩子内部：
 也是一个待解释的异常现象（可能原因：日志级别过滤、命中了不同的代码路径、或 gateway 进程用的是
 重建前的旧插件 bundle）。
 
-**这两处调试代码是临时的**，问题定位后应当移除（除非用户要求保留为永久调试开关），具体位置：
+这两处临时调试代码现已移除：
 - `integrations/openclaw/src/plugin.ts` 第 266 行、第 350 行附近的 `TRACK1_DEBUG_HOOKS` 判断块
 - `deploy/track1/compose.track1.yml` 里 `openclaw-gateway` 服务的 `TRACK1_DEBUG_HOOKS` 环境变量行
 
 ## 下一步（未完成）
 
-1. 重新构建插件 dist（`integrations/openclaw` 下 `npm run build`），重建 `openclaw-gateway`
-   镜像，用 `TRACK1_DEBUG_HOOKS=1` 重启 gateway，跑一次真实 invocation，检查 gateway 日志里
-   `session_start` 和 `llm_input` 两处调试行的真实事件内容。
-2. 根据真实事件形状定位并修复 Bug #8。
-3. 修复后移除上述临时调试代码（`TRACK1_DEBUG_HOOKS` 相关）。
-4. 用真实凭据重跑完整 9 案例 campaign，确认端到端可以走完。
-5. 补充覆盖 Bug #8 根因的回归测试（预计在 `integrations/openclaw/tests/plugin-hooks.spec.ts`）。
-6. 跑一遍完整测试套件（repo/shared/engine:sandbox/integration:openclaw/track1:openclaw:unit/
-   track1:acceptance/track1:report/backend/frontend）确认无回归。
-7. 全部通过后才可以把 REQ-T1-DEMO-010 标记为完成。
+1. 用最终源码重新构建 `openclaw-gateway` 与 `campaign-runner` 镜像。
+2. 使用授权凭据重跑完整 9-case campaign，确认每个 attempt 都收到终态 snapshot。
+3. 运行独立 acceptance validator，确认 9/9 动作、镜像摘要、hook/tool 集合和制品边界。
+4. 原子提升 accepted baseline，生成并校验最终报告/evidence pack。
+5. 重跑 repo/shared/sandbox/OpenClaw/acceptance/report/backend/frontend 门禁。
+6. 只有上述步骤全部通过后才可以把 REQ-T1-DEMO-010 标记为完成。
 
 ## 安全约束（务必遵守）
 

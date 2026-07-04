@@ -74,6 +74,7 @@ export function makeCredentialedE2EPorts(options?: {
         openclaw_version: "2026.6.10",
         plugin_status: "loaded",
         hooks: [
+          "agent_end",
           "session_start",
           "llm_input",
           "llm_output",
@@ -194,6 +195,7 @@ export function makeAcceptedRealCampaignSource() {
       model_ref: TRACK1_MODEL_REF_CANONICAL,
       plugin_status: "loaded",
       hooks: [
+        "agent_end",
         "session_start",
         "llm_input",
         "llm_output",

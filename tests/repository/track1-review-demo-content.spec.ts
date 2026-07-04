@@ -127,6 +127,10 @@ test("REQ-T1-DEMO-010 review tour is five ordered minutes with stable targets", 
       assert.notEqual(String(step[key]).trim(), "", `${String(step.id)}.${key}`);
     }
   }
+  const runtimeReadiness = tour.find(
+    (step) => step.id === "runtime-readiness"
+  );
+  assert.match(String(runtimeReadiness?.presenter_guidance), /七类 hook/);
 });
 
 test("REQ-T1-DEMO-010 review scenarios follow the canonical three-agent order", () => {

@@ -181,7 +181,7 @@ export async function buildTrack1MarkdownReport(
     [
       "## 4. 系统架构与 OpenClaw 集成",
       `模型引用：\`${model.environment.model_ref}\`；OpenClaw 包完整性：\`${model.environment.openclaw_package_integrity}\`。`,
-      "插件注册 session_start、llm_input、llm_output、before_tool_call、after_tool_call、session_end 六类 hook；" +
+      "插件注册 session_start、llm_input、llm_output、before_tool_call、after_tool_call、agent_end、session_end 七类 hook；" +
         "仅注册 send_email、read_file、write_file、call_api 四个模拟业务工具。",
       "监督快照经内部 ingest 接口进入后端，监督端只通过只读 API 展示活动、会话、告警与阻断记录。"
     ],

@@ -79,6 +79,16 @@ test("REQ-T1-DEMO-010 report references five exact screenshots and discloses ret
   assert.match(markdown, /真实副作用计数：0/);
 });
 
+test("REQ-T1-DEMO-010 report documents the direct CLI terminal hook", async () => {
+  const markdown = await buildTrack1MarkdownReport(
+    makeCompletedReportModel(),
+    makeCanonicalFixturePort()
+  );
+
+  assert.match(markdown, /agent_end/);
+  assert.match(markdown, /七类 hook/);
+});
+
 test("REQ-T1-DEMO-010 report is deterministic and contains no runtime secrets", async () => {
   const model = makeCompletedReportModel();
   const first = await buildTrack1MarkdownReport(

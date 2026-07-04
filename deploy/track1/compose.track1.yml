@@ -19,7 +19,6 @@ services:
       OPENCLAW_MODEL_ID: ${OPENCLAW_MODEL_ID}
       OPENCLAW_GATEWAY_PASSWORD: ${OPENCLAW_GATEWAY_PASSWORD}
       TRACK1_INGEST_TOKEN: ${TRACK1_INGEST_TOKEN}
-      TRACK1_DEBUG_HOOKS: ${TRACK1_DEBUG_HOOKS:-}
     volumes:
       - ../../integrations/openclaw/config/openclaw.json5:/app/config/openclaw.json5:ro
       - ../../integrations/openclaw/config/agents.json5:/app/config/agents.json5:ro

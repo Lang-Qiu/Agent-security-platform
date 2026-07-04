@@ -1054,3 +1054,30 @@ test("REQ-T1-DEMO-010 memory observation rejects malformed envelope content_sha2
       error.code === "monitor_model_request_invalid"
   );
 });
+
+test("REQ-T1-DEMO-010 external runtime failure produces a terminal failed result", async () => {
+  const session = await makeReadyObservedSession("allow");
+
+  const failed = session.fail();
+
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.summary, "Monitored sandbox session failed");
+  assert.equal(typeof failed.finished_at, "string");
+  assert.throws(
+    () => session.observeModelInput(makeObservedModelInput()),
+    (error: unknown) =>
+      error instanceof Track1MonitorError &&
+      error.code === "monitor_state_invalid"
+  );
+});
+
+test("REQ-T1-DEMO-010 external runtime failure overrides an intercept-sealed state", async () => {
+  const session = await makeReadyObservedSession("deny");
+  const outcome = await session.beforeTool(makeObservedToolRequest());
+  assert.equal(outcome.disposition, "intercept");
+
+  const failed = session.fail();
+
+  assert.equal(failed.status, "failed");
+  assert.equal(failed.summary, "Monitored sandbox session failed");
+});

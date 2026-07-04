@@ -28,6 +28,7 @@ export function makeValidPluginProbeResult(): Track1PluginProbeResult {
     tool_names: Object.freeze(["call_api", "read_file", "send_email", "write_file"]),
     hook_names: Object.freeze([
       "after_tool_call",
+      "agent_end",
       "before_tool_call",
       "llm_input",
       "llm_output",
