@@ -3478,3 +3478,52 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   - no new credentialed 9-case result or accepted baseline exists yet.
 - status: BUG_8_CODE_COMPLETE_REAL_CAMPAIGN_PENDING
 - requirement status: REQ-T1-DEMO-010_IN_PROGRESS
+
+## 2026-07-05 - REQ-T1-DEMO-010 Bug #8 commit, image rebuild, and digest sync
+
+- context: CURRENT_BLOCKER.md listed six remaining operational steps after the
+  Bug #8 code fix; user confirmed the path forward is commit-fix →
+  rebuild images → sync digests → credentialed run.
+- actions:
+  - committed Bug #8 fix as `a1588665`
+    `fix(track1): repair OpenClaw direct-CLI hook lifecycle` (28 files,
+    894 insertions / 368 deletions). Electron-related working-tree
+    changes (`.gitignore` `electron/release/`, `package.json`
+    `test:electron`, `pnpm-lock.yaml` electron deps, untracked
+    `electron/`, `tests/repository/track1-electron-app.spec.ts`,
+    `P3_T6_COMMIT_MSG.tmp`, `.superpowers/`) were intentionally left
+    unstaged — they are a separate work stream unrelated to REQ-010.
+  - rebuilt all six compose services (`openclaw-gateway`, `backend`,
+    `frontend`, `campaign-runner`, `evidence-capture`, `report-builder`)
+    with placeholder env values; all six report `Built`.
+  - synced `deploy/track1/image-digests.lock.json` from placeholder
+    `1111…` / `2222…` / `3333…` to the actual upstream pinned base
+    image digests declared in the three Dockerfile FROM directives
+    (`node:22.19.0-bookworm-slim`,
+    `mcr.microsoft.com/playwright:v1.60.0-noble`,
+    `pandoc/latex:3.10.0.0-ubuntu`). Committed as `c41bf19f`
+    `build(track1): sync image-digests.lock.json with pinned Dockerfile
+    FROM digests`. The hardcoded values in
+    `scripts/track1/credentialed-e2e.ts` already matched the Dockerfile
+    FROM directives, so only the lock file needed updating; without
+    this sync the production credentialed E2E would fail
+    `track1_acceptance_invalid` on `isDeepStrictEqual(image_digests)`.
+- offline gate snapshot:
+  - `test:repo` 145/145, `test:shared` 148/148,
+    `test:engine:sandbox` 432/432, `test:track1:openclaw` 142/142,
+    `test:track1:acceptance` 12/12, `test:track1:report` 33/33,
+    `test:frontend` 221/221;
+  - `test:backend` 229/231 (two pre-existing failures unrelated to
+    REQ-010, reproduced on a clean tree with the Bug #8 fix stashed:
+    `startProductionServers` EACCES binding 127.0.0.1:3000 on Windows;
+    `task engine service maps tasks` asset-scan adapter deep-equal
+    drift).
+- remaining blocker: the credentialed 9-case campaign, independent
+  acceptance validation, and atomic baseline promotion still require
+  real cloud-model credentials. Per CURRENT_BLOCKER.md safety
+  constraint, credentials must only be supplied via shell environment
+  variables or a git-ignored `.env` file; they must never be written
+  to any git-tracked file. The user has confirmed they will provide
+  credentials via a git-ignored `.env` file.
+- status: IMAGES_REBUILT_AND_DIGESTS_SYNCED_AWAITING_CREDENTIALS
+- requirement status: REQ-T1-DEMO-010_IN_PROGRESS

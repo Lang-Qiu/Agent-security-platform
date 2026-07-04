@@ -6,13 +6,16 @@
 
 ## 结论先说
 
-Bug #8 的代码根因已经定位并修复：`openclaw agent` 直连 harness 不会为每次调用发送
-`session_start` / `session_end`，而是在带时间前缀的 `llm_input` 后发送 `agent_end`。插件现在
-从 `llm_input` 延迟绑定规范 campaign 身份，严格映射 `session-<hex>` 与
-`session:<hex>`，并以 `agent_end` 作为直连 CLI 的终态边界。
+Bug #8 的代码根因已经定位并修复（提交 `a1588665`）：`openclaw agent` 直连 harness 不会
+为每次调用发送 `session_start` / `session_end`，而是在带时间前缀的 `llm_input` 后发送
+`agent_end`。插件现在从 `llm_input` 延迟绑定规范 campaign 身份，严格映射 `session-<hex>`
+与 `session:<hex>`，并以 `agent_end` 作为直连 CLI 的终态边界。
 
-本地回归和新镜像构建已经通过。当前唯一剩余阻塞是使用授权凭据重新执行完整 9-case
-campaign、独立验收并提升 baseline；在这三步完成前不得把 REQ-010 标记为完成。
+最新镜像已重建（`openclaw-gateway`、`backend`、`frontend`、`campaign-runner`、
+`evidence-capture`、`report-builder` 全部 Built）；`image-digests.lock.json` 已同步到
+Dockerfile FROM 指令的 pinned upstream 摘要（提交 `c41bf19f`）。当前唯一剩余阻塞是
+使用授权凭据重新执行完整 9-case campaign、独立验收并提升 baseline；在这三步完成前
+不得把 REQ-010 标记为完成。
 
 ## 2026-07-05 Bug #8 修复证据
 
@@ -91,12 +94,25 @@ Gateway 日志显示根因在插件钩子内部：
 
 ## 下一步（未完成）
 
-1. 用最终源码重新构建 `openclaw-gateway` 与 `campaign-runner` 镜像。
-2. 使用授权凭据重跑完整 9-case campaign，确认每个 attempt 都收到终态 snapshot。
+1. ~~用最终源码重新构建 `openclaw-gateway` 与 `campaign-runner` 镜像。~~ ✅ 已完成（同时重建了 backend/frontend/evidence-capture/report-builder；`image-digests.lock.json` 已同步到 Dockerfile FROM 的 pinned upstream 摘要）。
+2. 使用授权凭据重跑完整 9-case campaign，确认每个 attempt 都收到终态 snapshot。**← 当前阻塞点**：环境变量 `OPENCLAW_MODEL_BASE_URL`、`OPENCLAW_MODEL_API_KEY`、`OPENCLAW_MODEL_ID`、`TRACK1_INGEST_TOKEN`（可选 `OPENCLAW_GATEWAY_PASSWORD`）尚未提供；用户将通过 git-ignored `.env` 文件提供。
 3. 运行独立 acceptance validator，确认 9/9 动作、镜像摘要、hook/tool 集合和制品边界。
 4. 原子提升 accepted baseline，生成并校验最终报告/evidence pack。
 5. 重跑 repo/shared/sandbox/OpenClaw/acceptance/report/backend/frontend 门禁。
 6. 只有上述步骤全部通过后才可以把 REQ-T1-DEMO-010 标记为完成。
+
+## 离线门禁快照（2026-07-05，Bug #8 修复后）
+
+| Gate | 结果 |
+| --- | --- |
+| `test:repo` | 145/145 pass |
+| `test:shared` | 148/148 pass |
+| `test:engine:sandbox` | 432/432 pass |
+| `test:track1:openclaw` | 142/142 pass |
+| `test:track1:acceptance` | 12/12 pass |
+| `test:track1:report` | 33/33 pass |
+| `test:frontend` | 221/221 pass |
+| `test:backend` | 229/231 pass（2 个 pre-existing 失败，stash Bug #8 改动后同样失败，与 REQ-010 无关：`startProductionServers` 在 Windows 上 bind 127.0.0.1:3000 EACCES；`task engine service maps tasks` 是 asset-scan 适配器无关 deep-equal 偏差） |
 
 ## 安全约束（务必遵守）
 
