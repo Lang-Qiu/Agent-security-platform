@@ -1,0 +1,28 @@
+FROM node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90
+
+WORKDIR /app
+
+RUN npm install --global --no-save openclaw@2026.6.10
+
+COPY integrations/openclaw/package.json ./integrations/openclaw/package.json
+COPY integrations/openclaw/scripts ./integrations/openclaw/scripts
+RUN cd integrations/openclaw && npm install --ignore-scripts
+
+COPY integrations/openclaw/src ./integrations/openclaw/src
+COPY integrations/openclaw/openclaw.plugin.json ./integrations/openclaw/openclaw.plugin.json
+COPY shared ./shared
+COPY engines/sandbox/src ./engines/sandbox/src
+RUN cd integrations/openclaw && \
+    npm run build && \
+    mkdir -p /opt/track1-plugin/dist && \
+    cp dist/index.js /opt/track1-plugin/dist/index.js && \
+    cp openclaw.plugin.json /opt/track1-plugin/openclaw.plugin.json && \
+    cp package.json /opt/track1-plugin/package.json
+COPY scripts/track1 ./scripts/track1
+COPY samples/track1 ./samples/track1
+COPY deploy/track1/config/openclaw-runner.json5 ./config/openclaw-runner.json5
+
+RUN mkdir -p /run/track1/messages /tmp/openclaw
+
+ENV OPENCLAW_CONFIG_PATH=/app/config/openclaw-runner.json5
+CMD ["node", "--experimental-strip-types", "scripts/track1/run-openclaw-campaign.ts"]

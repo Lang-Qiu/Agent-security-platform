@@ -1,0 +1,14 @@
+FROM pandoc/latex:3.10.0.0-ubuntu@sha256:568ae5d3dc4cf9266753c9c78e7d073c1472f6540e0cf02de6a330143df8bdb7
+
+USER root
+COPY deploy/track1/render-report.sh /usr/local/bin/render-track1-report
+RUN chmod 0555 /usr/local/bin/render-track1-report
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    TZ=UTC \
+    SOURCE_DATE_EPOCH=0 \
+    FORCE_SOURCE_DATE=1
+
+WORKDIR /data
+ENTRYPOINT ["/usr/local/bin/render-track1-report"]

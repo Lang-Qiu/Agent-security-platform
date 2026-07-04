@@ -681,3 +681,86 @@ a {
     font-size: 14px;
   }
 }
+
+.review-demo-page {
+  display: grid;
+  gap: 20px;
+}
+
+.review-demo-page__body {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.review-demo-tour-nav__controls {
+  margin-top: 16px;
+}
+
+.review-demo-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 16px;
+  margin: 16px 0 0;
+}
+
+.review-demo-metric-grid__item dt {
+  color: var(--console-muted, rgba(0, 0, 0, 0.45));
+  font-size: 13px;
+}
+
+.review-demo-metric-grid__item dd {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.review-demo-scenario-investigation {
+  display: grid;
+  gap: 16px;
+}
+
+.review-demo-scenario-card__evidence {
+  margin: 8px 0;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.review-demo-scenario-card__cases {
+  margin: 8px 0 12px;
+  padding-left: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+
+.review-demo-scenario-case-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.review-demo-scenario-case-row__id {
+  min-width: 130px;
+}
+
+.review-demo-scenario-card__cases-empty {
+  margin: 8px 0 12px;
+}
+
+.review-demo-capability-list {
+  display: grid;
+  gap: 12px;
+  padding-left: 0;
+  list-style: none;
+}
+
+@media (max-width: 1100px) {
+  .review-demo-page__body {
+    grid-template-columns: 1fr;
+  }
+}

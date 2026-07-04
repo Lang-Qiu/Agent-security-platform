@@ -18,6 +18,8 @@ const VALID_ENVIRONMENT = Object.freeze({
   OPENCLAW_MODEL_BASE_URL: "https://model.example.test/v1",
   OPENCLAW_MODEL_API_KEY: "test-only-key",
   OPENCLAW_MODEL_ID: "provider/model-safe",
+  OPENCLAW_GATEWAY_PASSWORD: "gateway-test-password",
+  OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: "1",
   PATH: "/usr/bin"
 });
 
@@ -54,23 +56,28 @@ function sha256HexOfCanonicalCase(): string {
 function makeValidInvocation() {
   return {
     agent_id: "agent:track1:prompt-injection" as const,
+    session_id: "session:0123456789abcdef0123456789abcdef",
     session_key: "session-key:0123456789abcdef0123456789abcdef",
     attempt_id: "attempt:t1-sc-001-c001:1",
     prompt: makeCompiledPrompt("attempt:t1-sc-001-c001:1")
   };
 }
 
-function sessionKeySha256(sessionKey: string): string {
-  return createHash("sha256").update(sessionKey, "utf8").digest("hex");
-}
-
 function makeCliJsonContaining(sentinel: string): string {
   return JSON.stringify({
-    agent_id: "agent:track1:prompt-injection",
-    session_key_sha256: sessionKeySha256(
-      "session-key:0123456789abcdef0123456789abcdef"
-    ),
-    _debug: sentinel
+    runId: "run-track1-test",
+    status: "ok",
+    summary: "completed",
+    result: {
+      payloads: [{ text: sentinel }],
+      meta: {
+        agentMeta: {
+          sessionFile:
+            "/root/.openclaw/agents/agent-track1-prompt-injection/sessions/session-0123456789abcdef0123456789abcdef.jsonl",
+          sessionId: "session-0123456789abcdef0123456789abcdef"
+        }
+      }
+    }
   });
 }
 
@@ -150,21 +157,26 @@ function makeRecordingEphemeralMessagePort(): EphemeralMessagePort & {
 }
 
 const VALID_SAFE_CLI_JSON = JSON.stringify({
-  agent_id: "agent:track1:prompt-injection",
-  session_key_sha256: sessionKeySha256(
-    "session-key:0123456789abcdef0123456789abcdef"
-  )
+  runId: "run-track1-test",
+  status: "ok",
+  summary: "completed",
+  result: {
+    payloads: [{ text: "safe test reply" }],
+    meta: {
+      agentMeta: {
+        sessionFile:
+          "/root/.openclaw/agents/agent-track1-prompt-injection/sessions/session-0123456789abcdef0123456789abcdef.jsonl",
+        sessionId: "session-0123456789abcdef0123456789abcdef"
+      }
+    }
+  }
 });
 
 test("REQ-T1-DEMO-010 OpenClaw port uses a fixed shell-free command", async () => {
   const processPort = makeRecordingProcessPort({ stdout: VALID_SAFE_CLI_JSON });
+  const invocation = makeValidInvocation();
   const result = await invokeOpenClawAgent(
-    {
-      agent_id: "agent:track1:prompt-injection",
-      session_key: "session-key:0123456789abcdef0123456789abcdef",
-      attempt_id: "attempt:t1-sc-001-c001:1",
-      prompt: makeCompiledPrompt("attempt:t1-sc-001-c001:1")
-    },
+    invocation,
     VALID_ENVIRONMENT,
     processPort,
     makeRecordingEphemeralMessagePort()
@@ -177,11 +189,13 @@ test("REQ-T1-DEMO-010 OpenClaw port uses a fixed shell-free command", async () =
       args: [
         "agent",
         "--agent",
-        "agent:track1:prompt-injection",
+        "agent-track1-prompt-injection",
+        "--session-id",
+        "session-0123456789abcdef0123456789abcdef",
         "--session-key",
         "session-key:0123456789abcdef0123456789abcdef",
-        "--message-file",
-        "/run/track1/messages/attempt-t1-sc-001-c001-1.json",
+        "--message",
+        Buffer.from(invocation.prompt.utf8).toString("utf8"),
         "--json"
       ],
       shell: false,
@@ -221,19 +235,13 @@ test("REQ-T1-DEMO-010 OpenClaw port discards raw stdout and stderr", async () =>
     stdout: makeCliJsonContaining(sentinel),
     stderr: `provider failed ${sentinel}`
   });
-  await assert.rejects(
-    () =>
-      invokeOpenClawAgent(
-        makeValidInvocation(),
-        VALID_ENVIRONMENT,
-        port,
-        makeRecordingEphemeralMessagePort()
-      ),
-    (error: unknown) => {
-      assert.equal(String(error).includes(sentinel), false);
-      return true;
-    }
+  const result = await invokeOpenClawAgent(
+    makeValidInvocation(),
+    VALID_ENVIRONMENT,
+    port,
+    makeRecordingEphemeralMessagePort()
   );
+  assert.equal(JSON.stringify(result).includes(sentinel), false);
 });
 
 test("REQ-T1-DEMO-010 OpenClaw port rejects a non-zero exit code", async () => {
@@ -280,10 +288,19 @@ test("REQ-T1-DEMO-010 OpenClaw port rejects malformed JSON output", async () => 
 
 test("REQ-T1-DEMO-010 OpenClaw port rejects wrong agent/session protocol metadata", async () => {
   const wrongAgent = JSON.stringify({
-    agent_id: "agent:track1:tool-hijack",
-    session_key_sha256: sessionKeySha256(
-      "session-key:0123456789abcdef0123456789abcdef"
-    )
+    runId: "run-track1-test",
+    status: "ok",
+    summary: "completed",
+    result: {
+      payloads: [],
+      meta: {
+        agentMeta: {
+          sessionFile:
+            "/root/.openclaw/agents/agent-track1-tool-hijack/sessions/session-0123456789abcdef0123456789abcdef.jsonl",
+          sessionId: "session-0123456789abcdef0123456789abcdef"
+        }
+      }
+    }
   });
   const port = makeRecordingProcessPort({ stdout: wrongAgent });
   await assert.rejects(
@@ -300,10 +317,7 @@ test("REQ-T1-DEMO-010 OpenClaw port rejects wrong agent/session protocol metadat
 
 test("REQ-T1-DEMO-010 OpenClaw port rejects extra protocol keys", async () => {
   const withExtra = JSON.stringify({
-    agent_id: "agent:track1:prompt-injection",
-    session_key_sha256: sessionKeySha256(
-      "session-key:0123456789abcdef0123456789abcdef"
-    ),
+    ...JSON.parse(VALID_SAFE_CLI_JSON),
     extra: "field"
   });
   const port = makeRecordingProcessPort({ stdout: withExtra });
@@ -328,6 +342,11 @@ test("REQ-T1-DEMO-010 OpenClaw port only allows whitelisted environment variable
     makeRecordingEphemeralMessagePort()
   );
   assert.equal("SECRET_UNRELATED" in port.calls[0].env, false);
+  assert.equal("OPENCLAW_MODEL_API_KEY" in port.calls[0].env, false);
+  assert.equal(
+    port.calls[0].env.OPENCLAW_GATEWAY_PASSWORD,
+    "gateway-test-password"
+  );
 });
 
 test("REQ-T1-DEMO-010 OpenClaw port writes the compiled prompt to the ephemeral message port", async () => {

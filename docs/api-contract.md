@@ -1944,3 +1944,76 @@ permanently prohibits these command surfaces.
 
 Real 390/1024/1440 browser screenshots, visual acceptance, and end-to-end
 campaign orchestration across Docker/OpenClaw runtime belong to Phase 6.
+## REQ-T1-DEMO-010 Evidence Builder and Acceptance Boundary
+
+No public write route was added for report generation. The report CLI reads
+the existing public endpoints:
+
+- `GET /api/supervision/campaigns/:campaignId`
+- `GET /api/supervision/sessions/:sessionId`
+- `GET /api/supervision/sessions/:sessionId/evidence`
+
+After local byte re-read and manifest validation, it registers exactly one
+existing internal envelope:
+
+- `POST /internal/track1/campaigns/:campaignId/evidence`
+
+The registration body remains
+`Track1CampaignEvidenceRegistration` with exactly
+`schema_version`, `campaign_id`, `artifact_manifest_sha256`,
+`artifact_manifest_ref`, and `registered_at`. Runtime prompt/output/tool
+content, provider bodies, browser logs, and credentials are not accepted.
+
+The output directory contains exactly `security-risk-analysis.md`,
+`security-risk-analysis.pdf`, `campaign.json`, five fixed PNG paths, and
+`manifest.json`. `manifest.json` is canonical JSON and does not list itself.
+The independent acceptance source additionally contains normalized campaign
+and session DTOs, a three-counter safe log summary, and closed runtime
+capability metadata; it is an ignored operational artifact and is not copied
+into the accepted baseline.
+
+## REQ-T1-DEMO-010 Review Demo UI Frontend Contract
+
+The `/review-demo` guided evaluator tour adds no new backend route, DTO, or
+write path. It reuses exactly these existing public read endpoints:
+
+- `GET /api/supervision/campaigns` — resolves a default campaign when no
+  `campaign_id` URL param is present, and refreshes the aggregate summary
+  used for live metrics.
+- `GET /api/supervision/campaigns/:campaignId` — campaign detail, fetched in
+  parallel with the summary via the existing
+  `campaign-supervision-service` functions.
+- `GET /api/supervision/campaigns/:campaignId/evidence` — evidence
+  readiness check (`ready` / `409 CAMPAIGN_EVIDENCE_NOT_READY` /
+  `unavailable`), identical semantics to the Phase 5 campaign mode.
+
+### Metric field coverage
+
+The content catalog's `metric_bindings` lists 11 keys. Five are populated
+from live `Track1CampaignSummary` fields:
+
+| Catalog key | Summary field |
+| --- | --- |
+| `agent_count` | `agent_count` |
+| `case_count` | `case_count` |
+| `retry_count` | `retry_count` |
+| `ask_count` | `ask_count` |
+| `blocked_count` | `blocked_count` |
+
+The remaining six (`attempt_count`, `deny_count`, `allow_count`,
+`intercepted_tool_count`, `executed_simulated_tool_count`,
+`real_side_effect_count`) are not present on `Track1CampaignSummary` or
+`Track1CampaignDetail` today — they only exist inside the offline evidence
+package's `campaign.json` (`scripts/track1/report/report-model.ts`). The UI
+renders a fixed neutral placeholder for these six rather than deriving them
+client-side, which would duplicate backend aggregation logic. Populating
+them live is future work gated on a public evidence-metrics API, not part
+of this slice.
+
+### Explicit non-goals
+
+No public route serves `security-risk-analysis.md/.pdf`, the five fixed
+screenshot PNGs, or `manifest.json` directly, so the review demo UI does not
+link or fetch those paths. No campaign start/retry/approve/reject/cancel/
+edit-policy command surface exists — the page is read-only, same rule as the
+Phase 5 campaign mode.

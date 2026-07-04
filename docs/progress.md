@@ -3027,3 +3027,314 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
     or reconciled with this rebuild — a decision on that branch is pending
 - status: PHASE_4_COMPLETE_PENDING_REVIEW
 - next blocker: user review of Phase 4 before Phase 6 report/evidence pipeline
+
+## 2026-07-04 - REQ-T1-DEMO-010 Phase 4 real-runtime gap fix (exit-gate item 6)
+
+- requirement: the prior Phase 4 completion report never actually ran the
+  plan's exit-gate item 6 (`openclaw plugins inspect agent-security-track1
+  --runtime --json` against the real built image, without a model call) — a
+  follow-up review ran it and it failed closed with a config schema error and
+  a missing plugin. This entry fixes the real gap so that exact command now
+  passes against the real image.
+- root causes found (both real, verified against the actual `openclaw
+  2026.6.10` CLI, not assumed):
+  1. `integrations/openclaw/src/index.ts` never re-exported the `default`
+     export from `plugin.ts` (the `DefinedPluginEntry` that `definePluginEntry`
+     produces). The real OpenClaw plugin loader requires the entry module's
+     `default` export to own `register`/`activate`; without it, `openclaw
+     plugins inspect --runtime` reported `"status": "error"`,
+     `"error": "plugin export missing register/activate"`, zero tools, zero
+     hooks — even though `plugin.ts` itself was correct.
+  2. `deploy/track1/Dockerfile.openclaw` only ran `npm install -g
+     openclaw@2026.6.10` and copied the two `.json5` config files; it never
+     copied the built plugin (`integrations/openclaw/dist`,
+     `openclaw.plugin.json`, `package.json`) into the image. The plugin
+     referenced by `integrations/openclaw/config/openclaw.json5` did not
+     exist inside the container at all.
+  3. `integrations/openclaw/config/openclaw.json5` used a schema that does
+     not exist in the real OpenClaw `2026.6.10` config
+     (`tools.builtins`/`tools.channels`, `skills.enabled`, a top-level
+     `marketplace` key, `plugins.thirdParty`, a top-level `workspace` key,
+     `logging.persistTranscripts`/`redactSensitiveToolData`, and a root
+     `schema_version` field). None of these keys exist in the real
+     `openclaw config schema` output (verified by dumping the live JSON
+     Schema from the built image); `openclaw config validate` rejected the
+     file with `Invalid input` on `tools`, `skills`, `plugins`, `logging`,
+     and `<root>`. `integrations/openclaw/config/agents.json5` used a
+     `{ agents: [{ id, scenario_id, model }] }` shape that the real
+     `agents.list[]` schema also rejects (no `scenario_id` field; the
+     container key is `list`, not `agents`).
+  4. Even after fixing 1-3, the real plugin loader additionally blocks the
+     `llm_input`/`llm_output` typed hooks for any non-bundled plugin unless
+     `plugins.entries.<id>.hooks.allowConversationAccess` is explicitly set
+     to `true` — a real safety gate not modeled in the original config.
+- fix:
+  - `integrations/openclaw/src/index.ts` — add `export { default } from
+    "./plugin.ts";`; rebuilt `integrations/openclaw/dist/index.js` via
+    `npm run build` (esbuild).
+  - `deploy/track1/Dockerfile.openclaw` — `COPY integrations/openclaw/dist
+    /opt/track1-plugin/dist`, `openclaw.plugin.json`, and `package.json`
+    into the image before the config files are copied.
+  - `integrations/openclaw/config/openclaw.json5` — rewritten against the
+    real schema: `tools: { profile: "minimal", allow: [...] }` (deny-all
+    baseline profile + explicit plugin-tool allowlist, replacing the
+    fictitious `tools.builtins`/`tools.channels`); `skills: { allowBundled:
+    [] }`; `agents: { defaults: { workspace: "/workspace" }, $include:
+    "./agents.json5" }`; `plugins: { load: { paths:
+    ["/opt/track1-plugin"] }, entries: { "agent-security-track1": {
+    enabled: true, hooks: { allowConversationAccess: true }, config: {...}
+    } } }`; `session: { store: "/tmp/openclaw/sessions.json" }` (a file
+    path, not a directory); `logging: { level: "info", redactSensitive:
+    "tools" }`; no top-level `marketplace`, `workspace`, or `schema_version`
+    key (none exist in the real schema).
+  - `integrations/openclaw/config/agents.json5` — rewritten to `{ list: [{
+    id, model }] }`; `model` is `"openai-compat/${OPENCLAW_MODEL_ID}"` to
+    match the real per-agent `model` field grammar (`provider/model-id`),
+    resolved through the `$include`d file's own env-var substitution.
+  - `tests/repository/track1-openclaw-runtime-config.spec.ts` — rewritten
+    to assert the real corrected shapes instead of the fictitious ones
+    (`tools.profile`/`tools.allow`, `skills.allowBundled`,
+    `plugins.entries.agent-security-track1.hooks.allowConversationAccess`,
+    `agents.defaults.workspace`, `session.store` as a file path, the
+    corrected top-level key set, and `agents.json5`'s `list[]` shape).
+- real verification performed (not fixture/mocked):
+  - `docker build -f deploy/track1/Dockerfile.openclaw -t
+    agent-security-track1-openclaw:2026.6.10 .` — succeeds; `docker run
+    --rm agent-security-track1-openclaw:2026.6.10 --version` reports
+    exactly `OpenClaw 2026.6.10 (aa69b12)`.
+  - `docker run --rm -e OPENCLAW_MODEL_BASE_URL=... -e
+    OPENCLAW_MODEL_API_KEY=... -e OPENCLAW_MODEL_ID=... -e
+    TRACK1_INGEST_TOKEN=... agent-security-track1-openclaw:2026.6.10
+    plugins inspect agent-security-track1 --runtime --json` — real CLI
+    output: `"status": "loaded"`, `toolNames`: exactly `["send_email",
+    "read_file", "write_file", "call_api"]`, `typedHooks`: exactly
+    `after_tool_call, before_tool_call, llm_input, llm_output, session_end,
+    session_start`, `"diagnostics": []`. Zero cloud-model or agent
+    invocation occurred (command never runs `openclaw agent`).
+  - the identical command was re-run through the real Compose service
+    definition (`docker-compose -f deploy/track1/compose.track1.yml
+    --profile track1 build openclaw-gateway` then `... run --rm
+    openclaw-gateway plugins inspect agent-security-track1 --runtime
+    --json`, exactly as documented in `deploy/track1/README.md`) with
+    dummy non-routable env values — same clean result, `"diagnostics":
+    []`.
+  - `docker-compose -f deploy/track1/compose.track1.yml --profile track1
+    config` re-checked after the fix: only `backend` publishes a host port
+    (`3000:3000`), no secret literal outside injected env substitution.
+- GREEN gates (re-run after the fix, actual):
+  - `test:track1:openclaw` (integration 55 + unit 67): 122/122 pass
+  - `test:repo`: 115/115 pass
+  - `test:shared`: 148/148 pass
+  - `test:engine:sandbox`: 430/430 pass
+  - `test:backend`: 228/229 pass (same single pre-existing
+    `task-engine.service.spec.ts` asset-scan failure, reproduced on `main`
+    before this change; unrelated to Track 1)
+- status: PHASE_4_REAL_RUNTIME_GAP_FIXED
+- next blocker: none for this fix; Phase 4 exit-gate item 6 (real plugin
+  inspect without a model call) is now genuinely satisfied. Awaiting user
+  decision on whether to proceed to Phase 6.
+
+## 2026-07-04 - REQ-T1-DEMO-010 Phase 4 rebuild and Phase 6 evidence pipeline
+
+- Phase 4 rebuild corrections:
+  - production OpenClaw invocation now uses the real `agent --message`
+    protocol, exact session correlation, a shell-free process port, and safe
+    Gateway JSON normalization;
+  - the production campaign entrypoint now runs the fixed campaign instead
+    of stopping after preflight;
+  - Docker topology now builds real backend/frontend/runner images, publishes
+    frontend on `5173`, keeps internal ingest and Gateway ports private, and
+    composes a one-shot running evidence checkpoint;
+  - real SDK prompt envelopes are rebound before model observation and the
+    REQ-008 rule provider remains on the real plugin path.
+- Phase 6 implementation:
+  - strict report projector re-derives actions, retries, blocks, tool counts,
+    and 3-agent/9-case coverage from normalized session decisions;
+  - canonical manifest builder hashes eight exact artifacts and emits stable
+    JSON with one final LF;
+  - report generator emits 18 fixed sections, bilingual abstracts, a nine-row
+    matrix, retry disclosure, five image refs, and nine hash-verified fixture
+    appendices;
+  - capture boundary checks fresh state, identity, API/console failures,
+    nonblank PNG bytes, and overflow at 390/1024/1440 widths;
+  - PDF boundary accepts only fixed hashes/timestamps/screenshots and hides
+    engine stderr;
+  - pipeline writes to a temporary directory, re-reads every byte, atomically
+    publishes, then registers evidence.
+- Immutable image references:
+  - `mcr.microsoft.com/playwright:v1.60.0-noble@sha256:9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948`
+  - `pandoc/latex:3.10.0.0-ubuntu@sha256:568ae5d3dc4cf9266753c9c78e7d073c1472f6540e0cf02de6a330143df8bdb7`
+- verified gates:
+  - `test:track1:openclaw`: 133/133 pass (56 integration + 77 unit)
+  - `test:track1:report`: 32/32 pass
+  - `test:repo`: 120/120 pass
+  - `test:shared`: 148/148 pass
+  - `test:engine:sandbox`: 430/430 pass
+  - `test:frontend`: 212/212 pass
+  - frontend production build: pass
+  - Compose static config with both profiles: pass via Compose v2.39.4
+- backend: 229/230 pass; the only failure is the existing Semgrep integration
+  case at `backend-task-center.api.spec.ts:648`, where child spawn returns
+  `EPERM`. The attempted unsandboxed confirmation was refused by the current
+  tool-usage limit.
+- Docker builds for the latest Phase 4/6 source were not re-run because the
+  Docker escalation/build quota is unavailable. Fixture evidence is not
+  accepted competition evidence.
+- status: PHASE_6_CODE_AND_FIXTURE_COMPLETE_PENDING_DOCKER_REVIEW
+
+## 2026-07-04 - REQ-T1-DEMO-010 Phase 7 automation
+
+- implemented:
+  - explicit credential validator and non-skipping E2E harness;
+  - fixed Compose lifecycle with cleanup in `finally`;
+  - independent campaign/session/runtime/artifact acceptance validator;
+  - exact nine-file, no-overwrite, atomic baseline promoter;
+  - production ports for running/final screenshots, report registration,
+    acceptance-source collection, and content-free log scanning.
+- RED evidence:
+  - credentialed harness, acceptance validator, and baseline promoter each
+    first failed with `ERR_MODULE_NOT_FOUND`;
+  - runner checkpoint first failed with `0 !== 1`;
+  - repository evidence gate first failed on missing images/scripts/services.
+- GREEN gates:
+  - `test:track1:acceptance`: 11/11 pass;
+  - explicit `test:track1:openclaw:e2e`: failed immediately with
+    `track1_e2e_credentials_missing`, as required, before Docker or model use.
+- no real cloud campaign was run; no baseline was generated or promoted.
+- status: PHASE_7_T1_T3_COMPLETE_CREDENTIAL_GATE_BLOCKED
+- requirement status: REQ-T1-DEMO-010_IN_PROGRESS
+
+## 2026-07-04 - REQ-T1-DEMO-010 Review Demo Content
+
+- requirement: create the content-only foundation for a five-minute Chinese
+  evaluator experience without adding UI, API, runtime, or packaging behavior
+- scope:
+  - added the versioned `track1-review-demo-content.v1` Chinese content catalog
+    with a closed top-level shape
+  - fixed five ordered review steps totaling 300 seconds
+  - described the three canonical Track 1 scenarios in contract order
+  - validates that every scenario evidence reference resolves to a defined
+    evidence-surface entry
+  - added stable capability, metric-binding, evidence-surface, safety-boundary,
+    and evaluator-FAQ content
+  - kept metric values, policy actions, campaign IDs, and artifact hashes out
+    of the editorial catalog
+  - permanently labels the source as
+    `受控评审数据 · 非实时云模型验收结果`
+  - documents that fixture PNG/PDF binary placeholders are pipeline checks and
+    must not be presented as real competition evidence
+- RED evidence:
+  - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/track1-review-demo-content.spec.ts`
+  - result: 7 tests, 1 pass, 6 fail for the intended reason:
+    `samples/track1/review-demo/content.zh-CN.json` did not exist
+- GREEN evidence:
+  - focused review-content gate: 7/7 pass
+  - `npm.cmd run test:repo`: 127/127 pass
+  - the first `npm run test:repo` attempt did not enter the test runner because
+    local PowerShell policy blocked `npm.ps1`; rerunning through `npm.cmd`
+    executed the same repository script successfully
+- documentation:
+  - added `docs/track1/review-demo-content.md` as the human-readable content
+    and presentation guide
+  - inspected `README.md`, `docs/architecture.md`, and
+    `docs/api-contract.md`; no update is required because this slice changes no
+    runtime entrypoint, architecture boundary, route, DTO, or shared contract
+- unchanged:
+  - no frontend component or route
+  - no backend or engine behavior
+  - no shared contract
+  - no executable packaging
+  - no fixture evidence artifact or accepted baseline
+- status: REVIEW_DEMO_CONTENT_COMPLETE
+- next dependency: explicit user approval before starting a separate
+  review-mode UI requirement
+
+## 2026-07-04 - REQ-T1-DEMO-010 Review Demo UI
+
+- requirement: add a new top-level, all-Chinese `/review-demo` guided
+  five-minute evaluator tour that consumes the versioned content catalog
+  and the existing public campaign API, without any backend route, DTO, or
+  Electron/executable packaging change
+- scope:
+  - new route `/review-demo` and top-level nav entry "评审模式"
+  - `frontend/src/content/review-demo-content.ts`: typed loader reusing
+    `samples/track1/review-demo/content.zh-CN.json` (no duplicated Chinese
+    strings)
+  - `frontend/src/pages/ReviewDemoPage.tsx`: tour shell; owns campaign-ID
+    resolution once at the page level (falls back to the most recently
+    updated campaign via `listCampaigns` when no `campaign_id` URL param is
+    present) so steps 3-5 share one resolved campaign
+  - `ReviewTourNav`, `CampaignSnapshotPanel`, `ScenarioInvestigationPanel`,
+    `EvidenceVerificationPanel` components
+  - step 3 shows live values for exactly the five catalog metric keys
+    present on `Track1CampaignSummary` (`agent_count`, `case_count`,
+    `retry_count`, `ask_count`, `blocked_count`); the remaining six metric
+    keys render a fixed neutral placeholder because they have no public API
+    source today
+  - step 4 deep-links into the existing `/results/sandbox?campaign_id=...
+    &agent_id=...` workbench instead of building a second investigation UI
+  - step 5 checks evidence readiness via the existing `getCampaignEvidence`
+    read; no report artifact file path is fetched or linked directly
+  - read-only: no start/retry/approve/reject/cancel/edit-policy command
+    surface
+- RED evidence:
+  - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/track1-review-demo-ui.spec.ts`
+  - result: 10 tests, 1 pass, 9 fail for the intended reason: the frontend
+    page/content/component files did not exist yet
+- GREEN evidence:
+  - focused review-demo UI repository gate: 10/10 pass
+  - focused frontend page spec (`npm run test --prefix frontend -- review-demo`):
+    8/8 pass
+  - `npm.cmd run test:repo`: 137/137 pass
+  - `npm.cmd run test:frontend`: 220/220 pass (no regression to
+    `SandboxAlertsPage`, routing, or navigation tests)
+  - during implementation, the deep-link test initially used
+    `getByRole` against three matching links (one per scenario) and was
+    corrected to `getAllByRole`; this was a test-assertion fix, not a
+    production-code defect
+- documentation:
+  - `docs/architecture.md`: added `/review-demo` to the route skeleton list
+    and a new "REQ-T1-DEMO-010 Review Demo UI" section describing the
+    catalog+API composition and explicit non-goals
+  - `docs/api-contract.md`: added a "REQ-T1-DEMO-010 Review Demo UI
+    Frontend Contract" section documenting the reused endpoints and the
+    five-of-eleven metric field coverage table
+- unchanged:
+  - no backend route, DTO, or shared contract
+  - no Electron/executable packaging
+  - no second investigation UI (step 4 deep-links to the existing
+    `/results/sandbox` workbench)
+  - no report-artifact download/preview endpoint
+- status: REVIEW_DEMO_UI_COMPLETE
+- next dependency: explicit user approval before starting any
+  Electron/executable packaging work
+
+## 2026-07-04 - REQ-T1-DEMO-010 Review Demo UI: show the nine cases in step 4
+
+- requirement: evaluators asked to see the nine fixed用例 (cases) directly in
+  the "场景调查" step instead of only reaching them through the
+  `/results/sandbox` deep link
+- scope:
+  - `frontend/src/pages/ReviewDemoPage.tsx`: the campaign polling hook
+    (`useCampaignSupervisionPolling`) moved up from `CampaignSnapshotPanel`
+    to the page itself, so both step 3 and step 4 read the same single
+    polled `campaign` result instead of fetching campaign detail twice
+  - `CampaignSnapshotPanel`: now a pure display component; takes
+    `campaign`/`retry` as props instead of owning the hook
+  - `ScenarioInvestigationPanel`: takes the new `campaignAgents` prop
+    (`Track1CampaignAgentDetail[] | null`, sourced from
+    `campaign.data?.detail.agents`) and renders each scenario's three cases
+    (case_id, pass/fail status, expected action, latest attempt's actual
+    action) above the existing `/results/sandbox` deep link, which is kept
+    for attempt-level session inspection
+- unchanged: still read-only, still no second polling loop, still no
+  backend route/DTO change — the case data comes from the same
+  `Track1CampaignDetail.agents[].cases` the existing campaign workbench
+  already renders via `CampaignAgentGroup`
+- GREEN evidence:
+  - focused frontend page spec (`npm run test --prefix frontend -- review-demo`):
+    9/9 pass (added a new test asserting all nine case IDs render grouped
+    under their scenario)
+  - `node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/track1-review-demo-ui.spec.ts`: 10/10 pass
+  - `npm run test --prefix frontend`: 221/221 pass (no regression)
+- status: REVIEW_DEMO_UI_CASES_COMPLETE

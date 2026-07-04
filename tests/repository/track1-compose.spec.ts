@@ -7,6 +7,7 @@ import YAML from "yaml";
 const ROOT = new URL("../../", import.meta.url);
 
 interface ComposeService {
+  command?: string[];
   ports?: string[];
   expose?: string[];
   tmpfs?: string[];
@@ -20,6 +21,7 @@ interface ComposeService {
 }
 
 interface ComposeFile {
+  networks?: Record<string, { internal?: boolean }>;
   services: Record<string, ComposeService>;
 }
 
@@ -34,9 +36,19 @@ test("REQ-T1-DEMO-010 Compose never publishes internal ingest or OpenClaw ports"
   assert.deepEqual(compose.services.backend.expose, ["3001"]);
   assert.equal("ports" in compose.services["openclaw-gateway"], false);
   assert.equal("ports" in compose.services["campaign-runner"], false);
+  assert.equal("ports" in compose.services["evidence-capture"], false);
+  assert.equal("ports" in compose.services["report-builder"], false);
+  assert.deepEqual(compose.services.frontend.ports, ["5173:3000"]);
   assert.deepEqual(
     Object.keys(compose.services).sort(),
-    ["backend", "campaign-runner", "frontend", "openclaw-gateway"]
+    [
+      "backend",
+      "campaign-runner",
+      "evidence-capture",
+      "frontend",
+      "openclaw-gateway",
+      "report-builder"
+    ]
   );
 });
 
@@ -53,10 +65,13 @@ test("REQ-T1-DEMO-010 Compose keeps OpenClaw state ephemeral", () => {
   }
 });
 
-test("REQ-T1-DEMO-010 Compose declares the fixed track1 profile on every service", () => {
+test("REQ-T1-DEMO-010 Compose separates runtime and evidence service profiles", () => {
   const compose = loadCompose("deploy/track1/compose.track1.yml");
-  for (const [name, service] of Object.entries(compose.services)) {
-    assert.deepEqual(service.profiles, ["track1"], name);
+  for (const name of ["backend", "campaign-runner", "frontend", "openclaw-gateway"]) {
+    assert.deepEqual(compose.services[name].profiles, ["track1"], name);
+  }
+  for (const name of ["evidence-capture", "report-builder"]) {
+    assert.deepEqual(compose.services[name].profiles, ["evidence"], name);
   }
 });
 
@@ -110,7 +125,7 @@ test("REQ-T1-DEMO-010 Compose has no hardcoded secret literal or unsafe fallback
 test("REQ-T1-DEMO-010 Compose pins non-build service images by digest", () => {
   const compose = loadCompose("deploy/track1/compose.track1.yml");
   for (const [name, service] of Object.entries(compose.services)) {
-    if (service.image) {
+    if (service.image && !service.build) {
       assert.match(service.image, /@sha256:[a-f0-9]{64}$/, name);
     }
   }
@@ -122,6 +137,62 @@ test("REQ-T1-DEMO-010 Compose openclaw-gateway builds from the pinned Dockerfile
     compose.services["openclaw-gateway"].build?.dockerfile,
     "deploy/track1/Dockerfile.openclaw"
   );
+});
+
+test("REQ-T1-DEMO-010 Compose starts a real gateway and a runner image containing OpenClaw", () => {
+  const compose = loadCompose("deploy/track1/compose.track1.yml");
+  const gateway = compose.services["openclaw-gateway"];
+  const runner = compose.services["campaign-runner"];
+  const backend = compose.services.backend;
+  const frontend = compose.services.frontend;
+
+  assert.deepEqual(gateway.command, [
+    "gateway",
+    "--bind",
+    "lan",
+    "--port",
+    "19001"
+  ]);
+  assert.equal(
+    runner.build?.dockerfile,
+    "deploy/track1/Dockerfile.runner"
+  );
+  assert.equal(runner.image, undefined);
+  assert.equal(
+    runner.environment?.OPENCLAW_CONFIG_PATH,
+    "/app/config/openclaw-runner.json5"
+  );
+  assert.equal(backend.build?.dockerfile, "deploy/track1/Dockerfile.backend");
+  assert.equal(frontend.build?.dockerfile, "deploy/track1/Dockerfile.frontend");
+});
+
+test("REQ-T1-DEMO-010 Compose binds the real backend and keeps ingest network internal", () => {
+  const compose = loadCompose("deploy/track1/compose.track1.yml");
+  const backend = compose.services.backend;
+
+  assert.equal(backend.environment?.PUBLIC_BIND_HOST, "0.0.0.0");
+  assert.equal(backend.environment?.INTERNAL_BIND_HOST, "0.0.0.0");
+  assert.equal(compose.networks?.["track1-ingest"].internal, true);
+  assert.equal(
+    readFileSync(
+      new URL("deploy/track1/compose.track1.yml", ROOT),
+      "utf8"
+    ).includes("minimal-backend.js"),
+    false
+  );
+});
+
+test("REQ-T1-DEMO-010 frontend proxy targets the backend service inside Compose", () => {
+  const compose = loadCompose("deploy/track1/compose.track1.yml");
+  assert.equal(
+    compose.services.frontend.environment?.TRACK1_BACKEND_ORIGIN,
+    "http://backend:3000"
+  );
+  const viteConfig = readFileSync(
+    new URL("frontend/vite.config.mjs", ROOT),
+    "utf8"
+  );
+  assert.match(viteConfig, /process\.env\.TRACK1_BACKEND_ORIGIN/);
 });
 
 test("REQ-T1-DEMO-010 gitignore covers generated Track 1 artifacts", () => {

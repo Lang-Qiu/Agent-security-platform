@@ -14,6 +14,22 @@ export interface InternalRouteMatch {
   params: Record<string, string>;
 }
 
+function decodeRouteSegment(value: string): string | null {
+  try {
+    const decoded = decodeURIComponent(value);
+    if (
+      decoded.includes("/") ||
+      decoded.includes("\\") ||
+      decoded.includes("\0")
+    ) {
+      return null;
+    }
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
 export function matchInternalRoute(
   method: string | undefined,
   pathname: string
@@ -43,7 +59,10 @@ export function matchInternalRoute(
     segments.length === 5 &&
     segments[2] === "campaigns"
   ) {
-    const campaignId = segments[3];
+    const campaignId = decodeRouteSegment(segments[3]);
+    if (campaignId === null) {
+      return null;
+    }
     if (segments[4] === "snapshots") {
       return { name: "ingestSnapshot", params: { campaignId } };
     }

@@ -1,5 +1,9 @@
 # agent-security-platform
 
+> **当前最高优先级阻塞项：** 见 [`CURRENT_BLOCKER.md`](./CURRENT_BLOCKER.md)。
+> REQ-T1-DEMO-010 真实凭据端到端 campaign 卡在 OpenClaw 插件钩子失败（Bug #8），
+> 在此问题解决前不得将该需求标记为完成。
+
 ## Asset Scan Discovery Pipeline
 
 `engines/asset-scan` now models the first six-step asset-scan flow inside the engine runtime.
@@ -317,3 +321,50 @@ npm.cmd run dev -- --host 127.0.0.1 --port 5173
 - 数据库 Schema
 - 登录与权限系统
 - 真实引擎联调与实时日志流
+# Track 1 OpenClaw Evidence Workflow
+
+The Track 1 path uses Node.js `>=22.19.0`, `pnpm@10.0.0`, OpenClaw
+`2026.6.10`, and digest-pinned runtime, browser, and report images.
+
+Offline verification:
+
+```powershell
+npm.cmd run test:track1:openclaw
+npm.cmd run test:track1:report
+npm.cmd run test:track1:acceptance
+npm.cmd run test:repo
+```
+
+Build the browser and report images:
+
+```powershell
+npm.cmd run test:track1:report:docker
+```
+
+Generate ignored fixture evidence (never competition evidence):
+
+```powershell
+npm.cmd run track1:evidence:fixture
+```
+
+The credentialed gate is explicit and never skips:
+
+```powershell
+npm.cmd run test:track1:openclaw:e2e
+```
+
+Before invoking it, place `OPENCLAW_MODEL_BASE_URL`,
+`OPENCLAW_MODEL_API_KEY`, `OPENCLAW_MODEL_ID`, and a 32-byte-or-longer
+`TRACK1_INGEST_TOKEN` in the local worker environment. Do not put credentials
+in source, command arguments, reports, screenshots, or commits.
+
+After a successful real run, rebuild/register a report and promote only an
+independently accepted campaign:
+
+```powershell
+npm.cmd run report:track1 -- --campaign-id campaign:t1:<32-lowercase-hex>
+node.exe --experimental-strip-types scripts/track1/promote-openclaw-baseline.ts --campaign-id campaign:t1:<32-lowercase-hex>
+```
+
+Fixture output under `artifacts/` is ignored. Only the nine-file allowlist may
+be promoted to `docs/track1/evidence/openclaw-baseline/`.

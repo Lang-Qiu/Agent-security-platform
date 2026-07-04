@@ -62,3 +62,9 @@ export type {
   Track1PluginProbePorts,
   PluginInspectOutput
 } from "./runtime-probe.ts";
+
+// Real OpenClaw plugin loader requires the entry module's `default` export
+// to be the DefinedPluginEntry (register/activate owner). Without this,
+// `openclaw plugins inspect --runtime` reports "plugin export missing
+// register/activate" and no hook/tool ever loads.
+export { default } from "./plugin.ts";

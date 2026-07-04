@@ -4,6 +4,21 @@ WORKDIR /app
 
 RUN npm install --global --no-save openclaw@2026.6.10
 
+COPY integrations/openclaw/package.json /build/integrations/openclaw/package.json
+COPY integrations/openclaw/scripts /build/integrations/openclaw/scripts
+COPY integrations/openclaw/src /build/integrations/openclaw/src
+COPY integrations/openclaw/openclaw.plugin.json /build/integrations/openclaw/openclaw.plugin.json
+COPY shared /build/shared
+COPY engines/sandbox/src /build/engines/sandbox/src
+RUN cd /build/integrations/openclaw && \
+    npm install --ignore-scripts && \
+    npm run build && \
+    mkdir -p /opt/track1-plugin/dist && \
+    cp dist/index.js /opt/track1-plugin/dist/index.js && \
+    cp openclaw.plugin.json /opt/track1-plugin/openclaw.plugin.json && \
+    cp package.json /opt/track1-plugin/package.json && \
+    rm -rf /build
+
 COPY integrations/openclaw/config/openclaw.json5 /app/config/openclaw.json5
 COPY integrations/openclaw/config/agents.json5 /app/config/agents.json5
 

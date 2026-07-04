@@ -90,3 +90,23 @@ supervision console rather than building a second investigation UI.
   DAG, acceptance criteria, and final diff/report/risk review.
 - The specification is approved. No implementation starts until the user
   approves the phased implementation plans and assigns the first task.
+
+## Current Implementation Status
+
+- Phase 4 runtime orchestration has been rebuilt on
+  `codex/track1-requirements-spec`; the real command, gateway, backend,
+  frontend, campaign runner, and running-checkpoint boundary are wired.
+- Phase 6 report/evidence code is implemented with deterministic fixture
+  evidence, five-screen capture contracts, bilingual 18-section Markdown,
+  PDF/container boundaries, canonical manifest generation, atomic publish,
+  and evidence registration.
+- Phase 7 credential validation, explicit non-skipping E2E harness,
+  independent acceptance validator, and atomic baseline promoter are
+  implemented.
+- The credentialed production gate currently fails before any port call with
+  `track1_e2e_credentials_missing`, because the four required credentials are
+  not present in the worker environment.
+- The accepted real baseline is intentionally absent. REQ-T1-DEMO-010 remains
+  **IN PROGRESS / CREDENTIAL GATE BLOCKED** until one authorized cloud-model
+  run passes and the resulting nine-file pack is independently validated and
+  promoted.

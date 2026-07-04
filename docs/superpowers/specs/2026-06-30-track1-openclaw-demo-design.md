@@ -4,10 +4,11 @@
 
 - Requirement: `REQ-T1-DEMO-010`
 - Name: OpenClaw-oriented end-to-end demo and report evidence pack
-- Status: approved; phased implementation plans tracked in git
+- Status: implemented through Phase 7 automation; credentialed acceptance pending
 - Date: `2026-06-30`
 - Previous requirement: `REQ-T1-SUPERVISION-UI-009` (accepted)
-- Implementation state: Phase 1 (contracts) complete and under rework review
+- Implementation state: Phases 1-6 implemented; Phase 7 T1-T3 implemented;
+  T4-T6 blocked at the human credential, cost, and Docker execution gate
 - Workflow: `Design -> Test (RED) -> Implement (GREEN) -> Document -> Stop and report`
 
 ## Objective

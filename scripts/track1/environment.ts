@@ -2,7 +2,13 @@
 // ingest environment. Never reads process.env directly — the caller supplies
 // a snapshot so tests stay deterministic and production code has one seam.
 
-const MODEL_ID_PATTERN = /^[a-z][a-z0-9._-]*\/[a-z][a-z0-9._-]*$/;
+// Accepts either a bare model id (e.g. "gpt-5.5", matching what many
+// OpenAI-compatible providers expose in /v1/models) or a provider/model
+// pair (e.g. "openai/gpt-5.5"). The provider segment is optional because
+// OPENCLAW_MODEL_ID is sent verbatim as the wire model name to
+// OPENCLAW_MODEL_BASE_URL — it does not have to match OpenClaw's own
+// provider-qualified model ref grammar.
+const MODEL_ID_PATTERN = /^[a-z][a-z0-9._-]*(?:\/[a-z][a-z0-9._-]*)?$/;
 const MIN_INGEST_TOKEN_BYTES = 32;
 
 export interface Track1CloudModelConfig {

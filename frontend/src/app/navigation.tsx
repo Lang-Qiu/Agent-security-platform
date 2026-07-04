@@ -1,6 +1,7 @@
 import {
   AppstoreOutlined,
   BarsOutlined,
+  CompassOutlined,
   RadarChartOutlined,
   SafetyCertificateOutlined,
   ScanOutlined
@@ -53,5 +54,11 @@ export const consoleNavigation: ConsoleNavigationItem[] = [
         icon: <SafetyCertificateOutlined />
       }
     ]
+  },
+  {
+    key: "/review-demo",
+    label: "评审模式",
+    path: "/review-demo",
+    icon: <CompassOutlined />
   }
 ];

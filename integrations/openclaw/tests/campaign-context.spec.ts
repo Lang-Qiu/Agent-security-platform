@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 import {
@@ -111,6 +112,35 @@ test("REQ-T1-DEMO-010 model input envelope rejects missing required keys", () =>
   const { user_prompt: _omit, ...withoutPrompt } = valid;
   assert.throws(
     () => normalizeTrack1ModelInputEnvelope(withoutPrompt),
+    /track1_model_input_invalid/
+  );
+});
+
+test("REQ-T1-DEMO-010 model input envelope binds controlled content to its hash and closed shape", () => {
+  const valid = makeTrack1ModelInputEnvelope();
+  const content = "Untrusted controlled retrieval content";
+  const entry = {
+    memory_entry_id: "retrieved:1",
+    content,
+    content_ref: "case://T1-SC-001-C001/retrieved/1",
+    content_sha256: createHash("sha256").update(content).digest("hex")
+  };
+  assert.throws(
+    () =>
+      normalizeTrack1ModelInputEnvelope({
+        ...valid,
+        retrieved_content: [
+          { ...entry, content_sha256: "0".repeat(64) }
+        ]
+      }),
+    /track1_model_input_invalid/
+  );
+  assert.throws(
+    () =>
+      normalizeTrack1ModelInputEnvelope({
+        ...valid,
+        retrieved_content: [{ ...entry, unknown: "not allowed" }]
+      }),
     /track1_model_input_invalid/
   );
 });

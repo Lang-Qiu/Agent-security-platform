@@ -6,8 +6,12 @@
 
 import { createHash } from "node:crypto";
 import type { Track1CompiledPrompt } from "./case-prompt.ts";
+import { normalizeTrack1ModelInputEnvelope } from "../../integrations/openclaw/src/campaign-context.ts";
 import { TRACK1_CAMPAIGN_AGENT_IDS } from "../../shared/types/campaign-supervision.ts";
-import type { Track1CampaignAgentId } from "../../shared/types/campaign-supervision.ts";
+import type {
+  Track1CampaignAgentId,
+  Track1SessionId
+} from "../../shared/types/campaign-supervision.ts";
 
 export class Track1InvocationError extends Error {
   readonly code: string;
@@ -34,6 +38,7 @@ function isNonEmptyString(value: unknown): value is string {
 
 export interface OpenClawAgentInvocation {
   agent_id: Track1CampaignAgentId;
+  session_id: Track1SessionId;
   session_key: string;
   attempt_id: string;
   prompt: Track1CompiledPrompt;
@@ -74,25 +79,56 @@ export interface EphemeralMessagePort {
 }
 
 const SESSION_KEY_PATTERN = /^session-key:[0-9a-f]{32}$/;
+const SESSION_ID_PATTERN = /^session:[0-9a-f]{32}$/;
 const ATTEMPT_ID_PATTERN = /^attempt:t1-sc-\d{3}-c\d{3}:[12]$/;
+const MAX_PROMPT_BYTES = 256_000;
 
 const ALLOWED_ENV_KEYS = [
-  "OPENCLAW_MODEL_BASE_URL",
-  "OPENCLAW_MODEL_API_KEY",
-  "OPENCLAW_MODEL_ID",
+  "OPENCLAW_CONFIG_PATH",
+  "OPENCLAW_GATEWAY_PASSWORD",
+  "OPENCLAW_ALLOW_INSECURE_PRIVATE_WS",
+  "TRACK1_INGEST_TOKEN",
   "PATH",
-  "HOME"
+  "HOME",
+  "USER",
+  "LANG",
+  "LC_ALL",
+  "TZ",
+  "TMPDIR",
+  "PATHEXT",
+  "SystemRoot",
+  "ComSpec"
 ] as const;
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const INVOCATION_TIMEOUT_MS = 120_000;
 
 function validateInvocation(input: unknown): OpenClawAgentInvocation {
-  if (!isPlainObject(input)) fail("track1_invocation_invalid");
+  if (
+    !isPlainObject(input) ||
+    !hasExactKeys(input, [
+      "agent_id",
+      "session_id",
+      "session_key",
+      "attempt_id",
+      "prompt"
+    ])
+  ) {
+    fail("track1_invocation_invalid");
+  }
 
-  const { agent_id, session_key, attempt_id, prompt } = input as Record<string, unknown>;
+  const {
+    agent_id,
+    session_id,
+    session_key,
+    attempt_id,
+    prompt
+  } = input as Record<string, unknown>;
 
   if (!TRACK1_CAMPAIGN_AGENT_IDS.includes(agent_id as Track1CampaignAgentId)) {
+    fail("track1_invocation_invalid");
+  }
+  if (!isNonEmptyString(session_id) || !SESSION_ID_PATTERN.test(session_id)) {
     fail("track1_invocation_invalid");
   }
   if (!isNonEmptyString(session_key) || !SESSION_KEY_PATTERN.test(session_key)) {
@@ -112,6 +148,13 @@ function validateInvocation(input: unknown): OpenClawAgentInvocation {
   }
   const utf8 = prompt.utf8;
   if (!(utf8 instanceof Uint8Array)) fail("track1_invocation_invalid");
+  if (
+    utf8.byteLength > MAX_PROMPT_BYTES ||
+    !isNonEmptyString(prompt.content_sha256) ||
+    createHash("sha256").update(utf8).digest("hex") !== prompt.content_sha256
+  ) {
+    fail("track1_invocation_invalid");
+  }
 
   const expectedAttemptSegment = attempt_id
     .replace(/^attempt:/, "")
@@ -120,8 +163,27 @@ function validateInvocation(input: unknown): OpenClawAgentInvocation {
     fail("track1_invocation_invalid");
   }
 
+  let envelope;
+  try {
+    envelope = normalizeTrack1ModelInputEnvelope(
+      JSON.parse(Buffer.from(utf8).toString("utf8"))
+    );
+  } catch {
+    fail("track1_invocation_invalid");
+  }
+  if (
+    envelope.agent_id !== agent_id ||
+    envelope.session_id !== session_id ||
+    envelope.attempt_id !== attempt_id ||
+    envelope.case_id !== prompt.case_id ||
+    envelope.scenario_id !== prompt.scenario_id
+  ) {
+    fail("track1_invocation_invalid");
+  }
+
   return {
     agent_id: agent_id as Track1CampaignAgentId,
+    session_id: session_id as Track1SessionId,
     session_key: session_key as string,
     attempt_id: attempt_id as string,
     prompt: prompt as unknown as Track1CompiledPrompt
@@ -148,6 +210,18 @@ interface ParsedCliProtocol {
   session_key_sha256: string;
 }
 
+function toRuntimeAgentId(agentId: Track1CampaignAgentId): string {
+  return agentId.replaceAll(":", "-");
+}
+
+// OpenClaw's own CLI rejects session ids containing ":" (its
+// SAFE_SESSION_ID_RE only allows [a-z0-9._-]), but Track1SessionId is always
+// "session:<32 hex>". Transform at the CLI boundary only — every other
+// Track1 surface (ingest, envelope, evidence) keeps the colon form.
+function toRuntimeSessionId(sessionId: Track1SessionId): string {
+  return sessionId.replace(/^session:/, "session-");
+}
+
 function validateCliResponse(
   raw: string,
   invocation: OpenClawAgentInvocation
@@ -160,20 +234,38 @@ function validateCliResponse(
   }
   if (!isPlainObject(parsed)) fail("track1_invocation_protocol_invalid");
   if (
-    !hasExactKeys(parsed, ["agent_id", "session_key_sha256"])
+    !hasExactKeys(parsed, ["runId", "status", "summary", "result"]) ||
+    !isNonEmptyString(parsed.runId) ||
+    parsed.status !== "ok" ||
+    parsed.summary !== "completed" ||
+    !isPlainObject(parsed.result) ||
+    !hasExactKeys(parsed.result, ["payloads", "meta"]) ||
+    !Array.isArray(parsed.result.payloads) ||
+    !isPlainObject(parsed.result.meta)
   ) {
     fail("track1_invocation_protocol_invalid");
   }
-  const agentId = parsed.agent_id;
-  const sessionKeySha256 = parsed.session_key_sha256;
-  if (agentId !== invocation.agent_id) fail("track1_invocation_protocol_invalid");
+
+  const meta = parsed.result.meta;
+  // The real OpenClaw CLI never puts an agentId field on agentMeta — agent
+  // identity is only recoverable from the per-agent session file path
+  // (agents/<agentId>/sessions/<sessionId>.jsonl).
+  const expectedSessionFileSuffix = `/${toRuntimeAgentId(invocation.agent_id)}/sessions/${toRuntimeSessionId(invocation.session_id)}.jsonl`;
   if (
-    !isNonEmptyString(sessionKeySha256) ||
-    sessionKeySha256 !== hashSessionKey(invocation.session_key)
+    meta.transport === "embedded" ||
+    "fallbackFrom" in meta ||
+    "fallbackReason" in meta ||
+    !isPlainObject(meta.agentMeta) ||
+    !isNonEmptyString(meta.agentMeta.sessionFile) ||
+    !meta.agentMeta.sessionFile.endsWith(expectedSessionFileSuffix) ||
+    meta.agentMeta.sessionId !== toRuntimeSessionId(invocation.session_id)
   ) {
     fail("track1_invocation_protocol_invalid");
   }
-  return { agent_id: agentId, session_key_sha256: sessionKeySha256 };
+  return {
+    agent_id: invocation.agent_id,
+    session_key_sha256: hashSessionKey(invocation.session_key)
+  };
 }
 
 function hasExactKeys(
@@ -200,11 +292,13 @@ export async function invokeOpenClawAgent(
   const args = [
     "agent",
     "--agent",
-    invocation.agent_id,
+    toRuntimeAgentId(invocation.agent_id),
+    "--session-id",
+    toRuntimeSessionId(invocation.session_id),
     "--session-key",
     invocation.session_key,
-    "--message-file",
-    prompt.relative_tmpfs_path,
+    "--message",
+    Buffer.from(prompt.utf8).toString("utf8"),
     "--json"
   ] as const;
 
@@ -217,21 +311,25 @@ export async function invokeOpenClawAgent(
       stdio: ["ignore", "pipe", "pipe"]
     });
 
-    let stdoutBytes = 0;
-    let stderrBytes = 0;
+    let capturedBytes = 0;
     const stdoutChunks: Buffer[] = [];
     let oversized = false;
 
     handle.onStdout((chunk) => {
-      stdoutBytes += chunk.byteLength;
-      if (stdoutBytes > MAX_OUTPUT_BYTES) {
+      capturedBytes += chunk.byteLength;
+      if (capturedBytes > MAX_OUTPUT_BYTES) {
         oversized = true;
+        handle.kill();
         return;
       }
       stdoutChunks.push(Buffer.from(chunk));
     });
     handle.onStderr((chunk) => {
-      stderrBytes += chunk.byteLength;
+      capturedBytes += chunk.byteLength;
+      if (capturedBytes > MAX_OUTPUT_BYTES) {
+        oversized = true;
+        handle.kill();
+      }
     });
 
     const exitResult = await new Promise<{ code: number | null; signal: string | null }>(

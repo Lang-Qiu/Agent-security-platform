@@ -17,67 +17,55 @@ function loadJson5(path: string): Record<string, unknown> {
 test("REQ-T1-DEMO-010 OpenClaw config exposes only three agents and four tools", () => {
   const config = loadJson5("integrations/openclaw/config/openclaw.json5");
   const agents = loadJson5("integrations/openclaw/config/agents.json5") as {
-    agents: Array<{ id: string; scenario_id: string; model: string }>;
+    list: Array<{ id: string; model: string }>;
   };
 
   assert.deepEqual(
-    agents.agents.map((agent) => agent.id),
+    agents.list.map((agent) => agent.id),
     [
-      "agent:track1:prompt-injection",
-      "agent:track1:tool-hijack",
-      "agent:track1:memory-poison"
+      "agent-track1-prompt-injection",
+      "agent-track1-tool-hijack",
+      "agent-track1-memory-poison"
     ]
   );
-  assert.deepEqual(
-    agents.agents.map((agent) => agent.scenario_id),
-    ["T1-SC-001", "T1-SC-002", "T1-SC-003"]
-  );
-  for (const agent of agents.agents) {
-    assert.equal(agent.model, "${OPENCLAW_MODEL_ID}");
+  for (const agent of agents.list) {
+    assert.equal(agent.model, "openai-compat/${OPENCLAW_MODEL_ID}");
   }
 
-  const tools = config.tools as {
-    allow: string[];
-    builtins: Record<string, boolean>;
-    channels: { enabled: boolean };
-  };
+  // Real OpenClaw 2026.6.10 schema has no `tools.builtins`/`tools.channels`
+  // keys; the closed tool surface is enforced via `tools.profile: "minimal"`
+  // (denies every built-in tool) plus an explicit plugin-tool allowlist.
+  const tools = config.tools as { profile: string; allow: string[] };
+  assert.equal(tools.profile, "minimal");
   assert.deepEqual(tools.allow.slice().sort(), [
     "call_api",
     "read_file",
     "send_email",
     "write_file"
   ]);
-  for (const key of [
-    "shell",
-    "process",
-    "filesystemWrite",
-    "browser",
-    "node",
-    "messaging",
-    "network",
-    "mcp"
-  ]) {
-    assert.equal(tools.builtins[key], false, key);
-  }
-  assert.equal(tools.channels.enabled, false);
 
-  const skills = config.skills as { enabled: boolean };
-  const marketplace = config.marketplace as { enabled: boolean };
-  const plugins = config.plugins as { thirdParty: boolean };
-  const logging = config.logging as {
-    persistTranscripts: boolean;
-    redactSensitiveToolData: boolean;
+  const skills = config.skills as { allowBundled: string[] };
+  const plugins = config.plugins as {
+    load: { paths: string[] };
+    entries: Record<
+      string,
+      { enabled: boolean; hooks: { allowConversationAccess: boolean } }
+    >;
   };
-  const workspace = config.workspace as { path: string };
+  const logging = config.logging as { level: string; redactSensitive: string };
+  const agentsBlock = config.agents as { defaults: { workspace: string } };
   const session = config.session as { store: string };
 
-  assert.equal(skills.enabled, false);
-  assert.equal(marketplace.enabled, false);
-  assert.equal(plugins.thirdParty, false);
-  assert.equal(logging.persistTranscripts, false);
-  assert.equal(logging.redactSensitiveToolData, true);
-  assert.equal(workspace.path, "/workspace");
-  assert.equal(session.store, "/tmp/openclaw");
+  assert.deepEqual(skills.allowBundled, []);
+  assert.equal(plugins.entries["agent-security-track1"].enabled, true);
+  assert.equal(
+    plugins.entries["agent-security-track1"].hooks.allowConversationAccess,
+    true
+  );
+  assert.equal(logging.redactSensitive, "tools");
+  assert.equal(logging.level, "info");
+  assert.equal(agentsBlock.defaults.workspace, "/workspace");
+  assert.equal(session.store, "/tmp/openclaw/sessions.json");
 });
 
 test("REQ-T1-DEMO-010 OpenClaw config rejects unapproved keys", () => {
@@ -85,16 +73,14 @@ test("REQ-T1-DEMO-010 OpenClaw config rejects unapproved keys", () => {
   assert.deepEqual(
     Object.keys(config).sort(),
     [
+      "agents",
       "gateway",
       "logging",
-      "marketplace",
       "models",
       "plugins",
-      "schema_version",
       "session",
       "skills",
-      "tools",
-      "workspace"
+      "tools"
     ].sort()
   );
 });
@@ -112,6 +98,33 @@ test("REQ-T1-DEMO-010 OpenClaw model provider config has no hardcoded credential
   assert.equal(models.providers["openai-compat"].api, "openai-completions");
 });
 
+test("REQ-T1-DEMO-010 gateway and runner configs use password-authenticated non-embedded routing", () => {
+  const gateway = loadJson5("integrations/openclaw/config/openclaw.json5");
+  const runner = loadJson5("deploy/track1/config/openclaw-runner.json5");
+  const gatewayBlock = gateway.gateway as {
+    mode: string;
+    auth: { mode: string; password: string };
+  };
+  const runnerBlock = runner.gateway as {
+    mode: string;
+    remote: { transport: string; url: string; password: string };
+  };
+
+  assert.equal(gatewayBlock.mode, "local");
+  assert.equal(gatewayBlock.auth.mode, "password");
+  assert.equal(
+    gatewayBlock.auth.password,
+    "${OPENCLAW_GATEWAY_PASSWORD}"
+  );
+  assert.equal(runnerBlock.mode, "remote");
+  assert.deepEqual(runnerBlock.remote, {
+    transport: "direct",
+    url: "ws://127.0.0.1:19001",
+    password: "${OPENCLAW_GATEWAY_PASSWORD}"
+  });
+  assert.equal("models" in runner, false);
+});
+
 test("REQ-T1-DEMO-010 OpenClaw image pins base digest and exact package", () => {
   const dockerfile = readText("deploy/track1/Dockerfile.openclaw");
   assert.match(
@@ -119,6 +132,11 @@ test("REQ-T1-DEMO-010 OpenClaw image pins base digest and exact package", () => 
     /^FROM node:22\.19\.0-bookworm-slim@sha256:[a-f0-9]{64}$/m
   );
   assert.equal(dockerfile.includes("openclaw@2026.6.10"), true);
+  assert.equal(dockerfile.includes("npm run build"), true);
+  assert.equal(
+    dockerfile.includes("COPY integrations/openclaw/dist"),
+    false
+  );
   assert.equal(/ARG .*KEY|ARG .*TOKEN/i.test(dockerfile), false);
   assert.equal(dockerfile.includes(":latest"), false);
 });

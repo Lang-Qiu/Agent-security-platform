@@ -423,6 +423,35 @@ test("REQ-T1-DEMO-010 snapshot path campaignId must match body campaign_id", asy
   assert.equal(body.error_code, "CAMPAIGN_PATH_BODY_MISMATCH");
 });
 
+test("REQ-T1-DEMO-010 internal campaign routes accept one encoded campaign id segment", async (t) => {
+  const harness = await startDualServerHarness();
+  t.after(() => harness.close());
+
+  await postJson(
+    harness.internalUrl,
+    "/internal/track1/campaigns",
+    makeCampaignStartEnvelope(),
+    { authorization: `Bearer ${INGEST_TOKEN}` }
+  );
+  const { makeCampaignSnapshot } = await import(
+    "../../backend/tests/fixtures/track1-campaign.fixture.ts"
+  );
+  const snapshot = makeCampaignSnapshot(1, null);
+  const response = await fetch(
+    `${harness.internalUrl}/internal/track1/campaigns/${encodeURIComponent(FIXED_CAMPAIGN_ID)}/snapshots`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${INGEST_TOKEN}`
+      },
+      body: JSON.stringify(snapshot)
+    }
+  );
+
+  assert.equal(response.status, 200);
+});
+
 // R7 (Phase 2 rework finding 3): after ingesting a snapshot via the internal
 // API, the session must be queryable via the public supervision session API.
 test("REQ-T1-DEMO-010 ingested session is queryable via public supervision API", async (t) => {

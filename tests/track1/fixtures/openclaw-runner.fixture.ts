@@ -168,16 +168,28 @@ export function makeCampaignRunnerPorts(
   options: Track1CampaignRunnerPortsOptions = {}
 ): Track1CampaignRunnerPorts & {
   calls: string[];
-  invocations: Array<{ agent_id: string; case_id: string; session_key: string }>;
+  invocations: Array<{
+    agent_id: string;
+    case_id: string;
+    session_id: string;
+    session_key: string;
+  }>;
   progressEvents: Array<Record<string, unknown>>;
   finalizeInputs: Track1CampaignFinalizeInput[];
+  runningCheckpoints: Array<Record<string, unknown>>;
   attemptsFor(caseId: string): Array<{ attempt_index: number; final: boolean }>;
 } {
   hexCounter = 0;
   const calls: string[] = [];
-  const invocations: Array<{ agent_id: string; case_id: string; session_key: string }> = [];
+  const invocations: Array<{
+    agent_id: string;
+    case_id: string;
+    session_id: string;
+    session_key: string;
+  }> = [];
   const progressEvents: Array<Record<string, unknown>> = [];
   const finalizeInputs: Track1CampaignFinalizeInput[] = [];
+  const runningCheckpoints: Array<Record<string, unknown>> = [];
 
   const attemptQueues = new Map<string, Track1AttemptObservation[]>();
   for (const [caseId, observations] of Object.entries(options.attempts ?? {})) {
@@ -189,6 +201,7 @@ export function makeCampaignRunnerPorts(
     invocations,
     progressEvents,
     finalizeInputs,
+    runningCheckpoints,
     attemptsFor(caseId: string) {
       return finalizeInputs
         .flatMap((f) => f.attempts)
@@ -228,6 +241,7 @@ export function makeCampaignRunnerPorts(
       invocations.push({
         agent_id: input.agent_id,
         case_id: input.prompt.case_id,
+        session_id: input.session_id,
         session_key: input.session_key
       });
       return Object.freeze({
@@ -250,6 +264,10 @@ export function makeCampaignRunnerPorts(
         final_action: actualAction === expectedAction ? (actualAction as never) : null,
         reason: actualAction === expectedAction ? null : "derived_action_mismatch"
       });
+    },
+    async captureRunningCheckpoint(input) {
+      calls.push("capture-running-checkpoint");
+      runningCheckpoints.push(structuredClone(input));
     },
     async finalizeCampaign(input) {
       calls.push("finalize-campaign");

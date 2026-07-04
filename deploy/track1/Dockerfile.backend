@@ -1,0 +1,16 @@
+FROM node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts
+
+COPY backend ./backend
+COPY shared ./shared
+COPY engines ./engines
+
+ENV NODE_ENV=production
+EXPOSE 3000 3001
+
+USER node
+CMD ["node", "--experimental-strip-types", "backend/src/main.ts"]

@@ -3,6 +3,7 @@ import { Navigate, type RouteObject } from "react-router-dom";
 import { ConsoleLayout } from "../layouts/ConsoleLayout";
 import { AssetResultPage } from "../pages/AssetResultPage";
 import { OverviewPage } from "../pages/OverviewPage";
+import { ReviewDemoPage } from "../pages/ReviewDemoPage";
 import { SandboxAlertsPage } from "../pages/SandboxAlertsPage";
 import { StaticAnalysisPage } from "../pages/StaticAnalysisPage";
 import { TaskDetailPage } from "../pages/TaskDetailPage";
@@ -40,6 +41,10 @@ export const appRoutes: RouteObject[] = [
       {
         path: "results/sandbox",
         element: <SandboxAlertsPage />
+      },
+      {
+        path: "review-demo",
+        element: <ReviewDemoPage />
       }
     ]
   }

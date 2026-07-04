@@ -1,0 +1,44 @@
+{
+  "agents": {
+    "list": [
+      {
+        "id": "agent-track1-prompt-injection",
+        "workspace": "/tmp/openclaw/prompt-injection"
+      },
+      {
+        "id": "agent-track1-tool-hijack",
+        "workspace": "/tmp/openclaw/tool-hijack"
+      },
+      {
+        "id": "agent-track1-memory-poison",
+        "workspace": "/tmp/openclaw/memory-poison"
+      }
+    ]
+  },
+  "gateway": {
+    "mode": "remote",
+    "remote": {
+      "transport": "direct",
+      "url": "ws://127.0.0.1:19001",
+      "password": "${OPENCLAW_GATEWAY_PASSWORD}"
+    }
+  },
+  "plugins": {
+    "load": {
+      "paths": ["/opt/track1-plugin"]
+    },
+    "entries": {
+      "agent-security-track1": {
+        "enabled": true,
+        "hooks": {
+          "allowConversationAccess": true,
+          "allowPromptInjection": false
+        },
+        "config": {
+          "ingestEndpoint": "http://backend:3001/internal/track1/campaigns",
+          "ingestToken": "${TRACK1_INGEST_TOKEN}"
+        }
+      }
+    }
+  }
+}

@@ -3,6 +3,7 @@ name: track1
 networks:
   track1-public:
   track1-ingest:
+    internal: true
   track1-model-egress:
 
 services:
@@ -12,9 +13,13 @@ services:
       context: ../..
       dockerfile: deploy/track1/Dockerfile.openclaw
     environment:
+      OPENCLAW_CONFIG_PATH: /app/config/openclaw.json5
       OPENCLAW_MODEL_BASE_URL: ${OPENCLAW_MODEL_BASE_URL}
       OPENCLAW_MODEL_API_KEY: ${OPENCLAW_MODEL_API_KEY}
       OPENCLAW_MODEL_ID: ${OPENCLAW_MODEL_ID}
+      OPENCLAW_GATEWAY_PASSWORD: ${OPENCLAW_GATEWAY_PASSWORD}
+      TRACK1_INGEST_TOKEN: ${TRACK1_INGEST_TOKEN}
+      TRACK1_DEBUG_HOOKS: ${TRACK1_DEBUG_HOOKS:-}
     volumes:
       - ../../integrations/openclaw/config/openclaw.json5:/app/config/openclaw.json5:ro
       - ../../integrations/openclaw/config/agents.json5:/app/config/agents.json5:ro
@@ -25,29 +30,24 @@ services:
     networks:
       - track1-ingest
       - track1-model-egress
+    command: ["gateway", "--bind", "lan", "--port", "19001"]
     healthcheck:
-      test: ["CMD", "openclaw", "--version"]
+      test: ["CMD", "openclaw", "health"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   backend:
     profiles: ["track1"]
-    image: node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90
-    working_dir: /app
-    command:
-      [
-        "node",
-        "--experimental-strip-types",
-        "backend/src/main.ts"
-      ]
+    build:
+      context: ../..
+      dockerfile: deploy/track1/Dockerfile.backend
     environment:
       PORT: "3000"
       INTERNAL_PORT: "3001"
+      PUBLIC_BIND_HOST: "0.0.0.0"
       INTERNAL_BIND_HOST: "0.0.0.0"
       TRACK1_INGEST_TOKEN: ${TRACK1_INGEST_TOKEN}
-    volumes:
-      - ../..:/app:ro
     ports:
       - "3000:3000"
     expose:
@@ -63,42 +63,74 @@ services:
 
   campaign-runner:
     profiles: ["track1"]
-    image: node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90
-    working_dir: /app
-    command:
-      [
-        "node",
-        "--experimental-strip-types",
-        "scripts/track1/run-openclaw-campaign.ts"
-      ]
+    build:
+      context: ../..
+      dockerfile: deploy/track1/Dockerfile.runner
+    network_mode: "service:openclaw-gateway"
     environment:
+      OPENCLAW_CONFIG_PATH: /app/config/openclaw-runner.json5
+      OPENCLAW_GATEWAY_PASSWORD: ${OPENCLAW_GATEWAY_PASSWORD}
+      OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: "1"
+      TRACK1_INGEST_TOKEN: ${TRACK1_INGEST_TOKEN}
+      TRACK1_INGEST_BASE_URL: "http://backend:3001/internal/track1"
+      TRACK1_BACKEND_URL: "http://backend:3000/api"
       OPENCLAW_MODEL_BASE_URL: ${OPENCLAW_MODEL_BASE_URL}
       OPENCLAW_MODEL_API_KEY: ${OPENCLAW_MODEL_API_KEY}
       OPENCLAW_MODEL_ID: ${OPENCLAW_MODEL_ID}
-      TRACK1_INGEST_TOKEN: ${TRACK1_INGEST_TOKEN}
-      TRACK1_INGEST_BASE_URL: "http://backend:3001/internal/track1"
-      TRACK1_BACKEND_URL: "http://backend:3000"
-      TRACK1_OPENCLAW_GATEWAY_URL: "http://openclaw-gateway:19001"
-    volumes:
-      - ../..:/app:ro
+    tmpfs:
+      - /run/track1
+      - /tmp/openclaw
     depends_on:
       backend:
         condition: service_healthy
       openclaw-gateway:
         condition: service_healthy
-    networks:
-      - track1-ingest
-      - track1-model-egress
 
   frontend:
     profiles: ["track1"]
-    image: node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90
-    working_dir: /app/frontend
-    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
-    volumes:
-      - ../../frontend:/app/frontend:ro
+    build:
+      context: ../..
+      dockerfile: deploy/track1/Dockerfile.frontend
+    environment:
+      TRACK1_BACKEND_ORIGIN: "http://backend:3000"
+    ports:
+      - "5173:3000"
     networks:
       - track1-public
     depends_on:
       backend:
         condition: service_healthy
+
+  evidence-capture:
+    profiles: ["evidence"]
+    build:
+      context: ../..
+      dockerfile: deploy/track1/Dockerfile.evidence
+    image: agent-security-track1-evidence:1.60.0
+    environment:
+      TRACK1_FRONTEND_URL: "http://frontend:3000/sandbox-alerts"
+      TRACK1_EVIDENCE_INPUT: "/data/input.json"
+      TRACK1_EVIDENCE_OUTPUT: "/data/screenshots"
+    volumes:
+      - ../../artifacts/track1:/data
+    tmpfs:
+      - /tmp
+    networks:
+      - track1-public
+    depends_on:
+      frontend:
+        condition: service_started
+
+  report-builder:
+    profiles: ["evidence"]
+    build:
+      context: ../..
+      dockerfile: deploy/track1/Dockerfile.report
+    image: agent-security-track1-report:1
+    environment:
+      SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH}
+    volumes:
+      - ../../artifacts/track1:/data
+    tmpfs:
+      - /tmp
+    network_mode: "none"

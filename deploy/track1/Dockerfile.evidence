@@ -1,0 +1,17 @@
+FROM mcr.microsoft.com/playwright:v1.60.0-noble@sha256:9bd26ad900bb5e0f4dee75839e957a89ae89c2b7ab1e76050e559790e946b948
+
+USER root
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts --no-audit --no-fund
+
+COPY scripts/track1 ./scripts/track1
+COPY shared ./shared
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    TZ=Asia/Shanghai
+
+USER pwuser
+ENTRYPOINT ["node", "--experimental-strip-types", "scripts/track1/capture-openclaw-evidence.ts"]

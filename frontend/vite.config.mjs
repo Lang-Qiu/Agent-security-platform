@@ -1,14 +1,17 @@
 import { defineConfig } from "vite";
 
+const backendOrigin =
+  process.env.TRACK1_BACKEND_ORIGIN ?? "http://127.0.0.1:3000";
+
 export default defineConfig({
   server: {
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:3000",
+        target: backendOrigin,
         changeOrigin: true
       },
       "/health": {
-        target: "http://127.0.0.1:3000",
+        target: backendOrigin,
         changeOrigin: true
       }
     }

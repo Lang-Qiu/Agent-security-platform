@@ -5,7 +5,8 @@
     "types": [
       "vitest/globals"
     ],
-    "baseUrl": "."
+    "baseUrl": ".",
+    "resolveJsonModule": true
   },
   "include": [
     "src/**/*.ts",

@@ -73,6 +73,20 @@ test("REQ-T1-DEMO-010 campaign creation failure invokes no agent", async () => {
   assert.equal(ports.invocations.length, 0);
 });
 
+test("REQ-T1-DEMO-010 post-creation invocation failure finalizes the campaign as failed", async () => {
+  const ports = makeCampaignRunnerPorts();
+  ports.invokeAgent = async () => {
+    throw new Error("track1_invocation_failed");
+  };
+
+  await assert.rejects(
+    () => runTrack1OpenClawCampaign(ports),
+    /track1_invocation_failed/
+  );
+  assert.equal(ports.finalizeInputs.length, 1);
+  assert.equal(ports.finalizeInputs[0].status, "failed");
+});
+
 test("REQ-T1-DEMO-010 runner generates unique campaign/attempt/session identifiers with exact grammars", async () => {
   const ports = makeCampaignRunnerPorts();
   const summary = await runTrack1OpenClawCampaign(ports);
@@ -98,4 +112,27 @@ test("REQ-T1-DEMO-010 finalization happens only after all nine final attempts", 
   assert.equal(ports.finalizeInputs.length, 1);
   assert.equal(ports.finalizeInputs[0].attempts.length, 9);
   assert.equal(ports.finalizeInputs[0].status, "completed");
+});
+
+test("REQ-T1-DEMO-010 runner captures one running checkpoint after the first final case", async () => {
+  const ports = makeCampaignRunnerPorts();
+  await runTrack1OpenClawCampaign(ports);
+
+  assert.equal(ports.runningCheckpoints.length, 1);
+  assert.deepEqual(ports.runningCheckpoints[0], {
+    campaign_id: "campaign:t1:00000000000000000000000000000001",
+    case_id: "T1-SC-001-C001",
+    session_id: "session:00000000000000000000000000000002"
+  });
+  const firstObserved = ports.progressEvents.findIndex(
+    (event) =>
+      event.event_type === "attempt_observed" &&
+      event.case_id === "T1-SC-001-C001"
+  );
+  const secondStarted = ports.progressEvents.findIndex(
+    (event) =>
+      event.event_type === "case_started" &&
+      event.case_id === "T1-SC-001-C002"
+  );
+  assert.ok(firstObserved >= 0 && secondStarted > firstObserved);
 });

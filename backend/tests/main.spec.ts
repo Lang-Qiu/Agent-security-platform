@@ -117,6 +117,48 @@ test("REQ-T1-DEMO-010 createProductionServers does not fall back to CAMPAIGN_ING
   }
 });
 
+// Regression: startProductionServers() is called with zero arguments by the
+// real entrypoint, so the public bind host MUST fall back to
+// process.env.PUBLIC_BIND_HOST when the options.publicBindHost is omitted —
+// exactly like internalBindHost already does. Without this, the public API
+// silently binds to 127.0.0.1 inside the container even when
+// PUBLIC_BIND_HOST=0.0.0.0 is set (as deploy/track1/compose.track1.yml
+// does), making it unreachable from other containers and the host's
+// published port.
+test("REQ-T1-DEMO-010 startProductionServers reads PUBLIC_BIND_HOST from env when option is omitted", async () => {
+  const { startProductionServers } = await import("../src/main.ts");
+  const prevHost = process.env.PUBLIC_BIND_HOST;
+  process.env.PUBLIC_BIND_HOST = "0.0.0.0";
+  try {
+    const handles = await startProductionServers({
+      publicPort: 0,
+      internalPort: 0,
+      ingestToken: "a".repeat(64)
+    });
+    try {
+      const publicAddress = handles.publicServer.address();
+      assert.ok(
+        publicAddress && typeof publicAddress === "object",
+        "public server must have a bound address"
+      );
+      const addr = (publicAddress as { address: string }).address;
+      assert.notStrictEqual(
+        addr,
+        "127.0.0.1",
+        "public server must not bind to loopback when PUBLIC_BIND_HOST=0.0.0.0 is set and no explicit option overrides it"
+      );
+    } finally {
+      await handles.close();
+    }
+  } finally {
+    if (prevHost === undefined) {
+      delete process.env.PUBLIC_BIND_HOST;
+    } else {
+      process.env.PUBLIC_BIND_HOST = prevHost;
+    }
+  }
+});
+
 test("REQ-T1-DEMO-010 startProductionServers binds internal server to configurable host", async () => {
   // Use port 0 to let the OS pick a free port; the bind host must be the
   // configured value (not hardcoded 127.0.0.1) so other containers can

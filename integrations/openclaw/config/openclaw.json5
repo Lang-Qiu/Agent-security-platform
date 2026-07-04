@@ -1,7 +1,15 @@
 {
-  "schema_version": "track1-openclaw-config.v1",
   "gateway": {
-    "mode": "local"
+    "mode": "local",
+    "port": 19001,
+    "bind": "lan",
+    "auth": {
+      "mode": "password",
+      "password": "${OPENCLAW_GATEWAY_PASSWORD}"
+    },
+    "controlUi": {
+      "enabled": false
+    }
   },
   "models": {
     "mode": "merge",
@@ -9,43 +17,63 @@
       "openai-compat": {
         "baseUrl": "${OPENCLAW_MODEL_BASE_URL}",
         "apiKey": "${OPENCLAW_MODEL_API_KEY}",
-        "api": "openai-completions"
+        "api": "openai-completions",
+        "models": [
+          {
+            "id": "${OPENCLAW_MODEL_ID}",
+            "name": "Track 1 Demo Model"
+          }
+        ]
       }
     }
   },
-  "tools": {
-    "allow": ["send_email", "read_file", "write_file", "call_api"],
-    "builtins": {
-      "shell": false,
-      "process": false,
-      "filesystemWrite": false,
-      "browser": false,
-      "node": false,
-      "messaging": false,
-      "network": false,
-      "mcp": false
+  "agents": {
+    "defaults": {
+      "workspace": "/workspace"
     },
-    "channels": {
-      "enabled": false
-    }
+    "$include": "./agents.json5"
+  },
+  "tools": {
+    // "profile": "minimal" resolves to the built-in CORE_TOOL_PROFILES.minimal
+    // allowlist, which only ever contains OpenClaw's own core tools (e.g.
+    // session_status) — it never includes plugin-registered tools. "allow"
+    // is a *separate*, additional restriction on top of the profile's
+    // allowlist, not a way to widen it. Widening a profile to include
+    // plugin tools requires "alsoAllow", which the profile resolver merges
+    // into the profile's allow list (see resolveEffectiveToolPolicy /
+    // mergeAlsoAllowPolicy in openclaw's tool-policy module). Without this,
+    // the gateway rejects every agent run with "No callable tools remain
+    // after resolving explicit tool allowlist" because none of
+    // send_email/read_file/write_file/call_api are core tools.
+    "profile": "minimal",
+    "alsoAllow": ["send_email", "read_file", "write_file", "call_api"]
   },
   "skills": {
-    "enabled": false
-  },
-  "marketplace": {
-    "enabled": false
+    "allowBundled": []
   },
   "plugins": {
-    "thirdParty": false
-  },
-  "workspace": {
-    "path": "/workspace"
+    "load": {
+      "paths": ["/opt/track1-plugin"]
+    },
+    "entries": {
+      "agent-security-track1": {
+        "enabled": true,
+        "hooks": {
+          "allowConversationAccess": true,
+          "allowPromptInjection": false
+        },
+        "config": {
+          "ingestEndpoint": "http://backend:3001/internal/track1/campaigns",
+          "ingestToken": "${TRACK1_INGEST_TOKEN}"
+        }
+      }
+    }
   },
   "session": {
-    "store": "/tmp/openclaw"
+    "store": "/tmp/openclaw/sessions.json"
   },
   "logging": {
-    "persistTranscripts": false,
-    "redactSensitiveToolData": true
+    "level": "info",
+    "redactSensitive": "tools"
   }
 }

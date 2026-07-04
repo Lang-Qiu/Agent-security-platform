@@ -293,23 +293,29 @@ export function compileTrack1CasePrompt(input: unknown): Track1CompiledPrompt {
 
   const retrievedContent = caseInput.retrieved_content.map((text, index) => ({
     memory_entry_id: `retrieved:${index + 1}`,
+    content: text,
     content_ref: `case://${manifestEntry.case_id}/retrieved/${index + 1}`,
     content_sha256: createHash("sha256").update(text, "utf8").digest("hex")
   }));
 
   const memoryEntries = caseInput.memory_entries.map((entry) => ({
     memory_entry_id: entry.memory_id,
+    content: entry.content,
     content_ref: `case://${manifestEntry.case_id}/memory/${entry.memory_id}`,
     content_sha256: createHash("sha256").update(entry.content, "utf8").digest("hex")
   }));
 
   const proposedToolCall = caseInput.proposed_tool_call
-    ? {
+      ? {
         tool_name: caseInput.proposed_tool_call.tool_name as
           | "send_email"
           | "read_file"
           | "write_file"
           | "call_api",
+        arguments: caseInput.proposed_tool_call.arguments as Record<
+          string,
+          unknown
+        >,
         arguments_ref: `case://${manifestEntry.case_id}/tool-call/${caseInput.proposed_tool_call.tool_name}`
       }
     : null;

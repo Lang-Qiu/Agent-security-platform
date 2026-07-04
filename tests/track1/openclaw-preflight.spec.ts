@@ -43,22 +43,37 @@ test("REQ-T1-DEMO-010 preflight rejects unsafe model endpoints", () => {
 });
 
 test("REQ-T1-DEMO-010 preflight rejects a malformed model id grammar", () => {
-  assert.throws(
-    () =>
-      normalizeTrack1CloudModelConfig({
-        ...makeValidTrack1Environment(),
-        OPENCLAW_MODEL_ID: "Provider/Model With Spaces"
-      }),
-    Track1EnvironmentError
-  );
-  assert.throws(
-    () =>
-      normalizeTrack1CloudModelConfig({
-        ...makeValidTrack1Environment(),
-        OPENCLAW_MODEL_ID: "no-slash-here"
-      }),
-    Track1EnvironmentError
-  );
+  for (const modelId of [
+    "Provider/Model With Spaces",
+    "UPPERCASE",
+    "provider//model",
+    "provider/model/extra",
+    "-leading-dash",
+    ""
+  ]) {
+    assert.throws(
+      () =>
+        normalizeTrack1CloudModelConfig({
+          ...makeValidTrack1Environment(),
+          OPENCLAW_MODEL_ID: modelId
+        }),
+      Track1EnvironmentError,
+      modelId
+    );
+  }
+});
+
+// OPENCLAW_MODEL_ID is sent verbatim as the wire model name to the
+// OpenAI-compatible provider at OPENCLAW_MODEL_BASE_URL. Many providers
+// (e.g. doro.lol's /v1/models catalog) expose bare model ids with no
+// provider prefix, so a bare id must be accepted — it does not have to
+// match OpenClaw's own provider/model ref grammar.
+test("REQ-T1-DEMO-010 preflight accepts a bare model id with no provider prefix", () => {
+  const config = normalizeTrack1CloudModelConfig({
+    ...makeValidTrack1Environment(),
+    OPENCLAW_MODEL_ID: "gpt-5.5"
+  });
+  assert.equal(config.model_id, "gpt-5.5");
 });
 
 test("REQ-T1-DEMO-010 preflight rejects an empty api key", () => {

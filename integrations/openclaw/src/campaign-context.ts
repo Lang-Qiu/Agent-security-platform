@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   TRACK1_MODEL_REF_CANONICAL
 } from "../../../shared/types/campaign-ingest.ts";
@@ -17,12 +19,14 @@ export interface Track1PluginContext {
 
 export interface Track1ControlledMemoryEntry {
   memory_entry_id: string;
+  content: string;
   content_ref: string;
   content_sha256: string;
 }
 
 export interface Track1ControlledToolProposal {
   tool_name: "send_email" | "read_file" | "write_file" | "call_api";
+  arguments: Readonly<Record<string, unknown>>;
   arguments_ref: string;
 }
 
@@ -55,7 +59,11 @@ export class Track1PluginContextError extends Error {
 // -- helpers ---------------------------------------------------------------
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -110,26 +118,89 @@ const FORBIDDEN_MODEL_INPUT_FIELDS = [
 ];
 
 function isValidMemoryEntry(value: unknown): value is Track1ControlledMemoryEntry {
-  if (!isPlainObject(value)) return false;
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, [
+      "memory_entry_id",
+      "content",
+      "content_ref",
+      "content_sha256"
+    ])
+  ) {
+    return false;
+  }
   return (
     isNonEmptyString(value.memory_entry_id) &&
+    isNonEmptyString(value.content) &&
     isNonEmptyString(value.content_ref) &&
-    isNonEmptyString(value.content_sha256)
+    typeof value.content_sha256 === "string" &&
+    /^[a-f0-9]{64}$/.test(value.content_sha256) &&
+    createHash("sha256").update(value.content).digest("hex") ===
+      value.content_sha256
   );
+}
+
+function cloneJsonValue(value: unknown, depth = 0): unknown {
+  if (depth > 12) {
+    throw new Track1PluginContextError("track1_model_input_invalid");
+  }
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => cloneJsonValue(item, depth + 1));
+  }
+  if (!isPlainObject(value)) {
+    throw new Track1PluginContextError("track1_model_input_invalid");
+  }
+  const cloned: Record<string, unknown> = {};
+  for (const key of Object.keys(value).sort()) {
+    if (
+      key === "__proto__" ||
+      key === "prototype" ||
+      key === "constructor" ||
+      FORBIDDEN_MODEL_INPUT_FIELDS.includes(key)
+    ) {
+      throw new Track1PluginContextError("track1_model_input_invalid");
+    }
+    cloned[key] = cloneJsonValue(value[key], depth + 1);
+  }
+  return cloned;
 }
 
 function isValidToolProposal(
   value: unknown
 ): value is Track1ControlledToolProposal | null {
   if (value === null) return true;
-  if (!isPlainObject(value)) return false;
-  return (
+  if (
+    !isPlainObject(value) ||
+    !hasExactKeys(value, ["tool_name", "arguments", "arguments_ref"])
+  ) {
+    return false;
+  }
+  if (
+    !(
     (value.tool_name === "send_email" ||
       value.tool_name === "read_file" ||
       value.tool_name === "write_file" ||
       value.tool_name === "call_api") &&
-    isNonEmptyString(value.arguments_ref)
-  );
+      isPlainObject(value.arguments) &&
+      isNonEmptyString(value.arguments_ref)
+    )
+  ) {
+    return false;
+  }
+  try {
+    cloneJsonValue(value.arguments);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // -- context normalization -------------------------------------------------
@@ -234,6 +305,25 @@ export function normalizeTrack1ModelInputEnvelope(
     throw new Track1PluginContextError("track1_model_input_invalid");
   }
 
+  const retrievedContent = value.retrieved_content.map((entry) =>
+    Object.freeze({ ...entry })
+  );
+  const memoryEntries = value.memory_entries.map((entry) =>
+    Object.freeze({ ...entry })
+  );
+  const proposedToolCall = value.proposed_tool_call
+    ? Object.freeze({
+        tool_name: value.proposed_tool_call.tool_name,
+        arguments: Object.freeze(
+          cloneJsonValue(value.proposed_tool_call.arguments) as Record<
+            string,
+            unknown
+          >
+        ),
+        arguments_ref: value.proposed_tool_call.arguments_ref
+      })
+    : null;
+
   return Object.freeze({
     schema_version: value.schema_version,
     campaign_id: value.campaign_id,
@@ -244,10 +334,8 @@ export function normalizeTrack1ModelInputEnvelope(
     case_id: value.case_id,
     scenario_id: value.scenario_id,
     user_prompt: value.user_prompt,
-    retrieved_content: Object.freeze([...value.retrieved_content]),
-    memory_entries: Object.freeze([...value.memory_entries]),
-    proposed_tool_call: value.proposed_tool_call
-      ? Object.freeze({ ...value.proposed_tool_call })
-      : null
+    retrieved_content: Object.freeze(retrievedContent),
+    memory_entries: Object.freeze(memoryEntries),
+    proposed_tool_call: proposedToolCall
   });
 }

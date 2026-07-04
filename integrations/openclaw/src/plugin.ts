@@ -6,6 +6,8 @@ import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import type { DefinedPluginEntry } from "openclaw/plugin-sdk/plugin-entry";
 import { ObservedMonitoredSession } from "../../../engines/sandbox/src/monitoring/observed-session.ts";
 import type { MonitorRuntimePorts, MonitorDecisionProvider } from "../../../engines/sandbox/src/monitoring/contract.ts";
+import { RuleBasedDecisionProvider } from "../../../engines/sandbox/src/base-filter/provider.ts";
+import { composeTrack1FilterModelRequest } from "../../../engines/sandbox/src/base-filter/context-envelope.ts";
 import { InMemorySimulatedToolState } from "../../../engines/sandbox/src/simulated-tools/state.ts";
 import { SimulatedToolExecutor } from "../../../engines/sandbox/src/simulated-tools/executor.ts";
 import { registerTrack1Tools } from "./tool-adapters.ts";
@@ -262,6 +264,9 @@ export function registerTrack1Plugin(
   // P0-Fix2: camelCase event fields from real SDK PluginHookSessionStartEvent.
 
   api.on("session_start", async (event: unknown, ctx: unknown) => {
+    if (process.env.TRACK1_DEBUG_HOOKS === "1") {
+      process.stderr.write(`TRACK1_DEBUG session_start event=${JSON.stringify(event)} ctx=${JSON.stringify(ctx)}\n`);
+    }
     if (!isPlainObject(event)) {
       throw new Track1PluginHookError("track1_plugin_event_invalid");
     }
@@ -342,6 +347,9 @@ export function registerTrack1Plugin(
   // P1-Fix5: Cross-check envelope fields with bound campaign context.
 
   api.on("llm_input", async (event: unknown, _ctx: unknown) => {
+    if (process.env.TRACK1_DEBUG_HOOKS === "1") {
+      process.stderr.write(`TRACK1_DEBUG llm_input event=${JSON.stringify(event)}\n`);
+    }
     if (!isPlainObject(event)) {
       throw new Track1PluginHookError("track1_plugin_event_invalid");
     }
@@ -354,10 +362,20 @@ export function registerTrack1Plugin(
       throw new Track1PluginHookError("track1_plugin_session_not_found");
     }
 
-    // Track 1 extension: envelope field for the full model input envelope.
-    // The real SDK PluginHookLlmInputEvent has `prompt` but not `envelope`.
-    // The Track 1 demo passes the envelope as a custom field alongside SDK fields.
-    const rawEnvelope = event.envelope;
+    // Tests may supply the Track 1 extension field directly. The real SDK
+    // supplies only `prompt`, so production must parse the same canonical
+    // envelope from that prompt before any observation or identity binding.
+    let rawEnvelope = event.envelope;
+    if (!isPlainObject(rawEnvelope) && isNonEmptyString(event.prompt)) {
+      try {
+        const parsedPrompt = JSON.parse(event.prompt);
+        if (isPlainObject(parsedPrompt)) {
+          rawEnvelope = parsedPrompt;
+        }
+      } catch {
+        // A non-envelope prompt is handled by the closed fallback below.
+      }
+    }
     let content: string;
     let contentRef: string;
 
@@ -395,8 +413,18 @@ export function registerTrack1Plugin(
         throw new Track1PluginHookError("track1_plugin_envelope_mismatch");
       }
 
-      content = envelope.user_prompt;
-      contentRef = `model://track1/input/${state.snapshotSequence}`;
+      const filterRequest = composeTrack1FilterModelRequest({
+        user_prompt: envelope.user_prompt,
+        retrieved_content: envelope.retrieved_content.map(
+          (entry) => entry.content
+        ),
+        memory_entries: envelope.memory_entries.map((entry) => ({
+          memory_id: entry.memory_entry_id,
+          content: entry.content
+        }))
+      });
+      content = filterRequest.content;
+      contentRef = filterRequest.content_ref;
 
       // Observe model input
       state.session.observeModelInput({
@@ -412,7 +440,7 @@ export function registerTrack1Plugin(
         state.session.observeMemoryWrite({
           session_id: state.context.session_id,
           memory_entry_id: entry.memory_entry_id,
-          content: entry.content_ref,
+          content: entry.content,
           content_ref: entry.content_ref,
           content_sha256: entry.content_sha256
         });
@@ -423,7 +451,7 @@ export function registerTrack1Plugin(
         state.session.observeMemoryRead({
           session_id: state.context.session_id,
           memory_entry_id: entry.memory_entry_id,
-          content: entry.content_ref,
+          content: entry.content,
           content_ref: entry.content_ref,
           content_sha256: entry.content_sha256
         });
@@ -431,7 +459,7 @@ export function registerTrack1Plugin(
     } else {
       // Fallback: use SDK prompt field directly
       const prompt = event.prompt;
-      if (!isNonEmptyString(prompt)) {
+      if (!isNonEmptyString(prompt) || state.context === null) {
         throw new Track1PluginHookError("track1_plugin_event_invalid");
       }
       content = prompt;
@@ -742,18 +770,7 @@ export function createTrack1PluginEntry(): DefinedPluginEntry {
 
       // Lazy import to avoid circular dependency at module load
       const ports: Track1PluginRuntimePorts = {
-        provider: {
-          decide() {
-            // Default provider: allow all (demo only)
-            return {
-              policy_id: "policy://track1/default",
-              action: "allow" as const,
-              reason_code: "default_allow",
-              reason: "Track 1 default allow",
-              evidence_refs: []
-            };
-          }
-        },
+        provider: new RuleBasedDecisionProvider(),
         async ingestSnapshot(envelope) {
           // Construct ingest client lazily
           const { Track1IngestClient } = await import("./ingest-client.ts");

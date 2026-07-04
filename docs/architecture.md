@@ -43,7 +43,7 @@ flowchart TD
 - 负责用户发起扫描任务、查看状态、筛选风险、追踪处置。
 - 对接后端 API，不直接依赖各引擎内部实现。
 - 第一版已落地统一后台壳子，包含固定侧边导航、顶部上下文栏、`Overview` 路由与结果路由占位页。
-- 当前路由骨架包括：`/overview`、`/tasks`、`/tasks/:taskId`、`/results/assets`、`/results/static-analysis`、`/results/sandbox`。
+- 当前路由骨架包括：`/overview`、`/tasks`、`/tasks/:taskId`、`/results/assets`、`/results/static-analysis`、`/results/sandbox`、`/review-demo`。
 
 前端只消费平台统一后的视图模型，不直接拼接不同引擎的原始数据格式。
 
@@ -876,3 +876,79 @@ The following remain outside Phase 5 scope and belong to Phase 6:
 - real 390/1024/1440 browser screenshots and visual acceptance
 - end-to-end campaign orchestration across Docker/OpenClaw runtime
 - report generation or evidence export UI
+## REQ-T1-DEMO-010 Report and Credentialed Acceptance
+
+The Track 1 runtime has six Compose services:
+
+1. `openclaw-gateway` runs the pinned OpenClaw runtime and native monitor
+   plugin.
+2. `campaign-runner` owns the fixed three-agent/nine-case state machine and
+   one-retry limit.
+3. `backend` exposes the public read listener and separate authenticated
+   internal ingest listener.
+4. `frontend` provides the read-only supervision console.
+5. `evidence-capture` uses digest-pinned Playwright without model or ingest
+   credentials.
+6. `report-builder` runs without a network and renders the fixed Markdown
+   input through the digest-pinned Pandoc/XeLaTeX image.
+
+The runner records one running-state checkpoint after the first final case.
+After terminal completion, the evidence pipeline independently projects all
+campaign/session evidence, captures four final UI views, verifies all nine
+fixture hashes, generates Markdown/PDF/campaign JSON, hashes the exact eight
+artifacts, writes `manifest.json`, re-reads every byte, atomically publishes
+the directory, and only then registers the manifest reference.
+
+The credentialed E2E harness is a separate operational boundary. It cleans
+ephemeral Compose state, builds images, verifies the plugin, runs the fixed
+campaign, creates evidence, collects a content-free log summary, and always
+stops the runtime. A second validator derives the 9/9 oracle result from the
+immutable manifest and normalized decisions; it does not trust runner or
+report success flags. Baseline promotion is allowlist-only and cannot
+overwrite an existing accepted baseline.
+
+Campaign persistence remains in memory. A process restart loses campaign and
+session state, so the current design is suitable for controlled competition
+runs, not durable production retention.
+
+## REQ-T1-DEMO-010 Review Demo UI
+
+`/review-demo` is a new top-level, all-Chinese route that guides an evaluator
+through the five-minute tour defined in the versioned content catalog
+(`samples/track1/review-demo/content.zh-CN.json`). It is a pure consumer: no
+new backend route, DTO, or write path was introduced.
+
+- Steps 1–2 (product boundary, runtime readiness) render catalog content
+  only — no fetch.
+- Step 3 reuses `useCampaignSupervisionPolling` and the existing
+  `getCampaign`/`listCampaigns` service functions exactly as
+  `SandboxAlertsPage` does. It renders live values for the five metric keys
+  present on `Track1CampaignSummary` (`agent_count`, `case_count`,
+  `retry_count`, `ask_count`, `blocked_count`) and a fixed neutral
+  placeholder for the remaining six catalog metric keys
+  (`attempt_count`, `deny_count`, `allow_count`, `intercepted_tool_count`,
+  `executed_simulated_tool_count`, `real_side_effect_count`), which currently
+  have no public API source — they only exist in the offline evidence
+  package's `campaign.json`.
+- Step 4 deep-links into the existing `/results/sandbox?campaign_id=...
+  &agent_id=...` campaign workbench instead of building a second
+  investigation UI.
+- Step 5 checks evidence readiness through the existing
+  `getCampaignEvidence` read (`ready` / `not-ready` / `unavailable`). No
+  report artifact file (`security-risk-analysis.md/.pdf`, screenshots,
+  `manifest.json`) is served or linked directly — no public route exists for
+  that today.
+- The page resolves which campaign to display once, at the page level
+  (falling back to the most recently updated campaign via `listCampaigns`
+  when no `campaign_id` URL param is present), so steps 3–5 share one
+  resolved campaign rather than each re-resolving independently.
+- Read-only: no start/retry/approve/reject/cancel/edit-policy command surface
+  exists. The repository gate at
+  `tests/repository/track1-review-demo-ui.spec.ts` permanently prohibits
+  these command surfaces and any direct reference to a report artifact file
+  path.
+
+### Explicit non-goals
+
+Electron/executable packaging, a report-artifact download/preview API, and
+any second investigation UI remain out of scope for this slice.

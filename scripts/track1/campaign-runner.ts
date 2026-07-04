@@ -14,7 +14,8 @@ import {
 import type {
   Track1CampaignAgentId,
   Track1CaseId,
-  Track1ScenarioId
+  Track1ScenarioId,
+  Track1SessionId
 } from "../../shared/types/campaign-supervision.ts";
 import type { SandboxPolicyAction } from "../../shared/types/sandbox.ts";
 import type { Track1CampaignStartEnvelope } from "../../shared/types/campaign-ingest.ts";
@@ -87,6 +88,7 @@ export interface Track1CampaignRunnerPorts {
   }): Promise<Track1CompiledPrompt>;
   invokeAgent(input: {
     agent_id: Track1CampaignAgentId;
+    session_id: Track1SessionId;
     session_key: string;
     attempt_id: string;
     prompt: Track1CompiledPrompt;
@@ -98,6 +100,11 @@ export interface Track1CampaignRunnerPorts {
     attempt_id: string;
     session_id: string;
   }): Promise<Track1AttemptObservation>;
+  captureRunningCheckpoint(input: {
+    campaign_id: string;
+    case_id: Track1CaseId;
+    session_id: Track1SessionId;
+  }): Promise<void>;
   finalizeCampaign(input: Track1CampaignFinalizeInput): Promise<void>;
   now(): string;
   randomHex32(): string;
@@ -137,10 +144,26 @@ export async function runTrack1OpenClawCampaign(
   await ports.createCampaign(startEnvelope);
   ports.progress({ event_type: "campaign_created", campaign_id: campaignId });
 
-  const finalActions: Record<string, SandboxPolicyAction> = {};
   const finalizeAttempts: Track1CampaignFinalizeAttemptRecord[] = [];
+  let finalizationRequested = false;
+  const requestFinalization = async (
+    status: "completed" | "failed"
+  ): Promise<void> => {
+    finalizationRequested = true;
+    await ports.finalizeCampaign({
+      campaign_id: campaignId,
+      status,
+      attempts: finalizeAttempts,
+      completed_at: ports.now()
+    });
+  };
+
+  try {
+  const finalActions: Record<string, SandboxPolicyAction> = {};
   let retryCount = 0;
   let campaignFailed = false;
+  let runningCheckpointAttempted = false;
+  let runningCheckpointFailed = false;
 
   let caseOrdinal = 0;
   for (let agentIndex = 0; agentIndex < TRACK1_CAMPAIGN_AGENT_IDS.length; agentIndex++) {
@@ -177,6 +200,7 @@ export async function runTrack1OpenClawCampaign(
 
         await ports.invokeAgent({
           agent_id: agentId,
+          session_id: sessionId as Track1SessionId,
           session_key: sessionKey,
           attempt_id: attemptId,
           prompt
@@ -211,6 +235,22 @@ export async function runTrack1OpenClawCampaign(
             attempt_id: attemptId,
             final_action: observation.final_action
           });
+          if (!runningCheckpointAttempted) {
+            runningCheckpointAttempted = true;
+            try {
+              await ports.captureRunningCheckpoint({
+                campaign_id: campaignId,
+                case_id: caseId,
+                session_id: sessionId as Track1SessionId
+              });
+            } catch {
+              runningCheckpointFailed = true;
+              ports.progress({
+                event_type: "running_checkpoint_failed",
+                campaign_id: campaignId
+              });
+            }
+          }
           caseResolved = true;
           break;
         }
@@ -254,13 +294,7 @@ export async function runTrack1OpenClawCampaign(
     if (campaignFailed) break;
   }
 
-  const completedAt = ports.now();
-  await ports.finalizeCampaign({
-    campaign_id: campaignId,
-    status: campaignFailed ? "failed" : "completed",
-    attempts: finalizeAttempts,
-    completed_at: completedAt
-  });
+  await requestFinalization(campaignFailed ? "failed" : "completed");
   ports.progress({
     event_type: "campaign_finalized",
     campaign_id: campaignId,
@@ -269,6 +303,9 @@ export async function runTrack1OpenClawCampaign(
 
   if (campaignFailed) {
     throw new Track1CampaignError("track1_campaign_failed");
+  }
+  if (runningCheckpointFailed) {
+    throw new Track1CampaignError("track1_running_checkpoint_failed");
   }
 
   return Object.freeze({
@@ -280,4 +317,10 @@ export async function runTrack1OpenClawCampaign(
       Record<Track1CaseId, SandboxPolicyAction>
     >
   });
+  } catch (error) {
+    if (!finalizationRequested) {
+      await requestFinalization("failed");
+    }
+    throw error;
+  }
 }

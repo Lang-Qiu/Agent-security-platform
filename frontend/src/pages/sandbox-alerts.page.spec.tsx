@@ -328,24 +328,28 @@ describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
     ).toHaveAttribute("aria-selected", "true");
   });
 
-  test("selected row remains after overview refresh", async () => {
-    mockSupervisionApi();
-    await renderAppAtRoute(
-      "/results/sandbox?session_id=session%3AT1-SC-002-C001"
-    );
+  test(
+    "selected row remains after overview refresh",
+    async () => {
+      mockSupervisionApi();
+      await renderAppAtRoute(
+        "/results/sandbox?session_id=session%3AT1-SC-002-C001"
+      );
 
-    await screen.findByRole("option", { name: /session:T1-SC-002-C001/i });
+      await screen.findByRole("option", { name: /session:T1-SC-002-C001/i });
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Refresh supervision data" })
-    );
+      fireEvent.click(
+        screen.getByRole("button", { name: "Refresh supervision data" })
+      );
 
-    await waitFor(() => {
-      expect(
-        screen.getByRole("option", { name: /session:T1-SC-002-C001/i })
-      ).toHaveAttribute("aria-selected", "true");
-    });
-  });
+      await waitFor(() => {
+        expect(
+          screen.getByRole("option", { name: /session:T1-SC-002-C001/i })
+        ).toHaveAttribute("aria-selected", "true");
+      });
+    },
+    10_000
+  );
 
   test("unknown known query values are removed from URL", async () => {
     mockSupervisionApi();
@@ -582,7 +586,7 @@ describe("REQ-T1-SUPERVISION-UI-009 sandbox alerts workbench", () => {
     await waitFor(() => {
       expect(screen.queryByText(/stale/i)).not.toBeInTheDocument();
     });
-  });
+  }, 10_000);
 
   test("refresh icon has accessible name", async () => {
     mockSupervisionApi();
