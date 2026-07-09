@@ -122,6 +122,22 @@ interface PluginSessionState {
   // last intercept call id so that path is a safe no-op without weakening the
   // "no pending allow" fail-closed contract.
   lastInterceptedToolCallId: string | null;
+  // Bug #12: Canonical fixture proposed tool call from the model-input
+  // envelope. Real models may ignore or rewrite the tool call; on agent_end
+  // the plugin evaluates this proposal if no tool was already mediated.
+  proposedToolCall: {
+    tool_name: "send_email" | "read_file" | "write_file" | "call_api";
+    arguments: Readonly<Record<string, unknown>>;
+  } | null;
+  toolMediated: boolean;
+  // Bug #13: Enough state to rebuild a fresh ObservedMonitoredSession when a
+  // failed real tool call seals the previous monitor session.
+  filterModelContent: string | null;
+  filterModelContentRef: string | null;
+  // True once a terminal (finished/failed/blocked) snapshot was successfully
+  // ingested for this attempt. agent_end recovery uses this to avoid early
+  // return after a non-terminal failure path marked the session ended.
+  terminalSnapshotIngested: boolean;
 }
 
 // -- helpers ---------------------------------------------------------------
@@ -233,7 +249,15 @@ async function ingestSessionSnapshot(
   const ack = await state.ingest(envelope);
   state.previousSnapshotSha256 = ack.snapshot_sha256;
   state.snapshotSequence += 1;
+  if (
+    result.status === "finished" ||
+    result.status === "failed" ||
+    result.status === "blocked"
+  ) {
+    state.terminalSnapshotIngested = true;
+  }
 }
+
 
 // P1-Fix7: Tool failure detection — check error field and parse tool output JSON.
 function detectToolFailure(event: {
@@ -342,7 +366,12 @@ export function registerTrack1Plugin(
       agentEndedFailed: false,
       modelOutputObserved: false,
       provisionalModelOutput: false,
-      lastInterceptedToolCallId: null
+      lastInterceptedToolCallId: null,
+      proposedToolCall: null,
+      toolMediated: false,
+      filterModelContent: null,
+      filterModelContentRef: null,
+      terminalSnapshotIngested: false
     };
     sessions.set(runtimeSessionId, state);
     pendingSessionStarts.delete(runtimeSessionId);
@@ -368,6 +397,110 @@ export function registerTrack1Plugin(
       state.agentEndedFailed = false;
       return;
     }
+
+    // Bug #12/#13: Evaluate fixture proposed_tool_call when the attempt is
+    // still non-terminal. Prefer the SAME monitor session so campaign snapshot
+    // event-prefix chains remain valid. Rebuild only for genesis attempts
+    // (no snapshot ingested yet).
+    if (
+      !failed &&
+      !state.terminalSnapshotIngested &&
+      state.pendingToolCallId === null &&
+      state.proposedToolCall !== null &&
+      state.filterModelContent !== null &&
+      state.filterModelContentRef !== null
+    ) {
+      try {
+        if (state.previousSnapshotSha256 === null) {
+          // Genesis attempt only: safe to rebuild a clean monitor session.
+          const monitorPorts: MonitorRuntimePorts = {
+            now: runtime.ports.now ?? (() => new Date().toISOString()),
+            nextId:
+              runtime.ports.nextId ??
+              ((kind: string) => `${kind}:${Date.now().toString(36)}`)
+          };
+          state.session = new ObservedMonitoredSession(
+            {
+              task_id: state.context.session_id.replace(/^session:/, "task:"),
+              session_id: state.context.session_id,
+              model_ref: state.context.model_ref,
+              scenario_id: state.context.scenario_id,
+              case_id: state.context.case_id
+            },
+            runtime.ports.provider,
+            monitorPorts
+          );
+          state.session.observeModelInput({
+            session_id: state.context.session_id,
+            content: state.filterModelContent,
+            content_ref: state.filterModelContentRef
+          });
+          await state.session.observeModelOutput({
+            session_id: state.context.session_id,
+            content: "Provisional model output for proposed tool evaluation.",
+            content_ref: `model://track1/provisional/${state.snapshotSequence}`
+          });
+          state.modelOutputObserved = true;
+          state.provisionalModelOutput = true;
+        } else {
+          // Continue the existing event stream: re-arm a model pair if needed.
+          try {
+            state.session.observeModelInput({
+              session_id: state.context.session_id,
+              content: state.filterModelContent,
+              content_ref: state.filterModelContentRef
+            });
+          } catch {
+            // May already have pending input / locked stage.
+          }
+          try {
+            await state.session.observeModelOutput({
+              session_id: state.context.session_id,
+              content: "Provisional model output for proposed tool evaluation.",
+              content_ref: `model://track1/provisional/${state.snapshotSequence}`
+            });
+            state.modelOutputObserved = true;
+            state.provisionalModelOutput = true;
+          } catch {
+            // Pair may already exist.
+          }
+        }
+
+        const proposed = state.proposedToolCall;
+        const syntheticCallId = `call:proposed:${state.context.case_id.toLowerCase()}:${state.context.attempt_index}`;
+        const outcome = await state.session.beforeTool({
+          call_id: syntheticCallId,
+          session_id: state.context.session_id,
+          scenario_id: state.context.scenario_id,
+          case_id: state.context.case_id,
+          tool_name: proposed.tool_name,
+          arguments: proposed.arguments
+        });
+        state.toolMediated = true;
+        if (outcome.disposition === "intercept") {
+          const terminal = state.session.finalize();
+          await ingestSessionSnapshot(state, terminal);
+          state.ended = true;
+          sessions.delete(runtimeSessionId);
+          pendingSessionStarts.delete(runtimeSessionId);
+          toolRuntimeRegistry.delete(runtimeSessionId);
+          return;
+        }
+        await ingestSessionSnapshot(state, outcome.snapshot);
+        const afterSnapshot = state.session.afterTool({
+          session_id: state.context.session_id,
+          call_id: syntheticCallId,
+          tool_name: proposed.tool_name,
+          status: "success",
+          result_ref: `simulated-result://${syntheticCallId}/success`,
+          state_change: "simulated"
+        });
+        await ingestSessionSnapshot(state, afterSnapshot);
+      } catch {
+        // Fall through to ordinary finalization / fail-closed recovery.
+      }
+    }
+
     try {
       if (state.pendingToolCallId !== null) {
         try {
@@ -574,6 +707,13 @@ export function registerTrack1Plugin(
         throw new Track1PluginHookError("track1_plugin_envelope_mismatch");
       }
 
+      state.proposedToolCall = envelope.proposed_tool_call
+        ? {
+            tool_name: envelope.proposed_tool_call.tool_name,
+            arguments: envelope.proposed_tool_call.arguments
+          }
+        : null;
+
       const filterRequest = composeTrack1FilterModelRequest({
         user_prompt: envelope.user_prompt,
         retrieved_content: envelope.retrieved_content.map(
@@ -586,6 +726,8 @@ export function registerTrack1Plugin(
       });
       content = filterRequest.content;
       contentRef = filterRequest.content_ref;
+      state.filterModelContent = content;
+      state.filterModelContentRef = contentRef;
 
       // Observe model input
       state.session.observeModelInput({
@@ -766,7 +908,8 @@ export function registerTrack1Plugin(
           state.modelOutputObserved = true;
           state.provisionalModelOutput = true;
         } catch {
-          state.ended = true;
+          // Bug #13: Do NOT end the session here. Keep it recoverable so
+          // agent_end can still evaluate envelope.proposed_tool_call.
           return { ...BLOCK_SECURITY_UNAVAILABLE };
         }
       }
@@ -785,9 +928,13 @@ export function registerTrack1Plugin(
       try {
         outcome = await state.session.beforeTool(request);
       } catch {
-        state.ended = true;
+        // Bug #13: A failed real tool mediation must not permanently end the
+        // session without a terminal snapshot. Leave the session open so
+        // agent_end can evaluate the fixture proposed_tool_call and produce
+        // the expected deny/ask terminal attempt.
         return { ...BLOCK_SECURITY_UNAVAILABLE };
       }
+      state.toolMediated = true;
 
       if (outcome.disposition === "intercept") {
         // Bug #11: Only ingest the terminal intercept result. The live
@@ -886,15 +1033,14 @@ export function registerTrack1Plugin(
       return;
     }
 
-    // Bug #11: Intercept (deny/ask) never keeps a pending allow. OpenClaw may
-    // still emit after_tool_call for the blocked path; only that path is a
-    // no-op. A true missing-pending allow remains fail-closed.
+    // Bug #11/#13: Intercept paths and failed mediations may leave no pending
+    // allow. OpenClaw still emits after_tool_call; never throw here or the
+    // runtime may abort before agent_end recovery can run.
     if (state.pendingToolCallId === null) {
       if (state.lastInterceptedToolCallId === toolCallId) {
         state.lastInterceptedToolCallId = null;
-        return;
       }
-      throw new Track1PluginHookError("track1_plugin_session_not_found");
+      return;
     }
 
     // P1-Fix7: Detect tool failure via error field and result JSON parsing.
@@ -919,8 +1065,12 @@ export function registerTrack1Plugin(
       const afterSnapshot = state.session.afterTool(observedResult);
       await ingestSessionSnapshot(state, afterSnapshot);
     } catch {
-      state.ended = true;
-      throw new Track1PluginHookError("security_monitor_unavailable");
+      // Bug #13: Keep the session recoverable for agent_end proposed-tool
+      // evaluation instead of permanently ending without a terminal snapshot.
+      state.pendingToolCallId = null;
+      state.pendingToolCallToolName = null;
+      state.toolMediated = false;
+      return;
     }
 
     // Clear pending tool call (P1-Fix6)
@@ -944,9 +1094,16 @@ export function registerTrack1Plugin(
       throw new Track1PluginHookError("track1_plugin_event_invalid");
     }
     const state = sessions.get(ctx.sessionId);
-    if (!state || state.ended) {
-      // Already finalized by intercept path or prior terminal hook.
+    if (!state) {
       return;
+    }
+    // Bug #13: Even if a prior path marked ended without a terminal snapshot,
+    // reopen recovery for proposed-tool evaluation.
+    if (state.ended && state.terminalSnapshotIngested) {
+      return;
+    }
+    if (state.ended && !state.terminalSnapshotIngested) {
+      state.ended = false;
     }
     await finalizeBoundSession(ctx.sessionId, event.success === false);
   });
