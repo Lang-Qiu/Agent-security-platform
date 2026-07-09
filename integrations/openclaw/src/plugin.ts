@@ -114,6 +114,14 @@ interface PluginSessionState {
   // finalize() would seal the session (because there's a pending input),
   // making observeModelOutput impossible afterwards.
   modelOutputObserved: boolean;
+  // Bug #11: When a provisional model output was synthesized for an early
+  // tool turn, the real llm_output may arrive after the pair is no longer
+  // pending (or after an intercept seal). Observation may be a no-op.
+  provisionalModelOutput: boolean;
+  // Bug #11: after_tool_call may fire for a deny/ask intercept. Remember the
+  // last intercept call id so that path is a safe no-op without weakening the
+  // "no pending allow" fail-closed contract.
+  lastInterceptedToolCallId: string | null;
 }
 
 // -- helpers ---------------------------------------------------------------
@@ -332,7 +340,9 @@ export function registerTrack1Plugin(
       pendingToolCallToolName: null,
       agentEndedPendingOutput: false,
       agentEndedFailed: false,
-      modelOutputObserved: false
+      modelOutputObserved: false,
+      provisionalModelOutput: false,
+      lastInterceptedToolCallId: null
     };
     sessions.set(runtimeSessionId, state);
     pendingSessionStarts.delete(runtimeSessionId);
@@ -375,24 +385,46 @@ export function registerTrack1Plugin(
           // The finalization attempt below remains fail-closed.
         }
       }
-      if (failed) {
-        await ingestSessionSnapshot(state, state.session.fail());
-        return;
-      }
-      const finalResult = state.session.finalize();
-      await ingestSessionSnapshot(state, finalResult);
-    } catch {
-      let recoveredFailedSnapshot = false;
+      // Bug #11: After a deny/ask intercept the monitored session is already
+      // sealed. Prefer finalize() even when agent_end reports success=false,
+      // because fail() on an intercept-sealed session can leave the campaign
+      // attempt non-terminal. Only use fail() when finalize is impossible.
       try {
-        const snapshot = state.session.snapshot();
-        if (snapshot.status === "failed") {
-          await ingestSessionSnapshot(state, snapshot);
-          recoveredFailedSnapshot = true;
+        const finalResult = state.session.finalize();
+        await ingestSessionSnapshot(state, finalResult);
+        return;
+      } catch {
+        if (failed) {
+          await ingestSessionSnapshot(state, state.session.fail());
+          return;
+        }
+        throw new Track1PluginHookError("security_monitor_unavailable");
+      }
+    } catch {
+      let recoveredTerminalSnapshot = false;
+      try {
+        // Prefer finalize over snapshot: intercept seals report "running" via
+        // snapshot() even though finalize() can emit the terminal blocked
+        // result the campaign runner needs.
+        try {
+          const finalResult = state.session.finalize();
+          await ingestSessionSnapshot(state, finalResult);
+          recoveredTerminalSnapshot = true;
+        } catch {
+          const snapshot = state.session.snapshot();
+          if (
+            snapshot.status === "failed" ||
+            snapshot.status === "finished" ||
+            snapshot.status === "blocked"
+          ) {
+            await ingestSessionSnapshot(state, snapshot);
+            recoveredTerminalSnapshot = true;
+          }
         }
       } catch {
         // No raw provider or model error crosses the plugin boundary.
       }
-      if (!recoveredFailedSnapshot) {
+      if (!recoveredTerminalSnapshot) {
         throw new Track1PluginHookError("security_monitor_unavailable");
       }
     } finally {
@@ -603,7 +635,9 @@ export function registerTrack1Plugin(
     }
     const state = sessions.get(sessionId);
     if (!state || state.ended) {
-      throw new Track1PluginHookError("track1_plugin_session_not_found");
+      // Session already finalized (e.g. intercept path) or cleaned up.
+      // Late llm_output is a no-op so OpenClaw multi-turn ordering remains safe.
+      return;
     }
 
     // Extract content from SDK assistantTexts array, or fallback to content field
@@ -629,13 +663,24 @@ export function registerTrack1Plugin(
       ? (event.contentRef as string)
       : `model://track1/output/${state.snapshotSequence}`;
 
-    // observeModelOutput may throw Track1MonitorError on provider failure
-    await state.session.observeModelOutput({
-      session_id: state.context.session_id,
-      content,
-      content_ref: contentRef
-    });
-    state.modelOutputObserved = true;
+    // Bug #11: When a provisional model output was synthesized for an early
+    // tool turn, the real llm_output may arrive after the pair is no longer
+    // pending (or after an intercept seal). Keep the session usable for
+    // agent_end finalization and never leak raw content on this path.
+    try {
+      await state.session.observeModelOutput({
+        session_id: state.context.session_id,
+        content,
+        content_ref: contentRef
+      });
+      state.modelOutputObserved = true;
+      state.provisionalModelOutput = false;
+    } catch {
+      if (!state.provisionalModelOutput) {
+        throw new Track1PluginHookError("security_monitor_unavailable");
+      }
+      state.provisionalModelOutput = false;
+    }
 
     // Bug #9: If agent_end already fired (agentEndedPendingOutput), the
     // session was kept alive so this hook could observe the output. Now
@@ -708,6 +753,24 @@ export function registerTrack1Plugin(
         return { ...BLOCK_TOOL_NOT_PERMITTED };
       }
 
+      // Bug #11: OpenClaw may invoke before_tool_call before llm_output for
+      // the same user turn. beforeTool requires a completed model pair, so
+      // synthesize a provisional output that never contains raw provider body.
+      if (!state.modelOutputObserved) {
+        try {
+          await state.session.observeModelOutput({
+            session_id: state.context.session_id,
+            content: "Provisional model output for early tool evaluation.",
+            content_ref: `model://track1/provisional/${state.snapshotSequence}`
+          });
+          state.modelOutputObserved = true;
+          state.provisionalModelOutput = true;
+        } catch {
+          state.ended = true;
+          return { ...BLOCK_SECURITY_UNAVAILABLE };
+        }
+      }
+
       // Build SimulatedToolRequest for the adapter
       const request = {
         call_id: toolCallId,
@@ -727,11 +790,44 @@ export function registerTrack1Plugin(
       }
 
       if (outcome.disposition === "intercept") {
+        // Bug #11: Only ingest the terminal intercept result. The live
+        // beforeTool snapshot is non-terminal (status=running). Ingesting it
+        // first leaves the campaign attempt stuck if a later terminal ingest
+        // fails the snapshot chain, and even on success it is redundant.
         try {
-          await ingestSessionSnapshot(state, outcome.snapshot);
+          const terminal = state.session.finalize();
+          await ingestSessionSnapshot(state, terminal);
         } catch {
-          // Ingest failure on intercept is still a block
+          try {
+            // Last resort: force a terminal blocked envelope from the
+            // sealed snapshot without depending on finalize().
+            const snapshot = state.session.snapshot();
+            const forced = {
+              ...snapshot,
+              status: "blocked" as const,
+              summary: "Monitored sandbox session blocked",
+              finished_at:
+                typeof snapshot.finished_at === "string" &&
+                snapshot.finished_at.length > 0
+                  ? snapshot.finished_at
+                  : new Date().toISOString()
+            };
+            await ingestSessionSnapshot(state, forced as typeof snapshot);
+          } catch {
+            state.ended = true;
+            sessions.delete(sessionId);
+            pendingSessionStarts.delete(sessionId);
+            toolRuntimeRegistry.delete(sessionId);
+            return { ...BLOCK_SECURITY_UNAVAILABLE };
+          }
         }
+        state.lastInterceptedToolCallId = toolCallId;
+        state.pendingToolCallId = null;
+        state.pendingToolCallToolName = null;
+        state.ended = true;
+        sessions.delete(sessionId);
+        pendingSessionStarts.delete(sessionId);
+        toolRuntimeRegistry.delete(sessionId);
         const reason =
           outcome.decision.action === "deny"
             ? "policy_denied"
@@ -785,6 +881,19 @@ export function registerTrack1Plugin(
 
     const state = sessions.get(sessionId);
     if (!state || state.ended) {
+      // Session already cleaned up by agent_end/session_end — ignore late tool
+      // after-hooks rather than failing the runtime.
+      return;
+    }
+
+    // Bug #11: Intercept (deny/ask) never keeps a pending allow. OpenClaw may
+    // still emit after_tool_call for the blocked path; only that path is a
+    // no-op. A true missing-pending allow remains fail-closed.
+    if (state.pendingToolCallId === null) {
+      if (state.lastInterceptedToolCallId === toolCallId) {
+        state.lastInterceptedToolCallId = null;
+        return;
+      }
       throw new Track1PluginHookError("track1_plugin_session_not_found");
     }
 
@@ -833,6 +942,11 @@ export function registerTrack1Plugin(
       !isNonEmptyString(ctx.sessionId)
     ) {
       throw new Track1PluginHookError("track1_plugin_event_invalid");
+    }
+    const state = sessions.get(ctx.sessionId);
+    if (!state || state.ended) {
+      // Already finalized by intercept path or prior terminal hook.
+      return;
     }
     await finalizeBoundSession(ctx.sessionId, event.success === false);
   });
