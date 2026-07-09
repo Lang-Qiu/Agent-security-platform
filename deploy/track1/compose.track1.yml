@@ -48,7 +48,7 @@ services:
       INTERNAL_BIND_HOST: "0.0.0.0"
       TRACK1_INGEST_TOKEN: ${TRACK1_INGEST_TOKEN}
     ports:
-      - "3000:3000"
+      - "${TRACK1_BACKEND_HOST_PORT:-3000}:3000"
     expose:
       - "3001"
     networks:

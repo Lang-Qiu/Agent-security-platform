@@ -831,3 +831,149 @@ test("REQ-T1-DEMO-010 REQ-008 receives controlled retrieval content without pers
     false
   );
 });
+
+// -- Bug #9: OpenClaw direct CLI harness fires agent_end BEFORE llm_output ----
+
+test("REQ-T1-DEMO-010 real CLI lifecycle tolerates agent_end firing before llm_output", async () => {
+  // The OpenClaw direct CLI harness (`openclaw agent`) emits hooks in this
+  // order for a single-turn run:
+  //   session_start -> llm_input -> agent_end -> llm_output
+  // The plugin must NOT throw when agent_end arrives before llm_output.
+  // It must defer finalization, keep the session alive, let llm_output
+  // observe the model output, and then finalize with a "finished" snapshot.
+  const context = makeCampaignHookContext();
+  const runtimeSessionId = context.session_id.replace(/^session:/, "session-");
+  const runtimeContext = {
+    agentId: "agent-track1-prompt-injection",
+    sessionId: runtimeSessionId,
+    sessionKey: "session-key:0123456789abcdef0123456789abcdef"
+  };
+  const harness = await makePluginHookHarness({
+    register: registerTrack1Plugin,
+    action: "allow",
+    skipPreArm: true,
+    skipCampaignContext: true
+  });
+
+  await harness.sessionStart(
+    { sessionId: runtimeSessionId },
+    runtimeContext
+  );
+  await harness.llmInput(
+    {
+      runId: "run-real-cli-agent-end-first",
+      sessionId: runtimeSessionId,
+      provider: "openai-compat",
+      model: "provider/model-safe",
+      prompt: JSON.stringify(makeTrack1ModelInputEnvelope()),
+      historyMessages: [],
+      imagesCount: 0,
+      tools: []
+    },
+    runtimeContext
+  );
+
+  const agentEnd = harness.api.hooks.find(
+    (hook) => hook.name === "agent_end"
+  );
+  assert.ok(agentEnd);
+  // agent_end fires BEFORE llm_output — must not throw.
+  await assert.doesNotReject(
+    agentEnd.handler(
+      {
+        runId: "run-real-cli-agent-end-first",
+        messages: [{ role: "assistant", content: "ok" }],
+        success: true
+      },
+      runtimeContext
+    )
+  );
+
+  // llm_output fires AFTER agent_end — must not throw and must finalize.
+  await assert.doesNotReject(
+    harness.llmOutput(
+      {
+        runId: "run-real-cli-agent-end-first",
+        sessionId: runtimeSessionId,
+        provider: "openai-compat",
+        model: "provider/model-safe",
+        assistantTexts: ["The controlled portal is operating normally."]
+      },
+      runtimeContext
+    )
+  );
+
+  assert.equal(harness.snapshotsIngested, 1);
+  assert.equal(harness.snapshots[0]?.result.status, "finished");
+  assert.equal(
+    harness.snapshots[0]?.result.details?.session_id,
+    context.session_id
+  );
+});
+
+test("REQ-T1-DEMO-010 real CLI lifecycle with agent_end before llm_output rejects raw content in snapshot", async () => {
+  // Same hook ordering as above, but verify the safe-content boundary:
+  // raw model output must not appear in the ingested snapshot.
+  const context = makeCampaignHookContext();
+  const runtimeSessionId = context.session_id.replace(/^session:/, "session-");
+  const runtimeContext = {
+    agentId: "agent-track1-prompt-injection",
+    sessionId: runtimeSessionId,
+    sessionKey: "session-key:0123456789abcdef0123456789abcdef"
+  };
+  const harness = await makePluginHookHarness({
+    register: registerTrack1Plugin,
+    action: "allow",
+    skipPreArm: true,
+    skipCampaignContext: true
+  });
+
+  await harness.sessionStart(
+    { sessionId: runtimeSessionId },
+    runtimeContext
+  );
+  await harness.llmInput(
+    {
+      runId: "run-real-cli-agent-end-first-safe",
+      sessionId: runtimeSessionId,
+      provider: "openai-compat",
+      model: "provider/model-safe",
+      prompt: JSON.stringify(makeTrack1ModelInputEnvelope()),
+      historyMessages: [],
+      imagesCount: 0,
+      tools: []
+    },
+    runtimeContext
+  );
+
+  const agentEnd = harness.api.hooks.find(
+    (hook) => hook.name === "agent_end"
+  );
+  assert.ok(agentEnd);
+  await agentEnd.handler(
+    {
+      runId: "run-real-cli-agent-end-first-safe",
+      messages: [],
+      success: true
+    },
+    runtimeContext
+  );
+
+  const rawOutput = "RAW_MODEL_OUTPUT_SENTINEL_MUST_NOT_LEAK";
+  await harness.llmOutput(
+    {
+      runId: "run-real-cli-agent-end-first-safe",
+      sessionId: runtimeSessionId,
+      provider: "openai-compat",
+      model: "provider/model-safe",
+      assistantTexts: [rawOutput]
+    },
+    runtimeContext
+  );
+
+  assert.equal(harness.snapshotsIngested, 1);
+  assert.equal(
+    JSON.stringify(harness.snapshots).includes(rawOutput),
+    false
+  );
+});

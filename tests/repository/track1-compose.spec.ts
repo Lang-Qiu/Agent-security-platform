@@ -32,7 +32,10 @@ function loadCompose(path: string): ComposeFile {
 
 test("REQ-T1-DEMO-010 Compose never publishes internal ingest or OpenClaw ports", () => {
   const compose = loadCompose("deploy/track1/compose.track1.yml");
-  assert.deepEqual(compose.services.backend.ports, ["3000:3000"]);
+  assert.deepEqual(
+    compose.services.backend.ports,
+    ["${TRACK1_BACKEND_HOST_PORT:-3000}:3000"]
+  );
   assert.deepEqual(compose.services.backend.expose, ["3001"]);
   assert.equal("ports" in compose.services["openclaw-gateway"], false);
   assert.equal("ports" in compose.services["campaign-runner"], false);

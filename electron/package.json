@@ -1,0 +1,37 @@
+{
+  "name": "@agent-security-platform/electron",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/main.mjs",
+  "scripts": {
+    "build:frontend": "pnpm --filter @agent-security-platform/frontend build",
+    "start": "electron .",
+    "dev": "npm run build:frontend && electron .",
+    "test": "node --experimental-strip-types --experimental-test-isolation=none --test tests/wait-for-health.spec.ts tests/static-proxy-server.spec.ts tests/seed-demo-campaign.spec.ts",
+    "package:win": "npm run build:frontend && electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "43.0.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.agent-security-platform.track1-review-demo",
+    "productName": "Track1 Review Demo",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      { "from": "../backend/src", "to": "backend/src" },
+      { "from": "../shared", "to": "shared", "filter": ["**/*.ts", "!tests/**"] },
+      { "from": "../frontend/dist", "to": "frontend/dist" }
+    ],
+    "win": {
+      "target": ["portable"]
+    }
+  }
+}

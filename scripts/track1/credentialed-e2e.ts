@@ -30,6 +30,42 @@ export interface Track1CredentialedE2EPorts {
   stopRuntime(): Promise<void>;
 }
 
+export function deriveBackendHealthUrl(backendUrl: string): string {
+  return `${backendUrl.replace(/\/api\/?$/, "")}/health`;
+}
+
+export function deriveFrontendHealthUrl(frontendUrl: string): string {
+  const parsed = new URL(frontendUrl);
+  return `${parsed.origin}/`;
+}
+
+// REQ-T1-DEMO-010: build-security-risk-report.ts must run inside the
+// campaign-runner container so it can reach the internal ingest API
+// (port 3001) via the track1-ingest Docker network. The host never
+// publishes port 3001, and on Windows the default host port 3001 falls
+// inside the Hyper-V excluded range (2936-3035). Running the report
+// script inside the container avoids both issues while preserving the
+// security invariant that the ingest port is never published to the host.
+export function buildReportRunnerComposeArgs(
+  campaignHex: string,
+  artifactRoot: string
+): readonly string[] {
+  return Object.freeze([
+    "run",
+    "--rm",
+    "-v",
+    `${artifactRoot}:/data`,
+    "-e",
+    `TRACK1_PRECAPTURED_SCREENSHOT_ROOT=/data/.checkpoints/${campaignHex}`,
+    "campaign-runner",
+    "node",
+    "--experimental-strip-types",
+    "scripts/track1/build-security-risk-report.ts",
+    "--campaign-id",
+    `campaign:t1:${campaignHex}`
+  ]);
+}
+
 export interface Track1CredentialedE2EResult {
   schema_version: "track1-credentialed-e2e.v1";
   campaign_id: string;
@@ -272,6 +308,13 @@ interface SafeProcessResult {
   stdout: string;
 }
 
+export type RunProcessFn = (
+  executable: string,
+  args: readonly string[],
+  environment: Readonly<Record<string, string>>,
+  timeoutMs?: number
+) => Promise<SafeProcessResult>;
+
 function runSafeProcess(
   executable: string,
   args: readonly string[],
@@ -362,7 +405,11 @@ function normalizeInspectOutput(raw: string) {
 }
 
 export function createProductionCredentialedE2EPorts(
-  environment: Readonly<Record<string, string | undefined>>
+  environment: Readonly<Record<string, string | undefined>>,
+  options?: {
+    runProcess?: RunProcessFn;
+    waitForCampaignMaxPolls?: number;
+  }
 ): Track1CredentialedE2EPorts {
   const processEnvironment: Record<string, string> = {};
   for (const [key, value] of Object.entries(environment)) {
@@ -385,19 +432,23 @@ export function createProductionCredentialedE2EPorts(
   let latestInspect: ReturnType<typeof normalizeInspectOutput> | null = null;
   let acceptanceSource: Record<string, unknown> | null = null;
 
+  const runProcess = options?.runProcess ?? runSafeProcess;
+
   const compose = (
     args: readonly string[],
     timeoutMs?: number
   ) =>
-    runSafeProcess(
+    runProcess(
       COMPOSE_EXECUTABLE,
       [...COMPOSE_PREFIX, ...args],
       processEnvironment,
       timeoutMs
     );
 
+  const waitForCampaignMaxPolls = options?.waitForCampaignMaxPolls ?? 900;
+
   async function waitForCampaign(): Promise<string> {
-    for (let poll = 0; poll < 900; poll += 1) {
+    for (let poll = 0; poll < waitForCampaignMaxPolls; poll += 1) {
       try {
         const data = await getProductionApiData(
           backendUrl,
@@ -500,11 +551,13 @@ export function createProductionCredentialedE2EPorts(
       );
     },
     async waitForHealth() {
+      const backendHealthUrl = deriveBackendHealthUrl(backendUrl);
+      const frontendHealthUrl = deriveFrontendHealthUrl(frontendUrl);
       for (let poll = 0; poll < 120; poll += 1) {
         try {
           const [backend, frontend] = await Promise.all([
-            fetch("http://127.0.0.1:3000/health"),
-            fetch("http://127.0.0.1:5173/")
+            fetch(backendHealthUrl),
+            fetch(frontendHealthUrl)
           ]);
           if (backend.ok && frontend.ok) {
             await compose(
@@ -541,6 +594,14 @@ export function createProductionCredentialedE2EPorts(
     },
     async runCampaign() {
       const runner = compose(["run", "--rm", "campaign-runner"], 45 * 60_000);
+      // Bug #10: The runner Promise may reject while waitForCampaign() is
+      // still polling the public API. Without an early rejection handler,
+      // the rejection becomes an unhandledRejection, which the Node.js test
+      // runner treats as a hard test failure even though the catch block in
+      // runTrack1CredentialedE2E would otherwise catch the surfaced error
+      // at `await runner` below. Attach a no-op rejection handler now; the
+      // real error (if any) is re-surfaced when we await `runner`.
+      runner.catch(() => {});
       const campaignId = await waitForCampaign();
       latestCampaignId = campaignId;
       await captureRunningCheckpoint(campaignId);
@@ -613,21 +674,8 @@ export function createProductionCredentialedE2EPorts(
         ],
         180_000
       );
-      await runSafeProcess(
-        process.execPath,
-        [
-          "--experimental-strip-types",
-          "scripts/track1/build-security-risk-report.ts",
-          "--campaign-id",
-          campaignId
-        ],
-        {
-          ...processEnvironment,
-          TRACK1_BACKEND_URL: backendUrl,
-          TRACK1_INGEST_BASE_URL: ingestBaseUrl,
-          TRACK1_FRONTEND_URL: frontendUrl,
-          TRACK1_PRECAPTURED_SCREENSHOT_ROOT: checkpointRoot
-        },
+      await compose(
+        buildReportRunnerComposeArgs(campaignHex, artifactRoot),
         10 * 60_000
       );
       const manifestBytes = await readFile(

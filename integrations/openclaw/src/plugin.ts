@@ -101,6 +101,19 @@ interface PluginSessionState {
   pendingToolCallId: string | null;
   /** P4-ISSUE4: Track the tool name alongside the call ID for terminal failure */
   pendingToolCallToolName: string | null;
+  // Bug #9: The OpenClaw direct CLI harness emits agent_end BEFORE
+  // llm_output. When agent_end arrives and the session still has a
+  // pending model input (no output observed yet), we cannot finalize.
+  // Mark the session as "agentEndedPendingOutput" and keep it alive so
+  // llm_output can observe the output and finalize.
+  agentEndedPendingOutput: boolean;
+  // Bug #9: When agent_end fires first with success=false, we need to
+  // remember the failure flag so llm_output can finalize as failed.
+  agentEndedFailed: boolean;
+  // Bug #9: Track whether llm_output has been observed. When false,
+  // finalize() would seal the session (because there's a pending input),
+  // making observeModelOutput impossible afterwards.
+  modelOutputObserved: boolean;
 }
 
 // -- helpers ---------------------------------------------------------------
@@ -316,7 +329,10 @@ export function registerTrack1Plugin(
       previousSnapshotSha256: null,
       ended: false,
       pendingToolCallId: null,
-      pendingToolCallToolName: null
+      pendingToolCallToolName: null,
+      agentEndedPendingOutput: false,
+      agentEndedFailed: false,
+      modelOutputObserved: false
     };
     sessions.set(runtimeSessionId, state);
     pendingSessionStarts.delete(runtimeSessionId);
@@ -330,6 +346,17 @@ export function registerTrack1Plugin(
     const state = sessions.get(runtimeSessionId);
     if (!state || state.ended) {
       throw new Track1PluginHookError("track1_plugin_session_not_found");
+    }
+    // Bug #9: The OpenClaw direct CLI harness may emit agent_end BEFORE
+    // llm_output. When that happens, the session has a pending model input
+    // without a matching output. Calling finalize() would seal the session
+    // and make observeModelOutput impossible. Instead, defer finalization:
+    // mark the session as pending output so llm_output can observe the
+    // output and finalize later.
+    if (!state.modelOutputObserved && !failed) {
+      state.agentEndedPendingOutput = true;
+      state.agentEndedFailed = false;
+      return;
     }
     try {
       if (state.pendingToolCallId !== null) {
@@ -369,6 +396,11 @@ export function registerTrack1Plugin(
         throw new Track1PluginHookError("security_monitor_unavailable");
       }
     } finally {
+      // Bug #9: If we deferred finalization (agentEndedPendingOutput), keep
+      // the session alive so llm_output can still observe the output.
+      if (state.agentEndedPendingOutput) {
+        return;
+      }
       state.ended = true;
       sessions.delete(runtimeSessionId);
       pendingSessionStarts.delete(runtimeSessionId);
@@ -603,6 +635,37 @@ export function registerTrack1Plugin(
       content,
       content_ref: contentRef
     });
+    state.modelOutputObserved = true;
+
+    // Bug #9: If agent_end already fired (agentEndedPendingOutput), the
+    // session was kept alive so this hook could observe the output. Now
+    // that the output has been observed, finalize and clean up.
+    if (state.agentEndedPendingOutput) {
+      try {
+        if (state.agentEndedFailed) {
+          await ingestSessionSnapshot(state, state.session.fail());
+        } else {
+          const finalResult = state.session.finalize();
+          await ingestSessionSnapshot(state, finalResult);
+        }
+      } catch {
+        // Best-effort recovery: try to ingest a failed snapshot.
+        try {
+          const snapshot = state.session.snapshot();
+          if (snapshot.status === "failed") {
+            await ingestSessionSnapshot(state, snapshot);
+          }
+        } catch {
+          // No raw provider or model error crosses the plugin boundary.
+        }
+      } finally {
+        state.ended = true;
+        state.agentEndedPendingOutput = false;
+        sessions.delete(sessionId);
+        pendingSessionStarts.delete(sessionId);
+        toolRuntimeRegistry.delete(sessionId);
+      }
+    }
   });
 
   // -- before_tool_call -----------------------------------------------

@@ -38,6 +38,21 @@ const RAW_RULES: Track1FilterRule[] = [
     ]
   },
   {
+    rule_id: "indirect-injection-exfiltration",
+    stages: ["model_output"],
+    category: "prompt_injection",
+    action: "deny",
+    reason_code: "base_filter_indirect_injection_exfiltration",
+    reason: "Indirect prompt injection exfiltration attempt was detected in retrieved content",
+    conditions: [
+      {
+        source: "retrieved_content",
+        operator: "contains_all",
+        values: ["untrusted", "submit", "synthetic marker"]
+      }
+    ]
+  },
+  {
     rule_id: "retrieved-secret-exfiltration",
     stages: ["tool_request"],
     category: "prompt_injection",
