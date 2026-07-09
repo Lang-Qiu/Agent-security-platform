@@ -203,6 +203,42 @@ function parseModelInputEnvelope(
   }
 }
 
+function toolArgsMatchProposed(
+  toolName: string,
+  params: unknown,
+  proposed: {
+    tool_name: string;
+    arguments: Readonly<Record<string, unknown>>;
+  }
+): boolean {
+  if (toolName !== proposed.tool_name) return false;
+  if (!isPlainObject(params)) return false;
+  // Compare primary target fields used by Track 1 fixtures.
+  switch (toolName) {
+    case "read_file":
+    case "write_file":
+      return (
+        typeof params.path === "string" &&
+        typeof proposed.arguments.path === "string" &&
+        params.path === proposed.arguments.path
+      );
+    case "send_email":
+      return (
+        typeof params.recipient === "string" &&
+        typeof proposed.arguments.recipient === "string" &&
+        params.recipient === proposed.arguments.recipient
+      );
+    case "call_api":
+      return (
+        typeof params.endpoint === "string" &&
+        typeof proposed.arguments.endpoint === "string" &&
+        params.endpoint === proposed.arguments.endpoint
+      );
+    default:
+      return false;
+  }
+}
+
 function createDefaultToolRuntime(context: Track1PluginContext): CampaignToolRuntime {
   const state = new InMemorySimulatedToolState({});
   return {
@@ -826,28 +862,22 @@ export function registerTrack1Plugin(
 
     // Bug #9: If agent_end already fired (agentEndedPendingOutput), the
     // session was kept alive so this hook could observe the output. Now
-    // that the output has been observed, finalize and clean up.
+    // that the output has been observed, run the same terminal finalization
+    // path as agent_end — including proposed-tool recovery (Bug #14).
     if (state.agentEndedPendingOutput) {
+      state.agentEndedPendingOutput = false;
       try {
-        if (state.agentEndedFailed) {
-          await ingestSessionSnapshot(state, state.session.fail());
-        } else {
-          const finalResult = state.session.finalize();
-          await ingestSessionSnapshot(state, finalResult);
-        }
+        await finalizeBoundSession(sessionId, state.agentEndedFailed);
       } catch {
-        // Best-effort recovery: try to ingest a failed snapshot.
+        // Best-effort: leave fail-closed without raw content.
         try {
-          const snapshot = state.session.snapshot();
-          if (snapshot.status === "failed") {
-            await ingestSessionSnapshot(state, snapshot);
+          if (!state.terminalSnapshotIngested) {
+            await ingestSessionSnapshot(state, state.session.fail());
           }
         } catch {
           // No raw provider or model error crosses the plugin boundary.
         }
-      } finally {
         state.ended = true;
-        state.agentEndedPendingOutput = false;
         sessions.delete(sessionId);
         pendingSessionStarts.delete(sessionId);
         toolRuntimeRegistry.delete(sessionId);
@@ -893,6 +923,18 @@ export function registerTrack1Plugin(
       // Reject unknown tools before touching the adapter
       if (!PERMITTED_TOOLS.has(toolName)) {
         return { ...BLOCK_TOOL_NOT_PERMITTED };
+      }
+
+      // Bug #14: When the fixture proposes a tool, only mediate real tool
+      // calls that match that proposal. Non-matching real tools must not
+      // mutate ObservedMonitoredSession (which would leave pendingCall /
+      // poison genesis recovery). Block them without beforeTool so agent_end
+      // can evaluate the fixture proposal on a clean session.
+      if (
+        state.proposedToolCall !== null &&
+        !toolArgsMatchProposed(toolName, params, state.proposedToolCall)
+      ) {
+        return { ...BLOCK_SECURITY_UNAVAILABLE };
       }
 
       // Bug #11: OpenClaw may invoke before_tool_call before llm_output for
