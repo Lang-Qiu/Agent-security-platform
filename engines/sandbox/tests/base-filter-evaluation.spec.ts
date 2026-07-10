@@ -1042,8 +1042,16 @@ test("normalizer rejects non-canonical tool call_id with an approved prefix", as
     await runAllTrack1BaseFilterCases()
   );
   const badResults = cloneJson(report.results);
-  const caseId = report.cases[1].case_id;
-  const details = badResults[1].details;
+  // Prefer a result that actually contains tool events rather than a fixed
+  // case index (prompt-injection cases may terminate before tool calls).
+  const resultIndex = badResults.findIndex((result: any) =>
+    result.details.events.some(
+      (event: any) => event.event_type === "tool_request"
+    )
+  );
+  assert.ok(resultIndex >= 0, "test setup requires a tool_request event");
+  const details = badResults[resultIndex].details;
+  const caseId = report.cases[resultIndex].case_id;
   const request = details.events.find(
     (event: any) => event.event_type === "tool_request"
   );
@@ -1057,7 +1065,7 @@ test("normalizer rejects non-canonical tool call_id with an approved prefix", as
   result.payload.call_id = callId;
   const digest = result.payload.result_ref.split("/").at(-1);
   result.payload.result_ref = `simulated-result://${callId}/${digest}`;
-  assertSharedResultValid(badResults[1]);
+  assertSharedResultValid(badResults[resultIndex]);
 
   assert.equal(
     normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
@@ -1070,12 +1078,17 @@ test("normalizer rejects generic URI in tool result_ref", async () => {
     await runAllTrack1BaseFilterCases()
   );
   const badResults = cloneJson(report.results);
-  const result = badResults[1].details.events.find(
+  const resultIndex = badResults.findIndex((item: any) =>
+    item.details.events.some(
+      (event: any) => event.event_type === "tool_result"
+    )
+  );
+  assert.ok(resultIndex >= 0, "test setup requires a tool_result event");
+  const result = badResults[resultIndex].details.events.find(
     (event: any) => event.event_type === "tool_result"
   );
-  assert.ok(result, "test setup requires a tool_result event");
   result.payload.result_ref = "raw://toolsecret";
-  assertSharedResultValid(badResults[1]);
+  assertSharedResultValid(badResults[resultIndex]);
 
   assert.equal(
     normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
@@ -1217,12 +1230,17 @@ test("normalizer rejects generic URI in tool target_ref", async () => {
     await runAllTrack1BaseFilterCases()
   );
   const badResults = cloneJson(report.results);
-  const request = badResults[1].details.events.find(
+  const resultIndex = badResults.findIndex((item: any) =>
+    item.details.events.some(
+      (event: any) => event.event_type === "tool_request"
+    )
+  );
+  assert.ok(resultIndex >= 0, "test setup requires a tool_request event");
+  const request = badResults[resultIndex].details.events.find(
     (event: any) => event.event_type === "tool_request"
   );
-  assert.ok(request, "test setup requires a tool_request event");
   request.payload.target_ref = "raw://targetsecret";
-  assertSharedResultValid(badResults[1]);
+  assertSharedResultValid(badResults[resultIndex]);
 
   assert.equal(
     normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),
@@ -1235,12 +1253,17 @@ test("normalizer rejects generic URI in tool arguments_ref", async () => {
     await runAllTrack1BaseFilterCases()
   );
   const badResults = cloneJson(report.results);
-  const request = badResults[1].details.events.find(
+  const resultIndex = badResults.findIndex((item: any) =>
+    item.details.events.some(
+      (event: any) => event.event_type === "tool_request"
+    )
+  );
+  assert.ok(resultIndex >= 0, "test setup requires a tool_request event");
+  const request = badResults[resultIndex].details.events.find(
     (event: any) => event.event_type === "tool_request"
   );
-  assert.ok(request, "test setup requires a tool_request event");
   request.payload.arguments_ref = "raw://argumentsecret";
-  assertSharedResultValid(badResults[1]);
+  assertSharedResultValid(badResults[resultIndex]);
 
   assert.equal(
     normalizeTrack1BaseFilterDemoReport({ ...report, results: badResults }),

@@ -233,52 +233,49 @@ function validateCliResponse(
     fail("track1_invocation_protocol_invalid");
   }
   if (!isPlainObject(parsed)) fail("track1_invocation_protocol_invalid");
-  // Accept extra keys from evolving OpenClaw CLI releases; require the
-  // identity/status fields used by Track 1 correlation.
+  // Fail closed on unexpected top-level keys so protocol drift cannot be
+  // silently accepted as a successful agent invocation.
   if (
+    !hasExactKeys(parsed, ["runId", "status", "summary", "result"]) ||
     !isNonEmptyString(parsed.runId) ||
     parsed.status !== "ok" ||
-    (parsed.summary !== "completed" &&
-      parsed.summary !== "ok" &&
-      typeof parsed.summary !== "string") ||
+    parsed.summary !== "completed" ||
     !isPlainObject(parsed.result)
   ) {
     fail("track1_invocation_protocol_invalid");
   }
 
   const result = parsed.result;
-  const meta = isPlainObject(result.meta) ? result.meta : null;
-  // Prefer strict agentMeta correlation when present, but do not fail the
-  // whole campaign if OpenClaw omits/renames sessionFile fields after a
-  // successful run. Backend snapshot observation remains authoritative.
-  if (meta) {
-    if (
-      meta.transport === "embedded" ||
-      "fallbackFrom" in meta ||
-      "fallbackReason" in meta
-    ) {
-      fail("track1_invocation_protocol_invalid");
-    }
-    if (isPlainObject(meta.agentMeta)) {
-      const expectedSessionId = toRuntimeSessionId(invocation.session_id);
-      const expectedSuffix = `/${toRuntimeAgentId(invocation.agent_id)}/sessions/${expectedSessionId}.jsonl`;
-      const sessionFile = meta.agentMeta.sessionFile;
-      const sessionId = meta.agentMeta.sessionId;
-      if (
-        isNonEmptyString(sessionId) &&
-        sessionId !== expectedSessionId &&
-        sessionId !== invocation.session_id
-      ) {
-        fail("track1_invocation_protocol_invalid");
-      }
-      if (
-        isNonEmptyString(sessionFile) &&
-        !sessionFile.endsWith(expectedSuffix) &&
-        !sessionFile.includes(expectedSessionId)
-      ) {
-        fail("track1_invocation_protocol_invalid");
-      }
-    }
+  if (!hasExactKeys(result, ["payloads", "meta"]) || !isPlainObject(result.meta)) {
+    fail("track1_invocation_protocol_invalid");
+  }
+  const meta = result.meta;
+  if (
+    meta.transport === "embedded" ||
+    "fallbackFrom" in meta ||
+    "fallbackReason" in meta
+  ) {
+    fail("track1_invocation_protocol_invalid");
+  }
+  if (!isPlainObject(meta.agentMeta)) {
+    fail("track1_invocation_protocol_invalid");
+  }
+  const agentMeta = meta.agentMeta;
+  const expectedSessionId = toRuntimeSessionId(invocation.session_id);
+  const expectedSuffix = `/${toRuntimeAgentId(invocation.agent_id)}/sessions/${expectedSessionId}.jsonl`;
+  const sessionFile = agentMeta.sessionFile;
+  const sessionId = agentMeta.sessionId;
+  if (
+    !isNonEmptyString(sessionId) ||
+    (sessionId !== expectedSessionId && sessionId !== invocation.session_id)
+  ) {
+    fail("track1_invocation_protocol_invalid");
+  }
+  if (
+    !isNonEmptyString(sessionFile) ||
+    !sessionFile.endsWith(expectedSuffix)
+  ) {
+    fail("track1_invocation_protocol_invalid");
   }
   return {
     agent_id: invocation.agent_id,
@@ -368,25 +365,13 @@ export async function invokeOpenClawAgent(
     if (exitResult.code !== 0) fail("track1_invocation_nonzero_exit");
 
     const stdout = Buffer.concat(stdoutChunks).toString("utf8");
-    try {
-      const protocol = validateCliResponse(stdout, invocation);
-      return Object.freeze({
-        exit_code: 0 as const,
-        agent_id: invocation.agent_id,
-        session_key_sha256: protocol.session_key_sha256,
-        protocol_valid: true as const
-      });
-    } catch {
-      // OpenClaw CLI protocol shapes drift across versions. If the process
-      // exited 0, accept the invocation and let backend snapshot observation
-      // remain the source of truth for campaign outcomes.
-      return Object.freeze({
-        exit_code: 0 as const,
-        agent_id: invocation.agent_id,
-        session_key_sha256: hashSessionKey(invocation.session_key),
-        protocol_valid: true as const
-      });
-    }
+    const protocol = validateCliResponse(stdout, invocation);
+    return Object.freeze({
+      exit_code: 0 as const,
+      agent_id: invocation.agent_id,
+      session_key_sha256: protocol.session_key_sha256,
+      protocol_valid: true as const
+    });
   };
 
   return messagePort.withFile(prompt.relative_tmpfs_path, prompt.utf8, runInvocation);

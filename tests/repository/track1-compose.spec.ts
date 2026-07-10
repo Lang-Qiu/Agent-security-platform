@@ -223,4 +223,3 @@ test("REQ-T1-DEMO-010 gitignore covers generated Track 1 artifacts", () => {
   const raw = readFileSync(new URL(".gitignore", ROOT), "utf8");
   assert.equal(raw.includes("artifacts/"), true);
 });
-
