@@ -8,7 +8,6 @@ import {
   stat,
   writeFile
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -89,13 +88,17 @@ function runProcess(
   });
 }
 
-function dockerPdfPort(): Track1PdfBuilderPort {
+function dockerPdfPort(artifactRoot: string): Track1PdfBuilderPort {
+  const hostArtifactRoot = (
+    process.env.TRACK1_HOST_ARTIFACT_ROOT?.trim() || artifactRoot
+  ).replaceAll("\\", "/");
   return {
     async render(input, assets) {
-      const root = await mkdtemp(join(tmpdir(), "track1-pdf-"));
+      const temporary = await mkdtemp(join(artifactRoot, ".pdf-"));
+      const hostTemporary = `${hostArtifactRoot}/${basename(temporary)}`;
       try {
-        const inputRoot = join(root, "input");
-        const outputRoot = join(root, "output");
+        const inputRoot = join(temporary, "input");
+        const outputRoot = join(temporary, "output");
         await mkdir(join(inputRoot, "screenshots"), { recursive: true });
         await mkdir(outputRoot, { recursive: true });
         await writeFile(
@@ -119,18 +122,19 @@ function dockerPdfPort(): Track1PdfBuilderPort {
             "--env",
             `SOURCE_DATE_EPOCH=${input.source_date_epoch}`,
             "--volume",
-            `${root}:/data`,
+            `${hostTemporary}:/data`,
             REPORT_IMAGE
           ],
           120_000
         );
         return readFile(join(outputRoot, "security-risk-analysis.pdf"));
       } finally {
-        await rm(root, { recursive: true, force: true });
+        await rm(temporary, { recursive: true, force: true });
       }
     }
   };
 }
+
 
 async function writeFileMap(
   root: string,
@@ -159,6 +163,7 @@ function createProductionEvidencePorts(config: {
 }): Track1EvidencePipelinePorts {
   return {
     async loadSource(campaignId) {
+      process.stderr.write(`track1_report_step loadSource ${campaignId}\n`);
       const detail = normalizeTrack1CampaignDetail(
         await getApiData(
           apiUrl(
@@ -168,6 +173,9 @@ function createProductionEvidencePorts(config: {
         )
       );
       if (!detail) throw new Error("track1_report_source_invalid");
+      process.stderr.write(
+        `track1_report_step loadSource_status ${detail.status}\n`
+      );
       const attempts = detail.agents.flatMap((agent) =>
         agent.cases.flatMap((campaignCase) => campaignCase.attempts)
       );
@@ -184,6 +192,9 @@ function createProductionEvidencePorts(config: {
         if (!evidence) throw new Error("track1_report_source_invalid");
         sessions.push(evidence);
       }
+      process.stderr.write(
+        `track1_report_step loadSource_sessions ${sessions.length}\n`
+      );
       const campaignManifest = JSON.parse(
         await readFile(
           new URL("../../samples/track1/openclaw/campaign.v1.json", import.meta.url),
@@ -204,6 +215,7 @@ function createProductionEvidencePorts(config: {
     },
     projectReport: projectTrack1ReportModel,
     async captureRunning(model) {
+      process.stderr.write("track1_report_step captureRunning\n");
       const campaignHex = model.campaign.campaign_id.slice("campaign:t1:".length);
       return {
         path: "screenshots/campaign-running.png",
@@ -218,6 +230,7 @@ function createProductionEvidencePorts(config: {
       };
     },
     async captureFinal(model) {
+      process.stderr.write("track1_report_step captureFinal\n");
       const precaptured = process.env.TRACK1_PRECAPTURED_SCREENSHOT_ROOT;
       if (precaptured) {
         return [
@@ -257,6 +270,7 @@ function createProductionEvidencePorts(config: {
       }
     },
     async buildMarkdown(model) {
+      process.stderr.write("track1_report_step buildMarkdown\n");
       return Buffer.from(
         await buildTrack1MarkdownReport(model, {
           read(path) {
@@ -267,13 +281,14 @@ function createProductionEvidencePorts(config: {
       );
     },
     async buildPdf(model, markdown, screenshots) {
+      process.stderr.write("track1_report_step buildPdf\n");
       return buildTrack1Pdf(
         {
           markdown,
           completed_at: model.campaign.completed_at,
           screenshot_files: screenshots
         },
-        dockerPdfPort()
+        dockerPdfPort(config.artifactRoot)
       );
     },
     buildCampaignJson(model) {
@@ -351,8 +366,10 @@ async function runCli(): Promise<void> {
       ingestToken,
       frontendUrl:
         process.env.TRACK1_FRONTEND_URL ??
-        "http://127.0.0.1:5173/sandbox-alerts",
-      artifactRoot: resolve("artifacts/track1")
+        "http://127.0.0.1:5173/results/sandbox",
+      artifactRoot: resolve(
+        process.env.TRACK1_ARTIFACT_ROOT ?? "artifacts/track1"
+      )
     })
   );
   process.stdout.write(
@@ -366,7 +383,14 @@ if (
 ) {
   try {
     await runCli();
-  } catch {
+  } catch (error) {
+    if (process.env.TRACK1_REPORT_DEBUG === "1") {
+      const detail =
+        error instanceof Error
+          ? `${error.message}${error.stack ? `\n${error.stack}` : ""}`
+          : String(error);
+      process.stderr.write(`${detail}\n`);
+    }
     process.stderr.write("track1_report_failed\n");
     process.exitCode = 1;
   }

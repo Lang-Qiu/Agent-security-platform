@@ -60,6 +60,21 @@ test("REQ-T1-DEMO-010 report projector derives action from final session decisio
   assert.equal(model.cases[0]?.passed, true);
 });
 
+test("REQ-T1-DEMO-010 report projector accepts deny-path blocked terminal task_status", () => {
+  const source = makeCompletedCampaignReportSource();
+  const denySession = source.sessions.find(
+    (item) => item.session.summary.highest_action === "deny"
+  );
+  assert.ok(denySession);
+  assert.equal(denySession.session.summary.task_status, "blocked");
+  assert.equal(denySession.session.summary.blocked, true);
+
+  const model = projectTrack1ReportModel(source);
+  assert.equal(model.metrics.final_pass_count, 9);
+  assert.equal(model.metrics.deny_count, 5);
+  assert.equal(model.metrics.blocked_count, 5);
+});
+
 test("REQ-T1-DEMO-010 report projector rejects incomplete coverage", () => {
   const source = makeCompletedCampaignReportSource();
   source.campaign.agents.pop();

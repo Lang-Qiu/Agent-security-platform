@@ -8,6 +8,7 @@ test -f "$input"
 test -d /data/output
 test -n "${SOURCE_DATE_EPOCH:-}"
 
+# Use fonts packaged with TeX Live / Noto CJK in the report image.
 exec pandoc "$input" \
   --from=gfm \
   --standalone \
@@ -16,6 +17,6 @@ exec pandoc "$input" \
   --metadata=title:"Track 1 Security Risk Analysis" \
   --metadata=author:"Agent Security Platform" \
   --metadata=date:"" \
-  --variable=mainfont:"Latin Modern Roman" \
-  --variable=CJKmainfont:"FandolSong-Regular" \
+  --variable=mainfont:"TeX Gyre Termes" \
+  --variable=CJKmainfont:"Noto Serif CJK SC" \
   --output="$output"

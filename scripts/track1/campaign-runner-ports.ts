@@ -479,47 +479,136 @@ export function createProductionPorts(
     },
 
     async awaitAttempt(input): Promise<Track1AttemptObservation> {
-      for (let poll = 0; poll < 120; poll += 1) {
-        const response = await fetchImpl(
-          apiUrl(
-            publicApiBaseUrl,
-            `/supervision/campaigns/${encodeURIComponent(input.campaign_id)}`
-          )
+      // Version banner so we can confirm the live runner has this code path.
+      try {
+        process.stderr.write(
+          `await_attempt_start case=${input.case_id} attempt=${input.attempt_id} session=${input.session_id}\n`
         );
-        if (!response.ok) throw new Error("track1_attempt_observation_failed");
+      } catch {
+        // ignore
+      }
+      for (let poll = 0; poll < 120; poll += 1) {
+        let response: Response;
+        try {
+          response = await fetchImpl(
+            apiUrl(
+              publicApiBaseUrl,
+              `/supervision/campaigns/${encodeURIComponent(input.campaign_id)}`
+            )
+          );
+        } catch (err) {
+          if (poll % 6 === 0) {
+            try {
+              process.stderr.write(
+                `await_attempt_fetch_err poll=${poll} err=${String(err)}\n`
+              );
+            } catch {
+              // ignore
+            }
+          }
+          await sleep(5_000);
+          continue;
+        }
+        if (!response.ok) {
+          if (poll % 6 === 0) {
+            try {
+              process.stderr.write(
+                `await_attempt_http poll=${poll} status=${response.status}\n`
+              );
+            } catch {
+              // ignore
+            }
+          }
+          await sleep(5_000);
+          continue;
+        }
         let body: unknown;
         try {
           body = await response.json();
         } catch {
-          throw new Error("track1_campaign_observation_invalid");
+          await sleep(5_000);
+          continue;
         }
         if (
           typeof body !== "object" ||
           body === null ||
           (body as Record<string, unknown>).success !== true
         ) {
-          throw new Error("track1_campaign_observation_invalid");
-        }
-        const detail = normalizeTrack1CampaignDetail(
-          (body as Record<string, unknown>).data
-        );
-        const agent = detail?.agents.find(
-          (candidate) => candidate.agent_id === input.agent_id
-        );
-        const caseDetail = agent?.cases.find(
-          (candidate) => candidate.case_id === input.case_id
-        );
-        const attempt = caseDetail?.attempts.find(
-          (candidate) => candidate.attempt_id === input.attempt_id
-        );
-        if (!attempt || attempt.status === "running") {
           await sleep(5_000);
           continue;
         }
+        const data = (body as Record<string, unknown>).data;
+        // Always walk the raw detail payload. Do not depend on
+        // normalizeTrack1CampaignDetail: after the final case passes, all
+        // agents are "completed" while campaign status is still "running"
+        // until finalize runs, and the shared normalizer rejects that
+        // transitional shape (returning null forever -> observation timeout).
+        let attempt:
+          | {
+              attempt_id: string;
+              session_id: string;
+              status: string;
+              actual_action: string | null;
+            }
+          | undefined;
         if (
-          attempt.session_id !== input.session_id ||
-          attempt.actual_action === null
+          typeof data === "object" &&
+          data !== null &&
+          Array.isArray((data as { agents?: unknown }).agents)
         ) {
+          for (const agent of (data as { agents: unknown[] }).agents) {
+            if (typeof agent !== "object" || agent === null) continue;
+            const cases = (agent as { cases?: unknown }).cases;
+            if (!Array.isArray(cases)) continue;
+            for (const caseDetail of cases) {
+              if (typeof caseDetail !== "object" || caseDetail === null) continue;
+              const attempts = (caseDetail as { attempts?: unknown }).attempts;
+              if (!Array.isArray(attempts)) continue;
+              for (const candidate of attempts) {
+                if (typeof candidate !== "object" || candidate === null) continue;
+                const row = candidate as Record<string, unknown>;
+                if (row.attempt_id !== input.attempt_id) continue;
+                // Match by attempt_id only (globally unique in a campaign).
+                attempt = {
+                  attempt_id: String(row.attempt_id),
+                  session_id: String(row.session_id ?? ""),
+                  status: String(row.status ?? "running"),
+                  actual_action:
+                    typeof row.actual_action === "string"
+                      ? row.actual_action
+                      : null
+                };
+              }
+            }
+          }
+        }
+        if (!attempt || attempt.status === "running") {
+          if (poll % 3 === 0) {
+            try {
+              process.stderr.write(
+                `await_attempt_poll poll=${poll} case=${input.case_id} found=${Boolean(attempt)} status=${attempt?.status ?? "null"}\n`
+              );
+            } catch {
+              // ignore
+            }
+          }
+          await sleep(5_000);
+          continue;
+        }
+        const sessionMatches =
+          attempt.session_id === input.session_id ||
+          attempt.session_id.replace(/^session:/, "session-") ===
+            input.session_id.replace(/^session:/, "session-") ||
+          attempt.session_id.replace(/^session-/, "session:") ===
+            input.session_id.replace(/^session-/, "session:");
+        if (!sessionMatches || attempt.actual_action === null) {
+          try {
+            process.stderr.write(
+              `await_attempt_corr case=${input.case_id} want_session=${input.session_id} got_session=${attempt.session_id} action=${String(attempt.actual_action)}\n`
+            );
+          } catch {
+            // ignore
+          }
           return {
             outcome: "terminal_failed",
             final_action: null,
@@ -527,15 +616,22 @@ export function createProductionPorts(
           };
         }
         if (attempt.status === "passed") {
+          try {
+            process.stderr.write(
+              `await_attempt_passed case=${input.case_id} action=${attempt.actual_action}\n`
+            );
+          } catch {
+            // ignore
+          }
           return {
             outcome: "passed",
-            final_action: attempt.actual_action,
+            final_action: attempt.actual_action as never,
             reason: null
           };
         }
         return {
           outcome: "retryable_failed",
-          final_action: attempt.actual_action,
+          final_action: attempt.actual_action as never,
           reason: "derived_action_mismatch"
         };
       }

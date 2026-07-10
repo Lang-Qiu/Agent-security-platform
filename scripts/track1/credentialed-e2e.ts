@@ -50,13 +50,24 @@ export function buildReportRunnerComposeArgs(
   campaignHex: string,
   artifactRoot: string
 ): readonly string[] {
+  // Docker Desktop on Windows accepts host bind mounts with forward slashes.
+  // Backslashes are unsafe: "\t" in "...\track1..." becomes a tab in shell/env.
+  const hostArtifactRoot = artifactRoot.replaceAll("\\", "/");
   return Object.freeze([
     "run",
     "--rm",
     "-v",
-    `${artifactRoot}:/data`,
+    `${hostArtifactRoot}:/data`,
+    "-v",
+    "/var/run/docker.sock:/var/run/docker.sock",
+    "-e",
+    "TRACK1_ARTIFACT_ROOT=/data",
+    "-e",
+    `TRACK1_HOST_ARTIFACT_ROOT=${hostArtifactRoot}`,
     "-e",
     `TRACK1_PRECAPTURED_SCREENSHOT_ROOT=/data/.checkpoints/${campaignHex}`,
+    "-e",
+    "TRACK1_REPORT_DEBUG=1",
     "campaign-runner",
     "node",
     "--experimental-strip-types",
@@ -426,7 +437,7 @@ export function createProductionCredentialedE2EPorts(
     "http://127.0.0.1:3001/internal/track1";
   const frontendUrl =
     environment.TRACK1_FRONTEND_URL ??
-    "http://127.0.0.1:5173/sandbox-alerts";
+    "http://127.0.0.1:5173/results/sandbox";
   const artifactRoot = resolve("artifacts/track1");
   let latestCampaignId = "";
   let latestInspect: ReturnType<typeof normalizeInspectOutput> | null = null;
@@ -498,7 +509,7 @@ export function createProductionCredentialedE2EPorts(
           JSON.stringify({
             capture_mode: "running",
             input: {
-              base_url: "http://frontend:3000/sandbox-alerts",
+              base_url: "http://frontend:3000/results/sandbox",
               campaign_id: campaignId
             }
           }),
@@ -649,7 +660,7 @@ export function createProductionCredentialedE2EPorts(
         JSON.stringify({
           capture_mode: "final",
           input: {
-            base_url: "http://frontend:3000/sandbox-alerts",
+            base_url: "http://frontend:3000/results/sandbox",
             campaign_id: campaignId,
             cases: detail.agents.flatMap((agent) =>
               agent.cases.map((campaignCase) => ({

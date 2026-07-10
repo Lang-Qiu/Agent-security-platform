@@ -191,14 +191,36 @@ test("REQ-T1-DEMO-010 frontend proxy targets the backend service inside Compose"
     compose.services.frontend.environment?.TRACK1_BACKEND_ORIGIN,
     "http://backend:3000"
   );
+  assert.equal(
+    compose.services["evidence-capture"].environment?.TRACK1_FRONTEND_URL,
+    "http://frontend:3000/results/sandbox"
+  );
   const viteConfig = readFileSync(
     new URL("frontend/vite.config.mjs", ROOT),
     "utf8"
   );
   assert.match(viteConfig, /process\.env\.TRACK1_BACKEND_ORIGIN/);
+  assert.match(viteConfig, /allowedHosts/);
+});
+
+
+
+test("REQ-T1-DEMO-010 frontend Dockerfile ships monorepo tsconfig base and shared types", () => {
+  const dockerfile = readFileSync(
+    new URL("deploy/track1/Dockerfile.frontend", ROOT),
+    "utf8"
+  );
+  assert.match(dockerfile, /COPY\s+tsconfig\.base\.json\s+/);
+  assert.match(dockerfile, /COPY\s+shared\s+(\.\/)?shared/);
+  assert.match(
+    dockerfile,
+    /COPY\s+samples\/track1\/review-demo\s+(\.\/)?samples\/track1\/review-demo/
+  );
+  assert.match(dockerfile, /COPY\s+frontend\s+(\.\/)?frontend/);
 });
 
 test("REQ-T1-DEMO-010 gitignore covers generated Track 1 artifacts", () => {
   const raw = readFileSync(new URL(".gitignore", ROOT), "utf8");
   assert.equal(raw.includes("artifacts/"), true);
 });
+

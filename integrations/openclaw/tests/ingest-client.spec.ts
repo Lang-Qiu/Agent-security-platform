@@ -65,6 +65,43 @@ test("REQ-T1-DEMO-010 ingest client rejects envelope that fails shared normaliza
   );
 });
 
+test("REQ-T1-DEMO-010 ingest client accepts backend-wrapped attempt summary as success", async () => {
+  // Production backend returns { success, message, data: AttemptSummary }.
+  // Without accepting that shape, successful ingests look like failures and
+  // the plugin retries into CAMPAIGN_SNAPSHOT_CONFLICT.
+  const envelope = makeCampaignSnapshotEnvelope();
+  const client = new Track1IngestClient(makeCampaignPluginConfig(), {
+    async request() {
+      return {
+        status: 200,
+        body: JSON.stringify({
+          success: true,
+          message: "Snapshot ingested",
+          data: {
+            campaign_id: envelope.campaign_id,
+            agent_id: envelope.agent_id,
+            scenario_id: envelope.scenario_id,
+            case_id: envelope.case_id,
+            attempt_id: envelope.attempt_id,
+            attempt_index: envelope.attempt_index,
+            session_id: "session:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            task_id: "task:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            status: "passed",
+            actual_action: "deny",
+            started_at: "2026-06-30T00:00:04.000Z",
+            updated_at: "2026-06-30T00:00:04.000Z"
+          }
+        })
+      };
+    }
+  });
+  const ack = await client.appendSnapshot(envelope);
+  assert.equal(ack.campaign_id, envelope.campaign_id);
+  assert.equal(ack.attempt_id, envelope.attempt_id);
+  assert.equal(ack.sequence, envelope.sequence);
+  assert.equal(ack.snapshot_sha256, envelope.snapshot_sha256);
+});
+
 // -- fail-closed without token / backend leak ------------------------------
 
 test("REQ-T1-DEMO-010 ingest client fails closed without leaking token or backend body", async () => {

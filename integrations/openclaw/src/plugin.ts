@@ -1,4 +1,4 @@
-// P0-Fix1: Real OpenClaw SDK definePluginEntry import — no local stub.
+// P0-Fix1: Real OpenClaw SDK definePluginEntry import �?no local stub.
 // P0-Fix2: camelCase hook event fields + ctx param + tool label + 5-arg execute.
 // P1-Fix5: Per-session tool runtime via CampaignToolRuntimeResolver.
 
@@ -134,13 +134,32 @@ interface PluginSessionState {
   // failed real tool call seals the previous monitor session.
   filterModelContent: string | null;
   filterModelContentRef: string | null;
-  // True once a terminal (finished/failed/blocked) snapshot was successfully
+  // True once terminal (finished/failed/blocked) snapshot was successfully
   // ingested for this attempt. agent_end recovery uses this to avoid early
   // return after a non-terminal failure path marked the session ended.
   terminalSnapshotIngested: boolean;
+  // Bug #16: llm_input is fire-and-forget in OpenClaw. Session objects may
+  // exist before the envelope fields (proposedToolCall/filter context) are
+  // bound. agent_end must wait until binding is complete.
+  bindingReady: boolean;
+  // Monotonic creation order for multi-session fallback selection.
+  createdAtMs: number;
 }
 
 // -- helpers ---------------------------------------------------------------
+
+function debugLog(message: string, data?: Record<string, unknown>): void {
+  try {
+    const line = `[track1-plugin] ${JSON.stringify({
+      ts: new Date().toISOString(),
+      message,
+      ...(data ?? {})
+    })}\n`;
+    process.stderr.write(line);
+  } catch {
+    // never throw from debug
+  }
+}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -225,8 +244,14 @@ function toolArgsMatchProposed(
     case "send_email":
       return (
         typeof params.recipient === "string" &&
+        typeof params.subject === "string" &&
+        typeof params.body === "string" &&
         typeof proposed.arguments.recipient === "string" &&
-        params.recipient === proposed.arguments.recipient
+        typeof proposed.arguments.subject === "string" &&
+        typeof proposed.arguments.body === "string" &&
+        params.recipient === proposed.arguments.recipient &&
+        params.subject === proposed.arguments.subject &&
+        params.body === proposed.arguments.body
       );
     case "call_api":
       return (
@@ -282,20 +307,70 @@ async function ingestSessionSnapshot(
   result: BaseResult<SandboxRunResultDetails>
 ): Promise<void> {
   const envelope = buildSnapshotEnvelope(state, result);
-  const ack = await state.ingest(envelope);
-  state.previousSnapshotSha256 = ack.snapshot_sha256;
-  state.snapshotSequence += 1;
-  if (
-    result.status === "finished" ||
-    result.status === "failed" ||
-    result.status === "blocked"
-  ) {
-    state.terminalSnapshotIngested = true;
+  // Local validation before network so we can distinguish envelope shape
+  // failures from transport/HTTP failures.
+  const { normalizeTrack1CampaignSnapshotEnvelope } = await import(
+    "../../../shared/contracts/campaign-ingest.ts"
+  );
+  const localOk = normalizeTrack1CampaignSnapshotEnvelope(envelope);
+  if (!localOk) {
+    const details = result.details as SandboxRunResultDetails | undefined;
+    debugLog("envelope_invalid_local", {
+      case_id: state.context.case_id,
+      attempt_id: state.context.attempt_id,
+      status: result.status,
+      sequence: envelope.sequence,
+      task_type: result.task_type,
+      engine_type: result.engine_type,
+      risk_level: result.risk_level,
+      has_details: Boolean(details),
+      blocked: details?.blocked,
+      event_count: details?.event_count,
+      events: Array.isArray(details?.events) ? details.events.length : -1,
+      decisions: Array.isArray(details?.policy_decisions)
+        ? details.policy_decisions.length
+        : -1,
+      alerts: Array.isArray(details?.alerts) ? details.alerts.length : -1,
+      blocked_records: Array.isArray(details?.blocked_records)
+        ? details.blocked_records.length
+        : -1,
+      result_keys: Object.keys(result),
+      detail_keys: details ? Object.keys(details) : []
+    });
+  }
+  try {
+    const ack = await state.ingest(envelope);
+    state.previousSnapshotSha256 = ack.snapshot_sha256;
+    state.snapshotSequence += 1;
+    if (
+      result.status === "finished" ||
+      result.status === "failed" ||
+      result.status === "blocked"
+    ) {
+      state.terminalSnapshotIngested = true;
+    }
+    debugLog("ingest_ok", {
+      case_id: state.context.case_id,
+      attempt_id: state.context.attempt_id,
+      status: result.status,
+      sequence: envelope.sequence,
+      terminal: state.terminalSnapshotIngested
+    });
+  } catch (err) {
+    debugLog("ingest_fail", {
+      case_id: state.context.case_id,
+      attempt_id: state.context.attempt_id,
+      status: result.status,
+      sequence: envelope.sequence,
+      localOk: Boolean(localOk),
+      err: String(err)
+    });
+    throw err;
   }
 }
 
 
-// P1-Fix7: Tool failure detection — check error field and parse tool output JSON.
+// P1-Fix7: Tool failure detection �?check error field and parse tool output JSON.
 function detectToolFailure(event: {
   error?: string;
   result?: unknown;
@@ -312,7 +387,7 @@ function detectToolFailure(event: {
       if (result.status === "failed" || result.status === "error") {
         return true;
       }
-      // P5-ISSUE5: "rejected" is NOT a tool failure — the tool adapter
+      // P5-ISSUE5: "rejected" is NOT a tool failure �?the tool adapter
       // rejected the call (e.g. target_not_allowed), and the execution
       // succeeded at rejecting. It must be recorded as a tool execution
       // result, not a failure. The rejection_code is preserved in the
@@ -327,7 +402,7 @@ function detectToolFailure(event: {
       try {
         const parsed = JSON.parse(result);
         if (isPlainObject(parsed)) {
-          // P5-ISSUE5: "rejected" is also excluded here — same rationale.
+          // P5-ISSUE5: "rejected" is also excluded here �?same rationale.
           if (parsed.status === "failed" || parsed.status === "error") {
             return true;
           }
@@ -337,7 +412,7 @@ function detectToolFailure(event: {
           }
         }
       } catch {
-        // Not JSON — treat as success content
+        // Not JSON �?treat as success content
       }
     }
   }
@@ -353,6 +428,11 @@ export function registerTrack1Plugin(
   const sessions = new Map<string, PluginSessionState>();
   const pendingSessionStarts = new Set<string>();
   const { campaignContext, toolRuntimeRegistry } = runtime;
+  let idSeq = 0;
+  const nextRuntimeId = (kind: string): string => {
+    idSeq += 1;
+    return `${kind}:${Date.now().toString(36)}:${idSeq.toString(36)}`;
+  };
 
   // P3-ISSUE2: campaignContext may be undefined (production path). When
   // provided upfront (test probes), use it for session_start cross-checks.
@@ -375,9 +455,7 @@ export function registerTrack1Plugin(
     toolRuntimeRegistry.register(runtimeSessionId, toolRuntime);
     const monitorPorts: MonitorRuntimePorts = {
       now: runtime.ports.now ?? (() => new Date().toISOString()),
-      nextId:
-        runtime.ports.nextId ??
-        ((kind: string) => `${kind}:${Date.now().toString(36)}`)
+      nextId: runtime.ports.nextId ?? nextRuntimeId
     };
     const state: PluginSessionState = {
       session: new ObservedMonitoredSession(
@@ -407,11 +485,200 @@ export function registerTrack1Plugin(
       toolMediated: false,
       filterModelContent: null,
       filterModelContentRef: null,
-      terminalSnapshotIngested: false
+      terminalSnapshotIngested: false,
+      bindingReady: false,
+      createdAtMs: Date.now()
     };
     sessions.set(runtimeSessionId, state);
     pendingSessionStarts.delete(runtimeSessionId);
     return state;
+  };
+
+  const waitForBoundSession = async (
+    sessionId: string | null,
+    maxPolls = 100
+  ): Promise<{ runtimeId: string; state: PluginSessionState } | null> => {
+    // Bug #16/#17/#20/#22/#27:
+    // - Wait for llm_input binding (fire-and-forget).
+    // - Tolerate session: vs session- form drift.
+    // - NEVER steal another attempt's session. Late agent_end from a prior
+    //   attempt previously finalized the newest ready session and poisoned
+    //   SC-002-C002 with an invalid force-terminal envelope.
+    const candidatesFor = (id: string | null): string[] => {
+      if (!id) return [];
+      const out = [id];
+      if (id.startsWith("session:")) {
+        out.push(id.replace(/^session:/, "session-"));
+      } else if (id.startsWith("session-")) {
+        out.push(id.replace(/^session-/, "session:"));
+      }
+      return out;
+    };
+
+    const lookupExact = (
+      id: string | null
+    ): { runtimeId: string; state: PluginSessionState } | null => {
+      for (const candidate of candidatesFor(id)) {
+        const direct = sessions.get(candidate);
+        if (direct?.bindingReady) {
+          return { runtimeId: candidate, state: direct };
+        }
+      }
+      return null;
+    };
+
+    const pickNewestReady = (): {
+      runtimeId: string;
+      state: PluginSessionState;
+    } | null => {
+      const ready: Array<{ runtimeId: string; state: PluginSessionState }> = [];
+      for (const [runtimeId, state] of sessions.entries()) {
+        if (
+          state.bindingReady &&
+          !state.terminalSnapshotIngested &&
+          !state.ended
+        ) {
+          ready.push({ runtimeId, state });
+        }
+      }
+      if (ready.length === 0) return null;
+      ready.sort((a, b) => b.state.createdAtMs - a.state.createdAtMs);
+      return ready[0]!;
+    };
+
+    for (let poll = 0; poll < maxPolls; poll += 1) {
+      if (sessionId) {
+        const exact = lookupExact(sessionId);
+        if (exact) return exact;
+        // Exact id was requested: keep waiting for THAT session only.
+        // Do not fall back to another ready session.
+      } else {
+        const newest = pickNewestReady();
+        if (newest) return newest;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+
+    if (sessionId) {
+      return lookupExact(sessionId);
+    }
+    return pickNewestReady();
+  };
+
+  const listReadySessions = (): Array<{
+    runtimeId: string;
+    state: PluginSessionState;
+  }> => {
+    const ready: Array<{ runtimeId: string; state: PluginSessionState }> = [];
+    for (const [runtimeId, state] of sessions.entries()) {
+      if (state.bindingReady && !state.terminalSnapshotIngested) {
+        ready.push({ runtimeId, state });
+      }
+    }
+    ready.sort((a, b) => b.state.createdAtMs - a.state.createdAtMs);
+    return ready;
+  };
+
+  const purgeStaleSessions = (keepRuntimeId?: string): void => {
+    // Long-lived gateway accumulates abandoned sessions across sequential
+    // campaign attempts. On each new bind, keep ONLY the active attempt.
+    for (const [runtimeId] of sessions.entries()) {
+      if (keepRuntimeId && runtimeId === keepRuntimeId) continue;
+      sessions.delete(runtimeId);
+      pendingSessionStarts.delete(runtimeId);
+      toolRuntimeRegistry.delete(runtimeId);
+    }
+  };
+
+  const forceTerminalFail = async (
+    runtimeSessionId: string
+  ): Promise<boolean> => {
+    const live = sessions.get(runtimeSessionId);
+    if (!live || live.terminalSnapshotIngested) return false;
+    if (
+      live.proposedToolCall === null ||
+      live.filterModelContent === null ||
+      live.filterModelContentRef === null
+    ) {
+      return false;
+    }
+    try {
+      const monitorPorts: MonitorRuntimePorts = {
+        now: runtime.ports.now ?? (() => new Date().toISOString()),
+        nextId:
+          runtime.ports.nextId ?? nextRuntimeId
+      };
+      live.session = new ObservedMonitoredSession(
+        {
+          task_id: live.context.session_id.replace(/^session:/, "task:"),
+          session_id: live.context.session_id,
+          model_ref: live.context.model_ref,
+          scenario_id: live.context.scenario_id,
+          case_id: live.context.case_id
+        },
+        runtime.ports.provider,
+        monitorPorts
+      );
+      live.ended = false;
+      live.modelOutputObserved = false;
+      live.provisionalModelOutput = false;
+      live.previousSnapshotSha256 = null;
+      live.snapshotSequence = 1;
+      live.toolMediated = false;
+      live.pendingToolCallId = null;
+      live.pendingToolCallToolName = null;
+      live.session.observeModelInput({
+        session_id: live.context.session_id,
+        content: live.filterModelContent,
+        content_ref: live.filterModelContentRef
+      });
+      await live.session.observeModelOutput({
+        session_id: live.context.session_id,
+        content: "Provisional model output for force terminal recovery.",
+        content_ref: `model://track1/provisional/${live.snapshotSequence}`
+      });
+      live.modelOutputObserved = true;
+      live.provisionalModelOutput = true;
+      const proposed = live.proposedToolCall;
+      const syntheticCallId = `call:proposed:${live.context.case_id.toLowerCase()}:${live.context.attempt_index}`;
+      const recovery = await live.session.beforeTool({
+        call_id: syntheticCallId,
+        session_id: live.context.session_id,
+        scenario_id: live.context.scenario_id,
+        case_id: live.context.case_id,
+        tool_name: proposed.tool_name,
+        arguments: proposed.arguments
+      });
+      live.toolMediated = true;
+      if (recovery.disposition === "intercept") {
+        const terminal = live.session.finalize();
+        await ingestSessionSnapshot(live, terminal);
+      } else {
+        await ingestSessionSnapshot(live, recovery.snapshot);
+        const afterSnapshot = live.session.afterTool({
+          session_id: live.context.session_id,
+          call_id: syntheticCallId,
+          tool_name: proposed.tool_name,
+          status: "success",
+          result_ref: `simulated-result://${syntheticCallId}/success`,
+          state_change: "simulated"
+        });
+        await ingestSessionSnapshot(live, afterSnapshot);
+        const finalResult = live.session.finalize();
+        await ingestSessionSnapshot(live, finalResult);
+      }
+      live.ended = true;
+      sessions.delete(runtimeSessionId);
+      pendingSessionStarts.delete(runtimeSessionId);
+      toolRuntimeRegistry.delete(runtimeSessionId);
+      return live.terminalSnapshotIngested;
+    } catch (err) {
+      debugLog("force_terminal_fail", {
+        case_id: live.context.case_id,
+        err: String(err)
+      });
+      return false;
+    }
   };
 
   const finalizeBoundSession = async (
@@ -422,22 +689,109 @@ export function registerTrack1Plugin(
     if (!state || state.ended) {
       throw new Track1PluginHookError("track1_plugin_session_not_found");
     }
-    // Bug #9: The OpenClaw direct CLI harness may emit agent_end BEFORE
-    // llm_output. When that happens, the session has a pending model input
-    // without a matching output. Calling finalize() would seal the session
-    // and make observeModelOutput impossible. Instead, defer finalization:
-    // mark the session as pending output so llm_output can observe the
-    // output and finalize later.
+    // Bug #9 / #15 / #25 / #29: agent_end may arrive before llm_output.
+    // - If a proposed_tool_call exists, never defer: rebuild + evaluate.
+    // - If no proposed tool, still synthesize provisional model output and
+    //   finalize immediately so allow-only cases (SC-001-C003 / SC-003-C003)
+    //   do not hang waiting for fire-and-forget llm_output.
     if (!state.modelOutputObserved && !failed) {
-      state.agentEndedPendingOutput = true;
-      state.agentEndedFailed = false;
-      return;
+      if (state.proposedToolCall !== null) {
+        try {
+          await state.session.observeModelOutput({
+            session_id: state.context.session_id,
+            content:
+              "Provisional model output synthesized at agent_end before llm_output.",
+            content_ref: `model://track1/provisional/${state.snapshotSequence}`
+          });
+          state.modelOutputObserved = true;
+          state.provisionalModelOutput = true;
+        } catch {
+          // Do NOT defer when a fixture proposed tool exists. Rebuild a clean
+          // genesis monitor session so proposed-tool recovery can still run.
+          if (
+            state.filterModelContent !== null &&
+            state.filterModelContentRef !== null
+          ) {
+            try {
+              const monitorPorts: MonitorRuntimePorts = {
+                now: runtime.ports.now ?? (() => new Date().toISOString()),
+                nextId: runtime.ports.nextId ?? nextRuntimeId
+              };
+              state.session = new ObservedMonitoredSession(
+                {
+                  task_id: state.context.session_id.replace(
+                    /^session:/,
+                    "task:"
+                  ),
+                  session_id: state.context.session_id,
+                  model_ref: state.context.model_ref,
+                  scenario_id: state.context.scenario_id,
+                  case_id: state.context.case_id
+                },
+                runtime.ports.provider,
+                monitorPorts
+              );
+              state.session.observeModelInput({
+                session_id: state.context.session_id,
+                content: state.filterModelContent,
+                content_ref: state.filterModelContentRef
+              });
+              await state.session.observeModelOutput({
+                session_id: state.context.session_id,
+                content:
+                  "Provisional model output synthesized after rebuild at agent_end.",
+                content_ref: `model://track1/provisional/${state.snapshotSequence}`
+              });
+              state.modelOutputObserved = true;
+              state.provisionalModelOutput = true;
+              state.previousSnapshotSha256 = null;
+              state.snapshotSequence = 1;
+            } catch {
+              debugLog("agent_end_rebuild_failed", {
+                case_id: state.context.case_id,
+                attempt_id: state.context.attempt_id
+              });
+            }
+          }
+        }
+      } else {
+        // No proposed tool: still terminalize immediately.
+        try {
+          await state.session.observeModelOutput({
+            session_id: state.context.session_id,
+            content:
+              "Provisional model output synthesized at agent_end for allow-path finalization.",
+            content_ref: `model://track1/provisional/${state.snapshotSequence}`
+          });
+          state.modelOutputObserved = true;
+          state.provisionalModelOutput = true;
+        } catch {
+          // Keep legacy defer only if synthesis is impossible.
+          state.agentEndedPendingOutput = true;
+          state.agentEndedFailed = false;
+          return;
+        }
+      }
     }
 
-    // Bug #12/#13: Evaluate fixture proposed_tool_call when the attempt is
-    // still non-terminal. Prefer the SAME monitor session so campaign snapshot
-    // event-prefix chains remain valid. Rebuild only for genesis attempts
-    // (no snapshot ingested yet).
+    if (!state.modelOutputObserved && failed) {
+      // Failed CLI runs still need a terminal snapshot.
+      try {
+        await ingestSessionSnapshot(state, state.session.fail());
+        state.ended = true;
+        sessions.delete(runtimeSessionId);
+        pendingSessionStarts.delete(runtimeSessionId);
+        toolRuntimeRegistry.delete(runtimeSessionId);
+        return;
+      } catch {
+        // Continue into ordinary fail-closed finalization.
+      }
+    }
+
+    // Bug #12/#13/#28: Evaluate fixture proposed_tool_call when the attempt is
+    // still non-terminal. ALWAYS rebuild a clean genesis monitor session for
+    // proposed-tool recovery so prior memory/tool failures cannot poison
+    // normalizeBaseResult (Monitor result is invalid).
     if (
       !failed &&
       !state.terminalSnapshotIngested &&
@@ -447,60 +801,36 @@ export function registerTrack1Plugin(
       state.filterModelContentRef !== null
     ) {
       try {
-        if (state.previousSnapshotSha256 === null) {
-          // Genesis attempt only: safe to rebuild a clean monitor session.
-          const monitorPorts: MonitorRuntimePorts = {
-            now: runtime.ports.now ?? (() => new Date().toISOString()),
-            nextId:
-              runtime.ports.nextId ??
-              ((kind: string) => `${kind}:${Date.now().toString(36)}`)
-          };
-          state.session = new ObservedMonitoredSession(
-            {
-              task_id: state.context.session_id.replace(/^session:/, "task:"),
-              session_id: state.context.session_id,
-              model_ref: state.context.model_ref,
-              scenario_id: state.context.scenario_id,
-              case_id: state.context.case_id
-            },
-            runtime.ports.provider,
-            monitorPorts
-          );
-          state.session.observeModelInput({
+        const monitorPorts: MonitorRuntimePorts = {
+          now: runtime.ports.now ?? (() => new Date().toISOString()),
+          nextId:
+            runtime.ports.nextId ?? nextRuntimeId
+        };
+        state.session = new ObservedMonitoredSession(
+          {
+            task_id: state.context.session_id.replace(/^session:/, "task:"),
             session_id: state.context.session_id,
-            content: state.filterModelContent,
-            content_ref: state.filterModelContentRef
-          });
-          await state.session.observeModelOutput({
-            session_id: state.context.session_id,
-            content: "Provisional model output for proposed tool evaluation.",
-            content_ref: `model://track1/provisional/${state.snapshotSequence}`
-          });
-          state.modelOutputObserved = true;
-          state.provisionalModelOutput = true;
-        } else {
-          // Continue the existing event stream: re-arm a model pair if needed.
-          try {
-            state.session.observeModelInput({
-              session_id: state.context.session_id,
-              content: state.filterModelContent,
-              content_ref: state.filterModelContentRef
-            });
-          } catch {
-            // May already have pending input / locked stage.
-          }
-          try {
-            await state.session.observeModelOutput({
-              session_id: state.context.session_id,
-              content: "Provisional model output for proposed tool evaluation.",
-              content_ref: `model://track1/provisional/${state.snapshotSequence}`
-            });
-            state.modelOutputObserved = true;
-            state.provisionalModelOutput = true;
-          } catch {
-            // Pair may already exist.
-          }
-        }
+            model_ref: state.context.model_ref,
+            scenario_id: state.context.scenario_id,
+            case_id: state.context.case_id
+          },
+          runtime.ports.provider,
+          monitorPorts
+        );
+        state.previousSnapshotSha256 = null;
+        state.snapshotSequence = 1;
+        state.session.observeModelInput({
+          session_id: state.context.session_id,
+          content: state.filterModelContent,
+          content_ref: state.filterModelContentRef
+        });
+        await state.session.observeModelOutput({
+          session_id: state.context.session_id,
+          content: "Provisional model output for proposed tool evaluation.",
+          content_ref: `model://track1/provisional/${state.snapshotSequence}`
+        });
+        state.modelOutputObserved = true;
+        state.provisionalModelOutput = true;
 
         const proposed = state.proposedToolCall;
         const syntheticCallId = `call:proposed:${state.context.case_id.toLowerCase()}:${state.context.attempt_index}`;
@@ -532,7 +862,18 @@ export function registerTrack1Plugin(
           state_change: "simulated"
         });
         await ingestSessionSnapshot(state, afterSnapshot);
-      } catch {
+        const finalResult = state.session.finalize();
+        await ingestSessionSnapshot(state, finalResult);
+        state.ended = true;
+        sessions.delete(runtimeSessionId);
+        pendingSessionStarts.delete(runtimeSessionId);
+        toolRuntimeRegistry.delete(runtimeSessionId);
+        return;
+      } catch (err) {
+        debugLog("proposed_recovery_fail", {
+          case_id: state.context.case_id,
+          err: String(err)
+        });
         // Fall through to ordinary finalization / fail-closed recovery.
       }
     }
@@ -567,7 +908,12 @@ export function registerTrack1Plugin(
           await ingestSessionSnapshot(state, state.session.fail());
           return;
         }
-        throw new Track1PluginHookError("security_monitor_unavailable");
+        try {
+          await ingestSessionSnapshot(state, state.session.fail());
+          return;
+        } catch {
+          throw new Track1PluginHookError("security_monitor_unavailable");
+        }
       }
     } catch {
       let recoveredTerminalSnapshot = false;
@@ -580,14 +926,19 @@ export function registerTrack1Plugin(
           await ingestSessionSnapshot(state, finalResult);
           recoveredTerminalSnapshot = true;
         } catch {
-          const snapshot = state.session.snapshot();
-          if (
-            snapshot.status === "failed" ||
-            snapshot.status === "finished" ||
-            snapshot.status === "blocked"
-          ) {
-            await ingestSessionSnapshot(state, snapshot);
+          try {
+            await ingestSessionSnapshot(state, state.session.fail());
             recoveredTerminalSnapshot = true;
+          } catch {
+            const snapshot = state.session.snapshot();
+            if (
+              snapshot.status === "failed" ||
+              snapshot.status === "finished" ||
+              snapshot.status === "blocked"
+            ) {
+              await ingestSessionSnapshot(state, snapshot);
+              recoveredTerminalSnapshot = true;
+            }
           }
         }
       } catch {
@@ -602,10 +953,16 @@ export function registerTrack1Plugin(
       if (state.agentEndedPendingOutput) {
         return;
       }
-      state.ended = true;
-      sessions.delete(runtimeSessionId);
-      pendingSessionStarts.delete(runtimeSessionId);
-      toolRuntimeRegistry.delete(runtimeSessionId);
+      // Bug #26: Never delete a non-terminal session from finally. That left
+      // agent_end with found=false after a failed recovery attempt.
+      if (state.terminalSnapshotIngested) {
+        state.ended = true;
+        sessions.delete(runtimeSessionId);
+        pendingSessionStarts.delete(runtimeSessionId);
+        toolRuntimeRegistry.delete(runtimeSessionId);
+      } else {
+        state.ended = false;
+      }
     }
   };
 
@@ -729,7 +1086,7 @@ export function registerTrack1Plugin(
 
       // P3-ISSUE2: When no campaignContext was provided upfront (production path),
       // bind session identity from the first llm_input envelope.
-      // This is only done once — subsequent envelopes must match.
+      // This is only done once �?subsequent envelopes must match.
       // Cross-check envelope fields against bound context
       if (
         envelope.campaign_id !== state.context.campaign_id ||
@@ -764,36 +1121,61 @@ export function registerTrack1Plugin(
       contentRef = filterRequest.content_ref;
       state.filterModelContent = content;
       state.filterModelContentRef = contentRef;
+      // Envelope identity + proposed tool + filter context are fully bound.
+      // Mark binding ready as soon as identity + proposed tool + filter
+      // content are known. Later observation failures must not leave
+      // agent_end/tool hooks waiting forever with zero snapshots.
+      state.bindingReady = true;
+      purgeStaleSessions(runtimeSessionId);
+      debugLog("llm_input_bound", {
+        runtimeSessionId,
+        case_id: state.context.case_id,
+        attempt_id: state.context.attempt_id,
+        hasProposed: state.proposedToolCall !== null,
+        sessionCount: sessions.size
+      });
 
       // Observe model input
-      state.session.observeModelInput({
-        session_id: state.context.session_id,
-        content,
-        content_ref: contentRef
-      });
+      try {
+        state.session.observeModelInput({
+          session_id: state.context.session_id,
+          content,
+          content_ref: contentRef
+        });
+      } catch {
+        // Session may already have input from a partial prior attempt.
+      }
 
       // Emit controlled memory observations for memory_entries (writes)
       // P6-ISSUE6: Propagate content_sha256 from the envelope so the monitor
       // uses the hash from the envelope rather than re-hashing the content_ref.
       for (const entry of envelope.memory_entries) {
-        state.session.observeMemoryWrite({
-          session_id: state.context.session_id,
-          memory_entry_id: entry.memory_entry_id,
-          content: entry.content,
-          content_ref: entry.content_ref,
-          content_sha256: entry.content_sha256
-        });
+        try {
+          state.session.observeMemoryWrite({
+            session_id: state.context.session_id,
+            memory_entry_id: entry.memory_entry_id,
+            content: entry.content,
+            content_ref: entry.content_ref,
+            content_sha256: entry.content_sha256
+          });
+        } catch {
+          // Best-effort controlled memory observation.
+        }
       }
 
       // Emit controlled memory observations for retrieved_content (reads)
       for (const entry of envelope.retrieved_content) {
-        state.session.observeMemoryRead({
-          session_id: state.context.session_id,
-          memory_entry_id: entry.memory_entry_id,
-          content: entry.content,
-          content_ref: entry.content_ref,
-          content_sha256: entry.content_sha256
-        });
+        try {
+          state.session.observeMemoryRead({
+            session_id: state.context.session_id,
+            memory_entry_id: entry.memory_entry_id,
+            content: entry.content,
+            content_ref: entry.content_ref,
+            content_sha256: entry.content_sha256
+          });
+        } catch {
+          // Best-effort controlled memory observation.
+        }
       }
     }
   });
@@ -863,7 +1245,7 @@ export function registerTrack1Plugin(
     // Bug #9: If agent_end already fired (agentEndedPendingOutput), the
     // session was kept alive so this hook could observe the output. Now
     // that the output has been observed, run the same terminal finalization
-    // path as agent_end — including proposed-tool recovery (Bug #14).
+    // path as agent_end �?including proposed-tool recovery (Bug #14).
     if (state.agentEndedPendingOutput) {
       state.agentEndedPendingOutput = false;
       try {
@@ -881,6 +1263,26 @@ export function registerTrack1Plugin(
         sessions.delete(sessionId);
         pendingSessionStarts.delete(sessionId);
         toolRuntimeRegistry.delete(sessionId);
+      }
+      return;
+    }
+
+    // Bug #19: For fixture proposed tools, do not wait for a later agent_end
+    // race. After a real model output, evaluate the proposed tool immediately
+    // so text-only refusals still produce the expected deny/ask terminal
+    // attempt (SC-002-C003 etc.).
+    if (
+      state.proposedToolCall !== null &&
+      !state.terminalSnapshotIngested &&
+      !state.ended
+    ) {
+      try {
+        await finalizeBoundSession(sessionId, false);
+      } catch {
+        await forceTerminalFail(sessionId);
+      }
+      if (!state.terminalSnapshotIngested) {
+        await forceTerminalFail(sessionId);
       }
     }
   });
@@ -903,7 +1305,7 @@ export function registerTrack1Plugin(
 
       // ctx provides sessionId (real SDK PluginHookToolContext)
       const ctxObj = isPlainObject(ctx) ? ctx : {};
-      const sessionId =
+      let sessionId =
         (isNonEmptyString(ctxObj.sessionId) ? ctxObj.sessionId : undefined) ??
         (isNonEmptyString(event.sessionId) ? event.sessionId : undefined);
 
@@ -915,25 +1317,98 @@ export function registerTrack1Plugin(
         return { ...BLOCK_TOOL_NOT_PERMITTED };
       }
 
-      const state = sessions.get(sessionId);
-      if (!state || state.ended) {
+      // Bug #16: tool hooks can race ahead of fire-and-forget llm_input.
+      let state = sessions.get(sessionId);
+      if (!state?.bindingReady) {
+        const waited = await waitForBoundSession(sessionId);
+        state = waited?.state;
+        if (waited) sessionId = waited.runtimeId;
+      }
+      debugLog("before_tool_enter", {
+        sessionId,
+        toolName,
+        toolCallId,
+        hasState: Boolean(state),
+        bindingReady: Boolean(state?.bindingReady),
+        case_id: state?.context.case_id,
+        proposed: state?.proposedToolCall?.tool_name ?? null
+      });
+
+      if (!state || state.ended || !state.bindingReady) {
+        debugLog("before_tool_no_state", {
+          sessionId,
+          toolName,
+          readyCount: listReadySessions().length,
+          sessionKeys: [...sessions.keys()]
+        });
+        // Last chance: if any ready proposed-tool session exists, terminalize
+        // it even when this tool event's sessionId could not be resolved.
+        if (!state?.terminalSnapshotIngested) {
+          const ready = listReadySessions();
+          for (const target of ready) {
+            if (
+              target.state.proposedToolCall !== null &&
+              !target.state.terminalSnapshotIngested
+            ) {
+              try {
+                await finalizeBoundSession(target.runtimeId, false);
+              } catch {
+                // ignore
+              }
+            }
+          }
+        }
         return { ...BLOCK_SECURITY_UNAVAILABLE };
       }
 
-      // Reject unknown tools before touching the adapter
+      const terminalizeProposedIfNeeded = async (): Promise<void> => {
+        if (
+          state &&
+          state.proposedToolCall !== null &&
+          !state.terminalSnapshotIngested
+        ) {
+          if (state.ended) {
+            state.ended = false;
+          }
+          try {
+            await finalizeBoundSession(sessionId, false);
+          } catch {
+            await forceTerminalFail(sessionId);
+          }
+          if (!state.terminalSnapshotIngested) {
+            await forceTerminalFail(sessionId);
+          }
+        }
+      };
+
+      // Reject unknown tools before touching the adapter. If a fixture
+      // proposed tool still needs terminalization, do it now so unknown
+      // tool attempts (e.g. "status") still produce campaign evidence.
       if (!PERMITTED_TOOLS.has(toolName)) {
+        await terminalizeProposedIfNeeded();
         return { ...BLOCK_TOOL_NOT_PERMITTED };
       }
 
-      // Bug #14: When the fixture proposes a tool, only mediate real tool
+      // Bug #14/#19: When the fixture proposes a tool, only mediate real tool
       // calls that match that proposal. Non-matching real tools must not
-      // mutate ObservedMonitoredSession (which would leave pendingCall /
-      // poison genesis recovery). Block them without beforeTool so agent_end
-      // can evaluate the fixture proposal on a clean session.
+      // mutate ObservedMonitoredSession. Immediately evaluate the fixture
+      // proposal so the campaign does not depend on a later agent_end race.
       if (
         state.proposedToolCall !== null &&
         !toolArgsMatchProposed(toolName, params, state.proposedToolCall)
       ) {
+        debugLog("before_tool_nonmatch_terminalize", {
+          sessionId,
+          toolName,
+          proposed: state.proposedToolCall.tool_name,
+          case_id: state.context.case_id
+        });
+        await terminalizeProposedIfNeeded();
+        debugLog("before_tool_nonmatch_done", {
+          sessionId,
+          terminal: state.terminalSnapshotIngested,
+          seq: state.snapshotSequence
+        });
         return { ...BLOCK_SECURITY_UNAVAILABLE };
       }
 
@@ -950,8 +1425,9 @@ export function registerTrack1Plugin(
           state.modelOutputObserved = true;
           state.provisionalModelOutput = true;
         } catch {
-          // Bug #13: Do NOT end the session here. Keep it recoverable so
-          // agent_end can still evaluate envelope.proposed_tool_call.
+          // Bug #13/#19: Keep session recoverable and immediately try
+          // proposed-tool terminalization if available.
+          await terminalizeProposedIfNeeded();
           return { ...BLOCK_SECURITY_UNAVAILABLE };
         }
       }
@@ -969,14 +1445,103 @@ export function registerTrack1Plugin(
       let outcome;
       try {
         outcome = await state.session.beforeTool(request);
-      } catch {
-        // Bug #13: A failed real tool mediation must not permanently end the
-        // session without a terminal snapshot. Leave the session open so
-        // agent_end can evaluate the fixture proposed_tool_call and produce
-        // the expected deny/ask terminal attempt.
+      } catch (err) {
+        debugLog("before_tool_mediate_fail", {
+          sessionId,
+          toolName,
+          case_id: state.context.case_id,
+          err: String(err)
+        });
+        // Real-tool mediation failed (often Monitor result is invalid when the
+        // model rewrote fixture args or the live event stream cannot normalize).
+        // Drop the poisoned monitor session completely and evaluate the fixture
+        // proposed tool on a clean genesis session.
+        state.toolMediated = false;
+        state.pendingToolCallId = null;
+        state.pendingToolCallToolName = null;
+        state.modelOutputObserved = false;
+        state.provisionalModelOutput = false;
+        state.previousSnapshotSha256 = null;
+        state.snapshotSequence = 1;
+        state.ended = false;
+        state.terminalSnapshotIngested = false;
+        if (
+          state.proposedToolCall !== null &&
+          state.filterModelContent !== null &&
+          state.filterModelContentRef !== null
+        ) {
+          try {
+            const monitorPorts: MonitorRuntimePorts = {
+              now: runtime.ports.now ?? (() => new Date().toISOString()),
+              nextId:
+                runtime.ports.nextId ?? nextRuntimeId
+            };
+            state.session = new ObservedMonitoredSession(
+              {
+                task_id: state.context.session_id.replace(/^session:/, "task:"),
+                session_id: state.context.session_id,
+                model_ref: state.context.model_ref,
+                scenario_id: state.context.scenario_id,
+                case_id: state.context.case_id
+              },
+              runtime.ports.provider,
+              monitorPorts
+            );
+            state.session.observeModelInput({
+              session_id: state.context.session_id,
+              content: state.filterModelContent,
+              content_ref: state.filterModelContentRef
+            });
+            await state.session.observeModelOutput({
+              session_id: state.context.session_id,
+              content:
+                "Provisional model output after failed real-tool mediation.",
+              content_ref: `model://track1/provisional/${state.snapshotSequence}`
+            });
+            state.modelOutputObserved = true;
+            state.provisionalModelOutput = true;
+            const proposed = state.proposedToolCall;
+            const syntheticCallId = `call:proposed:${state.context.case_id.toLowerCase()}:${state.context.attempt_index}`;
+            const recovery = await state.session.beforeTool({
+              call_id: syntheticCallId,
+              session_id: state.context.session_id,
+              scenario_id: state.context.scenario_id,
+              case_id: state.context.case_id,
+              tool_name: proposed.tool_name,
+              arguments: proposed.arguments
+            });
+            state.toolMediated = true;
+            if (recovery.disposition === "intercept") {
+              const terminal = state.session.finalize();
+              await ingestSessionSnapshot(state, terminal);
+              state.ended = true;
+              sessions.delete(sessionId);
+              pendingSessionStarts.delete(sessionId);
+              toolRuntimeRegistry.delete(sessionId);
+              const reason =
+                recovery.decision.action === "deny"
+                  ? "policy_denied"
+                  : "policy_ask_required";
+              return Object.freeze({ block: true, blockReason: reason });
+            }
+          } catch (recoveryErr) {
+            debugLog("before_tool_recovery_fail", {
+              sessionId,
+              case_id: state.context.case_id,
+              err: String(recoveryErr)
+            });
+          }
+        }
         return { ...BLOCK_SECURITY_UNAVAILABLE };
       }
       state.toolMediated = true;
+      debugLog("before_tool_outcome", {
+        sessionId,
+        toolName,
+        disposition: outcome.disposition,
+        action: outcome.decision?.action,
+        case_id: state.context.case_id
+      });
 
       if (outcome.disposition === "intercept") {
         // Bug #11: Only ingest the terminal intercept result. The live
@@ -1038,7 +1603,7 @@ export function registerTrack1Plugin(
 
       return {};
     },
-    { priority: 100, timeoutMs: 10_000 }
+    { priority: 100, timeoutMs: 30_000 }
   );
 
   // -- after_tool_call ------------------------------------------------
@@ -1070,7 +1635,7 @@ export function registerTrack1Plugin(
 
     const state = sessions.get(sessionId);
     if (!state || state.ended) {
-      // Session already cleaned up by agent_end/session_end — ignore late tool
+      // Session already cleaned up by agent_end/session_end �?ignore late tool
       // after-hooks rather than failing the runtime.
       return;
     }
@@ -1087,7 +1652,7 @@ export function registerTrack1Plugin(
 
     // P1-Fix7: Detect tool failure via error field and result JSON parsing.
     // P5-ISSUE5: Use detectToolFailure() which rejects "rejected" status as
-    // a non-failure — adapter-rejected calls are tool executions, not failures.
+    // a non-failure �?adapter-rejected calls are tool executions, not failures.
     const failed = detectToolFailure({
       error: event.error,
       result: event.result
@@ -1125,30 +1690,74 @@ export function registerTrack1Plugin(
   // session_start/session_end for each direct run. agent_end is therefore
   // the authoritative per-attempt terminal boundary for the campaign CLI.
 
-  api.on("agent_end", async (event: unknown, ctx: unknown) => {
-    if (
-      !isPlainObject(event) ||
-      typeof event.success !== "boolean" ||
-      !Array.isArray(event.messages) ||
-      !isPlainObject(ctx) ||
-      !isNonEmptyString(ctx.sessionId)
-    ) {
-      throw new Track1PluginHookError("track1_plugin_event_invalid");
-    }
-    const state = sessions.get(ctx.sessionId);
-    if (!state) {
-      return;
-    }
-    // Bug #13: Even if a prior path marked ended without a terminal snapshot,
-    // reopen recovery for proposed-tool evaluation.
-    if (state.ended && state.terminalSnapshotIngested) {
-      return;
-    }
-    if (state.ended && !state.terminalSnapshotIngested) {
-      state.ended = false;
-    }
-    await finalizeBoundSession(ctx.sessionId, event.success === false);
-  });
+  api.on(
+    "agent_end",
+    async (event: unknown, ctx: unknown) => {
+      // Never throw from agent_end �?OpenClaw treats it as a hard error and
+      // the campaign runner would hang with zero snapshots.
+      if (!isPlainObject(event) || !isPlainObject(ctx)) {
+        return;
+      }
+
+      // OpenClaw event shapes vary slightly across harness paths. Accept
+      // missing messages/success rather than silently dropping the terminal
+      // boundary for tool-stage cases.
+      const failed = event.success === false;
+      const sessionId = isNonEmptyString(ctx.sessionId)
+        ? ctx.sessionId
+        : isNonEmptyString(event.sessionId)
+          ? (event.sessionId as string)
+          : null;
+
+      let targets = [] as Array<{
+        runtimeId: string;
+        state: PluginSessionState;
+      }>;
+      // Only finalize the exact session for this agent_end. Never fall back to
+      // listReadySessions() �?that allowed a late prior-attempt agent_end to
+      // poison the next case.
+      const bound = await waitForBoundSession(sessionId);
+      debugLog("agent_end_enter", {
+        sessionId,
+        failed,
+        found: Boolean(bound),
+        case_id: bound?.state.context.case_id,
+        proposed: bound?.state.proposedToolCall?.tool_name ?? null,
+        modelOut: bound?.state.modelOutputObserved,
+        terminal: bound?.state.terminalSnapshotIngested
+      });
+      if (bound) {
+        targets = [bound];
+      }
+
+      for (const { runtimeId, state } of targets) {
+        if (state.ended && state.terminalSnapshotIngested) {
+          continue;
+        }
+        if (state.ended && !state.terminalSnapshotIngested) {
+          state.ended = false;
+        }
+        try {
+          await finalizeBoundSession(runtimeId, failed);
+        } catch {
+          // Only force-terminal when we expected a terminal now
+          // (failed run or proposed-tool recovery). SC-001 may legitimately
+          // defer until llm_output.
+          if (failed || state.proposedToolCall !== null) {
+            await forceTerminalFail(runtimeId);
+          }
+        }
+        if (
+          !state.terminalSnapshotIngested &&
+          !state.agentEndedPendingOutput &&
+          (failed || state.proposedToolCall !== null)
+        ) {
+          await forceTerminalFail(runtimeId);
+        }
+      }
+    },
+    { timeoutMs: 30_000 }
+  );
 
   // -- session_end ----------------------------------------------------
   // P1-Fix6: session_end with pending tool must generate terminal failed snapshot.

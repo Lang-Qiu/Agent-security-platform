@@ -107,7 +107,7 @@ services:
       dockerfile: deploy/track1/Dockerfile.evidence
     image: agent-security-track1-evidence:1.60.0
     environment:
-      TRACK1_FRONTEND_URL: "http://frontend:3000/sandbox-alerts"
+      TRACK1_FRONTEND_URL: "http://frontend:3000/results/sandbox"
       TRACK1_EVIDENCE_INPUT: "/data/input.json"
       TRACK1_EVIDENCE_OUTPUT: "/data/screenshots"
     volumes:

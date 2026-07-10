@@ -47,7 +47,13 @@ try {
     ports,
     (line) => process.stdout.write(`${line}\n`)
   );
-} catch {
-  process.stderr.write("track1_campaign_failed\n");
+} catch (error) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "track1_campaign_failed";
+  process.stderr.write(`${message}\n`);
   process.exit(1);
 }

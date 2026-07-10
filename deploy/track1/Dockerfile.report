@@ -1,6 +1,20 @@
 FROM pandoc/latex:3.10.0.0-ubuntu@sha256:568ae5d3dc4cf9266753c9c78e7d073c1472f6540e0cf02de6a330143df8bdb7
 
 USER root
+# Base image ships TeX Live under /opt/texlive. Install CJK packages via tlmgr
+# and system fonts for XeLaTeX Chinese rendering.
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates \
+      fonts-texgyre \
+      fonts-noto-cjk \
+      wget \
+      xz-utils && \
+    rm -rf /var/lib/apt/lists/* && \
+    tlmgr update --self && \
+    tlmgr install ctex xecjk fandol && \
+    fc-cache -f
+
 COPY deploy/track1/render-report.sh /usr/local/bin/render-track1-report
 RUN chmod 0555 /usr/local/bin/render-track1-report
 

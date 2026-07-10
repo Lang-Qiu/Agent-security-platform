@@ -54,8 +54,16 @@ test("REQ-T1-DEMO-010 buildReportRunnerComposeArgs runs the report script inside
     "--rm",
     "-v",
     "/host/artifacts/track1:/data",
+    "-v",
+    "/var/run/docker.sock:/var/run/docker.sock",
+    "-e",
+    "TRACK1_ARTIFACT_ROOT=/data",
+    "-e",
+    "TRACK1_HOST_ARTIFACT_ROOT=/host/artifacts/track1",
     "-e",
     "TRACK1_PRECAPTURED_SCREENSHOT_ROOT=/data/.checkpoints/abc123",
+    "-e",
+    "TRACK1_REPORT_DEBUG=1",
     "campaign-runner",
     "node",
     "--experimental-strip-types",
@@ -65,13 +73,34 @@ test("REQ-T1-DEMO-010 buildReportRunnerComposeArgs runs the report script inside
   ]);
 });
 
+test("REQ-T1-DEMO-010 buildReportRunnerComposeArgs normalizes Windows host paths for docker bind mounts", () => {
+  const args = buildReportRunnerComposeArgs(
+    "abc123",
+    "E:\\LQiu\\Agent-security-platform\\.worktrees\\track1-requirements-spec\\artifacts\\track1"
+  );
+  assert.ok(
+    args.includes(
+      "E:/LQiu/Agent-security-platform/.worktrees/track1-requirements-spec/artifacts/track1:/data"
+    )
+  );
+  assert.ok(
+    args.includes(
+      "TRACK1_HOST_ARTIFACT_ROOT=E:/LQiu/Agent-security-platform/.worktrees/track1-requirements-spec/artifacts/track1"
+    )
+  );
+  assert.ok(
+    !args.some((value) => value.includes("\\")),
+    "host bind mounts must not retain Windows backslashes"
+  );
+});
+
 test("REQ-T1-DEMO-010 buildReportRunnerComposeArgs does not pass host-side ingest or backend URLs", () => {
   const args = buildReportRunnerComposeArgs(
     "deadbeef",
     "/host/artifacts/track1"
   );
   const envFlags = args.filter((value) => value === "-e");
-  assert.equal(envFlags.length, 1);
+  assert.equal(envFlags.length, 4);
   assert.ok(
     !args.some(
       (value) =>
@@ -79,6 +108,14 @@ test("REQ-T1-DEMO-010 buildReportRunnerComposeArgs does not pass host-side inges
         value.startsWith("TRACK1_BACKEND_URL=")
     ),
     "host-side URLs must not override the compose service environment"
+  );
+  assert.ok(
+    args.includes("TRACK1_ARTIFACT_ROOT=/data"),
+    "report builder must write into the mounted /data volume"
+  );
+  assert.ok(
+    args.includes("/var/run/docker.sock:/var/run/docker.sock"),
+    "report builder must reach the host docker daemon for PDF rendering"
   );
 });
 

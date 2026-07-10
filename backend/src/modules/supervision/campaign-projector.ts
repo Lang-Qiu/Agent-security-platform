@@ -205,11 +205,23 @@ export function projectTrack1Campaign(
     });
   }
 
+  // When every case is terminal, agents are all "completed". The stored
+  // campaign may still be "running" until finalize runs. Project that
+  // transitional shape as "collecting" so detail/list normalization succeeds
+  // and the campaign runner can observe the final attempt.
+  let projectedStatus: Track1CampaignStatus = campaignStatus;
+  if (
+    campaignStatus === "running" &&
+    agents.every((agent) => agent.status === "completed")
+  ) {
+    projectedStatus = "collecting";
+  }
+
   // Build and normalize detail.
   const detail: Track1CampaignDetail = {
     schema_version: TRACK1_CAMPAIGN_READ_SCHEMA_VERSION,
     campaign_id: campaignId,
-    status: campaignStatus,
+    status: projectedStatus,
     started_at: startedAt,
     updated_at: updatedAt,
     agent_count: 3,
@@ -259,7 +271,7 @@ export function projectTrack1Campaign(
   const summary: Track1CampaignSummary = {
     schema_version: TRACK1_CAMPAIGN_READ_SCHEMA_VERSION,
     campaign_id: campaignId,
-    status: campaignStatus,
+    status: projectedStatus,
     started_at: startedAt,
     updated_at: updatedAt,
     agent_count: 3,
@@ -273,7 +285,7 @@ export function projectTrack1Campaign(
     evidence_available: evidenceAvailable
   };
 
-  if (campaignStatus === "completed" && stored.campaign.completed_at) {
+  if (projectedStatus === "completed" && stored.campaign.completed_at) {
     summary.completed_at = stored.campaign.completed_at;
   }
 

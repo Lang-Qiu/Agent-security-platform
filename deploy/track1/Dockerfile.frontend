@@ -4,10 +4,14 @@ WORKDIR /app
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY frontend/package.json ./frontend/package.json
+COPY shared/package.json ./shared/package.json
 RUN corepack enable && \
     corepack prepare pnpm@10.0.0 --activate && \
     pnpm install --filter @agent-security-platform/frontend --frozen-lockfile
 
+COPY tsconfig.base.json ./tsconfig.base.json
+COPY shared ./shared
+COPY samples/track1/review-demo ./samples/track1/review-demo
 COPY frontend ./frontend
 
 WORKDIR /app/frontend

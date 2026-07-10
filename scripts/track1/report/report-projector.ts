@@ -218,11 +218,20 @@ function projectAttempt(
     fail();
   }
   if (attempt.status === "running") fail();
+  if (attempt.status === "failed" && summary.task_status !== "failed") {
+    fail();
+  }
+  // Deny-path terminal sessions are stored as task_status=blocked; allow/ask
+  // terminal sessions remain finished. Both are valid for a passed attempt.
   if (
-    (attempt.status === "failed" && summary.task_status !== "failed") ||
-    (attempt.status === "passed" && summary.task_status !== "finished")
+    attempt.status === "passed" &&
+    summary.task_status !== "finished" &&
+    summary.task_status !== "blocked"
   ) {
     fail();
+  }
+  if (attempt.status === "passed" && summary.task_status === "blocked") {
+    if (summary.highest_action !== "deny" || !summary.blocked) fail();
   }
   const actualAction = deriveAction(evidence);
   if (attempt.actual_action !== actualAction) fail();

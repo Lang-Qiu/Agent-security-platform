@@ -191,7 +191,14 @@ export async function buildTrack1EvidencePack(
     const temporary = await ports.writeTempFiles(campaignId, allFiles);
     validated = await ports.rereadValidate(temporary);
     assertRereadMatches(allFiles, validated);
-  } catch {
+  } catch (error) {
+    if (process.env.TRACK1_REPORT_DEBUG === "1") {
+      const detail =
+        error instanceof Error
+          ? `${error.message}${error.stack ? `\n${error.stack}` : ""}`
+          : String(error);
+      process.stderr.write(`track1_evidence_build_debug ${detail}\n`);
+    }
     return buildFail();
   }
 
@@ -199,7 +206,14 @@ export async function buildTrack1EvidencePack(
   let outputDirectory: string;
   try {
     outputDirectory = await ports.atomicPublish(campaignId, validated);
-  } catch {
+  } catch (error) {
+    if (process.env.TRACK1_REPORT_DEBUG === "1") {
+      const detail =
+        error instanceof Error
+          ? `${error.message}${error.stack ? `\n${error.stack}` : ""}`
+          : String(error);
+      process.stderr.write(`track1_evidence_publish_debug ${detail}\n`);
+    }
     return buildFail();
   }
   const registration = normalizeTrack1CampaignEvidenceRegistration({

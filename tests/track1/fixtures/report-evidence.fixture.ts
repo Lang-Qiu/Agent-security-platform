@@ -207,7 +207,12 @@ function makeSessionEvidence(
       summary: {
         task_id: attempt.task_id,
         session_id: attempt.session_id,
-        task_status: attempt.status === "failed" ? "failed" : "finished",
+        task_status:
+          attempt.status === "failed"
+            ? "failed"
+            : action === "deny"
+              ? "blocked"
+              : "finished",
         risk_level: action === "deny" || action === "alert" ? "high" : "medium",
         highest_action: action,
         scenario_id: attempt.scenario_id,

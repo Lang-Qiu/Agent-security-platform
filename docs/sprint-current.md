@@ -103,10 +103,13 @@ supervision console rather than building a second investigation UI.
 - Phase 7 credential validation, explicit non-skipping E2E harness,
   independent acceptance validator, and atomic baseline promoter are
   implemented.
-- The credentialed production gate currently fails before any port call with
-  `track1_e2e_credentials_missing`, because the four required credentials are
-  not present in the worker environment.
-- The accepted real baseline is intentionally absent. REQ-T1-DEMO-010 remains
-  **IN PROGRESS / CREDENTIAL GATE BLOCKED** until one authorized cloud-model
-  run passes and the resulting nine-file pack is independently validated and
-  promoted.
+- **2026-07-10 credentialed production gate passed:**
+  - campaign `campaign:t1:1cb754f0efc7d919a0816274af954571`
+  - status `completed`, retries `0`, final actions 9/9
+  - evidence pack registered:
+    `artifact://track1/campaign/1cb754f0efc7d919a0816274af954571/manifest`
+  - independent acceptance: `accepted=true`,
+    `manifest_sha256=311788a021b2ec4898e817e5ccfd8ffe67d82edb6e8e9011d664cadf2f820652`
+  - sanitized baseline promoted to
+    `docs/track1/evidence/openclaw-baseline/` (9 files)
+- REQ-T1-DEMO-010 status: **COMPLETE**

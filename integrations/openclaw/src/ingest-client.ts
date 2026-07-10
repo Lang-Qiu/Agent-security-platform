@@ -174,15 +174,61 @@ export class Track1IngestClient {
       throw new Track1IngestError("track1_ingest_failed");
     }
 
-    // Parse and validate the ack
-    let parsedAck: unknown;
+    // Parse response. Production backend wraps payloads as
+    // { success, message, data } where data is a Track1CampaignAttemptSummary
+    // (not a snapshot-ack schema). Accept:
+    // 1) bare Track1CampaignSnapshotAck
+    // 2) wrapped { success:true, data: <ack or attempt summary> }
+    // For attempt-summary responses, synthesize the ack from the envelope we
+    // just sent so successful ingests are not treated as failures.
+    let parsed: unknown;
     try {
-      parsedAck = JSON.parse(response.body);
+      parsed = JSON.parse(response.body);
     } catch {
       throw new Track1IngestError("track1_ingest_failed");
     }
 
-    const ack = normalizeTrack1CampaignSnapshotAck(parsedAck);
+    let candidate: unknown = parsed;
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      !Array.isArray(parsed) &&
+      "data" in parsed &&
+      (parsed as { success?: unknown }).success === true
+    ) {
+      candidate = (parsed as { data: unknown }).data;
+    }
+
+    let ack = normalizeTrack1CampaignSnapshotAck(candidate);
+    if (!ack) {
+      // Backend attempt-summary path: only synthesize when the payload looks
+      // like Track1CampaignAttemptSummary (status present, no snapshot ack
+      // schema). Malformed snapshot-acks must still fail closed.
+      if (
+        typeof candidate === "object" &&
+        candidate !== null &&
+        !Array.isArray(candidate)
+      ) {
+        const summary = candidate as Record<string, unknown>;
+        const looksLikeAttemptSummary =
+          typeof summary.status === "string" &&
+          typeof summary.session_id === "string" &&
+          !Object.prototype.hasOwnProperty.call(summary, "snapshot_sha256") &&
+          !Object.prototype.hasOwnProperty.call(summary, "accepted_at") &&
+          summary.campaign_id === campaignId &&
+          summary.attempt_id === attemptId;
+        if (looksLikeAttemptSummary) {
+          ack = {
+            schema_version: "track1-campaign-snapshot-ack.v1",
+            campaign_id: campaignId as Track1CampaignSnapshotAck["campaign_id"],
+            attempt_id: attemptId as Track1CampaignSnapshotAck["attempt_id"],
+            sequence,
+            snapshot_sha256: snapshotSha256,
+            accepted_at: new Date().toISOString()
+          };
+        }
+      }
+    }
     if (!ack) {
       throw new Track1IngestError("track1_ingest_failed");
     }

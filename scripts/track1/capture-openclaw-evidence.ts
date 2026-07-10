@@ -278,12 +278,18 @@ export async function captureTrack1CampaignEvidence(
 }
 
 async function captureRequests(
-  rawInput: unknown,
+  input: Track1CampaignCaptureInput,
   browser: Track1BrowserPort,
   requests: readonly Track1CaptureRequest[],
   verifyOverflow: boolean
 ): Promise<readonly Track1CampaignCapture[]> {
-  const input = normalizeInput(rawInput);
+  if (
+    !browser ||
+    typeof browser.verifyOverflow !== "function" ||
+    typeof browser.capture !== "function"
+  ) {
+    fail();
+  }
   if (verifyOverflow) {
     for (const viewport of OVERFLOW_VIEWPORTS) {
       if (!(await browser.verifyOverflow(input, viewport))) fail();
@@ -292,6 +298,26 @@ async function captureRequests(
   const captures: Track1CampaignCapture[] = [];
   for (const request of requests) {
     const observation = await browser.capture(Object.freeze({ ...request }));
+    if (process.env.TRACK1_CAPTURE_DEBUG === "1") {
+      process.stderr.write(
+        `${JSON.stringify({
+          request_path: request.path,
+          expected_state: request.expected_state,
+          evidence_state: observation.evidence_state,
+          campaign_id: observation.campaign_id,
+          selected_agent_id: observation.selected_agent_id,
+          selected_session_id: observation.selected_session_id,
+          panel_boxes: observation.panel_boxes,
+          console_errors: observation.console_errors,
+          page_errors: observation.page_errors,
+          failed_requests: observation.failed_requests,
+          unexpected_origins: observation.unexpected_origins,
+          body_len: observation.body_text?.length ?? 0,
+          body_head: String(observation.body_text ?? "").slice(0, 200),
+          bytes_len: observation.bytes?.byteLength ?? 0
+        })}\n`
+      );
+    }
     captures.push(
       Object.freeze({
         path: request.path,
@@ -403,8 +429,20 @@ export async function openTrack1PlaywrightBrowserPort(
         });
         page.on("pageerror", () => pageErrors.push("page_error"));
         page.on("requestfailed", (requestValue: any) => {
+          const failure = requestValue.failure?.();
+          const errorText = String(failure?.errorText ?? "");
+          // Campaign polling aborts in-flight fetches on React re-render /
+          // navigation; those are not real network failures.
+          if (
+            /ERR_ABORTED|net::ERR_ABORTED|NS_BINDING_ABORTED|cancelled|canceled/i.test(
+              errorText
+            )
+          ) {
+            return;
+          }
           failedRequests.push(new URL(requestValue.url()).pathname);
         });
+
         page.on("request", (requestValue: any) => {
           const requestUrl = new URL(requestValue.url());
           if (
@@ -525,7 +563,12 @@ if (
   try {
     await runContainerCli();
     process.stdout.write("status=completed\n");
-  } catch {
+  } catch (error) {
+    const detail =
+      error instanceof Error
+        ? `${error.message}${error.stack ? `\n${error.stack}` : ""}`
+        : String(error);
+    process.stderr.write(`${detail}\n`);
     process.stderr.write("track1_capture_failed\n");
     process.exitCode = 1;
   }
