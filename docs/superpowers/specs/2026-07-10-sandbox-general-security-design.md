@@ -3,10 +3,10 @@
 ## Document Status
 
 - Umbrella feature: `SANDBOX-GENERAL-SECURITY`
-- Status: ready for implementation plan
-- Review revision: 2
+- Status: `DRAFT_REVISED_PENDING_REAPPROVAL`
+- Review revision: 13
 - Original date: `2026-07-10`
-- Revised: `2026-07-11`
+- Revised: `2026-07-12`
 - Extends: `REQ-T1-BASE-FILTER-008`, `REQ-T1-MONITOR-PLUGIN-007`, and
   `REQ-T1-DEMO-010`
 - Delivery model: five independently specified and accepted requirements
@@ -14,6 +14,9 @@
 
 This revision changes documentation only. It does not change production code,
 tests, dependencies, or the active sprint.
+
+Implementation is blocked until this revised Design and the Core Spec are both
+explicitly reapproved.
 
 ## Objective
 
@@ -65,7 +68,19 @@ never selects the final action.
     `sandbox-security-strict.v1`; callers cannot submit or edit profiles.
 14. The complete engine-owned canonical evaluation request is limited to 512
     KiB, with tighter field and structural limits.
-15. The total synchronous budget is 5000 ms from engine entry.
+15. Normal sandbox-security evaluation work has a 5000 ms monotonic budget
+    starting at `SandboxSecurityEngine.evaluate()` entry. When that work budget
+    is exhausted, the Engine performs no further detector, sanitizer, or Judge
+    work, and no ordinary/unrestricted qualification, unrestricted publication,
+    or ordinary policy work. Only Scheme B restricted qualification and
+    restricted one-shot publication (below) are permitted. It may execute
+    one bounded deterministic fail-closed epilogue (Scheme B: restricted
+    qualification of settled matched results, lifecycle-correct escalation close,
+    one publication of already-accepted drafts, attach/finalize with closure
+    progress reuse, minimal reduce/validate) solely to close
+    internal state and, when a complete ledger can be built, return a minimal
+    validated content-free decision. The epilogue is not claimed to complete
+    inside the exhausted 5000 ms work budget.
 16. Scores from different detectors are never averaged.
 17. The backend authorizer, API, idempotency store, and durable audit belong to
     GENERAL-003.
@@ -90,15 +105,28 @@ flowchart TD
     U["Untrusted submission"] --> S["Shared structural normalizer"]
     S --> A["Trusted platform or integration adapter"]
     A --> B["Engine-private authoritative evaluation context"]
-    B --> E["Engine-owned normalized authoritative request"]
-    E --> R["Raw-local rule detector"]
-    R --> L["Raw-local local detector"]
-    L --> Z["Sanitizer port"]
-    Z --> J["Sanitized-external Judge detector"]
-    R --> Q["Candidate qualification"]
-    L --> Q
-    J --> Q
-    Q --> P["Policy reducer"]
+    B --> E["Authority-bound prepared input (no trust class)"]
+    E --> M["Resolve immutable profile"]
+    M --> T["Derive trust from profile trust_rules"]
+    T --> R["Rule detector"]
+    R --> RQ["Normalize + settle rule; qualify only if matched"]
+    RQ --> ES["Escalation state"]
+    RQ --> SC{"Short-circuit?"}
+    SC -->|No| L["Local detector"]
+    L --> LQ["Normalize + settle local; qualify only if matched"]
+    LQ --> ES
+    SC -->|Yes| ST["Close/terminate escalation without Judge"]
+    ES --> OC{"Unresolved obligations?"}
+    OC -->|Yes| O["Materialize routed obligations"]
+    OC -->|No| CL["Close escalation lifecycle"]
+    O --> Z["Sanitizer port"]
+    Z --> J["External Judge"]
+    J --> JQ["Normalize; qualify only if matched; build Judge outcome"]
+    JQ --> JR["Apply Judge outcome + close escalation"]
+    ST --> PUB["Global publication"]
+    CL --> PUB
+    JR --> PUB
+    PUB --> P["Reducer + semantic validator"]
     P --> D["Content-free decision"]
 ```
 
@@ -107,10 +135,11 @@ There are two explicit boundaries:
 1. The public submission boundary is untrusted. `claimed_source_type`,
    `provenance_ref`, IDs, profile ID, and content are claims only.
 2. A trusted platform or integration adapter validates the submission and
-   reconstructs an engine-private authoritative evaluation context containing
-   mode, stage, profile, complete source observations, and the actual tool
-   observation when applicable. The engine derives trust from this context and
-   the selected built-in profile.
+    reconstructs an engine-private authoritative evaluation context containing
+    mode, stage, profile, complete source observations, and the actual tool
+    observation when applicable. Authority normalization creates no trust class;
+    the selected built-in profile's immutable `trust_rules` are the sole trust
+    authority after profile resolution.
 
 The engine does not expose a public constructor for authoritative contexts.
 This is a trusted in-process boundary, not a cryptographic boundary. Later
@@ -230,7 +259,8 @@ The pipeline has four distinct states:
 ```text
 detector candidate
   -> profile threshold qualification
-  -> accepted normalized finding
+  -> accepted internal DraftFinding with subject_key
+  -> one global public finding publication pass
   -> policy reduction
 ```
 
@@ -266,6 +296,13 @@ Detector identity comes from the registered profile slot. The engine ignores
 or rejects detector-supplied identity and generates finding IDs
 deterministically from `decision_id` and normalized non-content candidate
 fields. IDs are stable only within one decision and are not durable-audit data.
+Shared public `detector_id` is a plain `string` (not Engine
+`SandboxSecurityDetectorSlotId`). Shared normalizers validate grammar only
+against
+`^detector://[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?:/[A-Za-z0-9][A-Za-z0-9._-]{0,63}){1,7}$`
+(max 128); they must not import profile manifests, hard-code slot constants, or
+import Engine modules. Engine semantic validation alone checks membership in
+selected `profile.detector_slots`.
 
 ### Finding Subjects
 
@@ -280,14 +317,42 @@ Tool name and target are whole-field subjects. An unsafe or ambiguous argument
 pointer degrades to whole arguments or whole call. Caller source IDs, call IDs,
 and detector-supplied tokens never enter public findings.
 
+Canonical private scope identity is owned before qualification by the
+Engine-internal `subject-scope.ts` primitive. It canonicalizes private
+content/tool refs and computes `subject_key = sha256(JCS({category, subjects}))`.
+Category participates; slot ID and input ref order do not. Duplicate scopes are
+rejected. Raw/external result boundaries and qualification reuse this helper.
+
+### Routed Judge Obligations
+
+Judge is never called with sanitized content alone. Every unresolved escalation
+signal becomes a deterministic, content-free obligation embedded in the exact
+sanitized payload:
+
+```text
+obligation://sandbox/security/<decision-id>/<four-digit-ordinal>
+```
+
+Obligations contain category and tokenized subject scope, sorted by category
+plus canonical tokenized scope. They exclude slot IDs, private handles, content,
+hashes, and provenance. Judge results reference an existing obligation ID,
+match its category, and cover only its routed scope. Missing result items are
+valid partial coverage and remain unresolved. A returned risk or clearance must
+have exact canonical scope equality with its obligation; subset, superset, and
+locator widening/narrowing are invalid. Unknown/cross-evaluation IDs or
+outside-scope results invalidate the result. The tool payload uses only
+`tool_name_token`; target and arguments remain bounded sanitizer-produced
+values named `sanitized_target` and `sanitized_arguments`.
+
 ### Detector Output Limits
 
 GENERAL-001 fixes detector and sanitizer boundaries: at most 32 candidates, 32
 clearances, eight subject refs per item, 64 KiB canonical detector result, 256
 KiB canonical sanitized payload, sanitized JSON depth 8 and 2048 nodes, 64 KiB
-Judge response, and 66 evaluation-scoped sanitized tokens. Every limit consumes
-the total evaluation budget. Result overflow is `detector_result_invalid`;
-sanitizer overflow is `external_redaction_failed`.
+Judge response, and 67 evaluation-scoped sanitized tokens. Every detector and
+sanitizer boundary check consumes the 5000 ms normal evaluation work budget.
+Result overflow is `detector_result_invalid`; sanitizer overflow is
+`external_redaction_failed`.
 
 ## Complete Built-In Profile Manifests
 
@@ -313,9 +378,13 @@ make a decision indeterminate. If low-confidence evidence requires Judge
 escalation and the optional Judge is unavailable, that unresolved
 evidence is indeterminate and fails closed.
 
-Strict construction requires rule and local slots. A missing profile-required
-slot makes engine construction invalid. Strict thresholds and action mappings
-are never less restrictive than balanced for identical normalized evidence.
+Registry and Engine construction require the rule detector only. When an
+evaluation selects the strict profile,
+`resolveSandboxSecurityDetectorsForProfile` requires the local detector. If it
+is missing, profile resolution fails with `sandbox_security_profile_invalid`
+before decision ID issuance and before any detector call. Strict thresholds and
+action mappings are never less restrictive than balanced for identical
+normalized evidence.
 Module initialization proves manifest-level monotonicity. Reducer property
 tests prove `reduce(strict) >= reduce(balanced)` for identical complete
 normalized evidence. A single-decision semantic validator checks only its
@@ -326,31 +395,48 @@ selected profile and does not claim to compare two runtime executions.
 `profile_required` is fixed by the manifest. `runtime_required` means an
 optional configured slot has been selected by routing for this evaluation.
 `optional_not_selected` means an optional slot is absent, unsupported, not
-routed, or terminated before selection. A slot skipped by conclusive risk
-short-circuit retains its manifest obligation; it is not relabelled
-`optional_not_selected`.
+routed, or never selected (including because of risk short-circuit before
+selection). A short-circuited slot preserves `profile_required` when required.
+An optional slot that was never selected uses `optional_not_selected`. The
+`risk_short_circuit` skip reason records why selection did not occur; it does
+not invent `runtime_required`.
 
-| Situation | Status | Skip/error code | Policy effect |
-| --- | --- | --- | --- |
-| profile-required slot missing | no evaluation | engine construction invalid | no `allow` |
-| optional slot not configured and no route requires it | `skipped` | `optional_not_configured` | none |
-| routing selects an unavailable optional slot | `failed` | `detector_unavailable` | becomes runtime-required; fail closed |
-| optional slot does not support stage | `skipped` | `stage_unsupported` | none; manifest cannot require it for that stage |
-| routing condition false | `skipped` | `routing_not_selected` | none |
-| prior accepted risk short-circuits | `skipped` | `risk_short_circuit` | preserve manifest obligation and accepted risk action |
-| routed detector succeeds | `matched` or `no_match` | none | normal reduction |
-| routed detector fails | `failed` | stable detector code | fail closed |
-| routed detector times out | `timeout` | `detector_timeout` | fail closed |
-| routed result violates contract | `invalid_result` | stable result code | fail closed |
-| sanitizer fails before Judge | `failed` | `external_redaction_failed` | Judge is not called; fail closed |
-| compatibility adapter cannot represent stage/tool | `failed` | `adapter_unsupported` | fail closed |
-| total budget expires before required/routed completion | `timeout` | `evaluation_budget_exhausted` | fail closed |
+An Engine-internal run ledger owns all transitions:
+`not_started -> skipped|running` and
+`running -> matched|no_match|failed|timeout|invalid_result`. Terminal state is
+immutable. Its closed skip reasons are `optional_not_configured`,
+`optional_not_selected`, `routing_not_selected`, `risk_short_circuit`, and
+`evaluation_terminated`. After global publication, the Engine calls
+`attachPublishedFindings(findings)` once; the ledger groups by
+`finding.detector_id`, attaches only to `matched` runs, and then `finalize()`
+closes the ledger. Opaque finding IDs alone never prove producer ownership.
 
-When accepted findings coexist with a failure, the verdict remains
-`risk_detected` and the action is the more restrictive of the risk action and
-the stage failure action. With no accepted finding, unresolved required
-evidence produces `indeterminate`. A selected detector failure can never be
-treated as ordinary optional absence.
+| Situation | Obligation | Status | Skip/error code | Policy effect |
+| --- | --- | --- | --- | --- |
+| strict profile selects missing profile-required local | n/a | no evaluation | `sandbox_security_profile_invalid` | profile resolution fails before decision ID; no `allow` |
+| optional slot not configured and no route requires it | `optional_not_selected` | `skipped` | `optional_not_configured` | resolved; none |
+| routing selects an unavailable optional slot | `runtime_required` | `failed` | `detector_unavailable` | becomes runtime-required; fail closed |
+| optional slot not selected for stage | `optional_not_selected` | `skipped` | `optional_not_selected` | resolved; none |
+| routing condition false | `optional_not_selected` | `skipped` | `routing_not_selected` | resolved; none |
+| profile-required slot bypassed by short-circuit | `profile_required` | `skipped` | `risk_short_circuit` | resolved by risk only with validated short-circuit finding; preserve accepted risk action |
+| optional slot never selected because of short-circuit | `optional_not_selected` | `skipped` | `risk_short_circuit` | resolved by risk only with validated short-circuit finding; preserve accepted risk action |
+| routed detector succeeds | required kind | `matched` or `no_match` | none | normal reduction |
+| routed detector fails | required kind | `failed` | stable detector code | unresolved; fail closed |
+| routed detector times out | required kind | `timeout` | `detector_timeout` | unresolved; fail closed |
+| routed result violates contract | required kind | `invalid_result` | stable result code | unresolved; fail closed |
+| sanitizer fails before Judge | `runtime_required` | `failed` | `external_redaction_failed` | unresolved; Judge is not called; fail closed |
+| compatibility adapter cannot represent stage/tool | required kind | `failed` | `adapter_unsupported` | unresolved; fail closed |
+| work budget expires during active detector | required kind | `timeout` | `detector_timeout` | unresolved; fail closed; enter bounded epilogue |
+| work budget expires for not-yet-started required slot | keep real obligation | `skipped` | `evaluation_terminated` | unresolved required evidence; fail closed |
+| work budget expires for never-selected optional | `optional_not_selected` | `skipped` | `evaluation_terminated` | no independent effect |
+| work budget expires after decision ID with sufficient state | n/a | no further normal work | Engine failure `evaluation_budget_exhausted` | one bounded fail-closed epilogue |
+| work budget expires before profile/RunLedger/valid decision ID | n/a | no Decision | stable content-free internal error | adapter fail closed |
+
+Detector failure/unresolved evidence with accepted findings preserves
+`risk_detected` and takes the more restrictive action. A separate Engine-level
+failure always produces `indeterminate`, preserves any accepted findings, and
+takes the more restrictive of their action and the stage failure floor. It is
+never represented by rewriting a successful detector run.
 
 ## Policy Reduction
 
@@ -361,10 +447,46 @@ treated as ordinary optional absence.
 | accepted low | `alert` | `alert` | `ask` | `deny` |
 | no finding and all obligations resolved | `allow` | `allow` | `allow` | `allow` |
 | unresolved required evidence | `ask` | `deny` | `ask` | `deny` |
+| Engine-level failure | `ask` minimum | `deny` | `ask` minimum | `deny` |
 
 Restrictiveness is `allow < alert < ask < deny`. `risk_detected` never maps to
 `allow`. `no_detected_risk` may map to `allow` but remains an evidence-bounded
 result rather than a safety proof.
+
+**Decision-bearing Engine failures** (may return a validated Decision with
+`engine-0001`):
+
+- post-ID work-budget exhaustion handled by the bounded epilogue (Scheme B);
+- normal-path `semantic_validation_failed` after one recovery attempt succeeds.
+
+These produce `indeterminate`, preserve already-accepted findings when
+publication-ready trusted evidence exists, and cannot reduce an existing action.
+Successful detector runs are never falsified to carry an Engine failure.
+
+**Terminal Engine errors** (never return a Decision; no `engine-0001`):
+
+- normalization/authority failure;
+- pre-ID work-budget exhaustion;
+- `decision_identity_invalid`;
+- `runtime_clock_invalid`;
+- `decision_materialization_invalid`;
+- failed recovery or failed epilogue validation.
+
+They raise stable content-free `sandbox_security_internal_invalid`; the embedding
+adapter fails closed. Decision ID is minted once only after profile resolution,
+RunLedger creation, detector resolution, trust derivation, frozen raw snapshot
+construction, and a remaining-work-budget check—immediately before detector
+execution.
+
+`profile_required + evaluation_terminated` and
+`runtime_required + evaluation_terminated` are unresolved required evidence.
+A `skipped` status is **not** resolved or unresolved by status alone.
+Resolution is determined by `obligation + skip_reason` (aligned with the Core
+Spec run matrix). Optional absence / unrouted optional skips are resolved;
+`risk_short_circuit` is resolved by risk only when a validated short-circuit
+finding exists. Already-selected optional slots retain `runtime_required` under
+termination; only never-selected optionals use `optional_not_selected` with
+`evaluation_terminated` (no independent effect).
 
 ## Canonicalization, Limits, and Locators
 
@@ -403,34 +525,117 @@ GENERAL-001 defines separate TypeScript ports:
 
 - `RawLocalDetector.detect(rawSnapshot, signal)` for trusted in-process rule
   and local-model code;
-- `SandboxSecuritySanitizer.sanitize(rawSnapshot, signal)` for constructing a
-  closed sanitized payload;
+- `SandboxSecuritySanitizer.sanitize(rawSnapshot, routedObligations, signal)`
+  for constructing a closed sanitized payload whose obligations are fixed by
+  the Engine before sanitization;
 - `SanitizedExternalDetector.detect(sanitizedPayload, signal)` for Judge code.
 
 The external detector parameter contains no raw snapshot, raw source value, or
 raw tool arguments. Its exact-key payload may contain sanitized source values
-and sanitized tool name/target/arguments under engine-issued tokens. It cannot
-carry provider metadata or free-form debug fields. GENERAL-001 supplies
+and bounded sanitized target/arguments. Tool name is represented only by the
+Engine-issued `tool_name_token`; no second tool-name field exists. The payload
+also contains nonempty `routed_obligations`; without them Judge is not called.
+It cannot carry provider metadata or free-form debug fields. GENERAL-001 supplies
 recording fakes only; production sanitizer and Judge implementations belong to
 GENERAL-002.
 
 ## Latency, Cancellation, and Late Results
 
-The 5000 ms total budget starts at `evaluate()` entry and includes structural
-normalization, authority validation, canonicalization, hashing, sanitization,
-detectors, qualification, and reduction.
+Normal sandbox-security evaluation work has a 5000 ms monotonic budget starting
+at `SandboxSecurityEngine.evaluate()` entry. When that work budget is exhausted,
+the Engine performs no further detector, sanitizer, or Judge work, and no
+ordinary/unrestricted qualification, unrestricted publication, or ordinary
+policy work. Only Scheme B restricted qualification and restricted one-shot
+publication are permitted. It may execute one bounded
+deterministic fail-closed epilogue (Scheme B restricted closure) solely to close
+internal state and, when a complete ledger can be built, return a minimal
+validated content-free decision. The epilogue is not claimed to complete inside
+the exhausted 5000 ms work budget.
+
+| Phase | Normal 5000 ms work budget | Fail-closed epilogue allowed |
+| --- | ---: | ---: |
+| normalization | yes | no |
+| authority validation | yes | no |
+| input preparation/JCS/hash | yes | no |
+| profile resolution/trust | yes | no |
+| snapshot construction | yes | no |
+| detector/sanitizer/Judge | yes | no |
+| boundary normalization | yes | no |
+| qualification/Judge resolution | yes | no |
+| normal publication | yes | no |
+| normal run finalization | yes | no |
+| normal reduction | yes | no |
+| normal decision materialization | yes | no |
+| normal semantic validation | yes | no |
+| close active lease/runs / terminalize incomplete slots | no | yes |
+| complete settled rule/local (matched: restricted-qualify + addSlotEvidence; no_match/invalid: record only) | no | yes |
+| lifecycle-correct escalation close / Judge apply | no | yes |
+| restricted one-shot publication (or reuse committed) | no | yes |
+| attachPublishedFindings + finalize (or reuse) | no | yes |
+| record decision-bearing Engine failure | no | yes |
+| minimal fail-closed reduction | no | yes |
+| minimal candidate normalize/validate | no | yes |
+
+Settled normalized result (atomic): generation open + full return + boundary
+normalize success + RunLedger atomic terminal matched/no_match/invalid_result +
+immutable normalized outcome stored. Running-on-expiry becomes timeout and is
+never qualified in the epilogue. Epilogue qualifies rule/local (and settled
+Judge when applicable) **before** closing escalation, and reuses already
+committed publication/attachment/finalization via closure progress.
 
 ```text
 effective detector timeout =
-  min(configured detector timeout, remaining total budget)
+  min(configured detector timeout, remaining normal work budget)
 ```
 
 Deadline expiry aborts the current signal. A generation/deadline check discards
 every late result. `AbortSignal` is cooperative and does not forcibly stop
-untrusted code. Caller cancellation rejects with `sandbox_security_cancelled`;
-budget exhaustion returns a fail-closed decision. Invalid timer ports raise a
-stable internal error, and every embedding adapter must map that error to the
-same stage fail-closed action.
+untrusted code. Caller cancellation rejects with `sandbox_security_cancelled`.
+Work-budget exhaustion before a resolved profile, RunLedger, and valid decision
+ID raises the stable content-free internal error and the embedding adapter fails
+closed; exhaustion after a valid decision ID enters at most one fail-closed
+epilogue. Invalid timer ports raise a stable internal error, and every embedding
+adapter maps it to the same stage fail-closed action.
+
+Decision identity is minted exactly once after profile resolution, RunLedger
+creation, detector resolution, trust derivation, frozen raw snapshot
+construction, and a remaining-work-budget check—immediately before detector
+execution—then the remaining budget is checked again immediately after a valid
+ID is issued. Post-ID exhaustion at that point is decision-bearing
+`phase: "decision_identity"` with zero detector calls. The same decision ID scopes finding IDs, public tokens, Judge
+obligation IDs, and evidence refs. Wall-clock `created_at` is read exactly once
+only after normal reduction (or during the epilogue's minimal materialization)
+and before complete ledger construction; monotonic deadline accounting never
+uses it.
+
+Normal final construction order is unique:
+
+```text
+1. complete detector execution
+2. complete qualification / Judge resolution
+3. publish public findings
+4. attachPublishedFindings on RunLedger
+5. finalize detector runs
+6. reduce initial policy result
+7. runtime.now() exactly once
+8. validate created_at grammar
+9. build complete frozen EvaluationEvidenceLedger
+10. build candidate decision
+11. normalizeSandboxSecurityDecision(candidate)
+12. semantic validate normalized candidate against ledger
+13. recursively freeze and return
+```
+
+Decision evidence refs flatten finding refs in finding order, append the
+Engine-failure marker when present, and perform ordered deduplication; a clean
+decision has `[]`.
+
+Semantic recovery belongs only to the normal work path while remaining work
+budget exists. If normal semantic validation observes work-budget exhaustion,
+the Engine enters the fail-closed epilogue instead of recovery. Epilogue minimal
+semantic validation failure throws; the epilogue never triggers semantic
+recovery. Recovery steps remain under the normal work budget; budget exhaustion
+during recovery terminates into the epilogue.
 
 ## Privacy and Threat Model
 

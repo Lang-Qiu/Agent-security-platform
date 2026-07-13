@@ -4,10 +4,10 @@
 
 - Requirement: `REQ-SBX-GENERAL-001`
 - Name: General sandbox security contracts and core evaluation pipeline
-- Status: ready for implementation plan
-- Review revision: 2
+- Status: `DRAFT_REVISED_PENDING_REAPPROVAL`
+- Review revision: 13
 - Original date: `2026-07-10`
-- Revised: `2026-07-11`
+- Revised: `2026-07-12`
 - Umbrella design:
   `docs/superpowers/specs/2026-07-10-sandbox-general-security-design.md`
 - Prerequisite: switch the active sprint from accepted `REQ-T1-DEMO-010`
@@ -16,6 +16,9 @@
 
 This revision is documentation-only. Every implementation task remains
 RED-first.
+
+Implementation is blocked until this revised Core Spec and the General Design
+are both explicitly reapproved.
 
 ## Objective
 
@@ -47,7 +50,7 @@ GENERAL-001 delivers:
 - Candidate qualification, escalation-signal derivation, duplicate rejection,
   and ordering.
 - Complete built-in policy profile manifests.
-- Per-slot and total budgets, cancellation, and late-result rejection.
+- Per-slot timeout and normal work budget, cancellation, and late-result rejection.
 - Stage-aware policy reduction and semantic decision validation.
 - Compatibility adapters and repository safety gates.
 
@@ -82,20 +85,29 @@ to change one is Ask First.
 ```text
 shared/
   types/sandbox-security.ts
-  contracts/sandbox-security.ts
-  tests/sandbox-security-contract.spec.ts
+  contracts/
+    sandbox-security-request.ts
+    sandbox-security.ts
+  tests/
+    sandbox-security-contract.spec.ts
+    types/sandbox-security-public-types.ts
 
 engines/sandbox/src/security/
-  contract.ts
   source-authority.ts
   canonical-json.ts
   canonical-fingerprint.ts
   input-boundary.ts
-  detector-output-boundary.ts
-  detector-contract.ts
-  detector-pipeline.ts
-  finding-qualification.ts
+  locator.ts
   policy-profiles.ts
+  detector-contract.ts
+  subject-scope.ts
+  detector-output-boundary.ts
+  sanitized-boundary.ts
+  detector-registry.ts
+  finding-qualification.ts
+  escalation-state.ts
+  runtime-deadline.ts
+  run-ledger.ts
   policy-reducer.ts
   semantic-validator.ts
   engine.ts
@@ -103,7 +115,6 @@ engines/sandbox/src/security/
   adapters/
     monitor-decision-provider.ts
     track1-rule-matches.ts
-    track1-regression-harness.ts
 
 engines/sandbox/tests/
   sandbox-security-input.spec.ts
@@ -112,6 +123,10 @@ engines/sandbox/tests/
   sandbox-security-policy.spec.ts
   sandbox-security-engine.spec.ts
   sandbox-security-track1-adapter.spec.ts
+  types/
+    sandbox-security-detector-types.ts
+  helpers/
+    track1-security-regression-harness.ts
 
 tests/repository/
   sandbox-security-core.spec.ts
@@ -119,6 +134,12 @@ tests/repository/
 
 `shared` validates syntax and structure only. It does not import a profile,
 slot registry, reducer, semantic validator, or engine module.
+There is no `engines/sandbox/src/security/contract.ts` or
+`engines/sandbox/src/security/detector-pipeline.ts`. Production `adapters/`
+contains exactly the Monitor and Track 1 rule adapters above. The Track 1
+regression harness is test-only and may exist only under
+`engines/sandbox/tests/helpers/`. File creation/modification ownership is the
+single-owner table locked by the Master plan.
 
 ## Public Shared Contracts
 
@@ -209,12 +230,28 @@ Lengths are UTF-8 bytes unless marked as ASCII characters.
 | `provenance_ref` | controlled grammar below | 256 chars |
 | `decision_id` | ASCII `^[A-Za-z0-9][A-Za-z0-9._:-]*$` | 128 chars |
 | `finding_id` | `^finding:sha256:[a-f0-9]{64}$` | 79 chars |
+| Judge obligation ID | `obligation://sandbox/security/<decision-id>/<four-digit-ordinal>` | 256 chars |
 | public source/call token | engine-generated `source://` or `call://sandbox/security/...` grammar | 256 chars |
-| detector slot ID | one of three manifest constants | 128 chars |
+| detector slot ID | shared public `string`; grammar below (not Engine slot union) | 128 chars |
 | detector version | ASCII semantic version `^[0-9]+\.[0-9]+\.[0-9]+(?:-[a-z0-9.-]+)?$` | 64 chars |
 | reason code | one of the closed category reason constants | 64 chars |
 | engine evidence ref | engine-generated grammar below | 256 chars |
 | JSON pointer | restricted RFC 6901 grammar below | 512 bytes |
+
+Shared public `detector_id` is a plain `string`. Shared normalizers validate
+**grammar only** against this exact regex (max 128 chars):
+
+```regex
+^detector://[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?:/[A-Za-z0-9][A-Za-z0-9._-]{0,63}){1,7}$
+```
+
+They must not import profile manifests, hard-code the three built-in slot
+constants, import `engines/**`, or depend on Engine type
+`SandboxSecurityDetectorSlotId`. Engine semantic validation alone checks
+membership: `detector_run.detector_id` and `finding.detector_id` each belong to
+selected `profile.detector_slots`. Engine-internal narrow type
+`SandboxSecurityDetectorSlotId` may be assigned to the public `string` field
+when materializing runs/findings. There is no second shared closed-set authority.
 
 Allowed provenance grammar:
 
@@ -232,9 +269,12 @@ Engine evidence references use:
 
 ```text
 evidence://sandbox/security/<decision-id>/<four-digit-ordinal>
+evidence://sandbox/security/<decision-id>/engine-0001
 ```
 
-They are generated after normalization and never accepted from a detector.
+The four-digit form is one-per-published-finding in final finding order. The
+`engine-0001` form is the sole Engine-failure marker. Both are generated during
+decision materialization and never accepted from a detector.
 
 JSON pointers use RFC 6901 escaping, but every unescaped object token must
 match `^[A-Za-z0-9_.-]{1,64}$`; array tokens are canonical decimal indexes with
@@ -336,7 +376,7 @@ export type SandboxDetectorRunStatus =
 
 export type SandboxDetectorSkipReason =
   | "optional_not_configured"
-  | "stage_unsupported"
+  | "optional_not_selected"
   | "routing_not_selected"
   | "risk_short_circuit"
   | "evaluation_terminated";
@@ -348,11 +388,11 @@ export type SandboxDetectorRunErrorCode =
   | "detector_result_invalid"
   | "detector_content_leak"
   | "external_redaction_failed"
-  | "evaluation_budget_exhausted"
   | "adapter_unsupported";
 
 interface SandboxDetectorRunBase {
-  detector_id: SandboxSecurityDetectorSlotId;
+  /** Public shared string; grammar-validated only. Not Engine slot union. */
+  detector_id: string;
   detector_version: string;
   detector_kind: "rule" | "local_model" | "external_judge";
   obligation: SandboxDetectorRunObligation;
@@ -418,7 +458,7 @@ type SandboxSecurityAuthorityKind =
 
 type SandboxSecuritySourceType = SandboxSecurityClaimedSourceType;
 
-interface AuthenticatedSourceObservation {
+export interface AuthenticatedSourceObservation {
   source_id: string;
   authority_kind: SandboxSecurityAuthorityKind;
   source_type: SandboxSecuritySourceType;
@@ -427,7 +467,7 @@ interface AuthenticatedSourceObservation {
   provenance_ref: string;
 }
 
-interface AuthenticatedToolObservation {
+export interface AuthenticatedToolObservation {
   authority_kind: "integration_observation" | "simulation_observation";
   call_id: string;
   tool_name: string;
@@ -435,7 +475,7 @@ interface AuthenticatedToolObservation {
   arguments: SandboxSecurityJsonValue;
 }
 
-interface SandboxSecurityAuthoritativeEvaluationContext {
+export interface SandboxSecurityAuthoritativeEvaluationContext {
   schema_version: "sandbox-security-authoritative-context.v1";
   evaluation_mode: SandboxSecurityEvaluationMode;
   stage: SandboxSecurityStage;
@@ -444,7 +484,7 @@ interface SandboxSecurityAuthoritativeEvaluationContext {
   tool_request?: Readonly<AuthenticatedToolObservation>;
 }
 
-interface SandboxSecurityEvaluationRequest {
+export interface SandboxSecurityEvaluationRequest {
   submission: Readonly<SandboxSecurityRequest>;
   authoritative_context:
     Readonly<SandboxSecurityAuthoritativeEvaluationContext>;
@@ -480,21 +520,74 @@ labelled simulation and cannot be used by an enforcement adapter. In
 profile, source observations, and tool call from hook/runtime state. Public
 claims cannot change them or select balanced in place of configured strict.
 
-Profiles derive trust through this fixed table:
+Authority normalization deliberately does not assign trust. It produces this
+Engine-internal authority-bound content shape:
 
-| Mode/authority | Authoritative source | Trust class |
-| --- | --- | --- |
-| enforcement / `platform_control` | system/developer instruction | `control` |
-| enforcement / `integration_observation` | user input | `user_supplied` |
-| enforcement / `integration_observation` | retrieved/memory content | `external_untrusted` |
-| enforcement / `integration_observation` | model output | `generated_untrusted` |
-| simulation / `simulation_observation` | system/developer instruction | `control` within simulation only |
-| simulation / `simulation_observation` | user input | `user_supplied` |
-| simulation / `simulation_observation` | retrieved/memory content | `external_untrusted` |
-| simulation / `simulation_observation` | model output | `generated_untrusted` |
+```ts
+declare const sandboxSecuritySourceHandleBrand: unique symbol;
+declare const sandboxSecurityCallHandleBrand: unique symbol;
 
-Every other pair is invalid. `control` is instruction authority within the
-declared mode, not proof of harmlessness.
+type SandboxSecuritySourceHandle =
+  string & { readonly [sandboxSecuritySourceHandleBrand]: true };
+
+type SandboxSecurityCallHandle =
+  string & { readonly [sandboxSecurityCallHandleBrand]: true };
+
+export interface SandboxSecurityAuthorityBoundContent {
+  readonly source_handle: SandboxSecuritySourceHandle;
+  readonly source_id: string;
+  readonly source_type: SandboxSecurityClaimedSourceType;
+  readonly media_type: "text/plain" | "application/json";
+  readonly authority_kind:
+    | "platform_control"
+    | "integration_observation"
+    | "simulation_observation";
+  readonly value: string | SandboxSecurityJsonValue;
+  readonly provenance_ref: string;
+  readonly original_utf8_bytes: readonly number[];
+  readonly original_value_sha256: string;
+  readonly comparison_value: string | SandboxSecurityJsonValue;
+}
+
+interface SandboxSecurityNormalizedToolRequest {
+  readonly call_handle: SandboxSecurityCallHandle;
+  readonly call_id: string;
+  readonly authority_kind:
+    | "integration_observation"
+    | "simulation_observation";
+  readonly tool_name: string;
+  readonly target?: string;
+  readonly arguments: SandboxSecurityJsonValue;
+  readonly arguments_jcs_sha256: string;
+  readonly has_target: boolean;
+}
+```
+
+The selected immutable profile is the sole trust authority. After profile
+resolution, `policy-profiles.ts` applies the profile's exact `trust_rules`
+through this helper:
+
+```ts
+export type SandboxSecurityTrustClass =
+  | "control"
+  | "user_supplied"
+  | "external_untrusted"
+  | "generated_untrusted";
+
+export function deriveSandboxSecurityTrustClass(input: {
+  readonly profile: Readonly<SandboxSecurityPolicyProfileManifest>;
+  readonly evaluation_mode: "simulation" | "enforcement";
+  readonly authority_kind:
+    | "platform_control"
+    | "integration_observation"
+    | "simulation_observation";
+  readonly source_type: SandboxSecurityClaimedSourceType;
+}): SandboxSecurityTrustClass;
+```
+
+Unknown or ambiguous combinations fail deterministically. `control` remains
+instruction authority within the declared mode, not proof of harmlessness.
+Phase 2 must not carry a second hard-coded trust table.
 
 ## Canonicalization and Hashing
 
@@ -580,18 +673,24 @@ authoritative projection.
 ## Engine-Private Snapshot
 
 ```ts
-interface SandboxSecuritySnapshot {
-  request_id: string;
-  evaluation_mode: SandboxSecurityEvaluationMode;
-  stage: SandboxSecurityStage;
-  profile: Readonly<SandboxSecurityPolicyProfileManifest>;
-  contents: readonly SandboxSecurityNormalizedContent[];
-  tool_request?: Readonly<SandboxSecurityNormalizedToolRequest>;
-  canonical_request_sha256: string;
+export interface SandboxSecurityRawDetectorSnapshot {
+  readonly request_id: string;
+  readonly evaluation_mode: SandboxSecurityEvaluationMode;
+  readonly stage: SandboxSecurityStage;
+  readonly profile: Readonly<SandboxSecurityPolicyProfileManifest>;
+  readonly contents: readonly SandboxSecurityNormalizedContent[];
+  readonly tool_request?: Readonly<SandboxSecurityNormalizedToolRequest>;
+  readonly canonical_request_sha256: string;
+}
+
+interface SandboxSecurityNormalizedContent
+  extends SandboxSecurityAuthorityBoundContent {
+  readonly trust_class: SandboxSecurityTrustClass;
 }
 ```
 
-Normalized contents include authoritative type/trust, engine-private source
+Normalized contents are created only after profile resolution. They include
+profile-derived trust, authoritative type, engine-private source
 handles, and hashes. A normalized tool observation includes an engine-private
 call handle. The snapshot is a recursively frozen defensive copy used only
 during evaluation. The engine stores no raw snapshot in instance fields or
@@ -613,6 +712,8 @@ export interface RawLocalDetector {
 export interface SandboxSecuritySanitizer {
   sanitize(
     snapshot: Readonly<SandboxSecurityRawDetectorSnapshot>,
+    routed_obligations:
+      readonly SandboxSecuritySanitizedJudgeObligation[],
     signal: AbortSignal
   ): Promise<SandboxSecuritySanitizedJudgePayload>;
 }
@@ -623,41 +724,87 @@ export interface SanitizedExternalDetector {
     signal: AbortSignal
   ): Promise<SandboxSecurityExternalDetectorResult>;
 }
+
+export interface SandboxSecurityDetectorRegistryInput {
+  readonly rule: RawLocalDetector;
+  readonly local?: RawLocalDetector;
+  readonly judge?: SanitizedExternalDetector;
+}
+
+export interface SandboxSecurityDetectorRegistry {
+  readonly rule: RawLocalDetector;
+  readonly local?: RawLocalDetector;
+  readonly judge?: SanitizedExternalDetector;
+}
 ```
+
+Registry construction requires the rule slot, validates exact keys, and freezes
+the captured ports without selecting a profile. Profile-specific required-slot
+resolution is a separate Engine-internal operation.
 
 The sanitizer output has this exact public-to-the-port shape; stage invariants
 control whether `tool_request` is present:
 
 ```ts
 interface SandboxSecuritySanitizedJudgeSource {
-  source_token: string;
-  source_type: SandboxSecuritySourceType;
-  media_type: "text/plain" | "application/json";
-  sanitized_value: string | SandboxSecurityJsonValue;
+  readonly source_token: string;
+  readonly source_type: SandboxSecuritySourceType;
+  readonly media_type: "text/plain" | "application/json";
+  readonly sanitized_value: string | SandboxSecurityJsonValue;
 }
 
 interface SandboxSecuritySanitizedJudgeToolRequest {
-  call_token: string;
-  sanitized_tool_name: string;
-  sanitized_target?: string;
-  sanitized_arguments: SandboxSecurityJsonValue;
+  readonly call_token: string;
+  readonly tool_name_token: string;
+  readonly sanitized_target?: string;
+  readonly sanitized_arguments: SandboxSecurityJsonValue;
 }
 
-interface SandboxSecuritySanitizedJudgePayload {
-  schema_version: "sandbox-security-sanitized-judge.v1";
-  request_token: string;
-  stage: SandboxSecurityStage;
-  policy_profile_id: SandboxSecurityPolicyProfileId;
-  sources: SandboxSecuritySanitizedJudgeSource[];
-  tool_request?: SandboxSecuritySanitizedJudgeToolRequest;
+export interface SandboxSecuritySanitizedJudgeObligation {
+  readonly obligation_id: string;
+  readonly category: SandboxSecurityRiskCategory;
+  readonly subject_refs:
+    readonly SandboxSecurityExternalCandidateSubjectRef[];
+}
+
+export interface SandboxSecuritySanitizedJudgePayload {
+  readonly schema_version: "sandbox-security-sanitized-judge.v1";
+  readonly request_token: string;
+  readonly stage: SandboxSecurityStage;
+  readonly policy_profile_id: SandboxSecurityPolicyProfileId;
+  readonly sources: readonly SandboxSecuritySanitizedJudgeSource[];
+  readonly tool_request?:
+    Readonly<SandboxSecuritySanitizedJudgeToolRequest>;
+  readonly routed_obligations:
+    readonly SandboxSecuritySanitizedJudgeObligation[];
 }
 ```
+
+`tool_name_token` is an Engine-issued external evaluation token, not a sanitized
+or transformed real tool name. `sanitized_target` and `sanitized_arguments`
+remain sanitizer-produced bounded values. This naming and representation are
+the only allowed tool payload model; no parallel tool-name, target-token, or
+arguments-token aliases exist.
 
 Every token is engine-issued and scoped to one evaluation. This type contains
 no raw snapshot, raw source value, raw tool name/target/arguments, ordinary
 content hash, provenance, credential, endpoint, or provider metadata. It may
 contain only sanitizer-produced source and tool values. External results refer
 only to these tokens; the engine maps them back to private subject handles.
+
+Judge may be called only when `routed_obligations` is nonempty. Each obligation
+is Engine-generated, deterministic, evaluation-scoped, content-free, and uses:
+
+```text
+obligation://sandbox/security/<decision-id>/<four-digit-ordinal>
+```
+
+Ordinals start at `0001` after sorting by category and canonical tokenized
+subject scope. Slot ID is excluded. Obligations contain only unresolved
+escalation signals. Their subject tokens must already exist in the payload and
+must match subject kind. Duplicate obligation IDs and duplicate category plus
+canonical scope are invalid. Raw content, private handles, ordinary hashes, and
+provenance are forbidden.
 
 ### Exact Candidate, Clearance, and Result Contracts
 
@@ -721,11 +868,27 @@ export interface SandboxSecurityRawDetectorResult {
   clearances: SandboxSecurityCategoryClearance[];
 }
 
+export interface SandboxSecurityExternalRiskCandidate {
+  readonly obligation_id: string;
+  readonly category: SandboxSecurityRiskCategory;
+  readonly severity: SandboxSecuritySeverity;
+  readonly confidence: number;
+  readonly reason_code: SandboxSecurityReasonCode;
+  readonly subject_refs:
+    readonly SandboxSecurityExternalCandidateSubjectRef[];
+}
+
+export interface SandboxSecurityExternalCategoryClearance {
+  readonly obligation_id: string;
+  readonly category: SandboxSecurityRiskCategory;
+  readonly confidence: number;
+  readonly subject_refs:
+    readonly SandboxSecurityExternalCandidateSubjectRef[];
+}
+
 export interface SandboxSecurityExternalDetectorResult {
-  candidates:
-    SandboxSecurityRiskCandidate<SandboxSecurityExternalCandidateSubjectRef>[];
-  clearances:
-    SandboxSecurityCategoryClearance<SandboxSecurityExternalCandidateSubjectRef>[];
+  readonly candidates: readonly SandboxSecurityExternalRiskCandidate[];
+  readonly clearances: readonly SandboxSecurityExternalCategoryClearance[];
 }
 ```
 
@@ -745,9 +908,10 @@ Result rules are fixed:
 - every candidate and clearance has one to eight unique subject refs; an empty
   or internally duplicate subject array is invalid;
 - canonical result size over 64 KiB is `detector_result_invalid`;
-- candidate duplicate key is category + reason code + canonical subject refs;
-  clearance duplicate key is category + canonical subject refs; repeating a key
-  in one slot is invalid regardless of severity/confidence rather than merged;
+- raw candidate duplicate key is category + reason code + canonical subject
+  refs; raw clearance key is category + canonical subject refs; external keys
+  prepend obligation_id. Repeating a key in one slot is invalid regardless of
+  severity/confidence rather than merged;
 - one slot cannot return both candidate and clearance for the same canonical
   subject/category scope;
 - unknown, stale, cross-evaluation, or wrong-kind handle/token is
@@ -760,6 +924,19 @@ Result rules are fixed:
   so detector identity is not lost; the reducer uses highest severity without
   voting or averaging.
 
+External result items must reference an obligation present in the validated
+payload. Category must equal the obligation category. After token-to-private
+mapping, both result and obligation refs are canonicalized with the P3-T3
+subject-scope helper and their canonical arrays must be exactly equal. Input
+order may differ; subset, superset, duplicate, locator widening/narrowing, and
+whole-source/byte-range substitution are invalid for both risk and clearance.
+A multi-ref obligation must be returned with every ref or omitted entirely.
+One obligation may yield accepted risk, qualified clearance, low-confidence
+unresolved evidence, or no returned item. Omitted obligations are the only
+valid partial coverage and remain unresolved. Unknown, stale, or
+cross-evaluation obligation IDs invalidate the result. Judge cannot create an
+escalation obligation or report an unrouted category/scope.
+
 ```ts
 export const SANDBOX_SECURITY_MAX_CANDIDATES_PER_RESULT = 32;
 export const SANDBOX_SECURITY_MAX_CLEARANCES_PER_RESULT = 32;
@@ -769,16 +946,16 @@ export const SANDBOX_SECURITY_MAX_SANITIZED_PAYLOAD_BYTES = 256 * 1024;
 export const SANDBOX_SECURITY_MAX_SANITIZED_JSON_DEPTH = 8;
 export const SANDBOX_SECURITY_MAX_SANITIZED_JSON_NODES = 2048;
 export const SANDBOX_SECURITY_MAX_JUDGE_RESPONSE_BYTES = 64 * 1024;
-export const SANDBOX_SECURITY_MAX_SANITIZED_TOKENS = 66;
+export const SANDBOX_SECURITY_MAX_SANITIZED_TOKENS = 67;
 ```
 
 Sanitized payload limits are 256 KiB canonical bytes, JSON depth 8, 2048 JSON
-nodes, and 66 unique evaluation tokens (one request token, 64 source tokens,
-plus one call token).
+nodes, and 67 unique evaluation tokens (one request token, 64 source tokens,
+one call token, and one tool-name token).
 Overflow is `external_redaction_failed` and causes zero Judge calls. A Judge
 adapter must reject a raw response over 64 KiB before parsing; an oversized or
 post-parse oversized external result is `detector_result_invalid`. Limit
-measurement and validation consume the total budget.
+measurement and validation consume the 5000 ms normal evaluation work budget.
 
 GENERAL-001 implements recording detectors and a recording sanitizer for tests
 only. Production sanitizer and external Judge belong to GENERAL-002. Sanitizer
@@ -786,12 +963,215 @@ failure prevents the Judge call and records `external_redaction_failed`. The
 Judge slot's effective timeout covers sanitizer plus Judge execution; the
 Judge receives only the time remaining after sanitization.
 
+### Canonical Private Subject Scope
+
+Subject identity is an Engine-internal Phase 3 primitive, not a Phase 4
+qualification implementation detail:
+
+```ts
+type SandboxSecurityCanonicalPrivateSubjectScope =
+  | {
+      readonly kind: "content_source";
+      readonly source_handle: SandboxSecuritySourceHandle;
+      readonly locator: SandboxSecurityContentLocator;
+    }
+  | {
+      readonly kind: "tool_request";
+      readonly call_handle: SandboxSecurityCallHandle;
+      readonly component: "whole_call" | "tool_name" | "target";
+    }
+  | {
+      readonly kind: "tool_request";
+      readonly call_handle: SandboxSecurityCallHandle;
+      readonly component: "arguments";
+      readonly locator: SandboxSecurityToolLocator;
+    };
+
+function canonicalizeSandboxSecurityPrivateSubjectScopes(
+  refs: readonly SandboxSecurityCandidateSubjectRef[]
+): readonly SandboxSecurityCanonicalPrivateSubjectScope[];
+
+function computeSandboxSecuritySubjectKey(input: {
+  readonly category: SandboxSecurityRiskCategory;
+  readonly subject_refs:
+    readonly SandboxSecurityCandidateSubjectRef[];
+}): string;
+```
+
+```text
+subject_key = sha256_hex(JCS({
+  category,
+  subjects: canonicalized_and_sorted_private_scopes
+}))
+```
+
+Category participates in identity; detector slot ID does not. Ref order does
+not affect the result, duplicate scopes are rejected before hashing, and both
+helpers remain Engine-internal. P3 raw and external boundaries use this single
+implementation; P4 qualification imports it and must not reimplement it.
+
 ## Candidate Qualification
 
 An engine-private risk candidate contains category, severity, finite confidence
 in `[0,1]`, closed reason code, and structured content/tool subject refs. A
 clearance contains category, confidence, and the same scoped subject model.
 Neither is public output.
+
+Qualification produces an exact Engine-internal draft rather than temporarily
+placing private handles in the public Finding type:
+
+```ts
+interface SandboxSecurityAcceptedRiskEvidence {
+  readonly category: SandboxSecurityRiskCategory;
+  readonly subject_key: string;
+  readonly source_slot_id: SandboxSecurityDetectorSlotId;
+  readonly finding_id: string;
+  readonly severity: SandboxSecuritySeverity;
+  readonly confidence: number;
+  readonly reason_code: SandboxSecurityReasonCode;
+  readonly subject_refs:
+    readonly SandboxSecurityCandidateSubjectRef[];
+}
+
+interface SandboxSecurityQualifiedClearance {
+  readonly category: SandboxSecurityRiskCategory;
+  readonly subject_key: string;
+  readonly source_slot_id: SandboxSecurityDetectorSlotId;
+  readonly confidence: number;
+}
+
+interface SandboxSecurityRoutingRiskEvidence {
+  readonly category: SandboxSecurityRiskCategory;
+  readonly subject_key: string;
+  readonly source_slot_id: SandboxSecurityDetectorSlotId;
+  readonly severity: SandboxSecuritySeverity;
+  readonly confidence: number;
+  readonly reason_code: SandboxSecurityReasonCode;
+  readonly subject_refs:
+    readonly SandboxSecurityCandidateSubjectRef[];
+}
+
+interface SandboxSecurityDraftFinding {
+  readonly finding_id: string;
+  readonly detector_id: SandboxSecurityDetectorSlotId;
+  readonly detector_version: string;
+  readonly category: SandboxSecurityRiskCategory;
+  readonly severity: SandboxSecuritySeverity;
+  readonly confidence: number;
+  readonly reason_code: SandboxSecurityReasonCode;
+  readonly subject_key: string;
+  readonly subject_refs:
+    readonly SandboxSecurityCandidateSubjectRef[];
+}
+
+interface SandboxSecurityQualifiedSlotEvidence {
+  readonly source_slot_id: SandboxSecurityDetectorSlotId;
+  readonly accepted_risks:
+    readonly SandboxSecurityAcceptedRiskEvidence[];
+  readonly accepted_draft_findings:
+    readonly SandboxSecurityDraftFinding[];
+  readonly qualified_clearances:
+    readonly SandboxSecurityQualifiedClearance[];
+  readonly routing_risks:
+    readonly SandboxSecurityRoutingRiskEvidence[];
+  readonly discarded_count: number;
+}
+
+/**
+ * One record per selected manifest slot, in profile.detector_slots order.
+ * Covers every terminal run status. Engine-internal; never exported;
+ * not durable audit; not public decision.
+ *
+ * Rules:
+ * - exactly one record per selected manifest slot
+ * - record order equals profile.detector_slots order
+ * - record.status must equal detector_run.status for the same slot
+ * - matched: must have normalized_result + qualified_evidence;
+ *   qualified_evidence.source_slot_id === slot_id;
+ *   qualified_evidence is cache under validation, not authority
+ * - all non-matched statuses: must not carry normalized_result or
+ *   qualified_evidence
+ * - recursively frozen
+ */
+export type SandboxSecuritySlotEvaluationRecord =
+  | {
+      readonly slot_id: SandboxSecurityDetectorSlotId;
+      readonly status: "matched";
+      readonly normalized_result:
+        Readonly<SandboxSecurityNormalizedSlotResult>;
+      readonly qualified_evidence:
+        Readonly<SandboxSecurityQualifiedSlotEvidence>;
+    }
+  | {
+      readonly slot_id: SandboxSecurityDetectorSlotId;
+      readonly status: "no_match";
+    }
+  | {
+      readonly slot_id: SandboxSecurityDetectorSlotId;
+      readonly status: "invalid_result";
+      readonly error_code:
+        | "detector_result_invalid"
+        | "detector_content_leak";
+    }
+  | {
+      readonly slot_id: SandboxSecurityDetectorSlotId;
+      readonly status: "failed";
+      readonly error_code:
+        | "detector_unavailable"
+        | "detector_failed"
+        | "external_redaction_failed"
+        | "adapter_unsupported";
+    }
+  | {
+      readonly slot_id: SandboxSecurityDetectorSlotId;
+      readonly status: "timeout";
+    }
+  | {
+      readonly slot_id: SandboxSecurityDetectorSlotId;
+      readonly status: "skipped";
+      readonly skip_reason: SandboxDetectorSkipReason;
+    };
+
+// SandboxSecuritySlotBoundaryOutcome is retired; use SlotEvaluationRecord.status.
+
+interface SandboxSecurityQualificationSubjectMap {
+  readonly evaluation_nonce: string;
+  readonly sources: readonly {
+    readonly source_handle: SandboxSecuritySourceHandle;
+  }[];
+  readonly tool?: Readonly<{
+    readonly call_handle: SandboxSecurityCallHandle;
+  }>;
+}
+
+interface SandboxSecurityPublicSubjectTokenMap {
+  readonly decision_id: string;
+  readonly sources: readonly {
+    readonly source_handle: SandboxSecuritySourceHandle;
+    readonly public_source_token: string;
+  }[];
+  readonly tool?: Readonly<{
+    readonly call_handle: SandboxSecurityCallHandle;
+    readonly public_call_token: string;
+  }>;
+}
+
+type SandboxSecurityAcceptedSubjectEntity =
+  | {
+      readonly kind: "content_source";
+      readonly source_handle: SandboxSecuritySourceHandle;
+    }
+  | {
+      readonly kind: "tool_request";
+      readonly call_handle: SandboxSecurityCallHandle;
+    };
+```
+
+Every accepted risk evidence item pairs with exactly one DraftFinding, which in
+turn pairs with exactly one published Finding. The three records must agree on
+subject key, finding ID, detector ID/version, category, severity, confidence,
+reason code, and canonical subject refs. Drafts contain no public tokens or
+evidence refs and never enter reduction or the public decision.
 
 For each slot:
 
@@ -826,6 +1206,173 @@ Every unresolved escalation signal routes external Judge. The slot becomes
 
 There is no Judge suppression, downgrade, detector vote, or score average.
 
+Judge resolution is owned by one Engine-internal state API:
+
+```ts
+export interface SandboxSecurityEscalationSignal {
+  readonly category: SandboxSecurityRiskCategory;
+  readonly subject_key: string;
+  readonly subject_refs:
+    readonly SandboxSecurityCandidateSubjectRef[];
+  readonly origin_slot_ids: readonly SandboxSecurityDetectorSlotId[];
+  readonly severity: SandboxSecuritySeverity;
+  readonly confidence: number;
+  readonly reason_code: SandboxSecurityReasonCode;
+}
+
+export type SandboxSecurityJudgeResolutionEvidence =
+  | {
+      readonly kind: "accepted_risk";
+      readonly obligation_id: string;
+      readonly category: SandboxSecurityRiskCategory;
+      readonly subject_key: string;
+      readonly finding_id: string;
+    }
+  | {
+      readonly kind: "qualified_clearance";
+      readonly obligation_id: string;
+      readonly category: SandboxSecurityRiskCategory;
+      readonly subject_key: string;
+    }
+  | {
+      readonly kind: "partial_coverage";
+      readonly covered_obligation_ids: readonly string[];
+      readonly uncovered_obligation_ids: readonly string[];
+    }
+  | { readonly kind: "no_match" }
+  | {
+      readonly kind: "low_confidence_unresolved";
+      readonly obligation_id: string;
+      readonly category: SandboxSecurityRiskCategory;
+      readonly subject_key: string;
+    }
+  | {
+      readonly kind: "invalid_result";
+      readonly error_code:
+        | "detector_result_invalid"
+        | "detector_content_leak";
+    };
+
+export type SandboxSecurityNormalizedJudgeOutcome =
+  | {
+      readonly status: "matched";
+      readonly evidence:
+        Readonly<SandboxSecurityQualifiedSlotEvidence>;
+      readonly covered_obligation_ids: readonly string[];
+    }
+  | {
+      readonly status: "no_match";
+      readonly covered_obligation_ids: readonly [];
+    }
+  | {
+      readonly status: "invalid_result";
+      readonly error_code:
+        | "detector_result_invalid"
+        | "detector_content_leak";
+    };
+
+export interface SandboxSecurityJudgeApplicationResult {
+  readonly resolution_evidence:
+    readonly SandboxSecurityJudgeResolutionEvidence[];
+  readonly unresolved_signals:
+    readonly SandboxSecurityEscalationSignal[];
+  readonly accepted_draft_findings:
+    readonly SandboxSecurityDraftFinding[];
+  /** Obligation IDs covered by this Judge application; subset of routed set. */
+  readonly covered_obligation_ids: readonly string[];
+}
+
+export type SandboxSecurityEscalationLifecycle =
+  | "collecting"
+  | "obligations_materialized"
+  | "judge_applied"
+  | "closed";
+
+export type SandboxSecurityJudgeTerminationReason =
+  | "risk_short_circuit"
+  | "detector_unavailable"
+  | "external_redaction_failed"
+  | "detector_failed"
+  | "detector_timeout"
+  | "evaluation_terminated";
+
+export interface SandboxSecurityEscalationState {
+  lifecycle(): SandboxSecurityEscalationLifecycle;
+  /** Rule/local evidence only; Judge evidence is forbidden here. */
+  addSlotEvidence(evidence: SandboxSecurityQualifiedSlotEvidence): void;
+  unresolvedSignals(): readonly SandboxSecurityEscalationSignal[];
+  materializeRoutedObligations(input: {
+    readonly decision_id: string;
+    readonly token_registry:
+      Readonly<SandboxSecurityExternalTokenRegistry>;
+  }): readonly SandboxSecuritySanitizedJudgeObligation[];
+  applyJudgeOutcome(
+    outcome: Readonly<SandboxSecurityNormalizedJudgeOutcome>
+  ): Readonly<SandboxSecurityJudgeApplicationResult>;
+  /**
+   * Termination without NormalizedJudgeOutcome.
+   * Callable from collecting or obligations_materialized only.
+   * Mutually exclusive with applyJudgeOutcome for this evaluation.
+   * Preserves all unresolved signals; creates no accepted findings;
+   * creates no new signals; returns resolution_evidence: [] always;
+   * termination is represented by Judge SlotEvaluationRecord + DetectorRun
+   * + retained unresolved signals (no judge_terminated evidence kind).
+   * Transitions directly to closed. At most once per evaluation.
+   * Includes risk_short_circuit when short-circuit leaves unrelated signals.
+   */
+  terminateJudgeAttempt(input: Readonly<{
+    reason: SandboxSecurityJudgeTerminationReason;
+  }>): Readonly<SandboxSecurityJudgeApplicationResult>;
+  /** When no unresolved signals exist: collecting -> closed without Judge. */
+  closeWithoutJudge(): void;
+  /** judge_applied -> closed. Required after successful applyJudgeOutcome. */
+  close(): void;
+}
+
+export function createSandboxSecurityEscalationState():
+  SandboxSecurityEscalationState;
+```
+
+Escalation lifecycle is call-once and exact:
+
+```text
+collecting
+  allow: addSlotEvidence(rule/local only)
+  forbid: applyJudgeOutcome
+  materializeRoutedObligations once -> obligations_materialized
+  closeWithoutJudge when no unresolved signals -> closed
+  terminateJudgeAttempt once -> closed (signals preserved)
+
+obligations_materialized
+  forbid: addSlotEvidence
+  applyJudgeOutcome once -> judge_applied
+  terminateJudgeAttempt once -> closed (signals preserved)
+  Judge cannot create new escalation signals
+
+judge_applied
+  close once -> closed  (mandatory after applyJudgeOutcome)
+
+closed
+  all mutation fails
+  final unresolved signals are read only from closed state
+
+Normal Judge path (locked):
+  applyJudgeOutcome(...) -> close() -> read final unresolved signals
+
+Failure paths without NormalizedJudgeOutcome (Judge absent, sanitizer fail,
+Judge throw/timeout, budget termination mid-Judge, short-circuit with remaining
+signals, etc.) must call terminateJudgeAttempt once.
+```
+
+`addSlotEvidence()` accepts rule/local evidence only. Judge routing risks never
+create new signals. `applyJudgeOutcome()` alone matches obligation IDs and
+applies accepted risk, clearance, low-confidence, omitted coverage, no-match,
+and invalid-result semantics. Covered obligation IDs must come only from this
+evaluation's routed obligations, with no duplicates; omitted obligations remain
+unresolved. P4 orchestration cannot duplicate this logic.
+Each signal's private refs canonicalize to its `subject_key`; they exist only so
+P4-T2 can map the routed scope through the Engine external-token registry.
+
 ### Finding Identity, Uniqueness, and Order
 
 The engine injects detector ID/version/kind from the registered slot. A
@@ -859,12 +1406,46 @@ decision ID and ordinal.
 The engine-private manifest shape is fixed:
 
 ```ts
+export interface SandboxSecurityTrustRule {
+  readonly evaluation_mode: "simulation" | "enforcement";
+  readonly authority_kind:
+    | "platform_control"
+    | "integration_observation"
+    | "simulation_observation";
+  readonly source_types:
+    readonly SandboxSecurityClaimedSourceType[];
+  readonly trust_class: SandboxSecurityTrustClass;
+}
+
+export interface SandboxSecurityActionByStage {
+  readonly user_input: SandboxSecurityAction;
+  readonly model_output: SandboxSecurityAction;
+  readonly tool_request: SandboxSecurityAction;
+}
+
+export interface SandboxSecurityActionMatrix {
+  readonly accepted_critical:
+    Readonly<SandboxSecurityActionByStage>;
+  readonly accepted_high: Readonly<SandboxSecurityActionByStage>;
+  readonly accepted_medium: Readonly<SandboxSecurityActionByStage>;
+  readonly accepted_low: Readonly<SandboxSecurityActionByStage>;
+  readonly no_finding_all_resolved:
+    Readonly<SandboxSecurityActionByStage>;
+  readonly unresolved_required:
+    Readonly<SandboxSecurityActionByStage>;
+}
+
 type SandboxSecurityRoutingRule =
   | "always"
   | "configured_after_no_short_circuit"
   | "unresolved_escalation_signal";
 
-interface SandboxSecurityDetectorSlotManifest {
+export type SandboxSecurityDetectorSlotId =
+  | "detector://sandbox/security/rule/default/v1"
+  | "detector://sandbox/security/local/default/v1"
+  | "detector://sandbox/security/judge/default/v1";
+
+export interface SandboxSecurityDetectorSlotManifest {
   slot_id: SandboxSecurityDetectorSlotId;
   detector_version: string;
   detector_kind: "rule" | "local_model" | "external_judge";
@@ -878,9 +1459,9 @@ interface SandboxSecurityDetectorSlotManifest {
   short_circuit_min_severity: SandboxSecuritySeverity | null;
 }
 
-interface SandboxSecurityPolicyProfileManifest {
+export interface SandboxSecurityPolicyProfileManifest {
   profile_id: SandboxSecurityPolicyProfileId;
-  total_budget_ms: 5000;
+  normal_work_budget_ms: 5000;
   trust_rules: readonly SandboxSecurityTrustRule[];
   detector_slots: readonly SandboxSecurityDetectorSlotManifest[];
   action_matrix: Readonly<SandboxSecurityActionMatrix>;
@@ -896,7 +1477,7 @@ The stable slots are:
 - `detector://sandbox/security/judge/default/v1`, version `1.0.0`, kind
   `external_judge`.
 
-All support all three stages. Both manifests have `total_budget_ms: 5000`, the
+All support all three stages. Both manifests have `normal_work_budget_ms: 5000`, the
 fixed trust table above, the closed reason-code catalog, the action matrix
 below, and no automatic retry.
 
@@ -910,9 +1491,14 @@ below, and no automatic retry.
 | strict | Judge | optional | `sanitized_external` | 4000 | 0.70 | 0.50 | unresolved escalation signal | none |
 
 Balanced rule-only is a normal supported configuration. Missing balanced local
-or Judge slots alone do not create indeterminacy. Strict construction requires
-rule and local. A routed but unavailable Judge is runtime-required and fails
-closed.
+or Judge registrations alone do not create indeterminacy. Registry and Engine
+construction require the rule detector only. When an evaluation selects the
+strict profile, profile-specific detector resolution requires both rule and
+local. If the local detector is missing, resolution fails with
+`sandbox_security_profile_invalid` before decision ID issuance and before any
+detector call. No public Decision is returned. A routed but unavailable Judge
+becomes `runtime_required` and fails closed through the normal Judge failure
+path.
 
 Manifests are exact-key validated at module initialization, recursively frozen,
 and selected only by built-in ID. Validation rejects duplicate slots, unknown
@@ -938,13 +1524,133 @@ normalized deterministic matches, or `1.00` for exact matches. Rule absence is
 
 Every manifest slot has exactly one ordered run summary.
 
+Run transitions are owned by one Engine-internal ledger, not by orchestration:
+
+```ts
+export interface SandboxSecurityRunLedger {
+  markSkipped(input: Readonly<{
+    slot_id: SandboxSecurityDetectorSlotId;
+    obligation: SandboxDetectorRunObligation;
+    skip_reason: SandboxDetectorSkipReason;
+    elapsed_ms: number;
+  }>): void;
+  markStarted(input: Readonly<{
+    slot_id: SandboxSecurityDetectorSlotId;
+    obligation: SandboxDetectorRunObligation;
+    started_monotonic_ms: number;
+  }>): void;
+  markMatched(input: Readonly<{slot_id: SandboxSecurityDetectorSlotId; elapsed_ms: number}>): void;
+  markNoMatch(input: Readonly<{slot_id: SandboxSecurityDetectorSlotId; elapsed_ms: number}>): void;
+  markFailed(input: Readonly<{
+    slot_id: SandboxSecurityDetectorSlotId;
+    elapsed_ms: number;
+    error_code:
+      | "detector_unavailable"
+      | "detector_failed"
+      | "external_redaction_failed"
+      | "adapter_unsupported";
+  }>): void;
+  markTimeout(input: Readonly<{slot_id: SandboxSecurityDetectorSlotId; elapsed_ms: number}>): void;
+  markInvalidResult(input: Readonly<{
+    slot_id: SandboxSecurityDetectorSlotId;
+    elapsed_ms: number;
+    error_code: "detector_result_invalid" | "detector_content_leak";
+  }>): void;
+  /**
+   * Global attachment once after publication. Groups by finding.detector_id.
+   * Opaque finding IDs alone never prove producer ownership.
+   */
+  attachPublishedFindings(
+    findings: readonly SandboxSecurityFinding[]
+  ): void;
+  finalize(): readonly SandboxDetectorRun[];
+  /**
+   * Canonical read-only state for Scheme B and orchestration.
+   * Sole source of slot status / RunLedger lifecycle; P4-T6 must not maintain
+   * a divergent parallel status table.
+   */
+  snapshot(): Readonly<SandboxSecurityRunLedgerSnapshot>;
+}
+
+export type SandboxSecurityRunLedgerLifecycle =
+  | "open"
+  | "findings_attached"
+  | "finalized";
+
+export interface SandboxSecurityRunLedgerSlotSnapshot {
+  readonly slot_id: SandboxSecurityDetectorSlotId;
+  readonly status:
+    | "not_started"
+    | "skipped"
+    | "running"
+    | "matched"
+    | "no_match"
+    | "failed"
+    | "timeout"
+    | "invalid_result";
+  readonly obligation?: SandboxDetectorRunObligation;
+  readonly skip_reason?: SandboxDetectorSkipReason;
+  readonly error_code?: SandboxDetectorRunErrorCode;
+}
+
+export interface SandboxSecurityRunLedgerSnapshot {
+  readonly lifecycle: SandboxSecurityRunLedgerLifecycle;
+  readonly slots: readonly SandboxSecurityRunLedgerSlotSnapshot[];
+}
+
+export function createSandboxSecurityRunLedger(input: Readonly<{
+  profile: Readonly<SandboxSecurityPolicyProfileManifest>;
+}>): SandboxSecurityRunLedger;
+```
+
+`snapshot()` is pure read-only, available before and after finalize; after
+finalize the returned snapshot is recursively frozen and immutable. Scheme B
+settled/running/timeout decisions and closure-progress agreement with RunLedger
+lifecycle must use this API only.
+
+Each transition input is an exact-key internal record carrying the manifest
+slot ID and only fields required by that transition. Construction creates one
+private `not_started` entry per `profile.detector_slots` item in manifest order
+and captures detector ID, version, and kind from the manifest. Every method
+rejects a slot outside the selected profile.
+
+`attachPublishedFindings(findings)` rules:
+
+1. at most once per evaluation;
+2. only after every detector slot is terminal;
+3. only before `finalize()`;
+4. every finding ID unique;
+5. every `finding.detector_id` belongs to the selected profile;
+6. group by `finding.detector_id`;
+7. only `matched` runs may receive non-empty finding IDs;
+8. `no_match`, failed, timeout, invalid, and skipped runs must have none;
+9. each finding belongs to exactly one run;
+10. finding ID order equals relative order in the final global finding order;
+11. a second attachment fails stably;
+12. foreign/unknown detector or duplicate IDs fail stably.
+
+`finalize()` rejects if any slot is non-terminal or attachment was required but
+missing, and otherwise emits exactly one run per manifest slot in manifest
+order. After `finalize()`, the ledger is fully closed; any transition or
+attachment fails. The state graph is exact:
+
+```text
+not_started -> skipped | running
+running -> matched | no_match | failed | timeout | invalid_result
+terminal -> no further status mutation
+all terminal -> attachPublishedFindings once after public finding publication
+attachPublishedFindings -> finalize
+finalize -> closed (immutable)
+```
+
 | Situation | Obligation | Status | Reason/error | Resolution |
 | --- | --- | --- | --- | --- |
-| profile-required registration missing | n/a | no evaluation | `sandbox_security_profile_invalid` | construction fails |
+| profile-required registration missing for selected profile | n/a | no evaluation | `sandbox_security_profile_invalid` | profile resolution fails before decision ID; no Decision; zero detector calls |
 | optional absent and no route requires it | `optional_not_selected` | `skipped` | `optional_not_configured` | resolved |
-| optional does not support current stage and is not routed | `optional_not_selected` | `skipped` | `stage_unsupported` | resolved |
+| optional slot not selected for current stage | `optional_not_selected` | `skipped` | `optional_not_selected` | resolved |
 | optional routing false | `optional_not_selected` | `skipped` | `routing_not_selected` | resolved |
-| slot bypassed by accepted risk short-circuit | manifest obligation | `skipped` | `risk_short_circuit` | resolved by risk |
+| profile-required slot bypassed by short-circuit | `profile_required` | `skipped` | `risk_short_circuit` | resolved by risk only when semantic validation confirms a finding that satisfies the profile short-circuit condition |
+| optional slot never selected because of short-circuit | `optional_not_selected` | `skipped` | `risk_short_circuit` | resolved by risk only when semantic validation confirms a finding that satisfies the profile short-circuit condition |
 | required or routed completion with candidates or clearances | required kind | `matched` | none | run complete; Judge must cover every routed signal |
 | required or routed completion with neither | required kind | `no_match` | none | run complete; routed Judge signals remain unresolved |
 | routed optional unavailable | `runtime_required` | `failed` | `detector_unavailable` | unresolved |
@@ -953,28 +1659,64 @@ Every manifest slot has exactly one ordered run summary.
 | required/routed malformed/leaking result | required kind | `invalid_result` | stable invalid/leak code | unresolved |
 | sanitizer fails | `runtime_required` | `failed` | `external_redaction_failed` | unresolved; Judge not called |
 | compatibility adapter cannot represent stage/tool | required kind | `failed` | `adapter_unsupported` | unresolved; fail closed |
-| total budget expires before required/routed completion | required kind | `timeout` | `evaluation_budget_exhausted` | unresolved |
-| later optional slot after terminal failure | `optional_not_selected` | `skipped` | `evaluation_terminated` | no effect |
+| already-selected optional slot after evaluation termination | `runtime_required` | `skipped` | `evaluation_terminated` | unresolved |
+| profile-required slot after evaluation termination | `profile_required` | `skipped` | `evaluation_terminated` | unresolved |
+| never-selected optional slot after evaluation termination | `optional_not_selected` | `skipped` | `evaluation_terminated` | no independent effect |
 
 An optional detector becomes runtime-required at the moment routing selects it,
 before availability or execution is checked. It cannot fail and then be treated
 as optional absence.
 
-The built-in registrations must implement all three manifest stages, so
-`stage_unsupported` is not valid for a built-in profile-required registration.
-It is retained for an optional compatibility detector that is not routed for
-the current stage; if routing requires that detector, the result is instead
-runtime-required `detector_unavailable`.
+Profile-required slots use `profile_required`. A configured balanced optional
+local slot becomes `runtime_required` when selected for execution; otherwise it
+is skipped with `optional_not_configured`, `optional_not_selected`,
+`routing_not_selected`, or `risk_short_circuit` as applicable. Routed Judge is
+`runtime_required`; unrouted Judge is optional/skipped. Published findings are
+attached only via `attachPublishedFindings` after public publication; the ledger
+groups by `finding.detector_id` and never accepts opaque ID lists as proof of
+producer ownership. The ledger rejects duplicate starts, illegal terminal
+transitions, pre-publication attachment, foreign detectors, and second
+attachment or post-finalize mutation.
 
 ## Timing and Cancellation
 
-The total deadline starts before shared normalization at `evaluate()` entry and
-includes normalization, authority validation, canonicalization, hashing,
-sanitization, all detectors, qualification, reduction, and semantic validation.
+Normal sandbox-security evaluation work has a 5000 ms monotonic budget starting
+at `SandboxSecurityEngine.evaluate()` entry. When that work budget is exhausted,
+the Engine performs no further detector, sanitizer, or Judge work, and no
+ordinary/unrestricted qualification, normal unrestricted publication, or
+ordinary policy work. It may execute one bounded
+deterministic fail-closed epilogue solely to close internal state and, when
+sufficient trusted state already exists, return a minimal validated content-free
+decision. The epilogue is not claimed to complete inside the exhausted 5000 ms
+work budget.
+
+| Phase | Normal 5000 ms work budget | Fail-closed epilogue allowed |
+| --- | ---: | ---: |
+| normalization | yes | no |
+| authority validation | yes | no |
+| input preparation/JCS/hash | yes | no |
+| profile resolution/trust | yes | no |
+| snapshot construction | yes | no |
+| detector/sanitizer/Judge | yes | no |
+| boundary normalization | yes | no |
+| qualification/Judge resolution | yes | no |
+| normal publication | yes | no |
+| normal run finalization | yes | no |
+| normal reduction | yes | no |
+| normal decision materialization | yes | no |
+| normal semantic validation | yes | no |
+| close active lease/runs / terminalize incomplete slots | no | yes |
+| complete settled rule/local (matched: restricted-qualify + addSlotEvidence; no_match/invalid: record only) | no | yes |
+| lifecycle-correct escalation close / Judge apply | no | yes |
+| restricted one-shot publication (or reuse committed) | no | yes |
+| attachPublishedFindings + finalize (or reuse) | no | yes |
+| record decision-bearing Engine failure | no | yes |
+| minimal fail-closed reduction | no | yes |
+| minimal candidate normalize/validate | no | yes |
 
 ```text
 effective detector timeout =
-  min(configured detector timeout, remaining total budget)
+  min(configured detector timeout, remaining normal work budget)
 ```
 
 Each active detector receives a derived `AbortSignal`. Deadline expiry aborts
@@ -983,8 +1725,28 @@ closure are ignored and cannot mutate runs or findings. `AbortSignal` does not
 promise forced termination.
 
 Caller cancellation rejects with `sandbox_security_cancelled` and returns no
-decision. Budget exhaustion returns a fail-closed decision. Invalid monotonic
-time, scheduler callbacks, cancellation handles, or wall-clock values raise
+decision. Work-budget exhaustion before a resolved profile, created RunLedger,
+and valid decision ID raises the stable content-free internal error; adapters
+fail closed. Exhaustion after a valid decision ID enters at most one fail-closed
+epilogue (see Fail-Closed Epilogue). An active detector becomes terminal
+`timeout`. Not-yet-started required or already-selected optional slots become
+`skipped` with `evaluation_terminated` while retaining their real obligation
+(`profile_required` or `runtime_required`) and are unresolved. Not-yet-started
+never-selected optional slots become `skipped` with
+`optional_not_selected + evaluation_terminated` and have **no independent
+effect**.
+`profile_required + evaluation_terminated` and
+`runtime_required + evaluation_terminated` are unresolved required evidence.
+A `skipped` status is **not** resolved or unresolved by status alone.
+Resolution is determined by `obligation + skip_reason` (see run matrix above).
+In particular, `optional_not_selected` with
+`optional_not_configured` / `optional_not_selected` / `routing_not_selected` is
+resolved; `optional_not_selected + evaluation_terminated` has no independent
+effect;
+`profile_required` / `runtime_required` + `evaluation_terminated` is unresolved;
+`risk_short_circuit` is resolved by risk only when a validated short-circuit
+finding exists. Invalid monotonic time, scheduler callbacks,
+cancellation handles, or wall-clock values raise
 `sandbox_security_internal_invalid`; monitor/backend/OpenClaw adapters must map
 that stable failure to `ask` for user/model and `deny` for tools.
 
@@ -1013,6 +1775,115 @@ export interface SandboxSecurityEngine {
 
 Public API submissions cannot call this method without first passing through a
 trusted adapter that constructs and validates the private evaluation request.
+
+Post-detector and non-detector failures use this exact Engine-internal evidence:
+
+```ts
+/**
+ * Decision-bearing Engine failure may enter reducer, ledger, and public
+ * engine-0001 evidence. Only when a valid decision ID, created_at, complete
+ * ledger, and candidate can still be materialized.
+ */
+/**
+ * Phases that may appear on a decision-bearing evaluation_budget_exhausted
+ * failure. Pre-ID phases are excluded; those map to terminal
+ * pre_id_evaluation_budget_exhausted.
+ *
+ * decision_identity is decision-bearing only when a valid decision ID was
+ * already minted and the immediately following remaining-budget check fails.
+ * Budget exhaustion before a successful nextDecisionId() is terminal.
+ */
+export type SandboxSecurityDecisionBearingBudgetPhase =
+  | "decision_identity"
+  | "detector_execution"
+  | "sanitization"
+  | "boundary_normalization"
+  | "qualification"
+  | "judge_resolution"
+  | "publication"
+  | "run_finalization"
+  | "reduction"
+  | "decision_materialization"
+  | "semantic_validation";
+
+export type SandboxSecurityDecisionBearingEngineFailure =
+  | {
+      readonly code: "evaluation_budget_exhausted";
+      readonly phase: SandboxSecurityDecisionBearingBudgetPhase;
+    }
+  | {
+      readonly code: "semantic_validation_failed";
+      readonly phase: "semantic_validation";
+    };
+
+/**
+ * Terminal Engine errors never enter reducer, ledger, public Decision, or
+ * engine-0001. evaluate() throws sandbox_security_internal_invalid;
+ * embedding adapter fails closed.
+ */
+export type SandboxSecurityTerminalEngineErrorCode =
+  | "decision_identity_invalid"
+  | "runtime_clock_invalid"
+  | "decision_materialization_invalid"
+  | "pre_id_evaluation_budget_exhausted";
+
+/** Convenience union for internal diagnostics only. */
+export type SandboxSecurityEngineFailureCode =
+  | SandboxSecurityDecisionBearingEngineFailure["code"]
+  | SandboxSecurityTerminalEngineErrorCode;
+
+/** Full phase taxonomy including pre-ID phases for diagnostics only. */
+export type SandboxSecurityEngineFailurePhase =
+  | "normalization"
+  | "authority"
+  | "input_preparation"
+  | "profile_resolution"
+  | "trust_derivation"
+  | "snapshot_construction"
+  | SandboxSecurityDecisionBearingBudgetPhase;
+
+/** Alias used by reducer/ledger: decision-bearing only. */
+export type SandboxSecurityEngineFailure =
+  SandboxSecurityDecisionBearingEngineFailure;
+
+// Code/phase rules:
+// semantic_validation_failed        -> semantic_validation only
+// evaluation_budget_exhausted       -> SandboxSecurityDecisionBearingBudgetPhase only
+// pre-ID phase budget exhaustion    -> pre_id_evaluation_budget_exhausted (terminal)
+//   pre-ID phases: normalization, authority, input_preparation,
+//   profile_resolution, trust_derivation, snapshot_construction
+// decision_identity_invalid         -> terminal; never reducer/ledger
+// runtime_clock_invalid             -> terminal; never reducer/ledger
+// decision_materialization_invalid  -> terminal; never reducer/ledger
+// pre_id_evaluation_budget_exhausted -> terminal; never reducer/ledger
+// Any other pairing is invalid. Terminal errors never fabricate a public
+// decision or evidence namespace.
+
+It is reducer/validator evidence only and never exposes raw diagnostics. Its
+single public evidence marker is:
+
+```text
+evidence://sandbox/security/<decision-id>/engine-0001
+```
+
+Engine failure never mutates a detector run and never lowers an action already
+required by accepted evidence.
+
+There is one necessary identity boundary. Failures during normalization or
+authority validation, pre-ID work-budget exhaustion, and
+`decision_identity_invalid` itself occur before a valid decision ID exists.
+They are **terminal Engine errors** (never decision-bearing): they cannot enter
+reducer/public decision or use a fabricated evidence ref;
+`evaluate()` raises the stable content-free internal error and the embedding
+adapter fails closed. `nextDecisionId()` is called exactly once only after
+profile resolution, RunLedger creation, detector resolution, trust derivation,
+frozen raw snapshot construction, and a remaining-work-budget check—
+immediately before detector execution. Later Engine failures (including the
+bounded epilogue after post-ID work-budget exhaustion) are reducer evidence when
+a valid timestamp and candidate can still be materialized and may then use the
+exact `engine-0001` marker. Invalid wall-clock output or failed recovery/epilogue
+validation returns no unvalidated decision. A second ID call or fallback ID is
+forbidden.
 
 GENERAL-001 also owns the only canonical fingerprint helper:
 
@@ -1046,26 +1917,562 @@ prohibited. Invalid port output or a thrown port error becomes
 
 `SandboxSecurityEngine.evaluate()` performs:
 
-1. start monotonic total deadline;
+1. start monotonic normal work budget (5000 ms) at evaluate entry;
 2. structurally normalize the untrusted submission;
-3. validate the authoritative context, exact public/context match, and trust;
-4. enforce all limits and compute JCS bytes/hashes;
-5. create a recursively frozen defensive snapshot;
-6. resolve and validate the immutable built-in manifest and registry;
-7. execute slots in manifest order with effective timeouts;
-8. validate raw/external result shapes and primary leakage defenses;
-9. qualify candidates and derive unresolved escalation signals;
-10. short-circuit or route sanitizer/Judge as the manifest requires;
-11. create all ordered run summaries and discard late results;
-12. reject same-slot duplicates, identify, and sort qualified findings;
-13. reduce findings and unresolved obligations to verdict/action/risk;
-14. generate content-free evidence refs;
-15. run engine semantic validation;
-16. recursively freeze and return the decision without retaining the snapshot.
+3. validate authoritative context and exact public/context match, producing
+   authority-bound content with no trust class;
+4. enforce limits and compute JCS bytes/hashes (input preparation);
+5. resolve profile, create one run ledger from that profile, and resolve the
+   detector registry;
+6. derive trust only through profile trust rules and build frozen raw snapshot;
+7. confirm remaining normal work budget; if exhausted before ID → terminal
+   `pre_id_evaluation_budget_exhausted`;
+8. call `runtime.nextDecisionId()` exactly once; validate decision ID grammar;
+   invalid → terminal `decision_identity_invalid`;
+9. immediately re-check remaining normal work budget; if exhausted →
+   decision-bearing `evaluation_budget_exhausted` with
+   `phase: "decision_identity"`, zero detector calls, enter Scheme B epilogue;
+10. **apply the unified slot branch table only when each slot becomes eligible**
+    (do **not** pre-terminalize later slots before short-circuit / routing):
+    1. rule;
+    2. evaluate rule short-circuit;
+    3. local only when not short-circuited and applicable;
+    4. Judge only when routed.
+    Before any detector call for an **eligible** slot:
+    - profile-required selected → `markStarted(profile_required)`;
+    - optional selected for execution → `markStarted(runtime_required)`;
+    - optional absent / not configured and no route →
+      `markSkipped(optional_not_selected, optional_not_configured)` + skipped
+      SlotEvaluationRecord (no detector call);
+    - configured but routing false →
+      `markSkipped(optional_not_selected, routing_not_selected)` + skipped
+      SlotEvaluationRecord;
+    After a started detector attempt (discriminated atomic; no mid-section
+    budget checkpoint; only `matched` qualifies / `addSlotEvidence`):
+    - matched: settle matched + store normalized result → qualify → record
+      matched SlotEvaluationRecord → `addSlotEvidence` → only then budget check;
+    - no_match: settle no_match → record no_match SlotEvaluationRecord → do not
+      qualify → do not call `addSlotEvidence` → only then budget check;
+    - invalid_result: settle invalid_result → record invalid_result
+      SlotEvaluationRecord → do not qualify → do not call `addSlotEvidence` →
+      only then budget check;
+    - throw/reject: `markFailed(detector_failed)` → failed SlotEvaluationRecord
+      → do not qualify → do not call `addSlotEvidence` → immediately re-check
+      normal work budget → if exhausted enter Scheme B → else continue policy;
+    - slot timeout: use deadline lease `termination_reason`:
+        `work_budget` → enter Scheme B (work budget wins simultaneous expiry);
+        `slot_timeout` → `markTimeout()` → timeout SlotEvaluationRecord → do not
+        qualify → do not call `addSlotEvidence` → immediately re-check normal
+        work budget → if exhausted enter Scheme B → else continue policy;
+    - work-budget exhaustion → Scheme B; caller cancellation → no Decision;
+    **continue policy after rule/local failure** (locked):
+    - rule failed/timeout: no qualification or escalation evidence; does **not**
+      short-circuit; continue to applicable local while normal budget remains;
+      required rule failure remains unresolved independently;
+    - local failed/timeout: preserve previously accumulated rule
+      evidence/signals; Judge routes only if those signals require it; local
+      failure remains unresolved independently;
+11. **if rule short-circuit** (only from accepted matched rule risk):
+    - mark remaining **not-yet-terminal** slots with exact obligations + skipped
+      SlotEvaluationRecord (never a second terminal transition):
+        profile-required (e.g. strict local) → obligation `profile_required`,
+          status `skipped`, skip_reason `risk_short_circuit`;
+        optional never selected (balanced local, balanced/strict Judge before
+          routing) → obligation `optional_not_selected`, status `skipped`,
+          skip_reason `risk_short_circuit`;
+        never fabricate `runtime_required` for short-circuit;
+    - do **not** materialize routed obligations; do **not** call sanitizer/Judge;
+    - while escalation still `collecting`:
+        no unresolved signals → `closeWithoutJudge()`;
+        unresolved signals exist →
+          `terminateJudgeAttempt({ reason: "risk_short_circuit" })`
+          (preserves unrelated signals; only same category+subject_key was
+          suppressed by accepted risk earlier);
+    - read final unresolved signals only from closed escalation state;
+    - continue at step 15 (publication);
+12. **when not short-circuited**, complete applicable local via the unified slot
+    branch table only when local becomes eligible (including
+    absent/skipped/failed/timeout);
+13. convert unresolved signals into deterministic routed obligations once only
+    when not short-circuited and signals exist; if no signals after local,
+    `closeWithoutJudge()` and terminalize unrouted Judge as skipped
+    (`optional_not_configured` or `routing_not_selected`) with skipped record;
+14. only when obligations are nonempty (and not short-circuited), Judge becomes
+    `runtime_required` and is `markStarted` **before** sanitizer/Judge attempt;
+    derive external tokens, sanitize, validate payload/obligations; then:
+    - success path: call Judge; apply **discriminated Judge atomic critical
+      section** (no mid-section budget checkpoint):
+      - external matched: normalize to private handles → settle matched + store
+        normalized result → qualify with Judge slot thresholds → construct
+        `NormalizedJudgeOutcome` `{ status:"matched", evidence,
+        covered_obligation_ids }` → record matched SlotEvaluationRecord →
+        `applyJudgeOutcome` → `close()` → only then budget check;
+      - external no_match: settle no_match → construct no_match
+        `NormalizedJudgeOutcome` → record no_match SlotEvaluationRecord →
+        `applyJudgeOutcome` → `close()` → only then budget check;
+      - external invalid_result: settle invalid_result → construct invalid_result
+        `NormalizedJudgeOutcome` → record invalid_result SlotEvaluationRecord →
+        `applyJudgeOutcome` → `close()` → only then budget check;
+      only matched invokes qualification;
+    - Judge failure path (no `NormalizedJudgeOutcome`; no qualification; no
+      `applyJudgeOutcome`): terminalize Judge run + matching
+      SlotEvaluationRecord, then `terminateJudgeAttempt` with signals unresolved:
+      - Judge unavailable → `failed` / `detector_unavailable`;
+      - sanitizer absent or failed → `failed` / `external_redaction_failed`
+        (zero Judge calls);
+      - Judge throw/reject → `failed` / `detector_failed`;
+      - Judge timeout → `timeout` / `detector_timeout`;
+      then continue to publication/reduction (no further detector);
+15. after all slots are terminal, all SlotEvaluationRecords exist (one per
+    manifest slot; Engine-owned precondition, not RunLedger API), and **after
+    escalation is closed**, materialize public tokens/findings once (commit
+    closure progress.publication);
+16. `attachPublishedFindings` then `finalize` the run ledger (or reuse if
+    already done via closure progress). Engine precondition before finalize:
+    one SlotEvaluationRecord per manifest slot already exists (P4-T5/P4-T6;
+    RunLedger does not receive or validate records).
+    `RunLedger.finalize` itself validates only: all run slots terminal +
+    attachment phase completed + ledger transition legality;
+17. reduce published findings, runs, unresolved signals, and Engine failure;
+18. call `runtime.now()` exactly once if absent, validate created_at, build the
+    complete frozen EvaluationEvidenceLedger (engine_failure already known if
+    any), then materialize, structurally normalize, semantically validate, and
+    freeze the decision using the single order below;
+19. return without retaining snapshot, registries, or ephemeral bytes.
 
 There is no detector retry in GENERAL-001.
 
+#### Unified slot branch table (normal path; locked)
+
+Apply this table **separately when each slot becomes eligible**:
+
+```text
+eligibility order:
+  1. rule
+  2. evaluate rule short-circuit
+  3. local only when not short-circuited and applicable
+  4. Judge only when routed
+
+Before slot execution (eligible slot only):
+  profile-required selected
+    → markStarted(profile_required)
+  optional selected for execution
+    → markStarted(runtime_required)
+  optional absent
+    → markSkipped(optional_not_selected, optional_not_configured)
+    → record skipped
+  configured but routing false
+    → markSkipped(optional_not_selected, routing_not_selected)
+    → record skipped
+
+After execution / attempt:
+  matched → matched atomic closure → only then budget check
+  no_match → no_match atomic closure → only then budget check
+  invalid_result → invalid_result atomic closure → only then budget check
+  throw/reject
+    → markFailed(detector_failed) + failed record
+    → immediately re-check normal work budget
+    → exhausted → Scheme B; else continue policy
+  slot timeout
+    → lease termination_reason:
+         work_budget → Scheme B (wins simultaneous expiry)
+         slot_timeout → markTimeout() + timeout record
+           → immediately re-check normal work budget
+           → exhausted → Scheme B; else continue policy
+  work-budget exhaustion → Scheme B
+  caller cancellation → no Decision
+```
+
+### Decision Materialization
+
+After profile resolution, RunLedger creation, detector resolution, trust
+derivation, frozen raw snapshot construction, and a remaining-work-budget
+check—and before detector execution—the Engine:
+
+1. confirms remaining budget (else terminal pre-ID exhaustion);
+2. calls `runtime.nextDecisionId()` exactly once;
+3. validates decision ID grammar (else terminal `decision_identity_invalid`);
+4. **immediately** re-checks remaining budget; if exhausted, records
+   decision-bearing `evaluation_budget_exhausted` with
+   `phase: "decision_identity"`, performs zero detector calls, and enters
+   Scheme B.
+
+The decision ID must satisfy the public grammar. Invalid identity produces
+`decision_identity_invalid` with no Decision and no fake ID.
+Finding IDs, public subject tokens, routed obligation IDs, finding evidence
+refs, and Engine-failure evidence all use this same decision ID.
+
+After normal reduction (or during the epilogue's minimal materialization), the
+Engine calls `runtime.now()` exactly once. The value must be a real
+RFC3339/ISO timestamp; invalid wall-clock output records
+`runtime_clock_invalid` with phase `decision_materialization` internally,
+cannot construct a complete ledger or candidate Decision, and is fail-closed by
+the embedding adapter. Deadline accounting uses only `monotonicNowMs()` and
+never wall clock.
+
+```text
+decision.evidence_refs = ordered_unique(
+  flatten(published findings' evidence_refs in finding order),
+  engine_failure == null
+    ? []
+    : [evidence://sandbox/security/<decision-id>/engine-0001]
+)
+```
+
+A clean decision has `[]`. Normal final construction order is unique:
+
+```text
+1. complete detector execution
+2. complete qualification / Judge resolution
+3. publish public findings
+4. attachPublishedFindings
+5. finalize detector runs
+6. reduce initial policy result
+7. runtime.now() exactly once
+8. validate created_at grammar
+9. build complete frozen EvaluationEvidenceLedger
+10. build candidate decision
+11. normalizeSandboxSecurityDecision(candidate)
+12. semantic validate normalized candidate against ledger
+13. recursively freeze and return
+```
+
+Normalization failure is `decision_materialization_invalid`; semantic mismatch
+is `semantic_validation_failed`. The semantic validator directly checks
+decision ID, request ID, created-at format, mode, stage, profile, findings,
+runs, evidence refs, verdict, action, risk, and Engine-failure floor.
+
+### Fail-Closed Epilogue (Scheme B: restricted deterministic closure)
+
+When the normal work budget is exhausted after a valid decision ID, resolved
+profile, and RunLedger exist, the Engine may execute **one** bounded
+deterministic fail-closed epilogue. The epilogue is **not** claimed to complete
+inside the exhausted 5000 ms normal work budget.
+
+Epilogue **forbids** new detector calls, sanitizer calls, Judge calls, ordinary
+or unrestricted qualification, ordinary unrestricted publication, ordinary
+allow/no-risk policy paths, a second `nextDecisionId()`, a second
+`runtime.now()`, retry, and semantic recovery loops.
+
+Only the **Scheme B restricted qualification** and **restricted one-shot
+publication** defined below are permitted after exhaustion.
+
+#### Settled boundary outcome (atomic; locked)
+
+Use the discriminated term **settled boundary outcome**. Only the matched branch
+is a **settled normalized result**.
+
+```ts
+type SandboxSecuritySettledBoundaryOutcome =
+  | {
+      status: "matched";
+      normalized_result: SandboxSecurityNormalizedSlotResult;
+    }
+  | {
+      status: "no_match";
+    }
+  | {
+      status: "invalid_result";
+      error_code:
+        | "detector_result_invalid"
+        | "detector_content_leak";
+    };
+```
+
+A settled boundary outcome exists only after **all** of:
+
+1. detector generation remains open;
+2. full detector output has returned;
+3. output boundary normalization succeeds;
+4. RunLedger has atomically transitioned the slot to
+   `matched` / `no_match` / `invalid_result`;
+5. for `matched` only: the immutable normalized result has been stored for
+   qualification.
+
+Normal path order (discriminated by boundary status):
+
+```text
+detector return
+→ boundary normalize
+→ atomically settle run status
+→ if matched: store normalized outcome (settled normalized result)
+  → ordinary qualification
+→ if no_match | invalid_result: settled boundary outcome without
+  normalized_result; no qualification; no addSlotEvidence
+```
+
+A slot still `running` when budget expires has **no** settled boundary outcome
+and must become `timeout`. It can never be qualified in the epilogue. Late
+results after generation close cannot become settled epilogue input.
+
+Only a `matched` boundary outcome carries
+`Readonly<SandboxSecurityNormalizedSlotResult>` and may enter
+`qualifySandboxSecuritySlotEvidence()`. `no_match` and `invalid_result` never
+carry `normalized_result` or `qualified_evidence` and never call
+`addSlotEvidence()`. Do not invent a normalized result for non-matched statuses.
+
+#### Atomic pure-computation critical sections (locked)
+
+Budget checkpoints are **forbidden** between these steps. If work budget is
+observed exhausted, it is observed only at section boundaries (before entry or
+after the full section commits).
+
+```text
+rule/local matched atomic closure:
+  settle matched run + store normalized result
+  → qualify
+  → record matched SlotEvaluationRecord
+  → addSlotEvidence
+  → only then check budget
+
+rule/local no_match atomic closure:
+  settle no_match run
+  → record no_match SlotEvaluationRecord
+  → do not qualify
+  → do not call addSlotEvidence
+  → only then check budget
+
+rule/local invalid_result atomic closure:
+  settle invalid_result run
+  → record invalid_result SlotEvaluationRecord
+  → do not qualify
+  → do not call addSlotEvidence
+  → only then check budget
+
+Judge external matched atomic closure:
+  normalize external result to private handles
+  → settle matched run + store normalized result
+  → qualify using Judge slot thresholds
+  → construct NormalizedJudgeOutcome {
+      status: "matched",
+      evidence: qualifiedEvidence,
+      covered_obligation_ids
+    }
+  → record matched SlotEvaluationRecord
+  → applyJudgeOutcome
+  → close()
+  → only then check budget
+
+Judge external no_match atomic closure:
+  settle no_match run
+  → construct no_match NormalizedJudgeOutcome
+  → record no_match SlotEvaluationRecord
+  → applyJudgeOutcome
+  → close()
+  → only then check budget
+
+Judge external invalid_result atomic closure:
+  settle invalid_result run
+  → construct invalid_result NormalizedJudgeOutcome
+  → record invalid_result SlotEvaluationRecord
+  → applyJudgeOutcome
+  → close()
+  → only then check budget
+```
+
+P3 external normalizer yields matched/no_match/invalid_result boundary shapes
+only; it never produces profile-threshold `QualifiedSlotEvidence`. Matched
+Judge qualification constructs `NormalizedJudgeOutcome.matched.evidence`.
+
+Therefore Scheme B never observes:
+- matched qualified record without addSlotEvidence (rule/local);
+- no_match/invalid_result calling qualify or addSlotEvidence;
+- Judge record without applyJudgeOutcome;
+- settled Judge no_match/invalid_result without applyJudgeOutcome;
+- settled Judge no_match/invalid_result routed to terminateJudgeAttempt.
+
+If an implementation still records intermediate progress, it must resume from
+that progress; the default locked model is atomic sections above.
+
+#### Epilogue steps (Scheme B order; locked)
+
+1. close active lease and reject late results;
+
+2. terminalize genuinely incomplete slots via RunLedger (no slot remains
+   `not_started`; create matching SlotEvaluationRecord for each):
+   - active **running** detector → `timeout` / `detector_timeout`
+     (no settled boundary outcome; never qualify; real obligation retained);
+   - not_started profile-required → obligation `profile_required`,
+     status `skipped`, skip_reason `evaluation_terminated` → **unresolved**;
+   - not_started already-selected optional → obligation `runtime_required`,
+     status `skipped`, skip_reason `evaluation_terminated` → **unresolved**;
+   - not_started never-selected optional → obligation `optional_not_selected`,
+     status `skipped`, skip_reason `evaluation_terminated` → **no independent
+     effect**;
+
+3. complete settled rule/local results lacking SlotEvaluationRecords
+   (discriminated; never "qualify" no_match/invalid_result):
+   - settled matched lacking record → restricted qualification + matched record
+     + addSlotEvidence;
+   - settled no_match lacking record → create no_match record only;
+   - settled invalid_result lacking record → create invalid_result record only;
+
+4. while escalation lifecycle is still `collecting`:
+   `addSlotEvidence` for any settled rule/local **matched** qualified evidence
+   not yet applied (idempotent; never double-add; never for no_match/invalid);
+
+5. inspect escalation lifecycle and close/apply exactly once as applicable:
+
+```text
+collecting + no unresolved signals
+  → closeWithoutJudge()
+
+collecting + unresolved signals, and Judge cannot run
+  (absent / sanitizer fail / budget forbids Judge / no settled Judge outcome)
+  → terminateJudgeAttempt(evaluation_terminated or concrete reason)
+  → resolution_evidence: []
+
+obligations_materialized + settled Judge matched:
+  qualify when not already qualified
+  → record matched result when absent
+  → applyJudgeOutcome(matched)
+  → close()
+
+obligations_materialized + settled Judge no_match:
+  record no_match when absent
+  → applyJudgeOutcome(no_match)
+  → close()
+
+obligations_materialized + settled Judge invalid_result:
+  record invalid_result when absent
+  → applyJudgeOutcome(invalid_result)
+  → close()
+
+obligations_materialized + no settled Judge outcome:
+  → terminateJudgeAttempt(...)
+
+judge_applied
+  → close() only
+  → never terminateJudgeAttempt
+
+closed
+  → no-op; never mutate
+```
+
+6. read final unresolved signals only from closed escalation state;
+
+7. complete one SlotEvaluationRecord per manifest slot (full status union;
+   status/error_code/skip_reason must match detector run; slot status from
+   RunLedger.snapshot() only);
+
+8. determine exact `SandboxSecurityDecisionBearingBudgetPhase` and create or
+   reuse the decision-bearing Engine failure
+   `{ code: "evaluation_budget_exhausted", phase }`;
+
+9. **publication via closure progress**:
+   not committed → commit restricted one-shot publication once;
+   committed → reuse exact token_map + findings; never republish;
+
+10. **RunLedger via snapshot lifecycle + closure progress**:
+    open → attachPublishedFindings once → finalize once;
+    findings_attached → finalize once;
+    finalized → reuse frozen runs; never reopen;
+
+11. reduce using the **same** decision-bearing Engine failure object that will
+    enter the ledger (reuse prior reduction inputs where already frozen);
+
+12. **created_at via closure progress**:
+    absent → runtime.now once (invalid clock = terminal);
+    present → reuse;
+
+13. **ledger**:
+    absent → build **once with engine_failure already present**;
+    present → create one frozen copy replacing **only** engine_failure
+    (must equal reducer input engine_failure);
+
+14. build candidate from reducer output (engine-0001 iff decision-bearing
+    failure present);
+
+15. structural normalize once; semantic validate once (full recompute;
+    publication via P4-T1 pure verify API);
+
+16. return validated Decision or throw stable content-free internal error.
+
+**Invariant (locked):**
+
+```text
+ledger.engine_failure
+=== reducerInput.engine_failure
+=== failure represented by decision.evidence_refs (engine-0001 when non-null)
+```
+
+Engine failure is recorded **before** building or copying the complete ledger.
+Epilogue never validates a candidate against a null-failure ledger when the
+decision is fail-closed for budget exhaustion.
+
+**Decision-bearing epilogue gate:** after the above, every manifest slot must
+have a complete SlotEvaluationRecord and runs must be finalizable or already
+finalized. If a complete ledger cannot be built (invalid clock/identity/
+materialization), throw — no Decision.
+
+Pre-ID / pre-profile / pre-RunLedger exhaustion returns no Decision.
+Epilogue semantic validation failure throws; epilogue never triggers recovery.
+
+Epilogue **forbids** new detector/sanitizer/Judge **calls**, ordinary/
+unrestricted qualification, unrestricted republication, ordinary allow/no-risk
+paths, a second `nextDecisionId()`, a second `runtime.now()`, retry, and
+semantic recovery loops.
+
+#### Closure progress (locked)
+
+Engine maintains evaluation-scoped closure progress (explicit type or equivalent
+private state). Scheme B is **not** a blind re-run of late pipeline steps; it
+is a resume-or-complete state machine:
+
+```ts
+interface SandboxSecurityClosureProgress {
+  readonly publication:
+    | { readonly state: "not_committed" }
+    | {
+        readonly state: "committed";
+        readonly token_map: SandboxSecurityPublicSubjectTokenMap;
+        readonly findings: readonly SandboxSecurityFinding[];
+      };
+  readonly run_ledger_state:
+    | "open"
+    | "findings_attached"
+    | "finalized";
+  readonly created_at: string | null;
+  readonly complete_ledger:
+    Readonly<SandboxSecurityEvaluationEvidenceLedger> | null;
+}
+```
+
+Rules:
+
+- each commit transition occurs at most once per evaluation;
+- publication, attachment, finalization, and created_at are reused verbatim when
+  already committed;
+- an existing complete ledger is reused as the immutable base and copied once
+  with only engine_failure replaced (never reused verbatim when failure is null
+  but the fail-closed Decision requires a decision-bearing failure);
+- decision-bearing exhaustion during publication, run_finalization, reduction,
+  decision_materialization, or semantic_validation never reopens closed
+  RunLedger state or republishes;
+- semantic_validation exhaustion reuses complete evidence base and copies the
+  ledger with only engine_failure replaced before minimal candidate rebuild.
+
 ## Policy Reduction
+
+The reducer has one exact input shape:
+
+```ts
+interface SandboxSecurityPolicyReducerInput {
+  readonly stage: SandboxSecurityStage;
+  readonly evaluation_mode: "simulation" | "enforcement";
+  readonly profile: Readonly<SandboxSecurityPolicyProfileManifest>;
+  readonly findings: readonly SandboxSecurityFinding[];
+  readonly detector_runs: readonly SandboxDetectorRun[];
+  readonly unresolved_escalation_signals:
+    readonly SandboxSecurityEscalationSignal[];
+  readonly engine_failure:
+    Readonly<SandboxSecurityDecisionBearingEngineFailure> | null;
+}
+```
+
+No second reducer input shape is permitted. Draft findings, raw snapshots,
+provider objects, separate clearance arrays, and ad hoc unresolved booleans are
+not reducer input.
 
 | Evidence | Balanced user/model | Balanced tool | Strict user/model | Strict tool |
 | --- | --- | --- | --- | --- |
@@ -1074,6 +2481,7 @@ There is no detector retry in GENERAL-001.
 | accepted low | `alert` | `alert` | `ask` | `deny` |
 | no accepted finding and all obligations resolved | `allow` | `allow` | `allow` | `allow` |
 | unresolved profile/runtime-required evidence | `ask` | `deny` | `ask` | `deny` |
+| Engine-level failure | `ask` minimum | `deny` | `ask` minimum | `deny` |
 
 If accepted findings and unresolved evidence coexist, verdict is
 `risk_detected` and action is the more restrictive of the finding action and
@@ -1087,6 +2495,12 @@ stage fail-closed action. Otherwise:
 or `info` for `no_detected_risk`, or `medium` for indeterminate user/model and
 `high` for indeterminate tool. When risk and unresolved evidence coexist, use
 the higher of accepted severity and that indeterminate floor.
+
+When decision-bearing `engine_failure != null`, verdict is always `indeterminate`; user/model
+action is at least `ask` and tool action is `deny`. Existing findings remain in
+the decision and their action is combined by maximum restrictiveness, so
+accepted high/critical risk still yields `deny`. Successful detector runs do
+not imply the overall evaluation resolved.
 
 Reducer property tests compare strict and balanced using identical complete
 normalized evidence. A single decision is validated only against its selected
@@ -1102,17 +2516,129 @@ profile.
 - discriminated run unions;
 - uniqueness and defensive copies.
 
-`engines/sandbox/src/security/semantic-validator.ts` receives the structurally
-normalized decision, resolved manifest, slot registry, authoritative request,
-and engine-created qualification record. It recomputes:
+`engines/sandbox/src/security/semantic-validator.ts` receives only the
+structurally normalized decision and this frozen exact ledger:
 
-- one ordered run per manifest slot;
-- obligation/status/skip/error consistency;
-- detector identity and finding qualification;
-- content/tool subject token mapping, finding IDs, uniqueness, order, and evidence
-  refs;
-- escalation-signal and unresolved-evidence state;
-- verdict, action, and risk level for the selected profile.
+```ts
+export interface SandboxSecurityEvaluationEvidenceLedger {
+  readonly decision_id: string;
+  readonly request_id: string;
+  readonly created_at: string;
+  readonly evaluation_mode: "simulation" | "enforcement";
+  readonly stage: SandboxSecurityStage;
+  readonly profile:
+    Readonly<SandboxSecurityPolicyProfileManifest>;
+  readonly subject_map:
+    Readonly<SandboxSecurityQualificationSubjectMap>;
+  readonly slot_records:
+    readonly SandboxSecuritySlotEvaluationRecord[];
+  readonly public_subject_token_map:
+    Readonly<SandboxSecurityPublicSubjectTokenMap>;
+  readonly routed_obligations:
+    readonly SandboxSecurityRoutedObligationRecord[];
+  readonly judge_resolution_evidence:
+    readonly SandboxSecurityJudgeResolutionEvidence[];
+  readonly published_findings:
+    readonly SandboxSecurityFinding[];
+  readonly detector_runs:
+    readonly SandboxDetectorRun[];
+  readonly unresolved_escalation_signals:
+    readonly SandboxSecurityEscalationSignal[];
+  readonly engine_failure:
+    Readonly<SandboxSecurityDecisionBearingEngineFailure> | null;
+}
+
+/**
+ * Engine-internal routed obligation record retaining coverage linkage.
+ * Obligation payload fields follow SandboxSecuritySanitizedJudgeObligation.
+ */
+export interface SandboxSecurityRoutedObligationRecord
+  extends SandboxSecuritySanitizedJudgeObligation {
+  readonly signal_subject_key: string;
+  readonly signal_category: SandboxSecurityRiskCategory;
+}
+
+export function validateSandboxSecurityDecisionSemantics(
+  decision: Readonly<SandboxSecurityDecision>,
+  ledger: Readonly<SandboxSecurityEvaluationEvidenceLedger>
+): Readonly<SandboxSecurityDecision>;
+```
+
+There is no second authoritative `slot_evidence` array. `qualified_evidence`
+inside each slot record is a cache under validation, never trusted input.
+
+The validator must recompute matched-slot qualification from
+`record.normalized_result` + profile thresholds + decision ID + subject map,
+and must verify the full slot-record union:
+
+```text
+exactly one record per manifest slot in profile order
+record.status === detector_run.status for every slot
+failed: record.error_code === detector_run.error_code
+invalid_result: record.error_code === detector_run.error_code
+timeout: detector_run.error_code === detector_timeout
+skipped: record.skip_reason === detector_run.skip_reason
+matched/no_match: no error_code and no skip_reason on record or run terminal fields
+matched: recompute qualification from normalized_result (ignore cache)
+non-matched: zero accepted findings; no normalized_result/qualified_evidence
+public tokens/findings: verify via P4-T1 pure
+  validateSandboxSecurityPublication / deriveSandboxSecurityExpectedPublication
+  (no committed re-publication; no ownership copy of token algorithm)
+```
+
+exactly:
+
+- accepted risks;
+- DraftFindings;
+- qualified clearances;
+- routing-floor risks;
+- discarded count;
+- subject keys;
+- finding IDs;
+- routed signals;
+- Judge resolution and obligation coverage;
+- public tokens;
+- published findings;
+- detector finding ownership;
+- reducer result (verdict/action/risk/floor);
+- one ordered run per manifest slot and obligation/status consistency;
+- decision-bearing Engine failure code/phase, action floor, and engine-0001;
+- decision ID, request ID, created-at format, mode, stage, profile, evidence refs.
+
+It must not trust record `qualified_evidence` as authoritative. Ledger
+`engine_failure` accepts only decision-bearing failures. The validator
+directly requires candidate `decision_id` to equal ledger `decision_id`,
+including clean decisions. It validates the already-recorded single publication
+pass and never republishes findings.
+
+Semantic recovery belongs only to the normal work path while remaining work
+budget exists. Structural normalization failure records
+`decision_materialization_invalid` internally and immediately raises
+`sandbox_security_internal_invalid`; it does not attempt recovery. If and only
+if the initially normalized candidate fails semantic validation and normal work
+budget remains, the Engine:
+
+1. reruns no detector, input/detector normalization boundary, qualification,
+   token materialization, or finding publication;
+2. calls neither `nextDecisionId()` nor `runtime.now()` again;
+3. creates one new frozen recovery ledger by copying the original ledger and
+   replacing only `engine_failure` with
+   `{code:"semantic_validation_failed", phase:"semantic_validation"}`;
+4. calls the reducer once with the recovery ledger's same profile, findings,
+   runs, and unresolved signals;
+5. builds one recovery candidate with the same decision/request IDs,
+   `created_at`, findings, runs, and ordered finding evidence, then appends the
+   exact `engine-0001` evidence marker;
+6. structurally normalizes and semantically validates that candidate once.
+
+If normal semantic validation observes work-budget exhaustion, enter the
+fail-closed epilogue instead of recovery. Recovery steps remain under the
+normal work budget; exhaustion during recovery terminates into the epilogue.
+Epilogue minimal semantic validation failure throws and never triggers recovery.
+A valid recovery candidate is recursively frozen and returned. Normalization or
+semantic failure of the recovery candidate raises
+`sandbox_security_internal_invalid`; no third candidate, recursion, or
+unvalidated decision is allowed.
 
 Cross-profile monotonicity is not a single-decision validator responsibility.
 Manifest validation and reducer property tests own it.
@@ -1144,8 +2670,11 @@ Run error codes include:
 - `detector_result_invalid`
 - `detector_content_leak`
 - `external_redaction_failed`
-- `evaluation_budget_exhausted`
 - `adapter_unsupported`
+
+Engine failure codes are the closed
+`SandboxSecurityEngineFailureCode` union defined above and are never attached
+to detector runs.
 
 `adapter_unsupported` is reserved for compatibility adapters that cannot
 represent a stage or tool in the legacy rule-match model. Generic detector
@@ -1183,12 +2712,44 @@ subject evidence refs, finding IDs, provenance, and ordinary content hashes.
 
 ### Monitor Adapter
 
-`SandboxSecurityMonitorDecisionAdapter` evaluates model-output/tool requests
-through the generic engine and maps the already reduced generic action to
-`MonitorDecisionProposal` with fixed safe reason codes and evidence refs. It
-accepts only `evaluation_mode=enforcement` and does not reduce a second time. A
-simulation decision or Engine error maps to the monitor's existing fail-closed
-proposal.
+```ts
+export function createSandboxSecurityMonitorDecisionAdapter(
+  deps: Readonly<{
+    engine: SandboxSecurityEngine;
+    policy_profile_id: SandboxSecurityPolicyProfileId;
+    buildEvaluationRequest: (
+      input: Readonly<MonitorDecisionInput>,
+      policyProfileId: SandboxSecurityPolicyProfileId
+    ) => Readonly<SandboxSecurityEvaluationRequest>;
+  }>
+): MonitorDecisionProvider;
+```
+
+The trusted `buildEvaluationRequest` mapper constructs submission and
+authoritative context together so source IDs, order, values, and provenance
+cannot diverge. `decide(input)` calls the mapper once and Engine once, then maps
+the already-reduced action to a new `MonitorDecisionProposal` with policy ID
+`policy://sandbox/security/monitor-adapter/v1`, the closed content-free reason
+mapping below, and a defensive copy of decision evidence refs (or `[]` for
+caught internal errors). It never returns `engine.evaluate(request)` directly,
+never pre-normalizes, and never reduces again. Mapper/Engine/mapping failure
+returns stage fail-closed action with the adapter-caught mapping:
+`ask` for `model_output`, `deny` for `tool_request`. The Monitor contract remains
+unchanged; `reason_code` is an unconstrained non-empty string there, so the
+adapter may emit the closed codes below without modifying Monitor contracts.
+
+Closed Monitor reason mapping (content-free; no raw exception, model, or tool
+text):
+
+| Decision / path | reason_code | reason | evidence_refs |
+| --- | --- | --- | --- |
+| `risk_detected` | first final finding's `reason_code` in finding order | `Sandbox security risk detected.` | defensive copy of decision.evidence_refs |
+| `no_detected_risk` | `sandbox_security_no_detected_risk` | `No sandbox security risk was detected.` | defensive copy of decision.evidence_refs |
+| `indeterminate` | `sandbox_security_evaluation_indeterminate` | `Sandbox security evaluation was incomplete.` | defensive copy of decision.evidence_refs |
+| adapter-caught internal error | `sandbox_security_internal_invalid` | `Sandbox security evaluation failed closed.` | `[]` |
+
+`risk_detected` without at least one finding is an invalid decision and must not
+be mapped as a successful risk proposal.
 
 ### Track 1 Rule-Match Adapter
 
@@ -1320,6 +2881,8 @@ recall >=85%, high/critical recall >=95%, and each category recall >=80%.
 - aggregate measurement includes authoritative IDs, refs, values, target, and
   arguments while excluding correlation-only request ID;
 - semantic source order is preserved and arbitrary adapter reorder rejects.
+- Phase 2 authority-bound content contains no trust class; profile trust rules
+  are the only trust derivation authority and reject unknown combinations.
 
 ### Canonicalization and Locator Tests
 
@@ -1340,7 +2903,10 @@ recall >=85%, high/critical recall >=95%, and each category recall >=80%.
   snapshot and raw port cannot be registered as sanitized external;
 - fixed slot order and all run summaries;
 - balanced rule-only normal mode;
-- strict missing local construction failure;
+- strict missing local profile-resolution failure (registry/engine construction
+  still succeed; evaluate(strict) fails before decision ID; zero detectors);
+- registry construction permits missing local; engine construction permits a
+  registry without local; balanced rule-only registry evaluates normally;
 - low-confidence unresolved escalation routing;
 - accepted risk plus clearance does not suppress or automatically route;
 - Judge risk adds evidence, matching qualified clearance resolves only the
@@ -1348,8 +2914,8 @@ recall >=85%, high/critical recall >=95%, and each category recall >=80%.
   unresolved;
 - routed optional becomes runtime-required before availability check;
 - sanitizer failure causes zero Judge calls and fail closed;
-- per-slot effective timeout and 5000 ms total deadline from engine entry;
-- normalization/hashing/sanitization consume the total budget;
+- per-slot effective timeout and 5000 ms normal work budget from engine entry plus one bounded fail-closed epilogue;
+- normalization/hashing/sanitization consume the 5000 ms normal work budget;
 - caller cancellation differs from budget exhaustion;
 - late results are discarded even when detector ignores AbortSignal;
 - timer anomalies cannot produce allow;
@@ -1358,6 +2924,12 @@ recall >=85%, high/critical recall >=95%, and each category recall >=80%.
 - nonempty low-confidence result is `matched`; double-empty result is
   `no_match`;
 - unknown/stale/wrong-kind content/tool token and invalid tool locator reject;
+- Judge receives nonempty routed obligations only; every result item binds an
+  existing obligation with matching category and covered scope;
+- omitted obligations remain unresolved, while unknown/cross-evaluation or
+  outside-routed obligation results are invalid;
+- run ledger covers every legal transition and rejects terminal mutation,
+  premature/cross-slot finding ID attachment, and every illegal transition;
 - no retry.
 
 ### Qualification and Policy Tests
@@ -1372,6 +2944,14 @@ recall >=85%, high/critical recall >=95%, and each category recall >=80%.
   cases;
 - every severity at all stages for both profiles;
 - accepted risk plus failure uses the more restrictive action;
+- Engine failure produces `indeterminate`, never rewrites successful runs, and
+  emits only the exact `engine-0001` evidence marker;
+- decision ID and created-at are each minted once; final evidence refs and the
+  normalize-then-semantic-validate materialization order are exact;
+- balanced medium rule evidence does not short-circuit configured local;
+  strict medium does; balanced/strict low never short-circuit;
+- rule short-circuit closes escalation (closeWithoutJudge or
+  terminateJudgeAttempt risk_short_circuit) before publication;
 - `risk_detected + allow` impossible;
 - manifest monotonicity validation and reducer property tests prove strict is
   never less restrictive than balanced for identical complete evidence;
@@ -1386,6 +2966,8 @@ recall >=85%, high/critical recall >=95%, and each category recall >=80%.
 - malicious in-process detector retention is documented as out of threat-model
   enforcement, not falsely tested as impossible;
 - Track 1 adapter never calls legacy final provider as detector;
+- Monitor mapper builds submission and authority together, calls Engine once,
+  maps to a new proposal, and fails closed without returning Engine decision;
 - unsupported adapter path emits `adapter_unsupported` and fails closed;
 - nine-case action matrix and published contracts remain stable;
 - generic core static scans reject network/filesystem/process/model/backend/UI,
@@ -1395,7 +2977,7 @@ recall >=85%, high/critical recall >=95%, and each category recall >=80%.
 
 Planned focused gates:
 
-```powershell
+```bash
 node --experimental-strip-types --test shared/tests/sandbox-security-contract.spec.ts
 node --experimental-strip-types --test engines/sandbox/tests/sandbox-security-authority.spec.ts
 node --experimental-strip-types --test engines/sandbox/tests/sandbox-security-input.spec.ts
@@ -1408,10 +2990,10 @@ node --experimental-strip-types --test tests/repository/sandbox-security-core.sp
 
 Required full gates:
 
-```powershell
-npm.cmd run test:shared
-npm.cmd run test:engine:sandbox
-npm.cmd run test:repo
+```bash
+npm run test:shared
+npm run test:engine:sandbox
+npm run test:repo
 git diff --check
 ```
 
@@ -1462,21 +3044,33 @@ GENERAL-001 is complete when:
 3. authoritative context/value matching, source order, stage/source/tool
    invariants, and all input/output limits have boundary tests;
 4. JCS vectors, hashes, and conservative locator mapping pass;
-5. external detector types cannot receive raw snapshots;
+5. external detector types cannot receive raw snapshots and Judge cannot run
+   without nonempty, Engine-issued routed obligations;
 6. both immutable manifests exactly match this spec;
-7. exact candidate/clearance/result contracts, escalation-only Judge behavior,
-   tool/content subjects, identity, uniqueness, and sorting are deterministic;
-8. every slot has a valid obligation/status/skip/error summary;
-9. required/runtime-required failure cannot produce allow;
-10. timeout, cancellation, late result, and total budget behavior is tested;
-11. semantic validator rejects forged selected-profile run/finding/reduction
+7. exact candidate/clearance/result contracts, exact canonical obligation-scope
+   equality, omission-only partial Judge coverage, tool/content subjects,
+   identity, uniqueness, and sorting are deterministic;
+8. the canonical private subject helper is the only `subject_key` authority and
+   is shared by raw, external, and qualification boundaries;
+9. the run-ledger factory prebuilds every manifest slot and finalizes them in
+   manifest order with valid obligation/status/skip/error summaries and
+   publication-time finding-ID backfill;
+10. required/runtime-required failure cannot produce allow;
+11. timeout, cancellation, late result, active-detector timeout, post-detector
+    Engine-budget failure, and exact Engine-failure code/phase compatibility are
+    tested;
+12. profile manifests are the sole trust derivation authority;
+13. semantic validator rejects forged selected-profile run/finding/reduction
     state, while manifest/property tests own cross-profile monotonicity;
-12. decisions contain no raw/sanitized content or ordinary content hashes;
-13. Engine-owned canonical fingerprint boundary prevents backend JCS
+14. decision identity, created-at capture, evidence ordering, normalization,
+    one bounded semantic-recovery attempt, freezing, and Engine-failure floors
+    follow the single materialization path;
+15. decisions contain no raw/sanitized content or ordinary content hashes;
+16. Engine-owned canonical fingerprint boundary prevents backend JCS
     duplication and content-derived durable fields;
-14. Track 1 legacy actions/contracts and existing byte gates remain stable;
-15. focused and full required gates pass with no new waiver;
-16. documentation is updated and the requirement stops for review.
+17. Track 1 legacy actions/contracts and existing byte gates remain stable;
+18. focused and full required gates pass with no new waiver;
+19. documentation is updated and the requirement stops for review.
 
 ## Open Questions
 
