@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 
 import type {
+  SandboxDetectorRun,
   SandboxSecurityClaimedSourceType,
+  SandboxSecurityDecision,
+  SandboxSecurityFinding,
+  SandboxSecurityFindingSubjectRef,
   SandboxSecurityReasonCode,
   SandboxSecurityRequest
 } from "../types/sandbox-security.ts";
@@ -202,6 +207,147 @@ function makeNestedJson(containerDepth: number): unknown {
     value = [value];
   }
   return value;
+}
+
+type SandboxSecurityContractModule = {
+  normalizeSandboxSecurityRequest: NormalizeSandboxSecurityRequest;
+  normalizeSandboxSecurityFinding: (
+    value: unknown
+  ) => SandboxSecurityFinding | null;
+  normalizeSandboxDetectorRun: (value: unknown) => SandboxDetectorRun | null;
+  normalizeSandboxSecurityDecision: (
+    value: unknown
+  ) => SandboxSecurityDecision | null;
+};
+
+const sandboxSecurityContractPath = resolve(
+  import.meta.dirname,
+  "../contracts/sandbox-security.ts"
+);
+const sandboxSecurityContractUrl = pathToFileURL(sandboxSecurityContractPath).href;
+
+async function loadSandboxSecurityContract(): Promise<SandboxSecurityContractModule> {
+  try {
+    return (await import(sandboxSecurityContractUrl)) as SandboxSecurityContractModule;
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ERR_MODULE_NOT_FOUND" &&
+      "url" in error &&
+      error.url === sandboxSecurityContractUrl
+    ) {
+      return {
+        normalizeSandboxSecurityRequest,
+        normalizeSandboxSecurityFinding: () => null,
+        normalizeSandboxDetectorRun: () => null,
+        normalizeSandboxSecurityDecision: () => null
+      };
+    }
+
+    throw error;
+  }
+}
+
+function readSandboxSecurityContractSource(): string {
+  try {
+    return readFileSync(sandboxSecurityContractPath, "utf8");
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      error.code === "ENOENT" &&
+      "path" in error &&
+      error.path === sandboxSecurityContractPath
+    ) {
+      return "";
+    }
+    throw error;
+  }
+}
+
+const sandboxSecurityContract = await loadSandboxSecurityContract();
+const {
+  normalizeSandboxSecurityFinding,
+  normalizeSandboxDetectorRun,
+  normalizeSandboxSecurityDecision
+} = sandboxSecurityContract;
+
+const findingId = `finding:sha256:${"a".repeat(64)}`;
+const secondFindingId = `finding:sha256:${"b".repeat(64)}`;
+
+function makeSourceToken(
+  decisionId = "decision_001",
+  ordinal = "0001"
+): string {
+  return `source://sandbox/security/${decisionId}/${ordinal}`;
+}
+
+function makeCallToken(
+  decisionId = "decision_001",
+  ordinal = "0001"
+): string {
+  return `call://sandbox/security/${decisionId}/${ordinal}`;
+}
+
+function makeEvidenceRef(
+  decisionId = "decision_001",
+  suffix = "0001"
+): string {
+  return `evidence://sandbox/security/${decisionId}/${suffix}`;
+}
+
+function makeFinding(overrides: Record<string, unknown> = {}) {
+  return {
+    finding_id: findingId,
+    detector_id: "detector://sandbox/security/rule/default/v1",
+    detector_version: "1.0.0",
+    category: "prompt_injection",
+    severity: "high",
+    confidence: 0.9,
+    reason_code: "sandbox_security_prompt_injection",
+    subject_refs: [
+      {
+        kind: "content_source",
+        source_token: makeSourceToken(),
+        locator: { kind: "whole_source" }
+      }
+    ],
+    evidence_refs: [makeEvidenceRef()],
+    ...overrides
+  };
+}
+
+function makeDetectorRun(overrides: Record<string, unknown> = {}) {
+  return {
+    detector_id: "detector://sandbox/security/rule/default/v1",
+    detector_version: "1.0.0",
+    detector_kind: "rule",
+    obligation: "profile_required",
+    elapsed_ms: 1,
+    status: "matched",
+    finding_ids: [findingId],
+    ...overrides
+  };
+}
+
+function makeDecision(overrides: Record<string, unknown> = {}) {
+  return {
+    schema_version: "sandbox-security-decision.v1",
+    decision_id: "decision_001",
+    request_id: "request_001",
+    evaluation_mode: "enforcement",
+    stage: "user_input",
+    policy_profile_id: "sandbox-security-balanced.v1",
+    verdict: "risk_detected",
+    action: "deny",
+    risk_level: "high",
+    findings: [makeFinding()],
+    detector_runs: [makeDetectorRun()],
+    evidence_refs: [makeEvidenceRef()],
+    created_at: "2026-07-13T12:34:56.789Z",
+    ...overrides
+  };
 }
 
 test("REQ-SBX-GENERAL-001 exports closed public security constants", () => {
@@ -1157,4 +1303,881 @@ test("REQ-SBX-GENERAL-001 rejects prototype pollution keys in JSON objects", () 
       null
     );
   }
+});
+
+test("REQ-SBX-GENERAL-001 source_token and call_token accept public grammar at max length", () => {
+  const decisionIdAtLimit = "d".repeat(128);
+  const finding = makeFinding({
+    subject_refs: [
+      {
+        kind: "content_source",
+        source_token: makeSourceToken(decisionIdAtLimit, "0000"),
+        locator: { kind: "whole_source" }
+      },
+      {
+        kind: "tool_request",
+        call_token: makeCallToken(decisionIdAtLimit, "9999"),
+        component: "whole_call"
+      }
+    ]
+  });
+
+  assert.deepEqual(normalizeSandboxSecurityFinding(finding), finding);
+});
+
+test("REQ-SBX-GENERAL-001 source_token and call_token reject illegal characters and over-length", () => {
+  const invalidSourceTokens = [
+    "source://sandbox/security/decision_001/001",
+    "source://sandbox/security/decision_001/00001",
+    "source://sandbox/security/.decision/0001",
+    "source://sandbox/security/decision/with/slash/0001",
+    `source://sandbox/security/${"d".repeat(129)}/0001`,
+    "source://sandbox/security/décision/0001",
+    "https://sandbox/security/decision_001/0001"
+  ];
+  for (const sourceToken of invalidSourceTokens) {
+    assert.equal(
+      normalizeSandboxSecurityFinding(
+        makeFinding({
+          subject_refs: [
+            {
+              kind: "content_source",
+              source_token: sourceToken,
+              locator: { kind: "whole_source" }
+            }
+          ]
+        })
+      ),
+      null
+    );
+  }
+
+  const invalidCallTokens = [
+    "call://sandbox/security/decision_001/001",
+    "call://sandbox/security/decision_001/00001",
+    "call://sandbox/security/-decision/0001",
+    `call://sandbox/security/${"d".repeat(129)}/0001`,
+    "source://sandbox/security/decision_001/0001",
+    "call://sandbox/security/decision 001/0001"
+  ];
+  for (const callToken of invalidCallTokens) {
+    assert.equal(
+      normalizeSandboxSecurityFinding(
+        makeFinding({
+          subject_refs: [
+            {
+              kind: "tool_request",
+              call_token: callToken,
+              component: "whole_call"
+            }
+          ]
+        })
+      ),
+      null
+    );
+  }
+});
+
+test("REQ-SBX-GENERAL-001 finding_id accepts engine public grammar at max length", () => {
+  const finding = makeFinding();
+
+  assert.equal(finding.finding_id.length, 79);
+  assert.deepEqual(normalizeSandboxSecurityFinding(finding), finding);
+});
+
+test("REQ-SBX-GENERAL-001 finding_id rejects illegal characters and over-length", () => {
+  for (const invalidFindingId of [
+    `finding:sha256:${"a".repeat(63)}`,
+    `finding:sha256:${"a".repeat(65)}`,
+    `finding:sha256:${"A".repeat(64)}`,
+    `finding:sha256:${"g".repeat(64)}`,
+    `finding:sha512:${"a".repeat(64)}`,
+    "finding_001"
+  ]) {
+    assert.equal(
+      normalizeSandboxSecurityFinding(
+        makeFinding({ finding_id: invalidFindingId })
+      ),
+      null
+    );
+  }
+});
+
+test("REQ-SBX-GENERAL-001 evidence_ref accepts evidence grammar at max length", () => {
+  const decisionIdAtLimit = "e".repeat(128);
+  const evidenceRef = makeEvidenceRef(decisionIdAtLimit, "9999");
+  const finding = makeFinding({ evidence_refs: [evidenceRef] });
+
+  assert.ok(evidenceRef.length <= 256);
+  assert.deepEqual(normalizeSandboxSecurityFinding(finding), finding);
+});
+
+test("REQ-SBX-GENERAL-001 evidence_ref rejects illegal characters and over-length", () => {
+  for (const evidenceRef of [
+    `evidence://sandbox/security/${"e".repeat(129)}/0001`,
+    "evidence://sandbox/security/.decision/0001",
+    "evidence://sandbox/security/decision 001/0001",
+    "evidence://sandbox/security/decision_001/%001",
+    "evidence://sandbox/security/decision_001/abcd",
+    "https://sandbox/security/decision_001/0001"
+  ]) {
+    assert.equal(
+      normalizeSandboxSecurityFinding(
+        makeFinding({ evidence_refs: [evidenceRef] })
+      ),
+      null
+    );
+  }
+});
+
+test("REQ-SBX-GENERAL-001 evidence_ref accepts only finding ordinal or engine-0001 grammar", () => {
+  for (const suffix of ["0000", "0001", "9999", "engine-0001"]) {
+    const finding = makeFinding({ evidence_refs: [makeEvidenceRef("decision_001", suffix)] });
+    assert.deepEqual(normalizeSandboxSecurityFinding(finding), finding);
+  }
+
+  for (const suffix of [
+    "001",
+    "00001",
+    "engine-0000",
+    "engine-0002",
+    "finding-0001",
+    "engine0001"
+  ]) {
+    assert.equal(
+      normalizeSandboxSecurityFinding(
+        makeFinding({ evidence_refs: [makeEvidenceRef("decision_001", suffix)] })
+      ),
+      null
+    );
+  }
+});
+
+test("REQ-SBX-GENERAL-001 detector_version accepts version grammar", () => {
+  const versionAtLimit = `1.0.0-${"a".repeat(58)}`;
+  assert.equal(versionAtLimit.length, 64);
+
+  for (const detectorVersion of ["0.0.0", "1.2.3", "1.2.3-alpha.1", versionAtLimit]) {
+    const finding = makeFinding({ detector_version: detectorVersion });
+    assert.deepEqual(normalizeSandboxSecurityFinding(finding), finding);
+  }
+
+  for (const detectorVersion of [
+    "v1.2.3",
+    "1.2",
+    "1.2.3-ALPHA",
+    `1.0.0-${"a".repeat(59)}`,
+    ""
+  ]) {
+    assert.equal(
+      normalizeSandboxSecurityFinding(
+        makeFinding({ detector_version: detectorVersion })
+      ),
+      null
+    );
+  }
+});
+
+test("REQ-SBX-GENERAL-001 detector_id accepts detector URI grammar at max 128", () => {
+  const detectorIdAtLimit = `detector://${"a".repeat(64)}/${"b".repeat(52)}`;
+  const finding = makeFinding({ detector_id: detectorIdAtLimit });
+
+  assert.equal(detectorIdAtLimit.length, 128);
+  assert.deepEqual(normalizeSandboxSecurityFinding(finding), finding);
+});
+
+test("REQ-SBX-GENERAL-001 detector_id rejects illegal characters and over-length", () => {
+  for (const detectorId of [
+    `detector://${"a".repeat(64)}/${"b".repeat(53)}`,
+    `detector://${"a".repeat(65)}/valid`,
+    "detector://single-segment",
+    "detector://sandbox/security/bad segment",
+    "detector://sandbox/security/bad?query",
+    "detector:///sandbox/security",
+    "https://sandbox/security/rule"
+  ]) {
+    assert.equal(
+      normalizeSandboxSecurityFinding(makeFinding({ detector_id: detectorId })),
+      null
+    );
+  }
+});
+
+test("REQ-SBX-GENERAL-001 shared run detector_id is a string and has no Engine type dependency", () => {
+  const detectorId: string = "detector://vendor/security/runtime/v9";
+  const run = makeDetectorRun({ detector_id: detectorId });
+  const normalized = normalizeSandboxDetectorRun(run);
+
+  assert.deepEqual(normalized, run);
+  assert.equal(normalized?.detector_id, detectorId);
+});
+
+test("REQ-SBX-GENERAL-001 shared normalizer accepts all three built-in detector URI IDs", () => {
+  for (const detectorId of [
+    "detector://sandbox/security/rule/default/v1",
+    "detector://sandbox/security/local/default/v1",
+    "detector://sandbox/security/judge/default/v1"
+  ]) {
+    const run = makeDetectorRun({ detector_id: detectorId });
+    assert.deepEqual(normalizeSandboxDetectorRun(run), run);
+  }
+});
+
+test("REQ-SBX-GENERAL-001 shared normalizer accepts a syntactically valid unknown detector URI", () => {
+  const finding = makeFinding({
+    detector_id: "detector://third-party/security/custom/v42"
+  });
+
+  assert.deepEqual(normalizeSandboxSecurityFinding(finding), finding);
+});
+
+test("REQ-SBX-GENERAL-001 shared normalizer rejects malformed detector URI", () => {
+  for (const detectorId of [
+    "detector://",
+    "detector://one",
+    "detector://one//two",
+    "DETECTOR://one/two",
+    "detector://one/two/",
+    "detector://one/twö"
+  ]) {
+    assert.equal(
+      normalizeSandboxDetectorRun(makeDetectorRun({ detector_id: detectorId })),
+      null
+    );
+  }
+});
+
+test("REQ-SBX-GENERAL-001 detector_id shared normalizer does not hard-code slot constants", () => {
+  const source = readSandboxSecurityContractSource();
+  assert.doesNotMatch(
+    source,
+    /detector:\/\/sandbox\/security\/(?:rule|local|judge)\/default\/v1/
+  );
+  assert.notEqual(
+    normalizeSandboxDetectorRun(
+      makeDetectorRun({ detector_id: "detector://vendor/security/arbitrary/v1" })
+    ),
+    null
+  );
+});
+
+test("REQ-SBX-GENERAL-001 detector_id shared normalizer does not import profile manifests", () => {
+  const source = readSandboxSecurityContractSource();
+
+  assert.doesNotMatch(source, /policy-profiles|profile-manifest|resolveSandboxSecurityProfile/i);
+  assert.notEqual(
+    normalizeSandboxSecurityFinding(
+      makeFinding({ detector_id: "detector://unregistered/security/rule/v1" })
+    ),
+    null
+  );
+});
+
+test("REQ-SBX-GENERAL-001 shared types do not import engines sandbox security modules", () => {
+  const contractSource = readSandboxSecurityContractSource();
+  const typesSource = readFileSync(sandboxSecurityTypesPath, "utf8");
+
+  assert.doesNotMatch(contractSource, /(?:from|import\()\s*["'][^"']*engines\//);
+  assert.doesNotMatch(typesSource, /(?:from|import\()\s*["'][^"']*engines\//);
+  assert.deepEqual(Object.keys(sandboxSecurityContract).sort(), [
+    "normalizeSandboxDetectorRun",
+    "normalizeSandboxSecurityDecision",
+    "normalizeSandboxSecurityFinding",
+    "normalizeSandboxSecurityRequest"
+  ]);
+  assert.strictEqual(
+    sandboxSecurityContract.normalizeSandboxSecurityRequest,
+    normalizeSandboxSecurityRequest
+  );
+});
+
+test("REQ-SBX-GENERAL-001 reason_code accepts closed public reason tokens only", () => {
+  const categories = [
+    "prompt_injection",
+    "jailbreak",
+    "instruction_override",
+    "privilege_escalation",
+    "sensitive_data_exposure",
+    "tool_hijacking",
+    "unsafe_side_effect",
+    "memory_poisoning",
+    "trust_boundary_violation"
+  ] as const;
+
+  for (const category of categories) {
+    const finding = makeFinding({
+      category,
+      reason_code: `sandbox_security_${category}`
+    });
+    assert.deepEqual(normalizeSandboxSecurityFinding(finding), finding);
+  }
+
+  for (const reasonCode of [
+    "sandbox_security_unknown",
+    "prompt_injection",
+    "SANDBOX_SECURITY_PROMPT_INJECTION",
+    ""
+  ]) {
+    assert.equal(
+      normalizeSandboxSecurityFinding(makeFinding({ reason_code: reasonCode })),
+      null
+    );
+  }
+
+  for (const confidence of [0, 1]) {
+    assert.notEqual(
+      normalizeSandboxSecurityFinding(makeFinding({ confidence })),
+      null
+    );
+  }
+  for (const confidence of [-0.01, 1.01, NaN, Infinity]) {
+    assert.equal(
+      normalizeSandboxSecurityFinding(makeFinding({ confidence })),
+      null
+    );
+  }
+});
+
+test("REQ-SBX-GENERAL-001 reason_code type is SandboxSecurityReasonCode", () => {
+  const reasonCode: SandboxSecurityReasonCode =
+    "sandbox_security_prompt_injection";
+  const finding = makeFinding({ reason_code: reasonCode });
+
+  assert.deepEqual(normalizeSandboxSecurityFinding(finding), finding);
+});
+
+test("REQ-SBX-GENERAL-001 ISO timestamps accept real-calendar values and reject invalid dates", () => {
+  for (const createdAt of [
+    "2024-02-29T23:59:59Z",
+    "2026-07-13T12:34:56.789Z",
+    "2026-07-13T12:34:56+08:00"
+  ]) {
+    const decision = makeDecision({ created_at: createdAt });
+    assert.deepEqual(normalizeSandboxSecurityDecision(decision), decision);
+  }
+
+  for (const createdAt of [
+    "2023-02-29T00:00:00Z",
+    "2026-02-30T00:00:00Z",
+    "2026-13-01T00:00:00Z",
+    "2026-07-13T25:00:00Z",
+    "2026-07-13",
+    "not-a-date"
+  ]) {
+    assert.equal(
+      normalizeSandboxSecurityDecision(makeDecision({ created_at: createdAt })),
+      null
+    );
+  }
+});
+
+test("REQ-SBX-GENERAL-001 subject refs accept 1 and 8 unique refs", () => {
+  const oneSubject = makeFinding();
+  const eightSubjects = makeFinding({
+    subject_refs: Array.from({ length: 8 }, (_, index) => ({
+      kind: "content_source",
+      source_token: makeSourceToken("decision_001", String(index + 1).padStart(4, "0")),
+      locator: { kind: "whole_source" }
+    }))
+  });
+
+  assert.deepEqual(normalizeSandboxSecurityFinding(oneSubject), oneSubject);
+  assert.deepEqual(normalizeSandboxSecurityFinding(eightSubjects), eightSubjects);
+});
+
+test("REQ-SBX-GENERAL-001 subject refs reject 0 and 9 refs", () => {
+  assert.equal(
+    normalizeSandboxSecurityFinding(makeFinding({ subject_refs: [] })),
+    null
+  );
+  assert.equal(
+    normalizeSandboxSecurityFinding(
+      makeFinding({
+        subject_refs: Array.from({ length: 9 }, (_, index) => ({
+          kind: "content_source",
+          source_token: makeSourceToken(
+            "decision_001",
+            String(index + 1).padStart(4, "0")
+          ),
+          locator: { kind: "whole_source" }
+        }))
+      })
+    ),
+    null
+  );
+  assert.equal(
+    normalizeSandboxSecurityFinding(
+      makeFinding({
+        subject_refs: [
+          {
+            kind: "content_source",
+            source_token: makeSourceToken(),
+            locator: { kind: "whole_source" }
+          },
+          {
+            locator: { kind: "whole_source" },
+            source_token: makeSourceToken(),
+            kind: "content_source"
+          }
+        ]
+      })
+    ),
+    null
+  );
+});
+
+test("REQ-SBX-GENERAL-001 content locator rejects malformed JSON pointer", () => {
+  const pointerAtLimit = `${`/${"a".repeat(64)}`.repeat(7)}/${"b".repeat(56)}`;
+  assert.equal(Buffer.byteLength(pointerAtLimit, "utf8"), 512);
+  for (const pointer of [
+    "/field/tilde/slash/0/10/a.b-c_d",
+    pointerAtLimit
+  ]) {
+    assert.notEqual(
+      normalizeSandboxSecurityFinding(
+        makeFinding({
+          subject_refs: [
+            {
+              kind: "content_source",
+              source_token: makeSourceToken(),
+              locator: { kind: "json_pointer", pointer }
+            }
+          ]
+        })
+      ),
+      null
+    );
+  }
+
+  for (const pointer of [
+    "",
+    "field",
+    "/",
+    "/field//nested",
+    "/field/~",
+    "/field/~2",
+    "/~0",
+    "/~1",
+    "/field/~0tilde",
+    "/field/~1slash",
+    "/01",
+    "/field with space",
+    "/é",
+    `/${"a".repeat(65)}`,
+    `${pointerAtLimit}b`
+  ]) {
+    assert.equal(
+      normalizeSandboxSecurityFinding(
+        makeFinding({
+          subject_refs: [
+            {
+              kind: "content_source",
+              source_token: makeSourceToken(),
+              locator: { kind: "json_pointer", pointer }
+            }
+          ]
+        })
+      ),
+      null
+    );
+  }
+});
+
+test("REQ-SBX-GENERAL-001 tool locator rejects component locator mismatch", () => {
+  const invalidSubjects = [
+    {
+      kind: "tool_request",
+      call_token: makeCallToken(),
+      component: "whole_call",
+      locator: { kind: "whole_arguments" }
+    },
+    {
+      kind: "tool_request",
+      call_token: makeCallToken(),
+      component: "tool_name",
+      locator: { kind: "json_pointer", pointer: "/name" }
+    },
+    {
+      kind: "tool_request",
+      call_token: makeCallToken(),
+      component: "target",
+      locator: { kind: "whole_arguments" }
+    },
+    {
+      kind: "tool_request",
+      call_token: makeCallToken(),
+      component: "arguments"
+    },
+    {
+      kind: "tool_request",
+      call_token: makeCallToken(),
+      component: "arguments",
+      locator: { kind: "whole_source" }
+    }
+  ];
+
+  for (const subject of invalidSubjects) {
+    assert.equal(
+      normalizeSandboxSecurityFinding(makeFinding({ subject_refs: [subject] })),
+      null
+    );
+  }
+});
+
+test("REQ-SBX-GENERAL-001 normalizes content and tool finding subjects", () => {
+  const finding = makeFinding({
+    subject_refs: [
+      {
+        kind: "content_source",
+        source_token: makeSourceToken(),
+        locator: { kind: "text_byte_range", start_byte: 0, end_byte: 4 }
+      },
+      {
+        kind: "content_source",
+        source_token: makeSourceToken("decision_001", "0002"),
+        locator: { kind: "json_pointer", pointer: "/items/0/name" }
+      },
+      {
+        kind: "tool_request",
+        call_token: makeCallToken(),
+        component: "whole_call"
+      },
+      {
+        kind: "tool_request",
+        call_token: makeCallToken("decision_001", "0002"),
+        component: "tool_name"
+      },
+      {
+        kind: "tool_request",
+        call_token: makeCallToken("decision_001", "0003"),
+        component: "target"
+      },
+      {
+        kind: "tool_request",
+        call_token: makeCallToken("decision_001", "0004"),
+        component: "arguments",
+        locator: { kind: "whole_arguments" }
+      },
+      {
+        kind: "tool_request",
+        call_token: makeCallToken("decision_001", "0005"),
+        component: "arguments",
+        locator: { kind: "json_pointer", pointer: "/items/0" }
+      }
+    ]
+  });
+
+  assert.deepEqual(normalizeSandboxSecurityFinding(finding), finding);
+});
+
+test("REQ-SBX-GENERAL-001 rejects mixed subject union fields", () => {
+  const invalidSubjects = [
+    {
+      kind: "content_source",
+      source_token: makeSourceToken(),
+      call_token: makeCallToken(),
+      locator: { kind: "whole_source" }
+    },
+    {
+      kind: "tool_request",
+      call_token: makeCallToken(),
+      source_token: makeSourceToken(),
+      component: "whole_call"
+    },
+    {
+      kind: "content_source",
+      source_token: makeSourceToken(),
+      locator: { kind: "text_byte_range", start_byte: 4, end_byte: 4 }
+    },
+    {
+      kind: "content_source",
+      source_token: makeSourceToken(),
+      locator: { kind: "text_byte_range", start_byte: -1, end_byte: 4 }
+    },
+    {
+      kind: "content_source",
+      source_token: makeSourceToken(),
+      locator: { kind: "whole_source", pointer: "/extra" }
+    }
+  ];
+
+  for (const subject of invalidSubjects) {
+    assert.equal(
+      normalizeSandboxSecurityFinding(makeFinding({ subject_refs: [subject] })),
+      null
+    );
+  }
+});
+
+test("REQ-SBX-GENERAL-001 rejects caller IDs hashes and prose in findings", () => {
+  for (const extra of [
+    { source_id: "source_001" },
+    { call_id: "call_001" },
+    { raw_content: "secret" },
+    { content_hash: "a".repeat(64) },
+    { provenance_ref: "source://fixture/item" },
+    { snippet: "secret" },
+    { reason: "free prose" },
+    { message: "provider message" },
+    { provider: "external" }
+  ]) {
+    assert.equal(
+      normalizeSandboxSecurityFinding(makeFinding(extra)),
+      null
+    );
+  }
+
+  assert.equal(
+    normalizeSandboxSecurityFinding(
+      Object.assign(Object.create({ inherited: true }), makeFinding())
+    ),
+    null
+  );
+
+  let getterCalled = false;
+  const accessorFinding = makeFinding();
+  Object.defineProperty(accessorFinding, "confidence", {
+    enumerable: true,
+    get() {
+      getterCalled = true;
+      return 0.9;
+    }
+  });
+  assert.equal(normalizeSandboxSecurityFinding(accessorFinding), null);
+  assert.equal(getterCalled, false);
+
+  const symbolFinding = makeFinding() as Record<PropertyKey, unknown>;
+  symbolFinding[Symbol("raw")] = "secret";
+  assert.equal(normalizeSandboxSecurityFinding(symbolFinding), null);
+});
+
+test("REQ-SBX-GENERAL-001 normalizes every detector run branch", () => {
+  const runs = [
+    makeDetectorRun(),
+    makeDetectorRun({ status: "no_match", finding_ids: [] }),
+    makeDetectorRun({
+      status: "failed",
+      error_code: "detector_failed",
+      finding_ids: undefined
+    }),
+    makeDetectorRun({
+      status: "timeout",
+      error_code: "detector_timeout",
+      finding_ids: undefined
+    }),
+    makeDetectorRun({
+      status: "invalid_result",
+      error_code: "detector_result_invalid",
+      finding_ids: undefined
+    }),
+    makeDetectorRun({
+      status: "skipped",
+      skip_reason: "optional_not_selected",
+      finding_ids: undefined,
+      obligation: "optional_not_selected"
+    })
+  ];
+
+  for (const run of runs) {
+    const branchExactRun = Object.fromEntries(
+      Object.entries(run).filter(([, value]) => value !== undefined)
+    );
+    assert.deepEqual(normalizeSandboxDetectorRun(branchExactRun), branchExactRun);
+  }
+});
+
+test("REQ-SBX-GENERAL-001 run skip reasons equal the revised closed five-value set", () => {
+  const skipReasons = [
+    "optional_not_configured",
+    "optional_not_selected",
+    "routing_not_selected",
+    "risk_short_circuit",
+    "evaluation_terminated"
+  ] as const;
+
+  for (const [index, skipReason] of skipReasons.entries()) {
+    const run = {
+      detector_id: "detector://sandbox/security/rule/default/v1",
+      detector_version: "1.0.0",
+      detector_kind: "rule",
+      obligation: ["profile_required", "runtime_required", "optional_not_selected"][
+        index % 3
+      ],
+      elapsed_ms: 0,
+      status: "skipped",
+      skip_reason: skipReason
+    };
+    assert.deepEqual(normalizeSandboxDetectorRun(run), run);
+  }
+
+  for (const skipReason of ["budget_exhausted", "not_selected", ""]) {
+    assert.equal(
+      normalizeSandboxDetectorRun({
+        detector_id: "detector://sandbox/security/rule/default/v1",
+        detector_version: "1.0.0",
+        detector_kind: "rule",
+        obligation: "profile_required",
+        elapsed_ms: 0,
+        status: "skipped",
+        skip_reason: skipReason
+      }),
+      null
+    );
+  }
+});
+
+test("REQ-SBX-GENERAL-001 detector run errors exclude Engine-level budget exhaustion", () => {
+  const errorCodes = [
+    "detector_unavailable",
+    "detector_failed",
+    "detector_timeout",
+    "detector_result_invalid",
+    "detector_content_leak",
+    "external_redaction_failed",
+    "adapter_unsupported"
+  ] as const;
+
+  for (const errorCode of errorCodes) {
+    const run = {
+      detector_id: "detector://sandbox/security/rule/default/v1",
+      detector_version: "1.0.0",
+      detector_kind: "rule",
+      obligation: "profile_required",
+      elapsed_ms: 2.5,
+      status: "failed",
+      error_code: errorCode
+    };
+    assert.deepEqual(normalizeSandboxDetectorRun(run), run);
+  }
+
+  assert.equal(
+    normalizeSandboxDetectorRun({
+      detector_id: "detector://sandbox/security/rule/default/v1",
+      detector_version: "1.0.0",
+      detector_kind: "rule",
+      obligation: "profile_required",
+      elapsed_ms: 1,
+      status: "failed",
+      error_code: "evaluation_budget_exhausted"
+    }),
+    null
+  );
+});
+
+test("REQ-SBX-GENERAL-001 rejects illegal run branch fields", () => {
+  const invalidRuns = [
+    makeDetectorRun({ error_code: "detector_failed" }),
+    makeDetectorRun({
+      status: "failed",
+      error_code: "detector_failed"
+    }),
+    makeDetectorRun({
+      status: "skipped",
+      skip_reason: "evaluation_terminated",
+      finding_ids: undefined,
+      error_code: "detector_failed"
+    }),
+    makeDetectorRun({ status: "unknown" }),
+    makeDetectorRun({ obligation: "required" }),
+    makeDetectorRun({ detector_kind: "remote_model" }),
+    makeDetectorRun({ elapsed_ms: -1 }),
+    makeDetectorRun({ elapsed_ms: NaN }),
+    makeDetectorRun({ finding_ids: [findingId, findingId] }),
+    makeDetectorRun({ raw_output: "secret" })
+  ];
+
+  for (const run of invalidRuns) {
+    assert.equal(normalizeSandboxDetectorRun(run), null);
+  }
+
+  let getterCalled = false;
+  const accessorRun = makeDetectorRun();
+  Object.defineProperty(accessorRun, "elapsed_ms", {
+    enumerable: true,
+    get() {
+      getterCalled = true;
+      return 1;
+    }
+  });
+  assert.equal(normalizeSandboxDetectorRun(accessorRun), null);
+  assert.equal(getterCalled, false);
+});
+
+test("REQ-SBX-GENERAL-001 structurally normalizes simulation and enforcement decisions", () => {
+  for (const evaluationMode of ["simulation", "enforcement"]) {
+    const decision = makeDecision({ evaluation_mode: evaluationMode });
+    assert.deepEqual(normalizeSandboxSecurityDecision(decision), decision);
+  }
+
+  const decision = makeDecision();
+  const normalized = normalizeSandboxSecurityDecision(decision);
+  assert.deepEqual(normalized, decision);
+  assert.ok(normalized);
+  assert.notStrictEqual(normalized, decision);
+  assert.notStrictEqual(normalized.findings, decision.findings);
+  assert.notStrictEqual(normalized.findings[0], decision.findings[0]);
+  assert.notStrictEqual(normalized.findings[0].subject_refs, decision.findings[0].subject_refs);
+  assert.notStrictEqual(normalized.detector_runs, decision.detector_runs);
+  assert.notStrictEqual(normalized.evidence_refs, decision.evidence_refs);
+
+  const invalidDecisions = [
+    makeDecision({ schema_version: "sandbox-security-decision.v2" }),
+    makeDecision({ decision_id: ".decision" }),
+    makeDecision({ request_id: "request/invalid" }),
+    makeDecision({ evaluation_mode: "preview" }),
+    makeDecision({ stage: "tool_result" }),
+    makeDecision({ policy_profile_id: "sandbox-security-custom.v1" }),
+    makeDecision({ verdict: "safe" }),
+    makeDecision({ action: "block" }),
+    makeDecision({ risk_level: "severe" }),
+    makeDecision({ evidence_refs: [makeEvidenceRef(), makeEvidenceRef()] }),
+    makeDecision({ findings: [makeFinding(), makeFinding()] }),
+    makeDecision({
+      detector_runs: [makeDetectorRun(), makeDetectorRun()]
+    }),
+    makeDecision({ findings: [makeFinding({ confidence: 2 })] }),
+    makeDecision({ detector_runs: [makeDetectorRun({ elapsed_ms: -1 })] }),
+    makeDecision({ raw_content: "secret" })
+  ];
+  for (const invalidDecision of invalidDecisions) {
+    assert.equal(normalizeSandboxSecurityDecision(invalidDecision), null);
+  }
+
+  let getterCalled = false;
+  const accessorDecision = makeDecision();
+  Object.defineProperty(accessorDecision, "created_at", {
+    enumerable: true,
+    get() {
+      getterCalled = true;
+      return "2026-07-13T12:34:56Z";
+    }
+  });
+  assert.equal(normalizeSandboxSecurityDecision(accessorDecision), null);
+  assert.equal(getterCalled, false);
+});
+
+test("REQ-SBX-GENERAL-001 does not perform engine semantic reduction", () => {
+  const contradictoryDecision = makeDecision({
+    evaluation_mode: "simulation",
+    verdict: "no_detected_risk",
+    action: "allow",
+    risk_level: "info",
+    findings: [makeFinding()],
+    detector_runs: [
+      {
+        detector_id: "detector://unregistered/security/custom/v1",
+        detector_version: "1.0.0",
+        detector_kind: "external_judge",
+        obligation: "optional_not_selected",
+        elapsed_ms: 0,
+        status: "failed",
+        error_code: "detector_timeout"
+      }
+    ]
+  });
+
+  assert.deepEqual(
+    normalizeSandboxSecurityDecision(contradictoryDecision),
+    contradictoryDecision
+  );
 });
