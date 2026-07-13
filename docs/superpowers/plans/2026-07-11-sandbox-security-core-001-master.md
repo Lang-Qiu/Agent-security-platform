@@ -10,9 +10,9 @@
 > implementation authority for REQ-SBX-GENERAL-001. Do not rely on any older
 > plan revision, chat summary, or external inventory.
 >
-> **REAPPROVAL GATE:** Both canonical Specs are
-> `DRAFT_REVISED_PENDING_REAPPROVAL`. No implementation task may start until the
-> user explicitly reapproves both documents. Active sprint remains unchanged.
+> **APPROVAL GATE PASSED:** The user reapproved both canonical Specs, this
+> Master, and all five Phase plans on `2026-07-13`. Implementation is authorized
+> only in the exact Master DAG order.
 
 **Goal:** Implement strict general-purpose sandbox security contracts and a
 deterministic in-process evaluation core for authoritative user-input,
@@ -83,13 +83,14 @@ node ./frontend/node_modules/typescript/bin/tsc --noEmit -p engines/sandbox/tsco
   `docs/superpowers/specs/2026-07-10-sandbox-security-core-spec.md`
 - Rules: `AGENTS.md`, `metadata.md`
 - Shared index: `shared/index.ts` (historical; GENERAL-001 additive only)
-- Sprint: `docs/sprint-current.md` (still `REQ-T1-DEMO-010` until user switches)
+- Sprint: `docs/sprint-current.md` (`REQ-SBX-GENERAL-001` after the approved
+  documentation-only gate)
 - Monitor contracts: `engines/sandbox/src/monitoring/contract.ts`
 - Track 1: `engines/sandbox/src/base-filter/*`
 
-Implementation must not start until both revised Specs are explicitly
-reapproved and the user switches active sprint to `REQ-SBX-GENERAL-001`. This
-document-only revision does neither.
+Both revised Specs and the canonical plan set were explicitly reapproved on
+`2026-07-13`, and the documentation-only gate switches the active sprint to
+`REQ-SBX-GENERAL-001`. Implementation must follow the Master DAG exactly.
 
 ---
 
@@ -170,9 +171,11 @@ adapter constructs SandboxSecurityEvaluationRequest
     - invalid_result: settle invalid_result → record invalid_result
       SlotEvaluationRecord → do not qualify → do not call addSlotEvidence →
       only then budget check;
-    - throw/reject: markFailed(detector_failed) + failed record; no qualify;
-      immediately re-check normal work budget → exhausted → Scheme B; else
-      continue policy;
+    - throw/reject: `instanceof` the exact engine-private
+      `SandboxSecurityAdapterUnsupportedError` maps to
+      `markFailed(adapter_unsupported)`; every other rejection maps to
+      `markFailed(detector_failed)`; record failed; do not qualify; immediately
+      re-check normal work budget → exhausted → Scheme B; else continue policy;
     - slot timeout: lease termination_reason work_budget → Scheme B (wins
       simultaneous expiry); slot_timeout → markTimeout() + timeout record;
       immediately re-check budget → exhausted → Scheme B; else continue policy;
@@ -1377,13 +1380,15 @@ export type SandboxSecurityEngineFailure =
   SandboxSecurityDecisionBearingEngineFailure;
 
 export interface SandboxSecurityPolicyReducerInput {
-  stage: SandboxSecurityStage;
-  evaluation_mode: "simulation" | "enforcement";
-  profile: Readonly<SandboxSecurityPolicyProfileManifest>;
-  findings: readonly SandboxSecurityFinding[];
-  detector_runs: readonly SandboxDetectorRun[];
-  unresolved_escalation_signals: readonly SandboxSecurityEscalationSignal[];
-  engine_failure: Readonly<SandboxSecurityDecisionBearingEngineFailure> | null;
+  readonly stage: SandboxSecurityStage;
+  readonly evaluation_mode: "simulation" | "enforcement";
+  readonly profile: Readonly<SandboxSecurityPolicyProfileManifest>;
+  readonly findings: readonly SandboxSecurityFinding[];
+  readonly detector_runs: readonly SandboxDetectorRun[];
+  readonly unresolved_escalation_signals:
+    readonly SandboxSecurityEscalationSignal[];
+  readonly engine_failure:
+    Readonly<SandboxSecurityDecisionBearingEngineFailure> | null;
 }
 ```
 
@@ -1632,6 +1637,17 @@ Never invent public *Input request types. One task, one commit, listed paths onl
 
 ## Global TDD Rules
 
+### New-module RED rule (approved `2026-07-13`)
+
+A raw `ERR_MODULE_NOT_FOUND`, export-link failure, syntax error, or environment
+error is never valid RED. For a not-yet-created production module, the test must
+narrowly catch only absence of the exact planned path, substitute a test-local
+type-compatible inert fallback, and then run the same named real input/output
+behavior assertion used after implementation. The fallback must not be copied
+into production and the test must not assert file or export existence as the
+behavior. Every other load error is rethrown. Recorded RED evidence must be an
+`AssertionError` describing the concrete behavioral mismatch.
+
 1. No production behavior before listed RED.
 2. Strengthen tests that pass before implementation.
 3. Untrusted object tests cover unknown/inherited/accessor/prototype.
@@ -1730,6 +1746,10 @@ profile types.
   fixtures, documentation examples, and type unions. `work_budget` wins
   simultaneous slot+budget expiry; dispose/closeGeneration
 - Track1 confidence 0.80; harness balanced.v1 only
+- Track1 representability failures use the engine-private exact
+  `SandboxSecurityAdapterUnsupportedError`; P4-T6 maps only that class to the
+  failed-run code `adapter_unsupported`, while lookalike or arbitrary
+  rejections remain `detector_failed`
 - adapters/ only monitor + track1 files; no production oracle
 - Registry construction ≠ profile resolution
 - Subject key helper owned by P3-T3; category + JCS(sorted private scopes), no slot ID
@@ -1892,6 +1912,7 @@ SandboxSecurityRoutedObligationRecord
 SandboxSecurityJudgeTerminationReason
 SandboxSecurityDecisionBearingEngineFailure
 SandboxSecurityDecisionBearingBudgetPhase
+SandboxSecurityAdapterUnsupportedError
 SandboxSecurityTerminalEngineErrorCode
 SandboxSecurityEngineFailureCode
 SandboxDetectorFailedRunErrorCode

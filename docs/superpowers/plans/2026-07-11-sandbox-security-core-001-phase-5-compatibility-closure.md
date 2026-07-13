@@ -6,8 +6,8 @@
 >
 > This phase plan is self-contained. Do not consult older plan revisions.
 >
-> **BLOCKED:** Canonical Specs are `DRAFT_REVISED_PENDING_REAPPROVAL`.
-> Do not execute until both are reapproved and the user changes active sprint.
+> **APPROVED:** The user reapproved both canonical Specs and the complete plan
+> set on `2026-07-13`. Execute only in the exact Master DAG order.
 
 **Goal:** Expose the accepted core through monitor and Track 1 boundaries
 without double reduction, preserve legacy gates, enforce exact engine export
@@ -30,6 +30,13 @@ closes exports without renaming frozen APIs.
 
 **Tech Stack:** Existing monitor/base-filter contracts on WSL Linux, `node:test`,
 static repository scans, real tsc typecheck.
+
+**New-module RED rule:** A raw module-load, export-link, syntax, or environment
+error is not valid RED. For an absent planned production module, tests narrowly
+catch only that exact path, substitute a test-local type-compatible inert
+fallback, and run the same real input/output assertion used after
+implementation. File/export existence is not the behavior; every other load
+error is rethrown.
 
 ---
 
@@ -245,6 +252,7 @@ validateSandboxSecurityPublication
 SandboxDetectorFailedRunErrorCode
 SandboxSecurityEngineFailureCode
 SandboxSecurityDecisionBearingBudgetPhase
+SandboxSecurityAdapterUnsupportedError
 harness / tests/
 ```
 
@@ -438,10 +446,11 @@ node --experimental-strip-types --test engines/sandbox/tests/sandbox-security-tr
 
 ### Expected RED failure and why valid
 
-Missing `createSandboxSecurityMonitorDecisionAdapter` module, missing
-`MonitorDecisionProvider` surface, double-reduction / pre-normalize assertions
-fail, simulation not fail-closed, wrong fail-closed action for stage, or
-`policy_id` mismatch. Failures must be behavioral, not import/env typos.
+When the exact module is absent, the guarded loader supplies a test-local
+monitor adapter whose provider returns an inert legacy decision. The unchanged
+provider-surface, double-reduction, pre-normalization, simulation fail-closed,
+stage-action, and `policy_id` assertions then fail behaviorally. Raw load,
+syntax, export-link, and environment errors are invalid RED.
 
 ### Step 3: Implementation boundary
 
@@ -504,6 +513,9 @@ production file `track1-rule-matches.ts`.
 ### Dependencies / frozen inputs
 
 - `RawLocalDetector` / raw result shapes from detector contracts.
+- Engine-private `SandboxSecurityAdapterUnsupportedError` from detector
+  contracts; P4-T6 already maps only an exact instance to the failed-run code
+  `adapter_unsupported`.
 - Track 1 rule catalog access without calling
   `RuleBasedDecisionProvider.decide()`.
 - Spec category maps.
@@ -537,6 +549,21 @@ no match -> no_match (empty candidates/clearances)
 never 0.60 or 1.00 from this adapter
 ```
 
+Representability is fail-closed and distinct from a supported no-match:
+
+```text
+user_input stage
+missing a rule-condition source required by a matched Track 1 rule
+tool_target condition when the authoritative tool has no target
+more than eight deduplicated subject refs for one candidate
+tool request outside the frozen Track 1 simulated-tool shapes
+  → throw exact SandboxSecurityAdapterUnsupportedError
+  → Engine failed run error_code adapter_unsupported
+  → never synthesize no_match or detector_result_invalid
+supported representable input with no catalog match
+  → empty candidates/clearances (no_match at the boundary)
+```
+
 ### Step 1: Exact RED test inventory
 
 ```ts
@@ -551,6 +578,13 @@ test("REQ-SBX-GENERAL-001 Track1 adapter maps sensitive_capability to unsafe_sid
 test("REQ-SBX-GENERAL-001 Track1 adapter never calls RuleBasedDecisionProvider.decide", async () => {});
 test("REQ-SBX-GENERAL-001 Track1 adapter returns exact-key candidates only", async () => {});
 test("REQ-SBX-GENERAL-001 Track1 adapter production file is adapters/track1-rule-matches.ts only", () => {});
+test("REQ-SBX-GENERAL-001 Track1 adapter user_input is adapter_unsupported", async () => {});
+test("REQ-SBX-GENERAL-001 Track1 adapter missing required subject is adapter_unsupported", async () => {});
+test("REQ-SBX-GENERAL-001 Track1 adapter absent required target is adapter_unsupported", async () => {});
+test("REQ-SBX-GENERAL-001 Track1 adapter over eight subject refs is adapter_unsupported", async () => {});
+test("REQ-SBX-GENERAL-001 Track1 adapter non-Track1 tool shape is adapter_unsupported", async () => {});
+test("REQ-SBX-GENERAL-001 Track1 unsupported path never synthesizes no_match", async () => {});
+test("REQ-SBX-GENERAL-001 Engine records Track1 unsupported path as failed adapter_unsupported", async () => {});
 ```
 
 ### Step 2: RED command
@@ -564,9 +598,12 @@ node --experimental-strip-types --test engines/sandbox/tests/sandbox-security-tr
 
 ### Expected RED failure and why valid
 
-Missing `createTrack1RuleMatchDetectorAdapter`, confidence not exactly `0.80`,
-category map wrong, or spy shows `RuleBasedDecisionProvider.decide` called.
-Failures must be behavioral, not import/env typos.
+When the exact module is absent, the guarded loader supplies a test-local Track
+1 adapter that returns no match and never throws the private unsupported error.
+The unchanged confidence `0.80`, category mapping, unsupported-path identity,
+and zero-`RuleBasedDecisionProvider.decide`-call assertions then fail
+behaviorally. Raw load, syntax, export-link, and environment errors are invalid
+RED.
 
 ### Step 3: Implementation boundary
 
@@ -578,6 +615,9 @@ engines/sandbox/src/security/adapters/track1-rule-matches.ts
 
 Do not implement harness (P5-T3). Do not call legacy final decision provider.
 Do not modify monitor adapter. Do not export from final index here (P5-T4).
+Throw only the exact engine-private `SandboxSecurityAdapterUnsupportedError`
+for the locked unrepresentable cases. Do not use free-form errors or reinterpret
+a supported catalog no-match.
 
 ### Step 4: GREEN command and expected result
 
@@ -738,8 +778,11 @@ node --experimental-strip-types --test \
 
 ### Expected RED failure and why valid
 
-Missing harness, nine-case map mismatches, non-balanced profile, or production
-oracle scan finds harness/case maps under `src/security/**`.
+When the exact module is absent, the guarded loader supplies a test-local
+harness that returns an inert result for every case. The unchanged nine-case
+map, balanced-only profile, and production-oracle placement assertions then
+fail behaviorally. Raw load, syntax, export-link, and environment errors are
+invalid RED.
 
 ### Step 3: Implementation boundary
 
@@ -924,7 +967,8 @@ const FORBIDDEN_ENGINE_EXPORTS = [
   "SandboxSecurityJudgeResolutionEvidence",
   "createSandboxSecurityDeadlineController",
   "SandboxSecurityDeadlineController",
-  "SandboxSecurityDetectorLease"
+  "SandboxSecurityDetectorLease",
+  "SandboxSecurityAdapterUnsupportedError"
 ] as const;
 ```
 
@@ -998,6 +1042,12 @@ test("REQ-SBX-GENERAL-001 production security module set matches Core ownership 
 test("REQ-SBX-GENERAL-001 production security has no contract detector-pipeline or harness module", () => {});
 test("REQ-SBX-GENERAL-001 type probes are not node test entrypoints", () => {});
 test("REQ-SBX-GENERAL-001 export close does not rename frozen APIs", () => {});
+test("REQ-SBX-GENERAL-001 public index resolves the balanced profile", () => {
+  assert.equal(
+    resolveSandboxSecurityProfile("sandbox-security-balanced.v1")?.profile_id,
+    "sandbox-security-balanced.v1"
+  );
+});
 ```
 
 ### Step 2: RED command
@@ -1013,11 +1063,15 @@ node --experimental-strip-types --test \
 
 ### Expected RED failure and why valid
 
-Final index is missing, over-exporting, or missing D types
-(`SandboxSecurityEvaluationRequest`, `SandboxSecurityRawDetectorSnapshot`,
-`SandboxSecurityDetectorRegistryInput`, profile/trust/action matrix types),
-still exporting internal symbols from FORBIDDEN set, or accidental rename of
-frozen APIs.
+When the exact module is absent, the guarded loader supplies a test-local
+`resolveSandboxSecurityProfile` fallback that returns `null`. The unchanged
+public-index profile assertion then fails on the required balanced profile.
+This behavior assertion is the RED evidence. C runtime namespace checks, D
+source/typecheck contract checks (`SandboxSecurityEvaluationRequest`,
+`SandboxSecurityRawDetectorSnapshot`, `SandboxSecurityDetectorRegistryInput`,
+and profile/trust/action matrix types), forbidden-export checks, and frozen-name
+checks remain permanent acceptance gates but are not RED evidence. Raw load,
+syntax, export-link, and environment errors are invalid RED.
 
 ### Step 3: Implementation boundary
 

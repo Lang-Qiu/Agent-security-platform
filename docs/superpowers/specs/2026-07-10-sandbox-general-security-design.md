@@ -3,20 +3,23 @@
 ## Document Status
 
 - Umbrella feature: `SANDBOX-GENERAL-SECURITY`
-- Status: `DRAFT_REVISED_PENDING_REAPPROVAL`
-- Review revision: 13
+- Status: `APPROVED`
+- Approved: `2026-07-13`
+- Review revision: 14
 - Original date: `2026-07-10`
-- Revised: `2026-07-12`
+- Revised: `2026-07-13`
 - Extends: `REQ-T1-BASE-FILTER-008`, `REQ-T1-MONITOR-PLUGIN-007`, and
   `REQ-T1-DEMO-010`
 - Delivery model: five independently specified and accepted requirements
 - Workflow: `Design -> Test (RED) -> Implement (GREEN) -> Document -> Stop`
 
-This revision changes documentation only. It does not change production code,
-tests, dependencies, or the active sprint.
+Revision 14 is the documentation-only approval gate. It changes no production
+code, tests, or dependencies; the approved active-sprint switch is recorded in
+`docs/sprint-current.md`.
 
-Implementation is blocked until this revised Design and the Core Spec are both
-explicitly reapproved.
+This revised Design and the Core Spec were explicitly reapproved by the user on
+`2026-07-13`. Implementation is authorized only through the canonical Master
+DAG.
 
 ## Objective
 

@@ -2,114 +2,119 @@
 
 ## Requirement ID
 
-REQ-T1-DEMO-010
+REQ-SBX-GENERAL-001
 
 ## Requirement Name
 
-OpenClaw-oriented end-to-end demo and report evidence pack
+Sandbox Security Core
+
+## Status
+
+IN_PROGRESS
+
+## Approval
+
+The user explicitly reapproved both Canonical Specs, the Master Plan, and all
+five Phase Plans on `2026-07-13`. Implementation is authorized only in the
+exact Master DAG order.
 
 ## Background
 
-REQ-002 through REQ-009 now provide three attack scenarios, nine controlled
-cases, attack replay scripts, simulated business tools, a typed supervision
-contract, a monitor plugin, a rule-based filter, and a read-only supervision
-console.
+The existing Track 1 sandbox path provides deterministic monitoring, a
+rule-based filter, controlled tool execution, and supervision contracts. This
+requirement adds a reusable core that evaluates bounded authoritative Agent
+activity without depending on Track 1 case IDs, benchmark labels, simulated
+tool names, or an expected-action oracle.
 
-REQ-010 connects those assets to a real pinned OpenClaw runtime and cloud
-OpenAI-compatible model, supervises three OpenClaw agents as one campaign, and
-produces the final Track 1 risk report and evidence pack.
+Canonical specifications:
 
-The approved design is:
+- `docs/superpowers/specs/2026-07-10-sandbox-general-security-design.md`
+- `docs/superpowers/specs/2026-07-10-sandbox-security-core-spec.md`
 
-- `docs/superpowers/specs/2026-06-30-track1-openclaw-demo-design.md`
+Canonical implementation authority:
 
-The implementation is divided into one master index and seven independently
-reviewed TDD phase plans under `docs/superpowers/plans/`.
+- `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-master.md`
+- the five `2026-07-11-sandbox-security-core-001-phase-*.md` plans
 
 ## Goal
 
-- Run all nine fixed cases through real OpenClaw and a cloud model.
-- Intercept model/tool activity with a native OpenClaw security plugin.
-- Supervise three scenario agents under one campaign.
-- Display campaign progress, agent groups, alerts, asks, blocks, and sessions.
-- Generate a Chinese risk report with bilingual abstracts, PDF, screenshots,
-  normalized JSON, and a SHA-256 artifact manifest.
-- Commit one sanitized, reproducible baseline evidence pack.
+- Add strict public request, finding, detector-run, and decision contracts.
+- Reconstruct and validate engine-private authoritative evaluation context.
+- Canonicalize and bound authoritative inputs using in-repository RFC 8785 JCS.
+- Isolate raw-local detectors from sanitized external Judge ports.
+- Qualify detector evidence through immutable balanced and strict profiles.
+- Route Judge only for unresolved escalation obligations.
+- Reduce findings and failures to deterministic, stage-aware fail-closed policy.
+- Preserve existing Monitor and Track 1 behavior through compatibility adapters.
 
 ## In Scope
 
-- Pinned OpenClaw `2026.6.10` Docker runtime.
-- Native plugin using the existing monitor, filter, and simulated tools.
-- Three fixed OpenClaw agents and nine fixed cases.
-- Authenticated Docker-internal snapshot ingestion.
-- Strict campaign read contracts and read-only supervision APIs.
-- Campaign mode inside `/results/sandbox`.
-- One audited retry per case and exact 9/9 final action matching.
-- Automatic screenshot, Markdown, PDF, JSON, and manifest generation.
-- Ordinary offline gates plus credentialed real OpenClaw/cloud-model E2E.
+- Shared structural types and exact-key normalizers.
+- Source authority, canonical projection, private handles, locators, and keyed
+  fingerprint boundary.
+- Detector ports, subject/result boundaries, immutable profiles, and registry.
+- Finding qualification, escalation lifecycle, runtime deadlines, run ledger,
+  policy reducer, semantic validator, and evaluation orchestration.
+- Monitor and Track 1 compatibility adapters, exact export closure, tests, and
+  durable documentation.
+- Exactly 26 tasks in the Master DAG: `4 + 5 + 6 + 6 + 5`.
 
 ## Out Of Scope
 
-- No real email, host filesystem, shell, browser, MCP, or business API side
-  effects.
-- No public campaign-start API or frontend execution control.
-- No database, durable campaign persistence, SSE, WebSocket, or message queue.
-- No arbitrary cases, model-selected targets, third-party systems, or external
-  OpenClaw channels.
-- No coordinator agent, additional scenario, or OpenClaw compatibility adapter.
-- No policy editing, acknowledgement, approval, or workflow commands.
+- Production generic detector rules, local model runtime, sanitizer, or Judge.
+- Backend routes, authentication, authorization, idempotency, or durable audit.
+- OpenClaw hook enforcement or frontend workbench behavior.
+- The 300-sample benchmark fixtures and execution.
+- New dependencies, network/filesystem/process integrations, dynamic profiles,
+  database, queue, worker, sidecar, or physical memory zeroization.
+- Any implementation from REQ-SBX-GENERAL-002 through GENERAL-005.
 
 ## Acceptance Criteria
 
-- Real OpenClaw loads the native plugin and all required hooks.
-- Three agents execute all nine cases through the configured cloud model.
-- Final expected/actual policy actions match 9/9 with at most one retry each.
-- Every tool request is intercepted before simulated execution.
-- No real side effect or prohibited raw-content leak occurs.
-- Campaign ingestion, projection, APIs, and UI satisfy the approved spec.
-- The baseline report and evidence pack are complete and hash-consistent.
-- Offline gates and the credentialed E2E gate pass.
-- Required documentation is updated.
+- Caller claims cannot create source trust or override authoritative stage,
+  profile, content, source order, or tool observations.
+- All fixed limits, JCS vectors, private/public token boundaries, and locator
+  rules have exact boundary tests.
+- External Judge code cannot receive a raw detector snapshot and cannot run
+  without validated nonempty routed obligations.
+- Required and runtime-required failure cannot produce `allow`.
+- Decision materialization, Scheme B closure, run ownership, and semantic
+  validation follow the Canonical Specs.
+- Decisions contain no raw or sanitized content, ordinary content hashes, or
+  free-form detector/provider text.
+- Existing Track 1 actions, contracts, and byte-stability gates remain green.
+- Focused, Phase, Master, shared, sandbox-engine, repository, and TypeScript
+  gates pass without waiver.
+- Required documentation is updated and final status becomes
+  `COMPLETE_PENDING_REVIEW`.
 
 ## Design Decision
 
-Run the existing sandbox security engine inside a native OpenClaw plugin. Send
-only normalized snapshots to a Docker-internal ingest listener, project
-campaign data through shared read contracts, and extend the existing
-supervision console rather than building a second investigation UI.
+Keep structural contracts in `shared/` and all authority, trust, detector,
+qualification, policy, and orchestration semantics inside
+`engines/sandbox/src/security/`. Trusted adapters construct authoritative
+evaluation requests. Profiles are immutable, detectors return evidence rather
+than actions, the external Judge receives only validated sanitized payloads,
+and policy reduction has one engine-owned implementation.
 
-## Constraints / Notes
+## Execution Constraints
 
-- The requirement switch and design document are documentation exceptions to
-  full TDD.
-- Implementation must follow:
-  `Design -> Test -> Implement -> Document -> Stop and report`.
-- No production code may be written before the relevant failing test is
-  confirmed.
-- Low-level implementation is assigned by the user. Codex produces the task
-  DAG, acceptance criteria, and final diff/report/risk review.
-- The specification is approved. No implementation starts until the user
-  approves the phased implementation plans and assigns the first task.
+- Work only in WSL/Linux with Node.js `>=22.19.0`, `pnpm@10.0.0`, and the
+  repository-local TypeScript compiler.
+- Follow `Design -> Test (RED) -> Implement (GREEN) -> Document -> Review` for
+  every implementation task.
+- A raw import, syntax, export-link, or environment error is not valid RED.
+- Execute one implementation task at a time in exact Master DAG order.
+- Preserve production-file ownership and exact per-task staging/commit scope.
+- Do not install dependencies, modify lockfiles, change frozen API names, or
+  widen requirement scope during implementation.
+- Complete both spec-compliance and code-quality review before each task commit.
+- Phase reviews may proceed automatically after their gates pass; do not enter
+  GENERAL-002 after this requirement closes.
 
 ## Current Implementation Status
 
-- Phase 4 runtime orchestration has been rebuilt on
-  `codex/track1-requirements-spec`; the real command, gateway, backend,
-  frontend, campaign runner, and running-checkpoint boundary are wired.
-- Phase 6 report/evidence code is implemented with deterministic fixture
-  evidence, five-screen capture contracts, bilingual 18-section Markdown,
-  PDF/container boundaries, canonical manifest generation, atomic publish,
-  and evidence registration.
-- Phase 7 credential validation, explicit non-skipping E2E harness,
-  independent acceptance validator, and atomic baseline promoter are
-  implemented.
-- **2026-07-10 credentialed production gate passed:**
-  - campaign `campaign:t1:1cb754f0efc7d919a0816274af954571`
-  - status `completed`, retries `0`, final actions 9/9
-  - evidence pack registered:
-    `artifact://track1/campaign/1cb754f0efc7d919a0816274af954571/manifest`
-  - independent acceptance: `accepted=true`,
-    `manifest_sha256=311788a021b2ec4898e817e5ccfd8ffe67d82edb6e8e9011d664cadf2f820652`
-  - sanitized baseline promoted to
-    `docs/track1/evidence/openclaw-baseline/` (9 files)
-- REQ-T1-DEMO-010 status: **COMPLETE**
+- Documentation-only approval and sprint-switch gate: complete in the active
+  gate commit.
+- Production implementation: not started.
+- Next DAG task after the Master baseline gate: `P1-T1`.

@@ -6,8 +6,8 @@
 >
 > This phase plan is self-contained. Do not consult older plan revisions.
 >
-> **BLOCKED:** Canonical Specs are `DRAFT_REVISED_PENDING_REAPPROVAL`.
-> Do not execute until both are reapproved and the user changes active sprint.
+> **APPROVED:** The user reapproved both canonical Specs and the complete plan
+> set on `2026-07-13`. Execute only in the exact Master DAG order.
 
 **Goal:** Convert a structurally valid public submission plus trusted adapter
 observations into one authoritative, bounded, canonically fingerprinted engine
@@ -22,6 +22,13 @@ path.
 
 **Tech Stack:** TypeScript ESM on WSL Linux, `node:test`, `node:crypto`, no new
 dependency.
+
+**New-module RED rule:** A raw module-load, export-link, syntax, or environment
+error is not valid RED. For an absent planned production module, tests narrowly
+catch only that exact path, substitute a test-local type-compatible inert
+fallback, and run the same real input/output assertion used after
+implementation. File/export existence is not the behavior; every other load
+error is rethrown.
 
 ---
 
@@ -181,10 +188,10 @@ node --experimental-strip-types --test engines/sandbox/tests/sandbox-security-in
 
 ### Expected RED failure and why valid
 
-`ERR_MODULE_NOT_FOUND` for
-`engines/sandbox/src/security/canonical-json.ts`, or assertion failures on
-missing vector digests / missing exports. Not syntax, env, toolchain, or
-Windows-interop errors.
+When the exact module is absent, the guarded loader supplies a test-local JCS
+fallback that returns non-canonical sentinel output. The unchanged fixed-vector
+byte and digest assertions then fail. A raw `ERR_MODULE_NOT_FOUND`, export-link,
+syntax, environment, toolchain, or Windows-interop error is invalid RED.
 
 ### Step 3: Implementation boundary
 
@@ -403,10 +410,11 @@ node --experimental-strip-types --test engines/sandbox/tests/sandbox-security-au
 
 ### Expected RED failure and why valid
 
-Module missing for `source-authority.ts`, or throws not-yet-implemented, or
-mismatch fixtures not yet mapped to
-`sandbox_security_authority_mismatch` /
-`sandbox_security_source_authority_invalid`. Not env/toolchain errors.
+When the exact module is absent, the guarded loader supplies a test-local
+authority fallback that produces an inert invalid result. The unchanged
+mismatch fixtures then fail to map to `sandbox_security_authority_mismatch` /
+`sandbox_security_source_authority_invalid`. Environment and toolchain errors
+are invalid RED.
 
 ### Step 3: Implementation boundary
 
@@ -720,10 +728,11 @@ node --experimental-strip-types --test engines/sandbox/tests/sandbox-security-in
 
 ### Expected RED failure and why valid
 
-Missing `input-boundary.ts`, or failing assertions for projection rules,
-authority-bound/no-trust shape, handle binding, 512 KiB bound, freeze, or
-`request_id` exclusion. Not
-env/toolchain errors.
+When the exact module is absent, the guarded loader supplies a test-local input
+boundary fallback that returns no prepared projection. The unchanged projection,
+authority binding, 512 KiB bound, freeze, and `request_id` exclusion assertions
+then fail behaviorally. Raw load and environment/toolchain errors are invalid
+RED.
 
 ### Step 3: Implementation boundary
 
@@ -910,8 +919,11 @@ node --experimental-strip-types --test engines/sandbox/tests/sandbox-security-in
 
 ### Expected RED failure and why valid
 
-Missing `locator.ts` or failing matrix cases for split code points, illegal
-pointers, extra keys, negative/inverted ranges. Not env/toolchain errors.
+When the exact module is absent, the guarded loader supplies a test-local
+locator fallback that rejects every locator. The unchanged matrix then fails on
+valid locator cases while retaining the same split-code-point, illegal-pointer,
+extra-key, and negative/inverted-range assertions. Raw load and
+environment/toolchain errors are invalid RED.
 
 ### Step 3: Implementation boundary
 
@@ -1061,8 +1073,10 @@ node --experimental-strip-types --test engines/sandbox/tests/sandbox-security-in
 
 ### Expected RED failure and why valid
 
-Missing `canonical-fingerprint.ts`, or failing port grammar / no-byte-retention /
-authority-before-port assertions. Not env/toolchain errors.
+When the exact module is absent, the guarded loader supplies a test-local
+fingerprint fallback that returns an inert sentinel. The unchanged port grammar,
+no-byte-retention, and authority-before-port ordering assertions then fail
+behaviorally. Raw load and environment/toolchain errors are invalid RED.
 
 ### Step 3: Implementation boundary
 

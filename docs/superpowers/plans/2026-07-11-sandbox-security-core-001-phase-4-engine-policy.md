@@ -6,8 +6,8 @@
 >
 > This phase plan is self-contained. Do not consult older plan revisions.
 >
-> **BLOCKED:** Canonical Specs are `DRAFT_REVISED_PENDING_REAPPROVAL`.
-> Do not execute until both are reapproved and the user changes active sprint.
+> **APPROVED:** The user reapproved both canonical Specs and the complete plan
+> set on `2026-07-13`. Execute only in the exact Master DAG order.
 
 **Goal:** Turn normalized detector outputs into deterministic qualified
 findings, escalation-only Judge obligations, fail-closed policy decisions, and
@@ -23,6 +23,13 @@ internal branded requests through the public surface.
 
 **Tech Stack:** TypeScript on WSL Linux, injected monotonic scheduler, recording
 ports, real tsc typecheck.
+
+**New-module RED rule:** A raw module-load, export-link, syntax, or environment
+error is not valid RED. For an absent planned production module, tests narrowly
+catch only that exact path, substitute a test-local type-compatible inert
+fallback, and run the same real input/output assertion used after
+implementation. File/export existence is not the behavior; every other load
+error is rethrown.
 
 ---
 
@@ -475,8 +482,11 @@ node --experimental-strip-types --test engines/sandbox/tests/sandbox-security-en
 
 ### Expected RED failure and why valid
 
-Missing `finding-qualification.ts` or identity/threshold/subject_key assertions
-fail for behavioral reasons. Not env/toolchain errors.
+When the exact module is absent, the guarded loader supplies a test-local
+qualification fallback with empty accepted evidence and no publication. The
+unchanged identity, threshold, subject-key, token, and publication assertions
+then fail behaviorally. Raw load, syntax, export-link, environment, and
+toolchain errors are invalid RED.
 
 ### Step 3: Implementation boundary
 
@@ -810,7 +820,11 @@ node --experimental-strip-types --test engines/sandbox/tests/sandbox-security-en
 
 ### Expected RED failure and why valid
 
-Missing `escalation-state.ts` or incorrect Judge routing/resolve conditions.
+When the exact module is absent, the guarded loader supplies a test-local closed
+escalation state with no obligations or resolution evidence. The unchanged
+Judge routing, state-transition, and resolution assertions then fail
+behaviorally. Raw load, syntax, export-link, and environment errors are invalid
+RED.
 
 ### Step 3: Implementation boundary
 
@@ -1075,8 +1089,11 @@ node --experimental-strip-types --test engines/sandbox/tests/sandbox-security-en
 
 ### Expected RED failure and why valid
 
-Missing deadline/run-ledger modules or incorrect timeout/generation/state
-transition behavior.
+When the exact modules are absent, the guarded loaders supply test-local inert
+deadline and run-ledger implementations that never perform the required
+transitions. The unchanged timeout, generation, and state-transition assertions
+then fail behaviorally. Raw load, syntax, export-link, and environment errors
+are invalid RED.
 
 ### Step 3: Implementation boundary
 
@@ -1325,8 +1342,10 @@ node --experimental-strip-types --test \
 
 ### Expected RED failure and why valid
 
-Missing `policy-reducer.ts` or matrix cell mismatches for the exact seven-field
-input.
+When the exact module is absent, the guarded loader supplies a test-local
+reducer that returns a fixed inert decision tuple. The unchanged policy matrix
+assertions over the exact seven-field input then fail behaviorally. Raw load,
+syntax, export-link, and environment errors are invalid RED.
 
 ### Step 3: Implementation boundary
 
@@ -1625,7 +1644,10 @@ node --experimental-strip-types --test \
 
 ### Expected RED failure and why valid
 
-Missing `semantic-validator.ts` or forgery cases still accepted.
+When the exact module is absent, the guarded loader supplies a test-local
+semantic validator that accepts every candidate. The unchanged forgery cases
+then fail because invalid decisions are still accepted. Raw load, syntax,
+export-link, and environment errors are invalid RED.
 
 ### Step 3: Implementation boundary
 
@@ -1693,7 +1715,8 @@ the sole owner that creates the final `security/index.ts` allowlist.
 - P3: detector ports, raw/external normalize, sanitizer, profiles,
   `createSandboxSecurityDetectorRegistry`,
   `resolveSandboxSecurityDetectorsForProfile` (engine-internal),
-  `validateSandboxSecuritySanitizedJudgePayload` (unknown → frozen payload).
+  `validateSandboxSecuritySanitizedJudgePayload` (unknown → frozen payload),
+  and exact `SandboxSecurityAdapterUnsupportedError` classification.
 - P4-T1 through P4-T5 modules, including
   `materializeSandboxSecurityPublicSubjectTokens` and
   `publishSandboxSecurityFindings`.
@@ -1758,9 +1781,11 @@ export function createSandboxSecurityEngine(deps: {
     - invalid_result: settle invalid_result → record invalid_result
       SlotEvaluationRecord → do not qualify → do not call addSlotEvidence →
       only then budget check;
-    - throw/reject: markFailed(detector_failed) + failed record; no qualify;
-      immediately re-check normal work budget → exhausted → Scheme B; else
-      continue policy;
+    - throw/reject: `instanceof SandboxSecurityAdapterUnsupportedError` maps to
+      `markFailed(adapter_unsupported)`; every other rejection maps to
+      `markFailed(detector_failed)`; create the matching failed record; do not
+      qualify; immediately re-check normal work budget → exhausted → Scheme B;
+      else continue policy;
     - slot timeout: lease termination_reason work_budget → Scheme B (wins
       simultaneous expiry); slot_timeout → markTimeout() + timeout record;
       immediately re-check budget → exhausted → Scheme B; else continue policy;
@@ -2180,6 +2205,7 @@ never export from the final surface:
   deriveSandboxSecurityExpectedPublication
   validateSandboxSecurityPublication
   SandboxSecurityPublicSubjectTokenMap
+  SandboxSecurityAdapterUnsupportedError
   encodeSandboxSecurityCanonicalProjection
   semantic-validator private module as stable public API
 P5-T4 owns final never-export enforcement
@@ -2296,6 +2322,8 @@ test("REQ-SBX-GENERAL-001 absent unrouted Judge is optional_not_configured", asy
 test("REQ-SBX-GENERAL-001 all normal-path manifest slots are terminal before publication", async () => {});
 test("REQ-SBX-GENERAL-001 all normal-path manifest slots have one SlotEvaluationRecord", async () => {});
 test("REQ-SBX-GENERAL-001 rule rejection creates failed run and failed record", async () => {});
+test("REQ-SBX-GENERAL-001 exact compatibility error creates adapter_unsupported failed run", async () => {});
+test("REQ-SBX-GENERAL-001 compatibility error lookalike remains detector_failed", async () => {});
 test("REQ-SBX-GENERAL-001 rule timeout creates timeout run and timeout record", async () => {});
 test("REQ-SBX-GENERAL-001 local rejection creates failed run and preserves rule signals", async () => {});
 test("REQ-SBX-GENERAL-001 local timeout remains unresolved independently of Judge", async () => {});
@@ -2398,8 +2426,11 @@ node --experimental-strip-types --test engines/sandbox/tests/sandbox-security-en
 
 ### Expected RED failure and why valid
 
-Missing `engine.ts` orchestration or budget-before-normalize / zero-detector
-assertions fail for the right reasons.
+When the exact module is absent, the guarded loader supplies a test-local Engine
+whose `evaluate` returns an inert result without executing the pipeline. The
+unchanged budget-before-normalize, zero-detector, orchestration, and end-to-end
+assertions then fail behaviorally. Raw load, syntax, export-link, and
+environment errors are invalid RED.
 
 ### Step 3: Implementation boundary
 

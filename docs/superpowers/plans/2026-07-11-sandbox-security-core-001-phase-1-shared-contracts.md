@@ -6,8 +6,8 @@
 >
 > This phase plan is self-contained. Do not consult older plan revisions.
 >
-> **BLOCKED:** Canonical Specs are `DRAFT_REVISED_PENDING_REAPPROVAL`.
-> Do not execute until both are reapproved and the user changes active sprint.
+> **APPROVED:** The user reapproved both canonical Specs and the complete plan
+> set on `2026-07-13`. Execute only in the exact Master DAG order.
 
 **Goal:** Add strict, versioned, content-free public submission and decision
 contracts whose shared normalizers validate structure without importing engine
@@ -31,6 +31,13 @@ passed to `normalizeSandboxSecurityFinding`.
 **Tech Stack:** TypeScript ESM on WSL Linux, `node:test`, real typecheck via
 `node ./frontend/node_modules/typescript/bin/tsc --noEmit`, no dependency
 changes.
+
+**New-module RED rule:** A raw module-load, export-link, syntax, or environment
+error is not valid RED. For an absent planned production module, tests narrowly
+catch only that exact path, substitute a test-local type-compatible inert
+fallback, and run the same real input/output assertion used after
+implementation. File/export existence is not the behavior; every other load
+error is rethrown.
 
 **Production file unique ownership (this phase):**
 
@@ -118,7 +125,7 @@ or unresolved by status alone; resolution is `obligation + skip_reason`.
 `profile_required|runtime_required + evaluation_terminated` is unresolved
 required evidence; `optional_not_selected` with
 `optional_not_configured|optional_not_selected|routing_not_selected` is resolved;
-`optional_not_selected + evaluation_terminated` has no effect;
+`optional_not_selected + evaluation_terminated` has no independent effect;
 `risk_short_circuit` is resolved by risk only with a validated short-circuit
 finding. markFailed error_code subset is SandboxDetectorFailedRunErrorCode
 (excludes timeout/invalid/leak; those use markTimeout/markInvalidResult);
@@ -181,8 +188,10 @@ node --experimental-strip-types --test shared/tests/sandbox-security-contract.sp
 
 ### Expected RED failure and why valid
 
-`ERR_MODULE_NOT_FOUND` for `shared/types/sandbox-security.ts` (module absent).
-Not a syntax/env error.
+When the exact module is absent, the guarded loader supplies test-local empty
+catalogs and zero limits. The unchanged catalog/value assertions then fail on
+their expected values. A raw `ERR_MODULE_NOT_FOUND`, export-link, syntax, or
+environment error is invalid RED.
 
 ### Step 3: Implementation boundary
 
@@ -284,9 +293,10 @@ node --experimental-strip-types --test shared/tests/sandbox-security-contract.sp
 
 ### Expected RED failure and why valid
 
-Import of `normalizeSandboxSecurityRequest` from
-`shared/contracts/sandbox-security-request.ts` fails or assertions fail because
-the normalizer is missing/returns null for valid fixtures. Not env errors.
+When the exact module is absent, the guarded loader supplies a test-local
+normalizer that returns `null`. The unchanged valid-fixture assertions then
+fail on the required normalized value. Raw import, syntax, export-link, and
+environment errors are invalid RED.
 
 ### Step 3: Implementation boundary
 
@@ -390,8 +400,10 @@ node --experimental-strip-types --test shared/tests/sandbox-security-contract.sp
 
 ### Expected RED failure and why valid
 
-Stable contract module is missing, its exact request-normalizer re-export is
-missing, or valid finding/run/decision fixtures normalize to null.
+When the exact module is absent, the guarded loader supplies test-local
+normalizers that return `null`. The unchanged valid finding/run/decision
+assertions then fail behaviorally. Raw module-load, syntax, export-link, and
+environment errors are invalid RED.
 
 ### Step 3: Implementation boundary
 

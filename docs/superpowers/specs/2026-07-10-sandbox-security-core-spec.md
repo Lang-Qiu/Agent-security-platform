@@ -4,21 +4,23 @@
 
 - Requirement: `REQ-SBX-GENERAL-001`
 - Name: General sandbox security contracts and core evaluation pipeline
-- Status: `DRAFT_REVISED_PENDING_REAPPROVAL`
-- Review revision: 13
+- Status: `APPROVED`
+- Approved: `2026-07-13`
+- Review revision: 14
 - Original date: `2026-07-10`
-- Revised: `2026-07-12`
+- Revised: `2026-07-13`
 - Umbrella design:
   `docs/superpowers/specs/2026-07-10-sandbox-general-security-design.md`
 - Prerequisite: switch the active sprint from accepted `REQ-T1-DEMO-010`
   before implementation
 - Workflow: `Design -> Test (RED) -> Implement (GREEN) -> Document -> Stop`
 
-This revision is documentation-only. Every implementation task remains
-RED-first.
+Revision 14 is the documentation-only approval and consistency gate. Every
+implementation task remains RED-first.
 
-Implementation is blocked until this revised Core Spec and the General Design
-are both explicitly reapproved.
+This revised Core Spec and the General Design were explicitly reapproved by the
+user on `2026-07-13`. Implementation is authorized only through the canonical
+Master DAG.
 
 ## Objective
 
@@ -723,6 +725,23 @@ export interface SanitizedExternalDetector {
     payload: Readonly<SandboxSecuritySanitizedJudgePayload>,
     signal: AbortSignal
   ): Promise<SandboxSecurityExternalDetectorResult>;
+}
+
+/**
+ * Engine-private compatibility control signal. It is exported only from its
+ * owning detector-contract module for internal adapters and is never exported
+ * from the final security index. Only `instanceof` this class maps to
+ * adapter_unsupported; lookalike objects and all other detector rejections map
+ * to detector_failed.
+ */
+export class SandboxSecurityAdapterUnsupportedError extends Error {
+  readonly code = "adapter_unsupported" as const;
+
+  constructor() {
+    super("sandbox_security_adapter_unsupported");
+    this.name = "SandboxSecurityAdapterUnsupportedError";
+    Object.freeze(this);
+  }
 }
 
 export interface SandboxSecurityDetectorRegistryInput {
@@ -1956,9 +1975,12 @@ prohibited. Invalid port output or a thrown port error becomes
     - invalid_result: settle invalid_result → record invalid_result
       SlotEvaluationRecord → do not qualify → do not call `addSlotEvidence` →
       only then budget check;
-    - throw/reject: `markFailed(detector_failed)` → failed SlotEvaluationRecord
-      → do not qualify → do not call `addSlotEvidence` → immediately re-check
-      normal work budget → if exhausted enter Scheme B → else continue policy;
+    - throw/reject: an exact engine-private
+      `SandboxSecurityAdapterUnsupportedError` maps to
+      `markFailed(adapter_unsupported)`; every other rejection maps to
+      `markFailed(detector_failed)` → failed SlotEvaluationRecord → do not
+      qualify → do not call `addSlotEvidence` → immediately re-check normal
+      work budget → if exhausted enter Scheme B → else continue policy;
     - slot timeout: use deadline lease `termination_reason`:
         `work_budget` → enter Scheme B (work budget wins simultaneous expiry);
         `slot_timeout` → `markTimeout()` → timeout SlotEvaluationRecord → do not
@@ -2070,7 +2092,10 @@ After execution / attempt:
   no_match → no_match atomic closure → only then budget check
   invalid_result → invalid_result atomic closure → only then budget check
   throw/reject
-    → markFailed(detector_failed) + failed record
+    → exact SandboxSecurityAdapterUnsupportedError:
+         markFailed(adapter_unsupported) + failed record
+    → every other rejection:
+         markFailed(detector_failed) + failed record
     → immediately re-check normal work budget
     → exhausted → Scheme B; else continue policy
   slot timeout

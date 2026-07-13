@@ -6,8 +6,8 @@
 >
 > This phase plan is self-contained. Do not consult older plan revisions.
 >
-> **BLOCKED:** Canonical Specs are `DRAFT_REVISED_PENDING_REAPPROVAL`.
-> Do not execute until both are reapproved and the user changes active sprint.
+> **APPROVED:** The user reapproved both canonical Specs and the complete plan
+> set on `2026-07-13`. Execute only in the exact Master DAG order.
 
 **Goal:** Define type-isolated detector/sanitizer ports and GENERAL-002-facing
 result contracts, prove isolation with real compile-time probes, close raw and
@@ -21,6 +21,13 @@ resolution is separate. Manifests own slots/thresholds/routes. No
 
 **Tech Stack:** TypeScript on WSL Linux, `node:test`,
 `node ./frontend/node_modules/typescript/bin/tsc --noEmit`.
+
+**New-module RED rule:** A raw module-load, export-link, syntax, or environment
+error is not valid RED. For an absent planned production module, tests narrowly
+catch only that exact path, substitute a test-local type-compatible inert
+fallback, and run the same real input/output assertion used after
+implementation. File/export existence is not the behavior; every other load
+error is rethrown.
 
 **Production file unique ownership (this phase):**
 
@@ -346,7 +353,10 @@ node --experimental-strip-types --test engines/sandbox/tests/sandbox-security-po
 
 ### Expected RED failure and why valid
 
-Missing `policy-profiles.ts` or wrong thresholds/timeouts/slot IDs.
+When the exact module is absent, the guarded loader supplies a test-local empty
+profile manifest. The unchanged profile assertions then fail on thresholds,
+timeouts, and slot IDs. Raw load, syntax, export-link, and environment errors
+are invalid RED.
 
 ### Step 3: Implementation boundary
 
@@ -440,7 +450,11 @@ Does **not** redefine `SandboxSecurityNormalizedContent` /
 - P3-T1 GREEN remains runtime detector.spec only; P3-T2 owns full
   `tsc --noEmit` isolation gate after this task.
 
-### Locked types owned here (exported in Master D via P5-T4)
+### Locked contracts owned here
+
+The GENERAL-002-facing types below are exported in Master D via P5-T4. The
+explicitly marked compatibility error class is module-exported only for
+engine-internal adapters and remains forbidden from the final security index.
 
 ```ts
 import type {
@@ -496,6 +510,22 @@ export interface SanitizedExternalDetector {
     payload: Readonly<SandboxSecuritySanitizedJudgePayload>,
     signal: AbortSignal
   ): Promise<SandboxSecurityExternalDetectorResult>;
+}
+
+/**
+ * Engine-private, content-free compatibility control signal. Only
+ * `instanceof` this class maps to adapter_unsupported; lookalike objects remain
+ * ordinary detector failures. P5-T4 never exports this class from
+ * security/index.ts.
+ */
+export class SandboxSecurityAdapterUnsupportedError extends Error {
+  readonly code = "adapter_unsupported" as const;
+
+  constructor() {
+    super("sandbox_security_adapter_unsupported");
+    this.name = "SandboxSecurityAdapterUnsupportedError";
+    Object.freeze(this);
+  }
 }
 
 export type SandboxSecurityCandidateSubjectRef =
@@ -581,17 +611,17 @@ export interface SandboxSecurityExternalDetectorResult {
 }
 
 export interface SandboxSecuritySanitizedJudgeSource {
-  source_token: string;
-  source_type: SandboxSecurityClaimedSourceType;
-  media_type: "text/plain" | "application/json";
-  sanitized_value: string | SandboxSecurityJsonValue;
+  readonly source_token: string;
+  readonly source_type: SandboxSecurityClaimedSourceType;
+  readonly media_type: "text/plain" | "application/json";
+  readonly sanitized_value: string | SandboxSecurityJsonValue;
 }
 
 export interface SandboxSecuritySanitizedJudgeToolRequest {
-  call_token: string;
-  tool_name_token: string;
-  sanitized_target?: string;
-  sanitized_arguments: SandboxSecurityJsonValue;
+  readonly call_token: string;
+  readonly tool_name_token: string;
+  readonly sanitized_target?: string;
+  readonly sanitized_arguments: SandboxSecurityJsonValue;
 }
 
 export interface SandboxSecuritySanitizedJudgeObligation {
@@ -602,13 +632,14 @@ export interface SandboxSecuritySanitizedJudgeObligation {
 }
 
 export interface SandboxSecuritySanitizedJudgePayload {
-  schema_version: "sandbox-security-sanitized-judge.v1";
-  request_token: string;
-  stage: SandboxSecurityStage;
-  policy_profile_id: SandboxSecurityPolicyProfileId;
-  sources: SandboxSecuritySanitizedJudgeSource[];
-  tool_request?: SandboxSecuritySanitizedJudgeToolRequest;
-  routed_obligations:
+  readonly schema_version: "sandbox-security-sanitized-judge.v1";
+  readonly request_token: string;
+  readonly stage: SandboxSecurityStage;
+  readonly policy_profile_id: SandboxSecurityPolicyProfileId;
+  readonly sources: readonly SandboxSecuritySanitizedJudgeSource[];
+  readonly tool_request?:
+    Readonly<SandboxSecuritySanitizedJudgeToolRequest>;
+  readonly routed_obligations:
     readonly SandboxSecuritySanitizedJudgeObligation[];
 }
 ```
@@ -657,6 +688,8 @@ test("REQ-SBX-GENERAL-001 RawDetectorSnapshot content trust comes from resolved 
 test("REQ-SBX-GENERAL-001 RawDetectorSnapshot does not redefine NormalizedContent fields", () => {});
 test("REQ-SBX-GENERAL-001 RawDetectorSnapshot exposes no canonical projection bytes", () => {});
 test("REQ-SBX-GENERAL-001 detector-contract does not export detector-pipeline", () => {});
+test("REQ-SBX-GENERAL-001 adapter unsupported error has exact content-free code", () => {});
+test("REQ-SBX-GENERAL-001 adapter unsupported error rejects lookalike identity", () => {});
 ```
 
 ### Step 2: RED command
@@ -667,14 +700,17 @@ node --experimental-strip-types --test engines/sandbox/tests/sandbox-security-de
 
 ### Expected RED failure and why valid
 
-Missing `detector-contract.ts` / fixtures; type/runtime contracts not present.
-`ERR_MODULE_NOT_FOUND` or assertion failure on missing exports. Not a
-syntax/env error.
+When the exact modules are absent, the guarded loaders supply test-local inert
+recording fixtures and zero limit values. The unchanged frozen-snapshot,
+sanitized-token, content-free evidence, limit, and adapter-error assertions then
+fail. A raw `ERR_MODULE_NOT_FOUND`, export-link, syntax, or environment error is
+invalid RED.
 
 ### Step 3: Implementation boundary
 
-Define ports, result types, snapshot type, limits, recording fixtures in the
-three listed files only.
+Define ports, the exact engine-private adapter-unsupported error class, result
+types, snapshot type, limits, and recording fixtures in the three listed files
+only.
 
 Do **not**:
 
@@ -1090,8 +1126,11 @@ node --experimental-strip-types --test engines/sandbox/tests/sandbox-security-de
 
 ### Expected RED failure and why valid
 
-Missing `detector-output-boundary.ts` / boundary normalizer or limit assertions
-fail. Not env/import typos for unrelated modules.
+When the exact modules are absent, the guarded loaders supply test-local raw
+boundary normalizers that return an inert invalid result. The unchanged valid
+normalization, canonical subject-scope, and limit assertions then fail. Raw
+load, syntax, export-link, environment, and unrelated import errors are invalid
+RED.
 
 ### Step 3: Implementation boundary
 
@@ -1400,8 +1439,11 @@ node --experimental-strip-types --test engines/sandbox/tests/sandbox-security-de
 
 ### Expected RED failure and why valid
 
-Missing `sanitized-boundary.ts` / external normalizer / zero-Judge-call
-assertions fail. Not env errors.
+When the exact module is absent, the guarded loader supplies a test-local
+sanitized-boundary normalizer that returns an inert invalid result without
+calling Judge. The unchanged valid external-result and zero-Judge-call
+assertions then fail on the normalized result. Raw load, syntax, export-link,
+and environment errors are invalid RED.
 
 ### Step 3: Implementation boundary
 
@@ -1597,10 +1639,12 @@ node --experimental-strip-types --test \
 
 ### Expected RED failure and why valid
 
-Missing `detector-registry.ts` factory, missing resolution function, or
-construction/resolution rules not enforced. Specifically: tests that expect
+When the exact module is absent, the guarded loader supplies a test-local empty
+registry that resolves no detector. The unchanged construction/resolution
+assertions then fail behaviorally. Specifically: tests that expect
 strict missing local to fail at **resolution** (not construction) must RED until
-implemented correctly.
+implemented correctly. Raw load, syntax, export-link, and environment errors
+are invalid RED.
 
 ### Step 3: Implementation boundary
 
