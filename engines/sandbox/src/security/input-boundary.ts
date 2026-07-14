@@ -159,8 +159,8 @@ function utf8ByteArray(text: string): number[] {
   return Array.from(Buffer.from(text, "utf8"));
 }
 
-function sha256Bytes(bytes: Uint8Array | number[]): string {
-  const buffer = bytes instanceof Uint8Array ? bytes : Buffer.from(bytes);
+function sha256Bytes(bytes: Uint8Array | readonly number[]): string {
+  const buffer = bytes instanceof Uint8Array ? bytes : Buffer.from(bytes as number[]);
   return createHash("sha256").update(buffer).digest("hex");
 }
 
