@@ -16,7 +16,7 @@ type PolicyModule = {
 
 async function loadPolicyModule(): Promise<PolicyModule> {
   try {
-    return (await import("../src/security/policy-profiles.ts")) as PolicyModule;
+    return (await import("../src/security/policy-profiles.ts")) as unknown as PolicyModule;
   } catch {
     return {
       resolveSandboxSecurityProfile: () => ({}),

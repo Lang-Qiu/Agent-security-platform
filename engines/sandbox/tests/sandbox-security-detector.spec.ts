@@ -53,7 +53,7 @@ function makeSnapshot(): SandboxSecurityRawDetectorSnapshot {
 test("REQ-SBX-GENERAL-001 recording raw detector receives frozen handles", async () => {
   const detector = createRecordingRawLocalDetector();
   const snapshot = Object.freeze(makeSnapshot());
-  await detector.detect(snapshot, AbortSignal.abort ? new AbortController().signal : (undefined as never));
+  await detector.detect(snapshot, new AbortController().signal);
   assert.deepEqual(detector.evidence.source_handles, [
     "hsrc:" + "a".repeat(32) + ":0001"
   ]);
