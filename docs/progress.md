@@ -1,13 +1,6 @@
 # Progress
 
 
-## 2026-07-14 - REQ-SBX-GENERAL-001 Phase 2 authority and canonical input
-
-- completed: P2-T1 JCS, P2-T2 authority normalizer, P2-T3 input boundary, P2-T4 locators, P2-T5 keyed fingerprint
-- verification: authority/input focused suites; shared/repo gates and typechecks as Phase 2 exit
-
-
-
 ## 2026-07-14 - REQ-SBX-GENERAL-001 P1-T4 public exports and gates
 
 - scope: additive shared package A/B exports, sandbox typecheck anchor/tsconfig, repository permanent gates, public type probes
