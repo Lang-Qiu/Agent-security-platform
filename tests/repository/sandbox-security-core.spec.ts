@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import ts from "../../frontend/node_modules/typescript/lib/typescript.js";
 import * as sharedPackage from "../../shared/index.ts";
+import { analyzeSandboxSecurityExportProvenance } from "./helpers/sandbox-security-export-provenance.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -240,11 +241,23 @@ type NamedImport = {
   specifierCount: number;
 };
 
-type SharedPackageExport = {
-  exportedName: string;
-  targetName: string;
-  declarationPaths: string[];
+type VirtualExportFixture = {
+  name: string;
+  fixturePath: string;
+  sources: SandboxSecurityExportSources;
+  overlay: Map<string, string>;
 };
+
+function analyzeSharedExportProvenance(
+  overlay: ReadonlyMap<string, string> = new Map()
+) {
+  return analyzeSandboxSecurityExportProvenance({
+    repositoryRoot: REPO_ROOT,
+    overlay,
+    canonicalTypeExportNames: new Set<string>(MASTER_B_TYPES),
+    canonicalValueExportNames: new Set<string>(MASTER_A_RUNTIME)
+  });
+}
 
 function hasModifier(node: ts.Node, kind: ts.SyntaxKind): boolean {
   return (
@@ -639,56 +652,24 @@ function evaluateSandboxSecurityExportGate(
   return violations;
 }
 
-function collectSharedPackageExports(): SharedPackageExport[] {
-  const indexPath = join(REPO_ROOT, "shared/index.ts");
-  const program = ts.createProgram({
-    rootNames: [indexPath],
-    options: {
-      target: ts.ScriptTarget.ES2022,
-      module: ts.ModuleKind.NodeNext,
-      moduleResolution: ts.ModuleResolutionKind.NodeNext,
-      noEmit: true,
-      allowImportingTsExtensions: true,
-      skipLibCheck: true,
-      types: []
-    }
-  });
-  const sourceFile = program.getSourceFile(indexPath);
-  assert.ok(sourceFile, "TypeScript program must load shared/index.ts");
-  const checker = program.getTypeChecker();
-  const moduleSymbol = checker.getSymbolAtLocation(sourceFile);
-  assert.ok(moduleSymbol, "TypeScript checker must resolve shared/index.ts");
+function createVirtualExportFixture(
+  name: string,
+  sharedFileName: string,
+  sharedSource: string,
+  indexExport: string,
+  additionalOverlay: ReadonlyMap<string, string> = new Map()
+): VirtualExportFixture {
+  const sources: SandboxSecurityExportSources = {
+    types: readText("shared/types/sandbox-security.ts"),
+    contracts: readText("shared/contracts/sandbox-security.ts"),
+    index: `${readText("shared/index.ts")}\n${indexExport}\n`
+  };
+  const overlay = new Map<string, string>(additionalOverlay);
+  overlay.set(resolve(REPO_ROOT, "shared/index.ts"), sources.index);
+  const fixturePath = resolve(REPO_ROOT, "shared", sharedFileName);
+  overlay.set(fixturePath, sharedSource);
 
-  return checker.getExportsOfModule(moduleSymbol).map((exportedSymbol) => {
-    const declarationPaths = new Set<string>();
-    const visitedSymbols = new Set<ts.Symbol>();
-    let targetSymbol = exportedSymbol;
-
-    while (!visitedSymbols.has(targetSymbol)) {
-      visitedSymbols.add(targetSymbol);
-      for (const declaration of targetSymbol.declarations ?? []) {
-        declarationPaths.add(resolve(declaration.getSourceFile().fileName));
-      }
-
-      if ((targetSymbol.flags & ts.SymbolFlags.Alias) === 0) {
-        break;
-      }
-
-      const aliasedSymbol =
-        checker.getImmediateAliasedSymbol(targetSymbol) ??
-        checker.getAliasedSymbol(targetSymbol);
-      if (aliasedSymbol === targetSymbol) {
-        break;
-      }
-      targetSymbol = aliasedSymbol;
-    }
-
-    return {
-      exportedName: exportedSymbol.getName(),
-      targetName: targetSymbol.getName(),
-      declarationPaths: [...declarationPaths]
-    };
-  });
+  return { name, fixturePath, sources, overlay };
 }
 
 
@@ -713,26 +694,394 @@ function readJson(relativePath: string): Record<string, unknown> {
   return JSON.parse(raw) as Record<string, unknown>;
 }
 
-function collectTsFiles(dirRelative: string): string[] {
-  const abs = join(REPO_ROOT, dirRelative);
-  const out: string[] = [];
-  const walk = (current: string) => {
-    for (const entry of readdirSync(current)) {
-      const full = join(current, entry);
-      const st = statSync(full);
-      if (st.isDirectory()) {
-        walk(full);
-        continue;
-      }
-      if (entry.endsWith(".ts")) {
-        out.push(relative(REPO_ROOT, full).replaceAll("\\", "/"));
+const VIRTUAL_ENGINE_FIXTURE_PATH = resolve(
+  REPO_ROOT,
+  "engines/sandbox/src/base-filter/export-provenance-fixture.ts"
+);
+const VIRTUAL_ENGINE_FIXTURE_SOURCE = `
+export interface SandboxSecurityEvaluationRequest {
+  readonly request_id: string;
+}
+
+export interface SandboxSecurityEngine {
+  evaluate(): void;
+}
+
+export function createSandboxSecurityEngine(): SandboxSecurityEngine {
+  return { evaluate() {} };
+}
+
+export type NormalizedSandboxSecurityEvaluationRequest =
+  SandboxSecurityEvaluationRequest & { readonly normalized: true };
+
+export const EngineProbe = "engine-probe";
+`;
+const VIRTUAL_ENGINE_OVERLAY = new Map<string, string>([
+  [VIRTUAL_ENGINE_FIXTURE_PATH, VIRTUAL_ENGINE_FIXTURE_SOURCE]
+]);
+const VIRTUAL_IMPORT_EQUALS_OVERLAY = new Map<string, string>(
+  VIRTUAL_ENGINE_OVERLAY
+);
+VIRTUAL_IMPORT_EQUALS_OVERLAY.set(
+  resolve(REPO_ROOT, "shared/package.json"),
+  '{"type":"commonjs"}\n'
+);
+VIRTUAL_IMPORT_EQUALS_OVERLAY.set(
+  resolve(REPO_ROOT, "engines/sandbox/package.json"),
+  '{"type":"commonjs"}\n'
+);
+const VIRTUAL_ENGINE_SPECIFIER =
+  "../engines/sandbox/src/base-filter/export-provenance-fixture.ts";
+
+const TRANSITIVE_EXPORT_FIXTURES = [
+  createVirtualExportFixture(
+    "Master D type relay renamed",
+    "provenance-d-type-relay.ts",
+    `
+import type { SandboxSecurityEvaluationRequest } from "${VIRTUAL_ENGINE_SPECIFIER}";
+export type HistoricalEvaluationRequest = SandboxSecurityEvaluationRequest;
+`,
+    'export type { HistoricalEvaluationRequest } from "./provenance-d-type-relay.ts";',
+    VIRTUAL_ENGINE_OVERLAY
+  ),
+  createVirtualExportFixture(
+    "Master D interface heritage relay",
+    "provenance-d-heritage-relay.ts",
+    `
+import type { SandboxSecurityEngine } from "${VIRTUAL_ENGINE_SPECIFIER}";
+export interface HistoricalEngine { readonly local_marker: true; }
+export interface HistoricalEngine extends SandboxSecurityEngine {}
+`,
+    'export type { HistoricalEngine } from "./provenance-d-heritage-relay.ts";',
+    VIRTUAL_ENGINE_OVERLAY
+  ),
+  createVirtualExportFixture(
+    "Master C runtime alias and wrapper relay",
+    "provenance-c-runtime-relay.ts",
+    `
+import { createSandboxSecurityEngine } from "${VIRTUAL_ENGINE_SPECIFIER}";
+export const createHistoricalEngine = createSandboxSecurityEngine;
+export function createHistoricalWrappedEngine() {
+  return createSandboxSecurityEngine();
+}
+`,
+    `export {
+  createHistoricalEngine,
+  createHistoricalWrappedEngine
+} from "./provenance-c-runtime-relay.ts";`,
+    VIRTUAL_ENGINE_OVERLAY
+  ),
+  createVirtualExportFixture(
+    "Master E type relay renamed",
+    "provenance-e-type-relay.ts",
+    `
+import type { NormalizedSandboxSecurityEvaluationRequest } from "${VIRTUAL_ENGINE_SPECIFIER}";
+export type HistoricalNormalizedRequest =
+  NormalizedSandboxSecurityEvaluationRequest;
+`,
+    'export type { HistoricalNormalizedRequest } from "./provenance-e-type-relay.ts";',
+    VIRTUAL_ENGINE_OVERLAY
+  ),
+  createVirtualExportFixture(
+    "canonical Master A runtime relay renamed",
+    "provenance-canonical-runtime-relay.ts",
+    `
+import { SANDBOX_SECURITY_STAGES } from "./types/sandbox-security.ts";
+export const HistoricalSecurityStages = SANDBOX_SECURITY_STAGES;
+`,
+    `export {
+  HistoricalSecurityStages
+} from "./provenance-canonical-runtime-relay.ts";`
+  ),
+  createVirtualExportFixture(
+    "canonical Master B relay renamed",
+    "provenance-canonical-renamed-relay.ts",
+    `
+import type { SandboxSecurityStage } from "./types/sandbox-security.ts";
+export type HistoricalStage = SandboxSecurityStage;
+`,
+    'export type { HistoricalStage } from "./provenance-canonical-renamed-relay.ts";'
+  ),
+  createVirtualExportFixture(
+    "canonical Master B same-name relay",
+    "provenance-canonical-same-name-relay.ts",
+    `
+import type {
+  SandboxSecurityStage as CanonicalSandboxSecurityStage
+} from "./types/sandbox-security.ts";
+export type SandboxSecurityStage = CanonicalSandboxSecurityStage;
+`,
+    `export type {
+  SandboxSecurityStage as HistoricalSameNameStage
+} from "./provenance-canonical-same-name-relay.ts";`
+  ),
+  createVirtualExportFixture(
+    "normalized engine import path",
+    "provenance-normalized-engine-import.ts",
+    `
+import type { EngineProbe } from "../engines/sandbox/src/base-filter/../base-filter/export-provenance-fixture.ts";
+export const HistoricalNormalizedImportValue = 1;
+`,
+    `export {
+  HistoricalNormalizedImportValue
+} from "./provenance-normalized-engine-import.ts";`,
+    VIRTUAL_ENGINE_OVERLAY
+  ),
+  createVirtualExportFixture(
+    "engine export star",
+    "provenance-engine-export-star.ts",
+    `export * from "${VIRTUAL_ENGINE_SPECIFIER}";`,
+    `export {
+  EngineProbe as HistoricalStarEngineProbe
+} from "./provenance-engine-export-star.ts";`,
+    VIRTUAL_ENGINE_OVERLAY
+  ),
+  createVirtualExportFixture(
+    "engine namespace export",
+    "provenance-engine-namespace.ts",
+    `export * as HistoricalEngineNamespace from "${VIRTUAL_ENGINE_SPECIFIER}";`,
+    `export {
+  HistoricalEngineNamespace
+} from "./provenance-engine-namespace.ts";`,
+    VIRTUAL_ENGINE_OVERLAY
+  ),
+  createVirtualExportFixture(
+    "engine ImportTypeNode reference",
+    "provenance-engine-import-type.ts",
+    `
+export type HistoricalImportType =
+  import("${VIRTUAL_ENGINE_SPECIFIER}").SandboxSecurityEvaluationRequest;
+`,
+    'export type { HistoricalImportType } from "./provenance-engine-import-type.ts";',
+    VIRTUAL_ENGINE_OVERLAY
+  ),
+  createVirtualExportFixture(
+    "engine TypeQuery reference",
+    "provenance-engine-type-query.ts",
+    `
+import { createSandboxSecurityEngine } from "${VIRTUAL_ENGINE_SPECIFIER}";
+export type HistoricalEngineFactory = typeof createSandboxSecurityEngine;
+`,
+    'export type { HistoricalEngineFactory } from "./provenance-engine-type-query.ts";',
+    VIRTUAL_ENGINE_OVERLAY
+  ),
+  createVirtualExportFixture(
+    "engine binding initializer reference",
+    "provenance-engine-binding.ts",
+    `
+import { EngineProbe } from "${VIRTUAL_ENGINE_SPECIFIER}";
+const { value: HistoricalBoundProbe } = { value: EngineProbe };
+export { HistoricalBoundProbe };
+`,
+    'export { HistoricalBoundProbe } from "./provenance-engine-binding.ts";',
+    VIRTUAL_ENGINE_OVERLAY
+  ),
+  createVirtualExportFixture(
+    "engine import-equals reference",
+    "provenance-engine-import-equals.ts",
+    `
+import Engine = require("${VIRTUAL_ENGINE_SPECIFIER}");
+export const HistoricalImportEqualsProbe = Engine.EngineProbe;
+`,
+    `export {
+  HistoricalImportEqualsProbe
+} from "./provenance-engine-import-equals.ts";`,
+    VIRTUAL_IMPORT_EQUALS_OVERLAY
+  ),
+  createVirtualExportFixture(
+    "literal engine require",
+    "provenance-engine-require.ts",
+    `
+export function loadRequiredEngine() {
+  return require("${VIRTUAL_ENGINE_SPECIFIER}");
+}
+`,
+    'export { loadRequiredEngine } from "./provenance-engine-require.ts";',
+    VIRTUAL_ENGINE_OVERLAY
+  ),
+  createVirtualExportFixture(
+    "parenthesized literal engine require",
+    "provenance-engine-parenthesized-require.ts",
+    `
+export function loadParenthesizedRequiredEngine() {
+  return (require)("${VIRTUAL_ENGINE_SPECIFIER}");
+}
+`,
+    `export {
+  loadParenthesizedRequiredEngine
+} from "./provenance-engine-parenthesized-require.ts";`,
+    VIRTUAL_ENGINE_OVERLAY
+  ),
+  createVirtualExportFixture(
+    "literal engine dynamic import",
+    "provenance-engine-dynamic-import.ts",
+    `
+export async function loadHistoricalEngine() {
+  return import("${VIRTUAL_ENGINE_SPECIFIER}");
+}
+`,
+    'export { loadHistoricalEngine } from "./provenance-engine-dynamic-import.ts";',
+    VIRTUAL_ENGINE_OVERLAY
+  ),
+  createVirtualExportFixture(
+    "unresolved engine-like require",
+    "provenance-unresolved-engine-require.ts",
+    `
+export function loadMissingEngine() {
+  return require("../engines/sandbox/src/base-filter/missing-provenance-fixture.ts");
+}
+`,
+    'export { loadMissingEngine } from "./provenance-unresolved-engine-require.ts";'
+  ),
+  createVirtualExportFixture(
+    "explicit engine package require",
+    "provenance-engine-package-require.ts",
+    `
+export function loadEnginePackage() {
+  return require("@agent-security-platform/engines/sandbox");
+}
+`,
+    'export { loadEnginePackage } from "./provenance-engine-package-require.ts";'
+  ),
+  createVirtualExportFixture(
+    "nonliteral dynamic import",
+    "provenance-nonliteral-dynamic-import.ts",
+    `
+const engineModulePath = "${VIRTUAL_ENGINE_SPECIFIER}";
+export function loadComputedEngine() {
+  return import(engineModulePath);
+}
+`,
+    'export { loadComputedEngine } from "./provenance-nonliteral-dynamic-import.ts";'
+  )
+] as const;
+
+const EXPECTED_ENGINE_ORIGIN_EXPORTS = new Map<string, readonly string[]>([
+  ["Master D type relay renamed", ["HistoricalEvaluationRequest"]],
+  ["Master D interface heritage relay", ["HistoricalEngine"]],
+  [
+    "Master C runtime alias and wrapper relay",
+    ["createHistoricalEngine", "createHistoricalWrappedEngine"]
+  ],
+  ["Master E type relay renamed", ["HistoricalNormalizedRequest"]],
+  ["engine export star", ["HistoricalStarEngineProbe"]],
+  ["engine namespace export", ["HistoricalEngineNamespace"]],
+  ["engine ImportTypeNode reference", ["HistoricalImportType"]],
+  ["engine TypeQuery reference", ["HistoricalEngineFactory"]],
+  ["engine binding initializer reference", ["HistoricalBoundProbe"]],
+  ["engine import-equals reference", ["HistoricalImportEqualsProbe"]],
+  ["literal engine require", ["loadRequiredEngine"]],
+  [
+    "parenthesized literal engine require",
+    ["loadParenthesizedRequiredEngine"]
+  ],
+  ["literal engine dynamic import", ["loadHistoricalEngine"]]
+]);
+
+const EXPECTED_CANONICAL_ORIGIN_EXPORTS = new Map<string, readonly string[]>([
+  ["canonical Master A runtime relay renamed", ["HistoricalSecurityStages"]],
+  ["canonical Master B relay renamed", ["HistoricalStage"]],
+  ["canonical Master B same-name relay", ["HistoricalSameNameStage"]]
+]);
+
+const ENGINE_MODULE_REFERENCE_FIXTURES = new Set([
+  "Master D type relay renamed",
+  "Master D interface heritage relay",
+  "Master C runtime alias and wrapper relay",
+  "Master E type relay renamed",
+  "normalized engine import path",
+  "engine export star",
+  "engine namespace export",
+  "engine ImportTypeNode reference",
+  "engine TypeQuery reference",
+  "engine binding initializer reference",
+  "engine import-equals reference",
+  "literal engine require",
+  "parenthesized literal engine require",
+  "literal engine dynamic import"
+]);
+
+const UNRESOLVED_ENGINE_MODULE_REFERENCE_FIXTURES = new Map([
+  [
+    "unresolved engine-like require",
+    "../engines/sandbox/src/base-filter/missing-provenance-fixture.ts"
+  ],
+  [
+    "explicit engine package require",
+    "@agent-security-platform/engines/sandbox"
+  ]
+]);
+
+const VIRTUAL_MIXED_HISTORICAL_MODULE_PATH = resolve(
+  REPO_ROOT,
+  "shared/provenance-mixed-historical.ts"
+);
+const UNRELATED_HISTORICAL_EXPORT_FIXTURE = createVirtualExportFixture(
+  "unrelated historical-style export",
+  "provenance-unrelated-namespace.ts",
+  `
+import * as Mixed from "./provenance-mixed-historical.ts";
+export const HistoricalSharedFixture = Mixed.HistoricalSharedValue;
+`,
+  `export {
+  HistoricalSharedFixture
+  } from "./provenance-unrelated-namespace.ts";`,
+  new Map([
+    [
+      VIRTUAL_MIXED_HISTORICAL_MODULE_PATH,
+      `
+export const HistoricalSharedValue = "historical";
+export type { SandboxSecurityStage } from "./types/sandbox-security.ts";
+`
+    ]
+  ])
+);
+
+const COMBINED_TRANSITIVE_EXPORT_OVERLAY = (() => {
+  const indexPath = resolve(REPO_ROOT, "shared/index.ts");
+  const baselineIndex = readText("shared/index.ts");
+  const overlay = new Map<string, string>();
+  let combinedIndex = baselineIndex;
+
+  for (const fixture of TRANSITIVE_EXPORT_FIXTURES) {
+    combinedIndex += fixture.sources.index.slice(baselineIndex.length);
+    for (const [fileName, source] of fixture.overlay) {
+      if (fileName !== indexPath) {
+        overlay.set(fileName, source);
       }
     }
-  };
-  if (existsSync(abs)) {
-    walk(abs);
   }
-  return out;
+  overlay.set(indexPath, combinedIndex);
+  return overlay;
+})();
+
+let currentSharedExportAnalysis:
+  | ReturnType<typeof analyzeSharedExportProvenance>
+  | undefined;
+let transitiveExportAnalysis:
+  | ReturnType<typeof analyzeSharedExportProvenance>
+  | undefined;
+let positiveVirtualExportAnalysis:
+  | ReturnType<typeof analyzeSharedExportProvenance>
+  | undefined;
+
+function analyzeCurrentSharedExports() {
+  currentSharedExportAnalysis ??= analyzeSharedExportProvenance();
+  return currentSharedExportAnalysis;
+}
+
+function analyzeCombinedTransitiveExports() {
+  transitiveExportAnalysis ??= analyzeSharedExportProvenance(
+    COMBINED_TRANSITIVE_EXPORT_OVERLAY
+  );
+  return transitiveExportAnalysis;
+}
+
+function analyzePositiveVirtualExports() {
+  positiveVirtualExportAnalysis ??= analyzeSharedExportProvenance(
+    UNRELATED_HISTORICAL_EXPORT_FIXTURE.overlay
+  );
+  return positiveVirtualExportAnalysis;
 }
 
 test("REQ-SBX-GENERAL-001 registers public contract gates", () => {
@@ -763,34 +1112,33 @@ test("REQ-SBX-GENERAL-001 registers public contract gates", () => {
 });
 
 test("REQ-SBX-GENERAL-001 keeps shared contracts engine independent", () => {
-  const sharedFiles = [
-    ...collectTsFiles("shared/types"),
-    ...collectTsFiles("shared/contracts"),
-    "shared/index.ts"
-  ];
-
-  for (const file of sharedFiles) {
-    if (!file.includes("sandbox-security") && file !== "shared/index.ts") {
-      continue;
-    }
-    const text = readText(file);
-    assert.doesNotMatch(
-      text,
-      /from ["'](?:\.\.\/)*engines\//,
-      `${file} must not import engines/**`
-    );
-    assert.doesNotMatch(
-      text,
-      /from ["']@agent-security-platform\/engines/,
-      `${file} must not import engine packages`
-    );
-  }
-
-  const sharedPublicExports = collectSharedPackageExports();
-  const sharedPublicExportNames = new Set(
-    sharedPublicExports.map((entry) => entry.exportedName)
+  const analysis = analyzeCurrentSharedExports();
+  assert.deepEqual(
+    analysis.diagnostics,
+    [],
+    `shared export provenance Program must typecheck:\n${analysis.diagnostics.join("\n")}`
   );
-  const forbiddenSharedNames = new Set<string>(FORBIDDEN_SHARED_ENGINE_EXPORTS);
+  assert.deepEqual(
+    analysis.violations,
+    [],
+    `shared export provenance violations:\n${analysis.violations.join("\n")}`
+  );
+  assert.equal(
+    analysis.rootNames.includes(resolve(REPO_ROOT, "shared/types/task.ts")),
+    true,
+    "provenance Program roots must include unrelated shared production files"
+  );
+  assert.equal(
+    analysis.rootNames.some((fileName) =>
+      fileName.startsWith(resolve(REPO_ROOT, "shared/tests"))
+    ),
+    false,
+    "provenance Program roots must exclude shared tests"
+  );
+
+  const sharedPublicExportNames = new Set(
+    analysis.exports.map((entry) => entry.exportedName)
+  );
   const allowedSandboxSecurityNames = new Set<string>([
     ...MASTER_A_RUNTIME,
     ...MASTER_B_TYPES
@@ -804,33 +1152,22 @@ test("REQ-SBX-GENERAL-001 keeps shared contracts engine independent", () => {
     );
   }
 
-  for (const entry of sharedPublicExports) {
-    assert.equal(
-      entry.declarationPaths.some(isEngineSourcePath),
-      false,
+  for (const entry of analysis.exports) {
+    assert.deepEqual(
+      entry.engineOriginPaths,
+      [],
       `shared package export ${entry.exportedName} must not originate in engines/**`
     );
-    assert.equal(
-      forbiddenSharedNames.has(entry.targetName),
-      false,
-      `shared package export ${entry.exportedName} must not target engine-only identifier ${entry.targetName}`
-    );
-
-    const originatesInCanonicalSandboxModule = entry.declarationPaths.some(
-      (declarationPath) =>
-        declarationPath === SANDBOX_SECURITY_TYPES_PATH ||
-        declarationPath === SANDBOX_SECURITY_CONTRACTS_PATH
-    );
-    if (originatesInCanonicalSandboxModule) {
+    if (entry.canonicalSandboxOriginPaths.length > 0) {
       assert.equal(
-        allowedSandboxSecurityNames.has(entry.targetName),
+        allowedSandboxSecurityNames.has(entry.exportedName),
         true,
-        `canonical sandbox security export ${entry.targetName} must be in Master A/B`
+        `canonical sandbox security export ${entry.exportedName} must be in Master A/B`
       );
       assert.equal(
-        entry.exportedName,
-        entry.targetName,
-        `canonical sandbox security export ${entry.targetName} must not be aliased`
+        entry.directCanonicalExport,
+        true,
+        `canonical sandbox security export ${entry.exportedName} must use a direct same-name row`
       );
     }
   }
@@ -885,6 +1222,144 @@ test("REQ-SBX-GENERAL-001 export gate rejects additional sandbox security export
     ),
     [false, false, false, false, false, false, false]
   );
+});
+
+for (const fixture of TRANSITIVE_EXPORT_FIXTURES) {
+  test(`REQ-SBX-GENERAL-001 export provenance rejects ${fixture.name}`, () => {
+    const analysis = analyzeCombinedTransitiveExports();
+    assert.deepEqual(
+      analysis.diagnostics,
+      [],
+      `${fixture.name} fixture must be a valid TypeScript program`
+    );
+    assert.equal(
+      analysis.rootNames.includes(fixture.fixturePath),
+      true,
+      `${fixture.name} fixture must be a shared production Program root`
+    );
+
+    for (const exportedName of
+      EXPECTED_ENGINE_ORIGIN_EXPORTS.get(fixture.name) ?? []) {
+      const exported = analysis.exports.find(
+        (entry) => entry.exportedName === exportedName
+      );
+      assert.ok(exported, `${fixture.name} must export ${exportedName}`);
+      assert.deepEqual(
+        exported.engineOriginPaths,
+        [VIRTUAL_ENGINE_FIXTURE_PATH],
+        `${fixture.name} must trace ${exportedName} to its engine declaration`
+      );
+    }
+
+    for (const exportedName of
+      EXPECTED_CANONICAL_ORIGIN_EXPORTS.get(fixture.name) ?? []) {
+      const exported = analysis.exports.find(
+        (entry) => entry.exportedName === exportedName
+      );
+      assert.ok(exported, `${fixture.name} must export ${exportedName}`);
+      assert.deepEqual(
+        exported.canonicalSandboxOriginPaths,
+        [SANDBOX_SECURITY_TYPES_PATH],
+        `${fixture.name} must trace ${exportedName} to the canonical type module`
+      );
+      assert.equal(
+        exported.directCanonicalExport,
+        false,
+        `${fixture.name} must not qualify a relay as a direct A/B row`
+      );
+    }
+
+    if (ENGINE_MODULE_REFERENCE_FIXTURES.has(fixture.name)) {
+      assert.equal(
+        analysis.moduleReferences.some(
+          (reference) =>
+            reference.sourcePath === fixture.fixturePath &&
+            reference.resolvedPath === VIRTUAL_ENGINE_FIXTURE_PATH &&
+            reference.engineDependency
+        ),
+        true,
+        `${fixture.name} must resolve and record its engine module reference`
+      );
+    }
+
+    const unresolvedEngineSpecifier =
+      UNRESOLVED_ENGINE_MODULE_REFERENCE_FIXTURES.get(fixture.name);
+    if (unresolvedEngineSpecifier !== undefined) {
+      assert.equal(
+        analysis.moduleReferences.some(
+          (reference) =>
+            reference.sourcePath === fixture.fixturePath &&
+            reference.moduleSpecifier === unresolvedEngineSpecifier &&
+            reference.resolvedPath === null &&
+            reference.engineDependency
+        ),
+        true,
+        `${fixture.name} must fail closed on its unresolved engine reference`
+      );
+    }
+
+    if (fixture.name === "nonliteral dynamic import") {
+      assert.equal(
+        analysis.moduleReferences.some(
+          (reference) =>
+            reference.sourcePath === fixture.fixturePath &&
+            reference.kind === "dynamic-import" &&
+            reference.moduleSpecifier === null &&
+            reference.resolvedPath === null &&
+            reference.violation !== null
+        ),
+        true,
+        "nonliteral dynamic import must fail closed before module resolution"
+      );
+    }
+
+    if (fixture.name === "normalized engine import path") {
+      const exported = analysis.exports.find(
+        (entry) => entry.exportedName === "HistoricalNormalizedImportValue"
+      );
+      assert.ok(exported);
+      assert.deepEqual(exported.engineOriginPaths, []);
+      assert.deepEqual(exported.canonicalSandboxOriginPaths, []);
+    }
+
+    assert.notDeepEqual(
+      analysis.violations,
+      [],
+      `${fixture.name} must not bypass the shared export gate`
+    );
+  });
+}
+
+test("REQ-SBX-GENERAL-001 export provenance permits direct canonical A/B rows", () => {
+  const analysis = analyzePositiveVirtualExports();
+
+  assert.deepEqual(analysis.diagnostics, []);
+  for (const exportedName of [
+    "SANDBOX_SECURITY_STAGES",
+    "SandboxSecurityStage",
+    "normalizeSandboxSecurityRequest"
+  ]) {
+    const exported = analysis.exports.find(
+      (entry) => entry.exportedName === exportedName
+    );
+    assert.ok(exported, `direct canonical fixture must export ${exportedName}`);
+    assert.equal(exported.canonicalSandboxOriginPaths.length > 0, true);
+    assert.equal(exported.directCanonicalExport, true);
+  }
+  assert.deepEqual(analysis.violations, []);
+});
+
+test("REQ-SBX-GENERAL-001 export provenance permits unrelated historical exports", () => {
+  const analysis = analyzePositiveVirtualExports();
+  assert.deepEqual(analysis.diagnostics, []);
+  const exported = analysis.exports.find(
+    (entry) => entry.exportedName === "HistoricalSharedFixture"
+  );
+  assert.ok(exported);
+  assert.deepEqual(exported.engineOriginPaths, []);
+  assert.deepEqual(exported.canonicalSandboxOriginPaths, []);
+  assert.equal(exported.directCanonicalExport, false);
+  assert.deepEqual(analysis.violations, []);
 });
 
 test("REQ-SBX-GENERAL-001 sandbox tsconfig exists for typecheck", () => {
