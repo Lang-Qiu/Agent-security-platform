@@ -4,10 +4,14 @@ import {
   normalizeSandboxBlockedRecord,
   normalizeSandboxPolicyDecision
 } from "../contracts/sandbox.ts";
+import { ENGINE_TYPES } from "../constants/engine-type.ts";
+import { RISK_LEVELS } from "../constants/risk-level.ts";
+import { TASK_STATUSES } from "../constants/task-status.ts";
+import { TASK_TYPES } from "../constants/task-type.ts";
 import type { AssetScanResultDetails, SandboxRunResultDetails, StaticAnalysisResultDetails } from "../types/result.ts";
 import type { SkillsStaticRuleHit, SkillsStaticTraceStep } from "../types/skills-static-rule-hit.ts";
 import { SKILLS_STATIC_SEVERITIES } from "../types/skills-static.ts";
-import type { EngineType, RiskLevel, RiskSummary, Task, TaskResultRef, TaskStatus, TaskTarget, TaskType } from "../types/task.ts";
+import type { RiskSummary, Task, TaskResultRef, TaskTarget, TaskType } from "../types/task.ts";
 import { isBoolean, isNumber, isOneOf, isPlainObject, isString, isStringArray } from "./guards.ts";
 
 const ASSET_SCAN_ALLOWED_INTERRUPTION_REASONS = ["none", "budget", "timeout", "manual_stop"] as const;
@@ -82,12 +86,13 @@ export function normalizeTask(value: unknown): Task | null {
   if (
     !isPlainObject(value) ||
     !isString(value.task_id) ||
-    !isString(value.task_type) ||
-    !isString(value.engine_type) ||
-    !isString(value.status) ||
+    !isOneOf(TASK_TYPES, value.task_type) ||
+    !isOneOf(ENGINE_TYPES, value.engine_type) ||
+    !isOneOf(TASK_STATUSES, value.status) ||
     !isString(value.title) ||
     !isString(value.created_at) ||
-    !isString(value.updated_at)
+    !isString(value.updated_at) ||
+    (value.risk_level !== undefined && !isOneOf(RISK_LEVELS, value.risk_level))
   ) {
     return null;
   }
@@ -100,9 +105,9 @@ export function normalizeTask(value: unknown): Task | null {
 
   const normalizedTask: Task = {
     task_id: value.task_id,
-    task_type: value.task_type as TaskType,
-    engine_type: value.engine_type as EngineType,
-    status: value.status as TaskStatus,
+    task_type: value.task_type,
+    engine_type: value.engine_type,
+    status: value.status,
     title: value.title,
     target: normalizedTarget,
     created_at: value.created_at,
@@ -117,8 +122,8 @@ export function normalizeTask(value: unknown): Task | null {
     normalizedTask.parameters = copyPlainObject(value.parameters);
   }
 
-  if (isString(value.risk_level)) {
-    normalizedTask.risk_level = value.risk_level as RiskLevel;
+  if (isOneOf(RISK_LEVELS, value.risk_level)) {
+    normalizedTask.risk_level = value.risk_level;
   }
 
   if (isString(value.summary)) {
@@ -154,9 +159,9 @@ export function normalizeRiskSummary(value: unknown): RiskSummary | null {
   if (
     !isPlainObject(value) ||
     !isString(value.task_id) ||
-    !isString(value.task_type) ||
-    !isString(value.status) ||
-    !isString(value.risk_level) ||
+    !isOneOf(TASK_TYPES, value.task_type) ||
+    !isOneOf(TASK_STATUSES, value.status) ||
+    !isOneOf(RISK_LEVELS, value.risk_level) ||
     !isString(value.summary) ||
     !isNumber(value.total_findings) ||
     !isNumber(value.info_count) ||
@@ -171,9 +176,9 @@ export function normalizeRiskSummary(value: unknown): RiskSummary | null {
 
   const normalizedSummary: RiskSummary = {
     task_id: value.task_id,
-    task_type: value.task_type as TaskType,
-    status: value.status as TaskStatus,
-    risk_level: value.risk_level as RiskLevel,
+    task_type: value.task_type,
+    status: value.status,
+    risk_level: value.risk_level,
     summary: value.summary,
     total_findings: value.total_findings,
     info_count: value.info_count,

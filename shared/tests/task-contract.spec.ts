@@ -9,6 +9,10 @@ import {
   createCanonicalStaticAnalysisFinishedTask,
   createCanonicalStaticAnalysisRiskSummary
 } from "../../tests/fixtures/static-analysis-contract.fixture.ts";
+import {
+  normalizeRiskSummary as normalizeRiskSummaryUtility,
+  normalizeTask as normalizeTaskUtility
+} from "../utils/normalizers.ts";
 
 const sharedEntrypointPath = resolve(import.meta.dirname, "../index.ts");
 
@@ -148,6 +152,52 @@ test("task contract normalizes task and risk summary shells for platform consume
     critical_count: 0,
     updated_at: "2026-03-26T00:00:00Z"
   });
+});
+
+test("task contract utility normalizers reject values outside closed task unions", () => {
+  const task = {
+    task_id: "task_closed_union",
+    task_type: "asset_scan",
+    engine_type: "asset_scan",
+    status: "pending",
+    title: "Validate closed task unions",
+    target: {
+      target_type: "url",
+      target_value: "https://demo-agent.example.com"
+    },
+    risk_level: "info",
+    created_at: "2026-03-26T00:00:00Z",
+    updated_at: "2026-03-26T00:00:00Z"
+  };
+  const riskSummary = {
+    task_id: "task_closed_union",
+    task_type: "asset_scan",
+    status: "pending",
+    risk_level: "info",
+    summary: "Validate closed risk summary unions",
+    total_findings: 0,
+    info_count: 0,
+    low_count: 0,
+    medium_count: 0,
+    high_count: 0,
+    critical_count: 0,
+    updated_at: "2026-03-26T00:00:00Z"
+  };
+
+  const invalidResults = [
+    normalizeTaskUtility({ ...task, task_type: "asset_scan_v2" }),
+    normalizeTaskUtility({ ...task, engine_type: "asset-scan" }),
+    normalizeTaskUtility({ ...task, status: "queued" }),
+    normalizeTaskUtility({ ...task, risk_level: "urgent" }),
+    normalizeRiskSummaryUtility({ ...riskSummary, task_type: "asset_scan_v2" }),
+    normalizeRiskSummaryUtility({ ...riskSummary, status: "queued" }),
+    normalizeRiskSummaryUtility({ ...riskSummary, risk_level: "urgent" })
+  ];
+
+  assert.deepEqual(
+    invalidResults.map((result) => result === null),
+    [true, true, true, true, true, true, true]
+  );
 });
 
 test("task contract normalizes a finished static-analysis task shell and risk summary with stable severity semantics", async () => {
