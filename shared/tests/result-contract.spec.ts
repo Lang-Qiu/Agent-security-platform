@@ -389,7 +389,7 @@ test("REQ-T1-SANDBOX-CONTRACT-005 rejects terminal sandbox results with broken i
   ];
 
   for (const override of invalidDetailOverrides) {
-    const result = sharedModule.normalizeBaseResult?.({
+    const result: unknown = sharedModule.normalizeBaseResult?.({
       ...validSandboxResult,
       details: { ...validDetails, ...override }
     });

@@ -226,11 +226,11 @@ export function normalizeSandboxSupervisionCounts(
   }
 
   return {
-    observed_session_count: value.observed_session_count,
-    running_session_count: value.running_session_count,
-    awaiting_confirmation_count: value.awaiting_confirmation_count,
-    alert_record_count: value.alert_record_count,
-    blocked_session_count: value.blocked_session_count
+    observed_session_count: value.observed_session_count as number,
+    running_session_count: value.running_session_count as number,
+    awaiting_confirmation_count: value.awaiting_confirmation_count as number,
+    alert_record_count: value.alert_record_count as number,
+    blocked_session_count: value.blocked_session_count as number
   };
 }
 

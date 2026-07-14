@@ -423,7 +423,7 @@ test("REQ-T1-DEMO-010 rejects case detail with passed status but null actual_act
   const c = detail.agents[0].cases[0];
   c.status = "passed";
   c.attempts[0].status = "passed";
-  c.attempts[0].actual_action = null;
+  (c.attempts[0] as { actual_action: string | null }).actual_action = null;
   assert.equal(normalizeTrack1CampaignDetail(detail), null);
 });
 
@@ -432,7 +432,7 @@ test("REQ-T1-DEMO-010 rejects case detail with failed status but null actual_act
   const c = detail.agents[0].cases[0];
   c.status = "failed";
   c.attempts[0].status = "failed";
-  c.attempts[0].actual_action = null;
+  (c.attempts[0] as { actual_action: string | null }).actual_action = null;
   assert.equal(normalizeTrack1CampaignDetail(detail), null);
 });
 
@@ -558,7 +558,7 @@ test("REQ-T1-DEMO-010 rejects agent detail completed when a case is running", ()
   detail.agents[0].status = "completed";
   detail.agents[0].cases[0].status = "running";
   detail.agents[0].cases[0].attempts[0].status = "running";
-  detail.agents[0].cases[0].attempts[0].actual_action = null;
+  (detail.agents[0].cases[0].attempts[0] as { actual_action: string | null }).actual_action = null;
   assert.equal(normalizeTrack1CampaignDetail(detail), null);
 });
 
@@ -651,7 +651,7 @@ test("REQ-T1-DEMO-010 rejects second attempt after running first attempt", () =>
   c.attempts = [
     { ...c.attempts[0], status: "running", actual_action: null },
     { ...c.attempts[0], attempt_id: `attempt:${c.case_id.toLowerCase()}:2`, attempt_index: 2, session_id: "session:feedface0000000000000000feedface", status: "running", actual_action: null }
-  ];
+  ] as unknown as typeof c.attempts;
   c.status = "running";
   detail.agents[0].status = "running";
   detail.status = "running";
@@ -780,7 +780,7 @@ test("REQ-T1-DEMO-010 rejects collecting agent with non-terminal cases", () => {
     ...detail.agents[0].cases[0].attempts[0],
     status: "running",
     actual_action: null
-  }];
+  }] as unknown as typeof detail.agents[0]["cases"][0]["attempts"];
   assert.equal(normalizeTrack1CampaignDetail(detail), null);
 });
 

@@ -1,5 +1,18 @@
 # Progress
 
+
+## 2026-07-14 - shared TypeScript baseline unblock for REQ-SBX-GENERAL-001
+
+- scope: historical shared package typecheck debt that blocked Canonical Phase gates
+- reason: `tsc -p shared/tsconfig.json` failed with 52 pre-existing errors in campaign/supervision/result/normalizer modules; none involved sandbox-security contracts
+- change: type-only narrowing/casts after existing runtime validation; no runtime behavior change; no dependency or lockfile change
+- verification:
+  - `node ./frontend/node_modules/typescript/bin/tsc --noEmit -p shared/tsconfig.json` pass
+  - `npm run test:shared` pass (148)
+  - focused `shared/tests/sandbox-security-contract.spec.ts` pass (58)
+- next: implement missing P1-T4 (exports/tsconfig/repository gates) then Phase 1 independent review
+
+
 Update this file after each completed requirement.
 
 Recommended fields:

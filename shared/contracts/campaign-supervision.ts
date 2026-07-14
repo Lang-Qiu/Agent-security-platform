@@ -10,13 +10,16 @@ import {
   TRACK1_CASE_IDS,
   TRACK1_SCENARIO_IDS,
   type Track1CampaignAgentDetail,
+  type Track1CampaignAgentId,
   type Track1CampaignAgentSummary,
   type Track1CampaignAttemptSummary,
   type Track1CampaignCaseDetail,
   type Track1CampaignCaseSummary,
   type Track1CampaignDetail,
   type Track1CampaignEvidenceExport,
-  type Track1CampaignSummary
+  type Track1CampaignSummary,
+  type Track1CaseId,
+  type Track1ScenarioId
 } from "../types/campaign-supervision.ts";
 
 export {
@@ -117,7 +120,7 @@ function isNonNegativeInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
-export function isCampaignId(value: unknown): value is string {
+export function isCampaignId(value: unknown): value is import("../types/campaign-supervision.ts").Track1CampaignId {
   return isString(value) && CAMPAIGN_ID_PATTERN.test(value);
 }
 
@@ -484,18 +487,18 @@ function normalizeTrack1CampaignAttempt(
   if (Date.parse(input.updated_at) < Date.parse(input.started_at)) return null;
 
   return {
-    campaign_id: input.campaign_id,
-    agent_id: input.agent_id,
-    scenario_id: input.scenario_id,
-    case_id: input.case_id,
-    attempt_id: input.attempt_id,
-    attempt_index: input.attempt_index,
-    session_id: input.session_id,
-    task_id: input.task_id,
-    status: input.status,
-    actual_action: input.actual_action,
-    started_at: input.started_at,
-    updated_at: input.updated_at
+    campaign_id: input.campaign_id as Track1CampaignAttemptSummary["campaign_id"],
+    agent_id: input.agent_id as Track1CampaignAgentId,
+    scenario_id: input.scenario_id as Track1ScenarioId,
+    case_id: input.case_id as Track1CaseId,
+    attempt_id: input.attempt_id as Track1CampaignAttemptSummary["attempt_id"],
+    attempt_index: input.attempt_index as Track1CampaignAttemptSummary["attempt_index"],
+    session_id: input.session_id as Track1CampaignAttemptSummary["session_id"],
+    task_id: input.task_id as Track1CampaignAttemptSummary["task_id"],
+    status: input.status as Track1CampaignAttemptSummary["status"],
+    actual_action: input.actual_action as Track1CampaignAttemptSummary["actual_action"],
+    started_at: input.started_at as string,
+    updated_at: input.updated_at as string
   };
 }
 
@@ -563,15 +566,15 @@ function normalizeTrack1CampaignCaseDetail(
   // P1-1 rework 3: pending cases have no attempts to check.
   if (input.status === "pending") {
     return {
-      campaign_id: input.campaign_id,
-      agent_id: input.agent_id,
-      scenario_id: input.scenario_id,
-      case_id: input.case_id,
-      status: input.status,
-      expected_action: input.expected_action,
-      attempt_count: input.attempt_count,
+      campaign_id: input.campaign_id as Track1CampaignCaseDetail["campaign_id"],
+      agent_id: input.agent_id as Track1CampaignAgentId,
+      scenario_id: input.scenario_id as Track1ScenarioId,
+      case_id: input.case_id as Track1CaseId,
+      status: input.status as Track1CampaignCaseDetail["status"],
+      expected_action: input.expected_action as Track1CampaignCaseDetail["expected_action"],
+      attempt_count: input.attempt_count as Track1CampaignCaseDetail["attempt_count"],
       attempts: normalizedAttempts,
-      updated_at: input.updated_at
+      updated_at: input.updated_at as string
     };
   }
 
@@ -600,15 +603,15 @@ function normalizeTrack1CampaignCaseDetail(
   }
 
   return {
-    campaign_id: input.campaign_id,
-    agent_id: input.agent_id,
-    scenario_id: input.scenario_id,
-    case_id: input.case_id,
-    status: input.status,
-    expected_action: input.expected_action,
-    attempt_count: input.attempt_count,
+    campaign_id: input.campaign_id as Track1CampaignCaseDetail["campaign_id"],
+    agent_id: input.agent_id as Track1CampaignAgentId,
+    scenario_id: input.scenario_id as Track1ScenarioId,
+    case_id: input.case_id as Track1CaseId,
+    status: input.status as Track1CampaignCaseDetail["status"],
+    expected_action: input.expected_action as Track1CampaignCaseDetail["expected_action"],
+    attempt_count: input.attempt_count as Track1CampaignCaseDetail["attempt_count"],
     attempts: normalizedAttempts,
-    updated_at: input.updated_at
+    updated_at: input.updated_at as string
   };
 }
 
@@ -682,13 +685,13 @@ function normalizeTrack1CampaignAgentDetail(
   }
 
   return {
-    campaign_id: input.campaign_id,
-    agent_id: input.agent_id,
-    scenario_id: input.scenario_id,
-    status: input.status,
+    campaign_id: input.campaign_id as Track1CampaignAgentDetail["campaign_id"],
+    agent_id: input.agent_id as Track1CampaignAgentId,
+    scenario_id: input.scenario_id as Track1ScenarioId,
+    status: input.status as Track1CampaignAgentDetail["status"],
     case_count: 3,
     cases: normalizedCases,
-    updated_at: input.updated_at
+    updated_at: input.updated_at as string
   };
 }
 
@@ -766,10 +769,10 @@ export function normalizeTrack1CampaignDetail(
 
   return {
     schema_version: TRACK1_CAMPAIGN_READ_SCHEMA_VERSION,
-    campaign_id: input.campaign_id,
-    status: input.status,
-    started_at: input.started_at,
-    updated_at: input.updated_at,
+    campaign_id: input.campaign_id as Track1CampaignDetail["campaign_id"],
+    status: input.status as Track1CampaignDetail["status"],
+    started_at: input.started_at as string,
+    updated_at: input.updated_at as string,
     agent_count: 3,
     case_count: 9,
     agents: normalizedAgents

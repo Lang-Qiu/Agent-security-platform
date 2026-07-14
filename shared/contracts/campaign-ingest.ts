@@ -35,6 +35,11 @@ import {
 
 // -- shared validation helpers -------------------------------------------------
 
+function narrow<T>(value: unknown): T {
+  return value as T;
+}
+
+
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const ATTEMPT_ID_PATTERN = /^attempt:t1-sc-(\d{3})-c(\d{3}):([12])$/;
 const ISO_8601_PATTERN =
@@ -248,12 +253,12 @@ export function normalizeTrack1CampaignStartEnvelope(
 
   return {
     schema_version: TRACK1_CAMPAIGN_START_SCHEMA_VERSION,
-    campaign_id: input.campaign_id,
-    campaign_manifest_sha256: input.campaign_manifest_sha256,
+    campaign_id: narrow<Track1CampaignStartEnvelope["campaign_id"]>(input.campaign_id),
+    campaign_manifest_sha256: narrow<string>(input.campaign_manifest_sha256),
     openclaw_version: TRACK1_OPENCLAW_VERSION,
-    openclaw_package_integrity: input.openclaw_package_integrity,
-    model_ref: input.model_ref,
-    started_at: input.started_at
+    openclaw_package_integrity: narrow<string>(input.openclaw_package_integrity),
+    model_ref: narrow<string>(input.model_ref),
+    started_at: narrow<string>(input.started_at)
   };
 }
 
@@ -307,16 +312,16 @@ export function normalizeTrack1CampaignSnapshotEnvelope(
 
   const withoutHash: Track1CampaignSnapshotWithoutHash = {
     schema_version: TRACK1_CAMPAIGN_SNAPSHOT_SCHEMA_VERSION,
-    campaign_id: input.campaign_id,
-    campaign_manifest_sha256: input.campaign_manifest_sha256,
-    agent_id: input.agent_id,
-    scenario_id: input.scenario_id,
-    case_id: input.case_id,
-    attempt_id: input.attempt_id,
-    attempt_index: input.attempt_index,
-    sequence: input.sequence,
-    previous_snapshot_sha256: input.previous_snapshot_sha256,
-    observed_at: input.observed_at,
+    campaign_id: narrow<Track1CampaignSnapshotWithoutHash["campaign_id"]>(input.campaign_id),
+    campaign_manifest_sha256: narrow<string>(input.campaign_manifest_sha256),
+    agent_id: narrow<Track1CampaignSnapshotWithoutHash["agent_id"]>(input.agent_id),
+    scenario_id: narrow<Track1CampaignSnapshotWithoutHash["scenario_id"]>(input.scenario_id),
+    case_id: narrow<Track1CampaignSnapshotWithoutHash["case_id"]>(input.case_id),
+    attempt_id: narrow<Track1CampaignSnapshotWithoutHash["attempt_id"]>(input.attempt_id),
+    attempt_index: narrow<Track1CampaignSnapshotWithoutHash["attempt_index"]>(input.attempt_index),
+    sequence: narrow<number>(input.sequence),
+    previous_snapshot_sha256: narrow<string | null>(input.previous_snapshot_sha256),
+    observed_at: narrow<string>(input.observed_at),
     result: normalizedResult as BaseResult<SandboxRunResultDetails>
   };
 
@@ -345,11 +350,11 @@ export function normalizeTrack1CampaignSnapshotAck(
 
   return {
     schema_version: TRACK1_CAMPAIGN_SNAPSHOT_ACK_SCHEMA_VERSION,
-    campaign_id: input.campaign_id,
-    attempt_id: input.attempt_id,
-    sequence: input.sequence,
-    snapshot_sha256: input.snapshot_sha256,
-    accepted_at: input.accepted_at
+    campaign_id: narrow<Track1CampaignSnapshotAck["campaign_id"]>(input.campaign_id),
+    attempt_id: narrow<Track1CampaignSnapshotAck["attempt_id"]>(input.attempt_id),
+    sequence: narrow<number>(input.sequence),
+    snapshot_sha256: narrow<string>(input.snapshot_sha256),
+    accepted_at: narrow<string>(input.accepted_at)
   };
 }
 
@@ -369,9 +374,9 @@ export function normalizeTrack1CampaignFinalizeEnvelope(
 
   return {
     schema_version: TRACK1_CAMPAIGN_FINALIZE_SCHEMA_VERSION,
-    campaign_id: input.campaign_id,
-    requested_status: input.requested_status,
-    completed_at: input.completed_at
+    campaign_id: narrow<Track1CampaignFinalizeEnvelope["campaign_id"]>(input.campaign_id),
+    requested_status: narrow<Track1CampaignFinalizeEnvelope["requested_status"]>(input.requested_status),
+    completed_at: narrow<string>(input.completed_at)
   };
 }
 
@@ -402,9 +407,9 @@ export function normalizeTrack1CampaignEvidenceRegistration(
 
   return {
     schema_version: TRACK1_CAMPAIGN_EVIDENCE_REGISTRATION_SCHEMA_VERSION,
-    campaign_id: input.campaign_id,
-    artifact_manifest_sha256: input.artifact_manifest_sha256,
-    artifact_manifest_ref: input.artifact_manifest_ref,
-    registered_at: input.registered_at
+    campaign_id: narrow<Track1CampaignEvidenceRegistration["campaign_id"]>(input.campaign_id),
+    artifact_manifest_sha256: narrow<string>(input.artifact_manifest_sha256),
+    artifact_manifest_ref: narrow<string>(input.artifact_manifest_ref),
+    registered_at: narrow<string>(input.registered_at)
   };
 }

@@ -22,8 +22,12 @@ function satisfiesFinishedStaticAnalysisContract(details: StaticAnalysisResultDe
       return false;
     }
 
-    if (hasLineStart && hasLineEnd && ruleHit.line_start > ruleHit.line_end) {
-      return false;
+    if (hasLineStart && hasLineEnd) {
+      const lineStart = ruleHit.line_start as number;
+      const lineEnd = ruleHit.line_end as number;
+      if (lineStart > lineEnd) {
+        return false;
+      }
     }
 
     return true;

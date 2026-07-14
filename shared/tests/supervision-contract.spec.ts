@@ -717,7 +717,7 @@ test("REQ-T1-SUPERVISION-UI-009 rejects evidence schema mismatch", async () => {
   assert.equal(
     module.normalizeSandboxSupervisionEvidenceExport(
       makeSupervisionEvidence({
-        schema_version: "track1-supervision-evidence.v0"
+        schema_version: "track1-supervision-evidence.v0" as "track1-supervision-evidence.v1"
       })
     ),
     null
@@ -727,7 +727,7 @@ test("REQ-T1-SUPERVISION-UI-009 rejects evidence schema mismatch", async () => {
   assert.equal(
     module.normalizeSandboxSupervisionEvidenceExport(
       makeSupervisionEvidence({
-        source_schema_version: "track1-supervision-ui.v0"
+        source_schema_version: "track1-supervision-ui.v0" as "track1-supervision-ui.v1"
       })
     ),
     null
@@ -738,7 +738,7 @@ test("REQ-T1-SUPERVISION-UI-009 rejects evidence schema mismatch", async () => {
     module.normalizeSandboxSupervisionEvidenceExport(
       makeSupervisionEvidence({
         session: makeSupervisionDetail({
-          schema_version: "track1-supervision-ui.v0"
+          schema_version: "track1-supervision-ui.v0" as "track1-supervision-ui.v1"
         })
       })
     ),

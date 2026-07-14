@@ -7,7 +7,7 @@ import {
 import type { AssetScanResultDetails, SandboxRunResultDetails, StaticAnalysisResultDetails } from "../types/result.ts";
 import type { SkillsStaticRuleHit, SkillsStaticTraceStep } from "../types/skills-static-rule-hit.ts";
 import { SKILLS_STATIC_SEVERITIES } from "../types/skills-static.ts";
-import type { RiskSummary, Task, TaskResultRef, TaskTarget, TaskType } from "../types/task.ts";
+import type { EngineType, RiskLevel, RiskSummary, Task, TaskResultRef, TaskStatus, TaskTarget, TaskType } from "../types/task.ts";
 import { isBoolean, isNumber, isOneOf, isPlainObject, isString, isStringArray } from "./guards.ts";
 
 const ASSET_SCAN_ALLOWED_INTERRUPTION_REASONS = ["none", "budget", "timeout", "manual_stop"] as const;
@@ -100,9 +100,9 @@ export function normalizeTask(value: unknown): Task | null {
 
   const normalizedTask: Task = {
     task_id: value.task_id,
-    task_type: value.task_type,
-    engine_type: value.engine_type,
-    status: value.status,
+    task_type: value.task_type as TaskType,
+    engine_type: value.engine_type as EngineType,
+    status: value.status as TaskStatus,
     title: value.title,
     target: normalizedTarget,
     created_at: value.created_at,
@@ -118,7 +118,7 @@ export function normalizeTask(value: unknown): Task | null {
   }
 
   if (isString(value.risk_level)) {
-    normalizedTask.risk_level = value.risk_level;
+    normalizedTask.risk_level = value.risk_level as RiskLevel;
   }
 
   if (isString(value.summary)) {
@@ -171,9 +171,9 @@ export function normalizeRiskSummary(value: unknown): RiskSummary | null {
 
   const normalizedSummary: RiskSummary = {
     task_id: value.task_id,
-    task_type: value.task_type,
-    status: value.status,
-    risk_level: value.risk_level,
+    task_type: value.task_type as TaskType,
+    status: value.status as TaskStatus,
+    risk_level: value.risk_level as RiskLevel,
     summary: value.summary,
     total_findings: value.total_findings,
     info_count: value.info_count,
@@ -428,7 +428,7 @@ function normalizeStaticAnalysisDetails(value: unknown): StaticAnalysisResultDet
       return null;
     }
 
-    normalizedDetails.rule_hits = normalizedRuleHits;
+    normalizedDetails.rule_hits = normalizedRuleHits as SkillsStaticRuleHit[];
   }
 
   if (isStringArray(value.sensitive_capabilities)) {

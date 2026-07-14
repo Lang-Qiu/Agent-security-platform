@@ -18,7 +18,10 @@ import {
   TRACK1_OPENCLAW_PACKAGE_INTEGRITY,
   TRACK1_MODEL_REF_CANONICAL
 } from "../index.ts";
-import { TRACK1_CAMPAIGN_MANIFEST_SHA256 } from "../types/campaign-ingest.ts";
+import {
+  TRACK1_CAMPAIGN_MANIFEST_SHA256,
+  type Track1CampaignSnapshotWithoutHash
+} from "../types/campaign-ingest.ts";
 import {
   makeCampaignEvidenceRegistration,
   makeCampaignFinalizeEnvelope,
@@ -49,7 +52,7 @@ function makeEnvelope(resultSummaryOverride?: string) {
   };
   return {
     ...withoutHash,
-    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash)
+    snapshot_sha256: calculateTrack1SnapshotSha256(withoutHash as Track1CampaignSnapshotWithoutHash)
   };
 }
 
@@ -168,7 +171,7 @@ test("REQ-T1-DEMO-010 rejects snapshot with agent/scenario mismatch", () => {
     case_id: "T1-SC-002-C001",
     attempt_id: "attempt:t1-sc-002-c001:1"
   };
-  mismatched.snapshot_sha256 = calculateTrack1SnapshotSha256(mismatched);
+  (mismatched as { snapshot_sha256?: string }).snapshot_sha256 = calculateTrack1SnapshotSha256(mismatched as Track1CampaignSnapshotWithoutHash);
   assert.equal(
     normalizeTrack1CampaignSnapshotEnvelope(mismatched),
     null
@@ -184,7 +187,7 @@ test("REQ-T1-DEMO-010 rejects snapshot with scenario/case mismatch", () => {
     case_id: "T1-SC-002-C001",
     attempt_id: "attempt:t1-sc-002-c001:1"
   };
-  mismatched.snapshot_sha256 = calculateTrack1SnapshotSha256(mismatched);
+  (mismatched as { snapshot_sha256?: string }).snapshot_sha256 = calculateTrack1SnapshotSha256(mismatched as Track1CampaignSnapshotWithoutHash);
   assert.equal(
     normalizeTrack1CampaignSnapshotEnvelope(mismatched),
     null
@@ -200,7 +203,7 @@ test("REQ-T1-DEMO-010 rejects snapshot with agent/case mismatch", () => {
     case_id: "T1-SC-001-C001",
     attempt_id: "attempt:t1-sc-001-c001:1"
   };
-  mismatched.snapshot_sha256 = calculateTrack1SnapshotSha256(mismatched);
+  (mismatched as { snapshot_sha256?: string }).snapshot_sha256 = calculateTrack1SnapshotSha256(mismatched as Track1CampaignSnapshotWithoutHash);
   assert.equal(
     normalizeTrack1CampaignSnapshotEnvelope(mismatched),
     null
@@ -215,7 +218,7 @@ test("REQ-T1-DEMO-010 rejects sequence 1 with non-null previous hash", () => {
     sequence: 1,
     previous_snapshot_sha256: "a".repeat(64)
   };
-  bad.snapshot_sha256 = calculateTrack1SnapshotSha256(bad);
+  (bad as { snapshot_sha256?: string }).snapshot_sha256 = calculateTrack1SnapshotSha256(bad as Track1CampaignSnapshotWithoutHash);
   assert.equal(
     normalizeTrack1CampaignSnapshotEnvelope(bad),
     null
@@ -230,7 +233,7 @@ test("REQ-T1-DEMO-010 rejects sequence > 1 with null previous hash", () => {
     sequence: 2,
     previous_snapshot_sha256: null
   };
-  bad.snapshot_sha256 = calculateTrack1SnapshotSha256(bad);
+  (bad as { snapshot_sha256?: string }).snapshot_sha256 = calculateTrack1SnapshotSha256(bad as Track1CampaignSnapshotWithoutHash);
   assert.equal(
     normalizeTrack1CampaignSnapshotEnvelope(bad),
     null
