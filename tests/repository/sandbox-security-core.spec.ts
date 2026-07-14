@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
@@ -196,21 +196,34 @@ const REPRESENTATIVE_MASTER_E_PROBES = [
   "normalizeSandboxSecurityEvaluationRequest"
 ] as const;
 
-const SANDBOX_SECURITY_TYPES_MODULE = "./types/sandbox-security.ts";
-const SANDBOX_SECURITY_CONTRACTS_MODULE = "./contracts/sandbox-security.ts";
+const SANDBOX_SECURITY_TYPES_PATH = resolve(
+  REPO_ROOT,
+  "shared/types/sandbox-security.ts"
+);
+const SANDBOX_SECURITY_CONTRACTS_PATH = resolve(
+  REPO_ROOT,
+  "shared/contracts/sandbox-security.ts"
+);
+const ENGINES_PATH = resolve(REPO_ROOT, "engines");
 
 type ExportKind = "type" | "value";
+
+type ModuleReference = {
+  moduleSpecifier: string;
+  resolvedPath: string | null;
+};
 
 type NamedExport = {
   exportedName: string;
   sourceName: string;
   kind: ExportKind;
   moduleSpecifier: string | null;
+  resolvedModulePath: string | null;
 };
 
 type ExportInventory = {
   named: NamedExport[];
-  starModuleSpecifiers: string[];
+  starModules: ModuleReference[];
   unsupported: string[];
 };
 
@@ -227,10 +240,58 @@ type NamedImport = {
   specifierCount: number;
 };
 
+type SharedPackageExport = {
+  exportedName: string;
+  targetName: string;
+  declarationPaths: string[];
+};
+
 function hasModifier(node: ts.Node, kind: ts.SyntaxKind): boolean {
   return (
     ts.canHaveModifiers(node) &&
     ts.getModifiers(node)?.some((modifier) => modifier.kind === kind) === true
+  );
+}
+
+function resolveModuleSpecifierPath(
+  fileName: string,
+  moduleSpecifier: string
+): string | null {
+  if (!moduleSpecifier.startsWith(".")) {
+    return null;
+  }
+
+  return resolve(dirname(resolve(REPO_ROOT, fileName)), moduleSpecifier);
+}
+
+function moduleReference(
+  fileName: string,
+  moduleSpecifier: string
+): ModuleReference {
+  return {
+    moduleSpecifier,
+    resolvedPath: resolveModuleSpecifierPath(fileName, moduleSpecifier)
+  };
+}
+
+function isEngineSourcePath(sourcePath: string): boolean {
+  return (
+    sourcePath === ENGINES_PATH || sourcePath.startsWith(`${ENGINES_PATH}${sep}`)
+  );
+}
+
+function isEngineModule(reference: ModuleReference): boolean {
+  return (
+    (reference.resolvedPath !== null &&
+      isEngineSourcePath(reference.resolvedPath)) ||
+    /^@agent-security-platform\/engines(?:\/|$)/.test(reference.moduleSpecifier)
+  );
+}
+
+function isCanonicalSandboxModule(reference: ModuleReference): boolean {
+  return (
+    reference.resolvedPath === SANDBOX_SECURITY_TYPES_PATH ||
+    reference.resolvedPath === SANDBOX_SECURITY_CONTRACTS_PATH
   );
 }
 
@@ -244,7 +305,7 @@ function enumerateDirectExports(fileName: string, source: string): ExportInvento
   );
   const inventory: ExportInventory = {
     named: [],
-    starModuleSpecifiers: [],
+    starModules: [],
     unsupported: []
   };
 
@@ -253,7 +314,8 @@ function enumerateDirectExports(fileName: string, source: string): ExportInvento
       exportedName: name,
       sourceName: name,
       kind,
-      moduleSpecifier: null
+      moduleSpecifier: null,
+      resolvedModulePath: null
     });
   };
 
@@ -266,6 +328,8 @@ function enumerateDirectExports(fileName: string, source: string): ExportInvento
           : ts.isStringLiteral(moduleSpecifier)
             ? moduleSpecifier.text
             : null;
+      const reference =
+        moduleName === null ? null : moduleReference(fileName, moduleName);
 
       if (moduleSpecifier !== undefined && moduleName === null) {
         inventory.unsupported.push("non-literal export module specifier");
@@ -275,14 +339,14 @@ function enumerateDirectExports(fileName: string, source: string): ExportInvento
         if (moduleName === null) {
           inventory.unsupported.push("export star without a literal module specifier");
         } else {
-          inventory.starModuleSpecifiers.push(moduleName);
+          inventory.starModules.push(moduleReference(fileName, moduleName));
         }
         continue;
       }
 
       if (!ts.isNamedExports(statement.exportClause)) {
-        if (moduleName !== null) {
-          inventory.starModuleSpecifiers.push(moduleName);
+        if (reference !== null) {
+          inventory.starModules.push(reference);
         }
         inventory.unsupported.push("namespace export");
         continue;
@@ -293,7 +357,8 @@ function enumerateDirectExports(fileName: string, source: string): ExportInvento
           exportedName: specifier.name.text,
           sourceName: specifier.propertyName?.text ?? specifier.name.text,
           kind: statement.isTypeOnly || specifier.isTypeOnly ? "type" : "value",
-          moduleSpecifier: moduleName
+          moduleSpecifier: moduleName,
+          resolvedModulePath: reference?.resolvedPath ?? null
         });
       }
       continue;
@@ -344,6 +409,28 @@ function enumerateDirectExports(fileName: string, source: string): ExportInvento
   return inventory;
 }
 
+function enumerateImportModules(fileName: string, source: string): ModuleReference[] {
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  const imports: ModuleReference[] = [];
+
+  for (const statement of sourceFile.statements) {
+    if (
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteral(statement.moduleSpecifier)
+    ) {
+      imports.push(moduleReference(fileName, statement.moduleSpecifier.text));
+    }
+  }
+
+  return imports;
+}
+
 function enumerateNamedImports(fileName: string, source: string): NamedImport[] {
   const sourceFile = ts.createSourceFile(
     fileName,
@@ -385,13 +472,14 @@ function enumerateNamedImports(fileName: string, source: string): NamedImport[] 
 function namesByKind(
   inventory: ExportInventory,
   kind: ExportKind,
-  moduleSpecifier?: string
+  resolvedModulePath?: string
 ): string[] {
   return inventory.named
     .filter(
       (entry) =>
         entry.kind === kind &&
-        (moduleSpecifier === undefined || entry.moduleSpecifier === moduleSpecifier)
+        (resolvedModulePath === undefined ||
+          entry.resolvedModulePath === resolvedModulePath)
     )
     .map((entry) => entry.exportedName);
 }
@@ -432,6 +520,7 @@ function evaluateSandboxSecurityExportGate(
     sources.contracts
   );
   const indexInventory = enumerateDirectExports("shared/index.ts", sources.index);
+  const indexImports = enumerateImportModules("shared/index.ts", sources.index);
 
   recordExactNames(
     violations,
@@ -460,32 +549,32 @@ function evaluateSandboxSecurityExportGate(
   recordExactNames(
     violations,
     "shared index sandbox security type-module values",
-    namesByKind(indexInventory, "value", SANDBOX_SECURITY_TYPES_MODULE),
+    namesByKind(indexInventory, "value", SANDBOX_SECURITY_TYPES_PATH),
     MASTER_A_TYPE_RUNTIME
   );
   recordExactNames(
     violations,
     "shared index sandbox security type-module types",
-    namesByKind(indexInventory, "type", SANDBOX_SECURITY_TYPES_MODULE),
+    namesByKind(indexInventory, "type", SANDBOX_SECURITY_TYPES_PATH),
     MASTER_B_TYPES
   );
   recordExactNames(
     violations,
     "shared index sandbox security contract-module values",
-    namesByKind(indexInventory, "value", SANDBOX_SECURITY_CONTRACTS_MODULE),
+    namesByKind(indexInventory, "value", SANDBOX_SECURITY_CONTRACTS_PATH),
     MASTER_A_CONTRACT_RUNTIME
   );
   recordExactNames(
     violations,
     "shared index sandbox security contract-module types",
-    namesByKind(indexInventory, "type", SANDBOX_SECURITY_CONTRACTS_MODULE),
+    namesByKind(indexInventory, "type", SANDBOX_SECURITY_CONTRACTS_PATH),
     []
   );
 
-  if (typesInventory.starModuleSpecifiers.length > 0) {
+  if (typesInventory.starModules.length > 0) {
     violations.push("sandbox security type module must not use export star");
   }
-  if (contractsInventory.starModuleSpecifiers.length > 0) {
+  if (contractsInventory.starModules.length > 0) {
     violations.push("sandbox security contract module must not use export star");
   }
   if (typesInventory.unsupported.length > 0) {
@@ -501,8 +590,8 @@ function evaluateSandboxSecurityExportGate(
 
   const sandboxIndexRows = indexInventory.named.filter(
     (entry) =>
-      entry.moduleSpecifier === SANDBOX_SECURITY_TYPES_MODULE ||
-      entry.moduleSpecifier === SANDBOX_SECURITY_CONTRACTS_MODULE
+      entry.resolvedModulePath === SANDBOX_SECURITY_TYPES_PATH ||
+      entry.resolvedModulePath === SANDBOX_SECURITY_CONTRACTS_PATH
   );
   const aliasedRows = sandboxIndexRows.filter(
     (entry) => entry.exportedName !== entry.sourceName
@@ -511,25 +600,46 @@ function evaluateSandboxSecurityExportGate(
     violations.push("shared index must not alias sandbox security exports");
   }
   if (
-    indexInventory.starModuleSpecifiers.includes(SANDBOX_SECURITY_TYPES_MODULE) ||
-    indexInventory.starModuleSpecifiers.includes(SANDBOX_SECURITY_CONTRACTS_MODULE)
+    indexInventory.starModules.some(isCanonicalSandboxModule)
   ) {
     violations.push("shared index must not export star from sandbox security modules");
   }
 
-  const indexNamedExports = new Set(
-    indexInventory.named.map((entry) => entry.exportedName)
-  );
-  for (const identifier of FORBIDDEN_SHARED_ENGINE_EXPORTS) {
-    if (indexNamedExports.has(identifier)) {
-      violations.push(`shared index exports engine-only identifier ${identifier}`);
+  if (indexImports.some(isCanonicalSandboxModule)) {
+    violations.push(
+      "shared index must directly re-export sandbox security types and contracts"
+    );
+  }
+
+  const indexReexportModules = [...indexInventory.starModules];
+  for (const entry of indexInventory.named) {
+    if (entry.moduleSpecifier !== null) {
+      indexReexportModules.push({
+        moduleSpecifier: entry.moduleSpecifier,
+        resolvedPath: entry.resolvedModulePath
+      });
+    }
+  }
+  if (
+    indexImports.some(isEngineModule) ||
+    indexReexportModules.some(isEngineModule)
+  ) {
+    violations.push("shared index must not import or re-export engines/**");
+  }
+
+  const forbiddenSharedNames = new Set<string>(FORBIDDEN_SHARED_ENGINE_EXPORTS);
+  for (const entry of indexInventory.named) {
+    for (const identifier of new Set([entry.sourceName, entry.exportedName])) {
+      if (forbiddenSharedNames.has(identifier)) {
+        violations.push(`shared index exports engine-only identifier ${identifier}`);
+      }
     }
   }
 
   return violations;
 }
 
-function collectSharedPackageExportNames(): Set<string> {
+function collectSharedPackageExports(): SharedPackageExport[] {
   const indexPath = join(REPO_ROOT, "shared/index.ts");
   const program = ts.createProgram({
     rootNames: [indexPath],
@@ -549,9 +659,36 @@ function collectSharedPackageExportNames(): Set<string> {
   const moduleSymbol = checker.getSymbolAtLocation(sourceFile);
   assert.ok(moduleSymbol, "TypeScript checker must resolve shared/index.ts");
 
-  return new Set(
-    checker.getExportsOfModule(moduleSymbol).map((symbol) => symbol.getName())
-  );
+  return checker.getExportsOfModule(moduleSymbol).map((exportedSymbol) => {
+    const declarationPaths = new Set<string>();
+    const visitedSymbols = new Set<ts.Symbol>();
+    let targetSymbol = exportedSymbol;
+
+    while (!visitedSymbols.has(targetSymbol)) {
+      visitedSymbols.add(targetSymbol);
+      for (const declaration of targetSymbol.declarations ?? []) {
+        declarationPaths.add(resolve(declaration.getSourceFile().fileName));
+      }
+
+      if ((targetSymbol.flags & ts.SymbolFlags.Alias) === 0) {
+        break;
+      }
+
+      const aliasedSymbol =
+        checker.getImmediateAliasedSymbol(targetSymbol) ??
+        checker.getAliasedSymbol(targetSymbol);
+      if (aliasedSymbol === targetSymbol) {
+        break;
+      }
+      targetSymbol = aliasedSymbol;
+    }
+
+    return {
+      exportedName: exportedSymbol.getName(),
+      targetName: targetSymbol.getName(),
+      declarationPaths: [...declarationPaths]
+    };
+  });
 }
 
 
@@ -649,13 +786,53 @@ test("REQ-SBX-GENERAL-001 keeps shared contracts engine independent", () => {
     );
   }
 
-  const sharedPublicExports = collectSharedPackageExportNames();
+  const sharedPublicExports = collectSharedPackageExports();
+  const sharedPublicExportNames = new Set(
+    sharedPublicExports.map((entry) => entry.exportedName)
+  );
+  const forbiddenSharedNames = new Set<string>(FORBIDDEN_SHARED_ENGINE_EXPORTS);
+  const allowedSandboxSecurityNames = new Set<string>([
+    ...MASTER_A_RUNTIME,
+    ...MASTER_B_TYPES
+  ]);
+
   for (const identifier of FORBIDDEN_SHARED_ENGINE_EXPORTS) {
     assert.equal(
-      sharedPublicExports.has(identifier),
+      sharedPublicExportNames.has(identifier),
       false,
       `shared package must not export engine-only identifier ${identifier}`
     );
+  }
+
+  for (const entry of sharedPublicExports) {
+    assert.equal(
+      entry.declarationPaths.some(isEngineSourcePath),
+      false,
+      `shared package export ${entry.exportedName} must not originate in engines/**`
+    );
+    assert.equal(
+      forbiddenSharedNames.has(entry.targetName),
+      false,
+      `shared package export ${entry.exportedName} must not target engine-only identifier ${entry.targetName}`
+    );
+
+    const originatesInCanonicalSandboxModule = entry.declarationPaths.some(
+      (declarationPath) =>
+        declarationPath === SANDBOX_SECURITY_TYPES_PATH ||
+        declarationPath === SANDBOX_SECURITY_CONTRACTS_PATH
+    );
+    if (originatesInCanonicalSandboxModule) {
+      assert.equal(
+        allowedSandboxSecurityNames.has(entry.targetName),
+        true,
+        `canonical sandbox security export ${entry.targetName} must be in Master A/B`
+      );
+      assert.equal(
+        entry.exportedName,
+        entry.targetName,
+        `canonical sandbox security export ${entry.targetName} must not be aliased`
+      );
+    }
   }
 });
 
@@ -684,7 +861,15 @@ test("REQ-SBX-GENERAL-001 export gate rejects additional sandbox security export
     },
     {
       ...sources,
-      index: `${sources.index}\nexport { createSandboxSecurityCanonicalFingerprintService } from "./types/sandbox.ts";\n`
+      index: `${sources.index}\nexport { createSandboxSecurityCanonicalFingerprintService as createSharedFingerprintHelper } from "../engines/sandbox/src/security/canonical-fingerprint.ts";\n`
+    },
+    {
+      ...sources,
+      index: `${sources.index}\nimport type { SandboxSecurityStage as InternalStage } from "./types/sandbox-security.ts";\nexport type { InternalStage as LeakedStage };\n`
+    },
+    {
+      ...sources,
+      index: `${sources.index}\nexport * as Internals from ".././engines/sandbox/src/security/canonical-fingerprint.ts";\n`
     }
   ];
 
@@ -698,7 +883,7 @@ test("REQ-SBX-GENERAL-001 export gate rejects additional sandbox security export
     mutations.map(
       (mutation) => evaluateSandboxSecurityExportGate(mutation).length === 0
     ),
-    [false, false, false, false, false]
+    [false, false, false, false, false, false, false]
   );
 });
 
@@ -800,7 +985,7 @@ test("REQ-SBX-GENERAL-001 shared package exports SandboxSecurityReasonCode type"
       (entry) =>
         entry.exportedName === "SandboxSecurityReasonCode" &&
         entry.kind === "type" &&
-        entry.moduleSpecifier === SANDBOX_SECURITY_TYPES_MODULE
+        entry.resolvedModulePath === SANDBOX_SECURITY_TYPES_PATH
     ),
     true
   );
@@ -848,7 +1033,7 @@ test("REQ-SBX-GENERAL-001 shared package exports all Master B type symbols", () 
   );
   assert.deepEqual(
     sortedNames(
-      namesByKind(indexInventory, "type", SANDBOX_SECURITY_TYPES_MODULE)
+      namesByKind(indexInventory, "type", SANDBOX_SECURITY_TYPES_PATH)
     ),
     sortedNames(MASTER_B_TYPES)
   );
