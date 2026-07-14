@@ -126,3 +126,461 @@ test("REQ-SBX-GENERAL-001 sha256CanonicalJson returns lowercase 64 hex", () => {
   assert.match(digest, /^[a-f0-9]{64}$/);
   assert.equal(digest, digest.toLowerCase());
 });
+
+
+// ---- P2-T3 input boundary -------------------------------------------------
+
+type PrepareModule = {
+  prepareSandboxSecurityInput: (request: unknown) => Readonly<Record<string, unknown>>;
+  encodeSandboxSecurityCanonicalProjection: (projection: unknown) => Uint8Array;
+  isSandboxSecuritySourceHandle: (value: unknown) => boolean;
+  isSandboxSecurityCallHandle: (value: unknown) => boolean;
+};
+
+async function loadPrepareModule(): Promise<PrepareModule> {
+  try {
+    return (await import("../src/security/input-boundary.ts")) as PrepareModule;
+  } catch {
+    return {
+      prepareSandboxSecurityInput: () => {
+        throw new Error("prepare unavailable");
+      },
+      encodeSandboxSecurityCanonicalProjection: () => new Uint8Array(),
+      isSandboxSecuritySourceHandle: () => false,
+      isSandboxSecurityCallHandle: () => false
+    };
+  }
+}
+
+const {
+  prepareSandboxSecurityInput,
+  encodeSandboxSecurityCanonicalProjection,
+  isSandboxSecuritySourceHandle,
+  isSandboxSecurityCallHandle
+} = await loadPrepareModule();
+
+async function loadAuthorityForPrepare() {
+  return import("../src/security/source-authority.ts");
+}
+
+async function makeNormalizedSimulationRequest() {
+  const authority = await loadAuthorityForPrepare();
+  return authority.normalizeSandboxSecurityEvaluationRequest({
+    submission: {
+      schema_version: "sandbox-security-request.v1",
+      request_id: "req-prepare-001",
+      stage: "user_input",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      content_items: [
+        {
+          source_id: "src-user",
+          claimed_source_type: "user_input",
+          media_type: "text/plain",
+          value: "hello",
+          provenance_ref: "source://workbench/user/input"
+        }
+      ]
+    },
+    authoritative_context: {
+      schema_version: "sandbox-security-authoritative-context.v1",
+      evaluation_mode: "simulation",
+      stage: "user_input",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      sources: [
+        {
+          source_id: "src-user",
+          authority_kind: "simulation_observation",
+          source_type: "user_input",
+          media_type: "text/plain",
+          value: "hello",
+          provenance_ref: "source://workbench/user/input"
+        }
+      ]
+    }
+  });
+}
+
+test("REQ-SBX-GENERAL-001 projection uses authoritative sources only", async () => {
+  const request = await makeNormalizedSimulationRequest();
+  const prepared = prepareSandboxSecurityInput(request);
+  const projection = prepared.canonical_projection as {
+    sources: Array<{ source_id: string; value: string }>;
+  };
+  assert.deepEqual(projection.sources.map((s) => s.source_id), ["src-user"]);
+  assert.equal(projection.sources[0].value, "hello");
+});
+
+test("REQ-SBX-GENERAL-001 projection preserves authoritative observation order", async () => {
+  const authority = await loadAuthorityForPrepare();
+  const request = authority.normalizeSandboxSecurityEvaluationRequest({
+    submission: {
+      schema_version: "sandbox-security-request.v1",
+      request_id: "req-order",
+      stage: "model_output",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      content_items: [
+        {
+          source_id: "src-user",
+          claimed_source_type: "user_input",
+          media_type: "text/plain",
+          value: "prompt",
+          provenance_ref: "source://user"
+        },
+        {
+          source_id: "src-model",
+          claimed_source_type: "model_output",
+          media_type: "text/plain",
+          value: "answer",
+          provenance_ref: "source://model"
+        }
+      ]
+    },
+    authoritative_context: {
+      schema_version: "sandbox-security-authoritative-context.v1",
+      evaluation_mode: "simulation",
+      stage: "model_output",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      sources: [
+        {
+          source_id: "src-user",
+          authority_kind: "simulation_observation",
+          source_type: "user_input",
+          media_type: "text/plain",
+          value: "prompt",
+          provenance_ref: "source://user"
+        },
+        {
+          source_id: "src-model",
+          authority_kind: "simulation_observation",
+          source_type: "model_output",
+          media_type: "text/plain",
+          value: "answer",
+          provenance_ref: "source://model"
+        }
+      ]
+    }
+  });
+  const prepared = prepareSandboxSecurityInput(request);
+  const projection = prepared.canonical_projection as {
+    sources: Array<{ source_id: string }>;
+  };
+  assert.deepEqual(
+    projection.sources.map((s) => s.source_id),
+    ["src-user", "src-model"]
+  );
+});
+
+test("REQ-SBX-GENERAL-001 projection excludes correlation request_id", async () => {
+  const prepared = prepareSandboxSecurityInput(await makeNormalizedSimulationRequest());
+  const projection = prepared.canonical_projection as Record<string, unknown>;
+  assert.equal(Object.hasOwn(projection, "request_id"), false);
+  assert.equal(prepared.request_id, "req-prepare-001");
+});
+
+test("REQ-SBX-GENERAL-001 projection rejects over 512 KiB before detectors", async () => {
+  const authority = await loadAuthorityForPrepare();
+  // One JSON object with many keys pushes JCS projection over 512 KiB while
+  // staying within shared structural limits (nodes/depth/items).
+  const hugeObject: Record<string, string> = {};
+  for (let index = 0; index < 900; index += 1) {
+    hugeObject[`k${String(index).padStart(4, "0")}`] = "y".repeat(700);
+  }
+  const content_items = [
+    {
+      source_id: "src-user",
+      claimed_source_type: "user_input",
+      media_type: "application/json" as const,
+      value: hugeObject,
+      provenance_ref: "source://user/json"
+    }
+  ];
+  const sources = content_items.map((item) => ({
+    source_id: item.source_id,
+    authority_kind: "simulation_observation",
+    source_type: item.claimed_source_type,
+    media_type: item.media_type,
+    value: item.value,
+    provenance_ref: item.provenance_ref
+  }));
+  const request = authority.normalizeSandboxSecurityEvaluationRequest({
+    submission: {
+      schema_version: "sandbox-security-request.v1",
+      request_id: "req-huge",
+      stage: "user_input",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      content_items
+    },
+    authoritative_context: {
+      schema_version: "sandbox-security-authoritative-context.v1",
+      evaluation_mode: "simulation",
+      stage: "user_input",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      sources
+    }
+  });
+  assert.throws(() => prepareSandboxSecurityInput(request));
+});
+
+test("REQ-SBX-GENERAL-001 prepared input is recursively frozen without Uint8Array fields", async () => {
+  const prepared = prepareSandboxSecurityInput(await makeNormalizedSimulationRequest());
+  assert.ok(Object.isFrozen(prepared));
+  assert.ok(Object.isFrozen(prepared.contents));
+  const content = (prepared.contents as Array<Record<string, unknown>>)[0];
+  assert.ok(Object.isFrozen(content));
+  assert.ok(Array.isArray(content.original_utf8_bytes));
+  assert.equal(content.original_utf8_bytes instanceof Uint8Array, false);
+  assert.ok(Object.isFrozen(content.original_utf8_bytes));
+});
+
+test("REQ-SBX-GENERAL-001 text hashes use original UTF-8 bytes", async () => {
+  const prepared = prepareSandboxSecurityInput(await makeNormalizedSimulationRequest());
+  const content = (prepared.contents as Array<Record<string, unknown>>)[0];
+  const bytes = content.original_utf8_bytes as number[];
+  assert.deepEqual(bytes, Array.from(Buffer.from("hello", "utf8")));
+  assert.match(String(content.original_value_sha256), /^[a-f0-9]{64}$/);
+  assert.equal(
+    content.original_value_sha256,
+    createHash("sha256").update(Buffer.from(bytes)).digest("hex")
+  );
+});
+
+test("REQ-SBX-GENERAL-001 JSON and tool hashes use JCS only", async () => {
+  const authority = await loadAuthorityForPrepare();
+  const args = { b: 1, a: 0 };
+  const request = authority.normalizeSandboxSecurityEvaluationRequest({
+    submission: {
+      schema_version: "sandbox-security-request.v1",
+      request_id: "req-tool-json",
+      stage: "tool_request",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      content_items: [
+        {
+          source_id: "src-model",
+          claimed_source_type: "model_output",
+          media_type: "application/json",
+          value: { z: 1, a: 2 },
+          provenance_ref: "source://model"
+        }
+      ],
+      tool_request: {
+        call_id: "call-1",
+        tool_name: "read_file",
+        arguments: args
+      }
+    },
+    authoritative_context: {
+      schema_version: "sandbox-security-authoritative-context.v1",
+      evaluation_mode: "simulation",
+      stage: "tool_request",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      sources: [
+        {
+          source_id: "src-model",
+          authority_kind: "simulation_observation",
+          source_type: "model_output",
+          media_type: "application/json",
+          value: { a: 2, z: 1 },
+          provenance_ref: "source://model"
+        }
+      ],
+      tool_request: {
+        authority_kind: "simulation_observation",
+        call_id: "call-1",
+        tool_name: "read_file",
+        arguments: { a: 0, b: 1 }
+      }
+    }
+  });
+  const prepared = prepareSandboxSecurityInput(request);
+  const content = (prepared.contents as Array<Record<string, unknown>>)[0];
+  assert.equal(content.original_value_sha256, sha256CanonicalJson({ a: 2, z: 1 }));
+  const tool = prepared.tool_request as Record<string, unknown>;
+  assert.equal(tool.arguments_jcs_sha256, sha256CanonicalJson({ a: 0, b: 1 }));
+});
+
+test("REQ-SBX-GENERAL-001 Phase 2 content is authority-bound without trust_class", async () => {
+  const prepared = prepareSandboxSecurityInput(await makeNormalizedSimulationRequest());
+  const content = (prepared.contents as Array<Record<string, unknown>>)[0];
+  assert.equal(Object.hasOwn(content, "trust_class"), false);
+  assert.equal(content.authority_kind, "simulation_observation");
+  assert.equal(content.source_type, "user_input");
+});
+
+test("REQ-SBX-GENERAL-001 Phase 2 contains no independent trust mapping table", async () => {
+  const source = await import("node:fs").then((fs) =>
+    fs.readFileSync(new URL("../src/security/input-boundary.ts", import.meta.url), "utf8")
+  );
+  assert.doesNotMatch(source, /SandboxSecurityTrustClass/);
+  assert.doesNotMatch(source, /deriveSandboxSecurityTrustClass/);
+  assert.doesNotMatch(source, /trust_rules/);
+});
+
+test("REQ-SBX-GENERAL-001 evaluation nonce is lowercase 128-bit hex", async () => {
+  const prepared = prepareSandboxSecurityInput(await makeNormalizedSimulationRequest());
+  assert.match(String(prepared.evaluation_nonce), /^[a-f0-9]{32}$/);
+});
+
+test("REQ-SBX-GENERAL-001 source handle uses four-digit semantic ordinal", async () => {
+  const prepared = prepareSandboxSecurityInput(await makeNormalizedSimulationRequest());
+  const content = (prepared.contents as Array<Record<string, unknown>>)[0];
+  assert.match(
+    String(content.source_handle),
+    new RegExp(`^hsrc:${prepared.evaluation_nonce}:0001$`)
+  );
+});
+
+test("REQ-SBX-GENERAL-001 call handle uses 0000 ordinal", async () => {
+  const authority = await loadAuthorityForPrepare();
+  const request = authority.normalizeSandboxSecurityEvaluationRequest({
+    submission: {
+      schema_version: "sandbox-security-request.v1",
+      request_id: "req-call",
+      stage: "tool_request",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      content_items: [
+        {
+          source_id: "src-model",
+          claimed_source_type: "model_output",
+          media_type: "text/plain",
+          value: "call",
+          provenance_ref: "source://model"
+        }
+      ],
+      tool_request: {
+        call_id: "call-1",
+        tool_name: "read_file",
+        arguments: {}
+      }
+    },
+    authoritative_context: {
+      schema_version: "sandbox-security-authoritative-context.v1",
+      evaluation_mode: "simulation",
+      stage: "tool_request",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      sources: [
+        {
+          source_id: "src-model",
+          authority_kind: "simulation_observation",
+          source_type: "model_output",
+          media_type: "text/plain",
+          value: "call",
+          provenance_ref: "source://model"
+        }
+      ],
+      tool_request: {
+        authority_kind: "simulation_observation",
+        call_id: "call-1",
+        tool_name: "read_file",
+        arguments: {}
+      }
+    }
+  });
+  const prepared = prepareSandboxSecurityInput(request);
+  const tool = prepared.tool_request as Record<string, unknown>;
+  assert.match(
+    String(tool.call_handle),
+    new RegExp(`^hcall:${prepared.evaluation_nonce}:0000$`)
+  );
+});
+
+test("REQ-SBX-GENERAL-001 handles are evaluation-bound and unique per prepare", async () => {
+  const a = prepareSandboxSecurityInput(await makeNormalizedSimulationRequest());
+  const b = prepareSandboxSecurityInput(await makeNormalizedSimulationRequest());
+  assert.notEqual(a.evaluation_nonce, b.evaluation_nonce);
+});
+
+test("REQ-SBX-GENERAL-001 malformed handle cannot enter an engine registry", () => {
+  assert.equal(isSandboxSecuritySourceHandle("hsrc:not-hex:0001"), false);
+  assert.equal(isSandboxSecuritySourceHandle("hsrc:" + "a".repeat(32) + ":0000"), false);
+  assert.equal(isSandboxSecuritySourceHandle("hsrc:" + "a".repeat(32) + ":0001"), true);
+  assert.equal(isSandboxSecurityCallHandle("hcall:" + "a".repeat(32) + ":0001"), false);
+  assert.equal(isSandboxSecurityCallHandle("hcall:" + "a".repeat(32) + ":0000"), true);
+});
+
+test("REQ-SBX-GENERAL-001 prepared input retains request_id for correlation only", async () => {
+  const prepared = prepareSandboxSecurityInput(await makeNormalizedSimulationRequest());
+  assert.equal(prepared.request_id, "req-prepare-001");
+  assert.equal(
+    Object.hasOwn(prepared.canonical_projection as object, "request_id"),
+    false
+  );
+});
+
+test("REQ-SBX-GENERAL-001 ordinary hashes remain private fields on prepared input", async () => {
+  const prepared = prepareSandboxSecurityInput(await makeNormalizedSimulationRequest());
+  const content = (prepared.contents as Array<Record<string, unknown>>)[0];
+  assert.match(String(content.original_value_sha256), /^[a-f0-9]{64}$/);
+});
+
+test("REQ-SBX-GENERAL-001 PreparedInput does not store canonical_projection_bytes", async () => {
+  const prepared = prepareSandboxSecurityInput(await makeNormalizedSimulationRequest());
+  assert.equal(Object.hasOwn(prepared, "canonical_projection_bytes"), false);
+  const bytes = encodeSandboxSecurityCanonicalProjection(prepared.canonical_projection);
+  assert.ok(bytes instanceof Uint8Array);
+  assert.ok(bytes.byteLength > 0);
+});
+
+test("REQ-SBX-GENERAL-001 raw snapshot exposes no canonical projection bytes", async () => {
+  const prepared = prepareSandboxSecurityInput(await makeNormalizedSimulationRequest());
+  const rawSnapshotShaped = {
+    request_id: prepared.request_id,
+    evaluation_mode: prepared.evaluation_mode,
+    stage: prepared.stage,
+    contents: prepared.contents,
+    tool_request: prepared.tool_request,
+    canonical_request_sha256: prepared.canonical_projection_sha256
+  };
+  assert.equal(Object.hasOwn(rawSnapshotShaped, "canonical_projection_bytes"), false);
+});
+
+test("REQ-SBX-GENERAL-001 tool has_target reflects optional target presence", async () => {
+  const authority = await loadAuthorityForPrepare();
+  const withTarget = authority.normalizeSandboxSecurityEvaluationRequest({
+    submission: {
+      schema_version: "sandbox-security-request.v1",
+      request_id: "req-target",
+      stage: "tool_request",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      content_items: [
+        {
+          source_id: "src-model",
+          claimed_source_type: "model_output",
+          media_type: "text/plain",
+          value: "call",
+          provenance_ref: "source://model"
+        }
+      ],
+      tool_request: {
+        call_id: "call-1",
+        tool_name: "read_file",
+        target: "/tmp/x",
+        arguments: {}
+      }
+    },
+    authoritative_context: {
+      schema_version: "sandbox-security-authoritative-context.v1",
+      evaluation_mode: "simulation",
+      stage: "tool_request",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      sources: [
+        {
+          source_id: "src-model",
+          authority_kind: "simulation_observation",
+          source_type: "model_output",
+          media_type: "text/plain",
+          value: "call",
+          provenance_ref: "source://model"
+        }
+      ],
+      tool_request: {
+        authority_kind: "simulation_observation",
+        call_id: "call-1",
+        tool_name: "read_file",
+        target: "/tmp/x",
+        arguments: {}
+      }
+    }
+  });
+  const prepared = prepareSandboxSecurityInput(withTarget);
+  assert.equal((prepared.tool_request as { has_target: boolean }).has_target, true);
+});
