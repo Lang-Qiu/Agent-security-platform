@@ -140,6 +140,17 @@ test("root quality gate delegates to test:all and includes frontend coverage", (
     "test:shared should include Track 1 campaign ingest contract coverage"
   );
 
+  assert.match(
+    scripts["test:shared"] ?? "",
+    /\bshared\/tests\/sandbox-security-contract\.spec\.ts\b/,
+    "test:shared should include sandbox security public contract coverage"
+  );
+
+  assert.ok(
+    scripts["test:repo"]?.includes("tests/repository/sandbox-security-core.spec.ts"),
+    "repository gate should include sandbox security core coverage"
+  );
+
   assert.ok(
     scripts["test:repo"]?.includes("tests/repository/track1-openclaw-manifest.spec.ts"),
     "repository gate should include Track 1 OpenClaw manifest coverage"
@@ -182,6 +193,12 @@ test("root quality gate delegates to test:all and includes frontend coverage", (
     sharedPackageJson.scripts?.test ?? "",
     /\btests\/campaign-ingest-contract\.spec\.ts\b/,
     "the shared package test should include Track 1 campaign ingest contract coverage"
+  );
+
+  assert.match(
+    sharedPackageJson.scripts?.test ?? "",
+    /\btests\/sandbox-security-contract\.spec\.ts\b/,
+    "the shared package test should include sandbox security public contract coverage"
   );
 });
 

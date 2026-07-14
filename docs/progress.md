@@ -1,6 +1,14 @@
 # Progress
 
 
+## 2026-07-14 - REQ-SBX-GENERAL-001 P1-T4 public exports and gates
+
+- scope: additive shared package A/B exports, sandbox typecheck anchor/tsconfig, repository permanent gates, public type probes
+- files: `shared/index.ts`, `shared/package.json`, `package.json`, `tests/repository/root-test-entry.spec.ts`, `tests/repository/sandbox-security-core.spec.ts`, `shared/tests/types/sandbox-security-public-types.ts`, `engines/sandbox/tsconfig.json`, `engines/sandbox/tests/types/sandbox-security-typecheck-anchor.ts`
+- verification: focused repo gate, test:shared, test:repo, shared/engine typecheck
+
+
+
 ## 2026-07-14 - shared TypeScript baseline unblock for REQ-SBX-GENERAL-001
 
 - scope: historical shared package typecheck debt that blocked Canonical Phase gates

@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "../../",
+    "types": ["node"],
+    "outDir": "./dist",
+    "noEmit": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": [
+    "src/security/**/*.ts",
+    "tests/sandbox-security-*.spec.ts",
+    "tests/fixtures/security-*.ts",
+    "tests/helpers/track1-security-regression-harness.ts",
+    "tests/types/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}
