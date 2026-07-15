@@ -1,5 +1,32 @@
 # Progress
 
+## 2026-07-15 - REQ-SBX-GENERAL-001 P3-T6 detector registry + phase gates
+
+- scope: registry construction (rule required; no profile knowledge) and
+  engine-internal profile resolution (strict local required at resolution)
+- files:
+  - `engines/sandbox/src/security/detector-registry.ts` (create)
+  - `engines/sandbox/tests/sandbox-security-detector.spec.ts` (registry inventory)
+  - `engines/sandbox/tests/sandbox-security-policy.spec.ts` (phase production gates)
+  - `tests/repository/sandbox-security-core.spec.ts` (module/publicity gates)
+  - `docs/progress.md`
+- verification:
+  - detector+policy focused green (64 tests combined run)
+  - repository gate 40/40
+  - `npm run test:shared` 207/207
+  - `npm run test:repo` 185/185
+  - shared + sandbox `tsc --noEmit` pass
+  - `git diff --check` clean
+- independent review:
+  - P0/P1: none
+  - construction ≠ resolution proven (strict missing local constructs, fails resolve)
+  - fixed slot IDs bound; kind/access mismatch rejected
+  - resolve helper not public
+  - no detector-pipeline; no network/fs/process/console in security tree
+  - conclusion: APPROVED
+- re-review: APPROVED
+- status: P3-T6 VERIFIED; Phase 3 complete pending final phase review note
+
 ## 2026-07-15 - REQ-SBX-GENERAL-001 P3-T4 sanitized external boundary
 
 - scope: Engine-issued etok registry, sanitized payload validation, external

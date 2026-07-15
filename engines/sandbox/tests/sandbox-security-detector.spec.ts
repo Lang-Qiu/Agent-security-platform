@@ -332,3 +332,146 @@ test("REQ-SBX-GENERAL-001 detector suite remains isolated from raw boundary owne
   assert.match(source, /export function normalizeSandboxSecurityRawDetectorResult/);
 });
 
+
+import {
+  createSandboxSecurityDetectorRegistry,
+  resolveSandboxSecurityDetectorsForProfile
+} from "../src/security/detector-registry.ts";
+
+test("REQ-SBX-GENERAL-001 SandboxSecurityDetectorRegistryInput requires rule", () => {
+  assert.throws(() =>
+    createSandboxSecurityDetectorRegistry({} as never)
+  );
+});
+
+test("REQ-SBX-GENERAL-001 balanced rule-only registry constructs", () => {
+  const registry = createSandboxSecurityDetectorRegistry({
+    rule: createRecordingRawLocalDetector()
+  });
+  assert.equal(typeof registry.rule.detect, "function");
+  assert.equal(Object.hasOwn(registry, "local"), false);
+});
+
+test("REQ-SBX-GENERAL-001 createSandboxSecurityDetectorRegistry does not require local", () => {
+  const registry = createSandboxSecurityDetectorRegistry({
+    rule: createRecordingRawLocalDetector()
+  });
+  assert.ok(registry.rule);
+});
+
+test("REQ-SBX-GENERAL-001 strict missing local still constructs registry", () => {
+  const registry = createSandboxSecurityDetectorRegistry({
+    rule: createRecordingRawLocalDetector()
+  });
+  assert.equal(Object.hasOwn(registry, "local"), false);
+});
+
+test("REQ-SBX-GENERAL-001 registry rejects unknown construction keys", () => {
+  assert.throws(() =>
+    createSandboxSecurityDetectorRegistry({
+      rule: createRecordingRawLocalDetector(),
+      extra: true
+    } as never)
+  );
+});
+
+test("REQ-SBX-GENERAL-001 optional Judge may be omitted at construction", () => {
+  const registry = createSandboxSecurityDetectorRegistry({
+    rule: createRecordingRawLocalDetector(),
+    local: createRecordingRawLocalDetector()
+  });
+  assert.equal(Object.hasOwn(registry, "judge"), false);
+});
+
+test("REQ-SBX-GENERAL-001 SandboxSecurityDetectorRegistryInput is the only construction input", () => {
+  const source = readFileSync(new URL("../src/security/detector-registry.ts", import.meta.url), "utf8");
+  assert.match(source, /export interface SandboxSecurityDetectorRegistryInput/);
+  assert.match(source, /createSandboxSecurityDetectorRegistry\(\s*input: Readonly<SandboxSecurityDetectorRegistryInput>/);
+});
+
+test("REQ-SBX-GENERAL-001 registry freezes and captures detector implementations", () => {
+  const rule = createRecordingRawLocalDetector();
+  const registry = createSandboxSecurityDetectorRegistry({ rule });
+  assert.ok(Object.isFrozen(registry));
+  assert.equal(registry.rule, rule);
+});
+
+test("REQ-SBX-GENERAL-001 registry rejects detector identity injection from detectors", () => {
+  const rule = Object.assign(createRecordingRawLocalDetector(), {
+    detector_id: "x"
+  });
+  assert.throws(() => createSandboxSecurityDetectorRegistry({ rule }));
+});
+
+test("REQ-SBX-GENERAL-001 resolveSandboxSecurityDetectorsForProfile balanced rule-only OK", () => {
+  const registry = createSandboxSecurityDetectorRegistry({
+    rule: createRecordingRawLocalDetector()
+  });
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const resolved = resolveSandboxSecurityDetectorsForProfile(registry, profile);
+  assert.equal(resolved.rule, registry.rule);
+  assert.ok(resolved.required_slot_ids.includes("detector://sandbox/security/rule/default/v1"));
+});
+
+test("REQ-SBX-GENERAL-001 resolveSandboxSecurityDetectorsForProfile strict missing local fails RESOLUTION", () => {
+  const registry = createSandboxSecurityDetectorRegistry({
+    rule: createRecordingRawLocalDetector()
+  });
+  const profile = resolveSandboxSecurityProfile("sandbox-security-strict.v1");
+  assert.throws(() => resolveSandboxSecurityDetectorsForProfile(registry, profile));
+});
+
+test("REQ-SBX-GENERAL-001 resolveSandboxSecurityDetectorsForProfile does not fail construction", () => {
+  const registry = createSandboxSecurityDetectorRegistry({
+    rule: createRecordingRawLocalDetector()
+  });
+  assert.ok(registry.rule);
+  const profile = resolveSandboxSecurityProfile("sandbox-security-strict.v1");
+  assert.throws(() => resolveSandboxSecurityDetectorsForProfile(registry, profile));
+});
+
+test("REQ-SBX-GENERAL-001 resolveSandboxSecurityDetectorsForProfile binds fixed slot IDs for rule local judge", () => {
+  const registry = createSandboxSecurityDetectorRegistry({
+    rule: createRecordingRawLocalDetector(),
+    local: createRecordingRawLocalDetector(),
+    judge: createRecordingExternalDetector()
+  });
+  const profile = resolveSandboxSecurityProfile("sandbox-security-strict.v1");
+  const resolved = resolveSandboxSecurityDetectorsForProfile(registry, profile);
+  assert.ok(resolved.required_slot_ids.includes("detector://sandbox/security/rule/default/v1"));
+  assert.ok(resolved.required_slot_ids.includes("detector://sandbox/security/local/default/v1"));
+});
+
+test("REQ-SBX-GENERAL-001 resolveSandboxSecurityDetectorsForProfile rejects kind access stage mismatches", () => {
+  const registry = createSandboxSecurityDetectorRegistry({
+    rule: createRecordingRawLocalDetector(),
+    local: createRecordingRawLocalDetector()
+  });
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const broken = {
+    ...profile,
+    detector_slots: profile.detector_slots.map((slot) =>
+      slot.detector_kind === "rule"
+        ? { ...slot, content_access: "sanitized_external" as const }
+        : slot
+    )
+  };
+  assert.throws(() => resolveSandboxSecurityDetectorsForProfile(registry, broken as never));
+});
+
+test("REQ-SBX-GENERAL-001 resolveSandboxSecurityDetectorsForProfile absent Judge before routing is OK", () => {
+  const registry = createSandboxSecurityDetectorRegistry({
+    rule: createRecordingRawLocalDetector(),
+    local: createRecordingRawLocalDetector()
+  });
+  const profile = resolveSandboxSecurityProfile("sandbox-security-strict.v1");
+  const resolved = resolveSandboxSecurityDetectorsForProfile(registry, profile);
+  assert.equal(Object.hasOwn(resolved, "judge"), false);
+});
+
+test("REQ-SBX-GENERAL-001 resolveSandboxSecurityDetectorsForProfile is engine-internal not Master C export", () => {
+  assert.equal(existsSync(new URL("../src/security/index.ts", import.meta.url)), false);
+  const sharedIndex = readFileSync(new URL("../../../shared/index.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(sharedIndex, /resolveSandboxSecurityDetectorsForProfile/);
+});
+

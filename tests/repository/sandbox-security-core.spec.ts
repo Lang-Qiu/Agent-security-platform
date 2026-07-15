@@ -1575,3 +1575,27 @@ test("REQ-SBX-GENERAL-001 shared package exports all Master B type symbols", () 
     sortedNames(MASTER_B_TYPES)
   );
 });
+
+
+test("REQ-SBX-GENERAL-001 detector-registry module exists for construction APIs", () => {
+  assert.equal(
+    existsSync(join(REPO_ROOT, "engines/sandbox/src/security/detector-registry.ts")),
+    true
+  );
+  const source = readText("engines/sandbox/src/security/detector-registry.ts");
+  assert.match(source, /export function createSandboxSecurityDetectorRegistry/);
+  assert.match(source, /export function resolveSandboxSecurityDetectorsForProfile/);
+});
+
+test("REQ-SBX-GENERAL-001 resolveSandboxSecurityDetectorsForProfile remains non-public", () => {
+  const sharedIndex = readText("shared/index.ts");
+  assert.doesNotMatch(sharedIndex, /resolveSandboxSecurityDetectorsForProfile/);
+  const securityIndex = join(REPO_ROOT, "engines/sandbox/src/security/index.ts");
+  if (existsSync(securityIndex)) {
+    assert.doesNotMatch(
+      readFileSync(securityIndex, "utf8"),
+      /resolveSandboxSecurityDetectorsForProfile/
+    );
+  }
+});
+

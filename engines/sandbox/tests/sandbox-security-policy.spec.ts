@@ -478,3 +478,53 @@ test("REQ-SBX-GENERAL-001 no Phase 2 module derives trust_class", () => {
     assert.doesNotMatch(source, /deriveSandboxSecurityTrustClass/);
   }
 });
+
+
+
+test("REQ-SBX-GENERAL-001 production security tree has no network fs process model console", () => {
+  const dir = new URL("../src/security/", import.meta.url);
+  const files = readdirSync(dir).filter((name) => name.endsWith(".ts"));
+  for (const name of files) {
+    const source = readFileSync(new URL(name, dir), "utf8");
+    assert.doesNotMatch(source, /\bfrom ["']node:(net|http|https|fs|child_process)["']/);
+    assert.doesNotMatch(source, /\bprocess\.env\b/);
+    assert.doesNotMatch(source, /\bconsole\.(log|error|info|warn)\b/);
+    assert.doesNotMatch(source, /\bopenai\b|\banthropic\b|\bfetch\(/i);
+  }
+});
+
+test("REQ-SBX-GENERAL-001 production security tree has no detector-pipeline module", () => {
+  assert.equal(
+    existsSync(new URL("../src/security/detector-pipeline.ts", import.meta.url)),
+    false
+  );
+});
+
+test("REQ-SBX-GENERAL-001 detector-registry is sole owner of registry construction APIs", () => {
+  const dir = new URL("../src/security/", import.meta.url);
+  const owners = [];
+  for (const name of readdirSync(dir).filter((n) => n.endsWith(".ts"))) {
+    const source = readFileSync(new URL(name, dir), "utf8");
+    if (source.includes("export function createSandboxSecurityDetectorRegistry")) {
+      owners.push(name);
+    }
+  }
+  assert.deepEqual(owners, ["detector-registry.ts"]);
+});
+
+test("REQ-SBX-GENERAL-001 phase 3 production files have unique ownership", () => {
+  const expected = [
+    "detector-contract.ts",
+    "detector-output-boundary.ts",
+    "detector-registry.ts",
+    "policy-profiles.ts",
+    "sanitized-boundary.ts",
+    "subject-scope.ts"
+  ];
+  const dir = new URL("../src/security/", import.meta.url);
+  const names = readdirSync(dir).filter((n) => n.endsWith(".ts")).sort();
+  for (const file of expected) {
+    assert.ok(names.includes(file), file);
+  }
+});
+
