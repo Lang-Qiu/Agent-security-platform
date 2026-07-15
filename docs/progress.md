@@ -1,6 +1,31 @@
 # Progress
 
 
+## 2026-07-15 - REQ-SBX-GENERAL-001 P3-T1 detector ports
+
+- scope: isolated detector ports, raw snapshot with full frozen profile,
+  candidate/clearance/sanitized payload contracts, fixed limits, adapter
+  unsupported error class, content-free recording fixtures
+- files:
+  - `engines/sandbox/src/security/detector-contract.ts` (create)
+  - `engines/sandbox/tests/sandbox-security-detector.spec.ts` (create)
+  - `engines/sandbox/tests/fixtures/security-detector.fixture.ts` (create)
+- verification:
+  - detector suite 20/20
+  - related policy+authority+input 93/93
+  - sandbox `tsc --noEmit` pass
+- independent review:
+  - P0/P1: none
+  - locked ports/snapshot/result/sanitized shapes match plan+spec
+  - no `policy_profile_id` on raw snapshot; full `profile` manifest only
+  - no action identity/prose/evidence fields; no detector-pipeline export
+  - limits exact (32/32/8/64KiB/256KiB/8/2048/64KiB/67)
+  - `SandboxSecurityAdapterUnsupportedError` exact code/message/frozen/instanceof
+  - NormalizedContent/ToolRequest imported not redefined
+  - conclusion: APPROVED
+- re-review: APPROVED (no changes required)
+- status: P3-T1 VERIFIED; next P3-T2
+
 ## 2026-07-15 - REQ-SBX-GENERAL-001 P3-T5 policy profiles
 
 - scope: immutable balanced/strict manifests, sole trust derivation, slot tables
