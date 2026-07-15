@@ -1,18 +1,45 @@
-// temporary deep imports until P5-T4 closes security/index.ts to Master C/D
-// type modules must be correct; do not import everything from detector-contract
-
 import type {
+  AuthenticatedSourceObservation,
+  AuthenticatedToolObservation,
   RawLocalDetector,
   SanitizedExternalDetector,
+  SandboxSecurityActionByStage,
+  SandboxSecurityActionMatrix,
+  SandboxSecurityAuthoritativeEvaluationContext,
+  SandboxSecurityCandidateSubjectRef,
+  SandboxSecurityCanonicalFingerprintPort,
+  SandboxSecurityCanonicalFingerprintService,
+  SandboxSecurityCategoryClearance,
+  SandboxSecurityDetectorRegistry,
+  SandboxSecurityDetectorRegistryInput,
+  SandboxSecurityDetectorSlotId,
+  SandboxSecurityDetectorSlotManifest,
+  SandboxSecurityEngine,
+  SandboxSecurityEvaluationRequest,
+  SandboxSecurityExternalCandidateSubjectRef,
+  SandboxSecurityExternalCategoryClearance,
+  SandboxSecurityExternalDetectorResult,
+  SandboxSecurityExternalRiskCandidate,
+  SandboxSecurityPolicyProfileManifest,
+  SandboxSecurityRawDetectorResult,
   SandboxSecurityRawDetectorSnapshot,
   SandboxSecurityRiskCandidate,
-  SandboxSecurityCandidateSubjectRef,
-  SandboxSecurityExternalCandidateSubjectRef
-} from "../../src/security/detector-contract.ts";
+  SandboxSecurityRuntimePorts,
+  SandboxSecuritySanitizedJudgeObligation,
+  SandboxSecuritySanitizedJudgePayload,
+  SandboxSecuritySanitizer,
+  SandboxSecurityTrustClass,
+  SandboxSecurityTrustRule
+} from "../../src/security/index.ts";
 
-import type {
-  SandboxSecurityEvaluationRequest
-} from "../../src/security/source-authority.ts";
+// @ts-expect-error internal normalized request is not a public engine export
+import type { NormalizedSandboxSecurityEvaluationRequest } from "../../src/security/index.ts";
+// @ts-expect-error internal request brand is not a public engine export
+import type { sandboxSecurityEvaluationRequestBrand } from "../../src/security/index.ts";
+// @ts-expect-error prepared input is not a public engine export
+import type { SandboxSecurityPreparedInput } from "../../src/security/index.ts";
+// @ts-expect-error raw subject registry is not a public engine export
+import type { SandboxSecurityRawSubjectRegistry } from "../../src/security/index.ts";
 
 import type {
   SandboxSecurityFindingSubjectRef,
@@ -28,6 +55,40 @@ declare const raw: RawLocalDetector;
 declare const evaluationRequest: SandboxSecurityEvaluationRequest;
 declare const publicSubject: SandboxSecurityFindingSubjectRef;
 declare const privateSubject: SandboxSecurityCandidateSubjectRef;
+type MasterDExportProbe = readonly [
+  SandboxSecurityEvaluationRequest,
+  SandboxSecurityAuthoritativeEvaluationContext,
+  AuthenticatedSourceObservation,
+  AuthenticatedToolObservation,
+  SandboxSecurityEngine,
+  SandboxSecurityRuntimePorts,
+  SandboxSecurityCanonicalFingerprintPort,
+  SandboxSecurityCanonicalFingerprintService,
+  SandboxSecurityDetectorRegistry,
+  SandboxSecurityDetectorRegistryInput,
+  RawLocalDetector,
+  SandboxSecuritySanitizer,
+  SanitizedExternalDetector,
+  SandboxSecurityRawDetectorSnapshot,
+  SandboxSecurityRiskCandidate,
+  SandboxSecurityCategoryClearance,
+  SandboxSecurityRawDetectorResult,
+  SandboxSecurityExternalDetectorResult,
+  SandboxSecurityExternalRiskCandidate,
+  SandboxSecurityExternalCategoryClearance,
+  SandboxSecuritySanitizedJudgePayload,
+  SandboxSecuritySanitizedJudgeObligation,
+  SandboxSecurityCandidateSubjectRef,
+  SandboxSecurityExternalCandidateSubjectRef,
+  SandboxSecurityPolicyProfileManifest,
+  SandboxSecurityDetectorSlotManifest,
+  SandboxSecurityDetectorSlotId,
+  SandboxSecurityTrustClass,
+  SandboxSecurityTrustRule,
+  SandboxSecurityActionByStage,
+  SandboxSecurityActionMatrix
+];
+declare const masterDExports: MasterDExportProbe;
 
 // @ts-expect-error ordinary public request is not complete evaluation request
 const badEval: SandboxSecurityEvaluationRequest = publicRequest;
@@ -64,3 +125,4 @@ void badJudge;
 void badSubject;
 void badCandidate;
 void badExternal;
+void masterDExports;

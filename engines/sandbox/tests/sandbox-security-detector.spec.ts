@@ -491,8 +491,12 @@ test("REQ-SBX-GENERAL-001 resolveSandboxSecurityDetectorsForProfile absent Judge
 });
 
 test("REQ-SBX-GENERAL-001 resolveSandboxSecurityDetectorsForProfile is engine-internal not Master C export", () => {
-  assert.equal(existsSync(new URL("../src/security/index.ts", import.meta.url)), false);
+  const indexPath = new URL("../src/security/index.ts", import.meta.url);
+  assert.equal(existsSync(indexPath), true);
+  assert.doesNotMatch(
+    readFileSync(indexPath, "utf8"),
+    /resolveSandboxSecurityDetectorsForProfile/
+  );
   const sharedIndex = readFileSync(new URL("../../../shared/index.ts", import.meta.url), "utf8");
   assert.doesNotMatch(sharedIndex, /resolveSandboxSecurityDetectorsForProfile/);
 });
-

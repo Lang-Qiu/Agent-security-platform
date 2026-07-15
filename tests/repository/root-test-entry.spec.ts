@@ -112,7 +112,13 @@ test("root quality gate delegates to test:all and includes frontend coverage", (
 
   for (const securityCoreTest of [
     "engines/sandbox/tests/sandbox-security-authority.spec.ts",
-    "engines/sandbox/tests/sandbox-security-input.spec.ts"
+    "engines/sandbox/tests/sandbox-security-input.spec.ts",
+    "engines/sandbox/tests/sandbox-security-detector.spec.ts",
+    "engines/sandbox/tests/sandbox-security-detector-boundary.spec.ts",
+    "engines/sandbox/tests/sandbox-security-sanitized-boundary.spec.ts",
+    "engines/sandbox/tests/sandbox-security-policy.spec.ts",
+    "engines/sandbox/tests/sandbox-security-engine.spec.ts",
+    "engines/sandbox/tests/sandbox-security-track1-adapter.spec.ts"
   ]) {
     assert.ok(
       scripts["test:engine:sandbox"]?.includes(securityCoreTest),

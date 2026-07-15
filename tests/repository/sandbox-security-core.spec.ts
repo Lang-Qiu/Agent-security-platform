@@ -206,6 +206,27 @@ const SANDBOX_SECURITY_CONTRACTS_PATH = resolve(
   "shared/contracts/sandbox-security.ts"
 );
 const ENGINES_PATH = resolve(REPO_ROOT, "engines");
+const SECURITY_INDEX_RELATIVE_PATH = "engines/sandbox/src/security/index.ts";
+const SECURITY_INDEX_PATH = resolve(REPO_ROOT, SECURITY_INDEX_RELATIVE_PATH);
+const INERT_SECURITY_INDEX_SOURCE = `
+export function resolveSandboxSecurityProfile(): null {
+  return null;
+}
+`;
+
+const MASTER_E_CLOSE_SET = [
+  "ValidatedSandboxSecurityEvaluationRequest",
+  "normalizeAndValidateSandboxSecurityEvaluationRequest",
+  "PreparedInput",
+  "NormalizedContent",
+  "RawSubjectRegistry",
+  "ExternalTokenRegistry"
+] as const;
+
+const FORBIDDEN_ENGINE_EXPORTS = [
+  ...MASTER_E_CONCRETE_IDENTIFIERS,
+  ...MASTER_E_CLOSE_SET
+] as const;
 
 type ExportKind = "type" | "value";
 
@@ -677,6 +698,49 @@ function readText(relativePath: string): string {
   return readFileSync(join(REPO_ROOT, relativePath), "utf8");
 }
 
+function readSecurityIndexSource(): string {
+  return existsSync(SECURITY_INDEX_PATH)
+    ? readText(SECURITY_INDEX_RELATIVE_PATH)
+    : INERT_SECURITY_INDEX_SOURCE;
+}
+
+function securityIndexInventory(): ExportInventory {
+  return enumerateDirectExports(
+    SECURITY_INDEX_RELATIVE_PATH,
+    readSecurityIndexSource()
+  );
+}
+
+type PublicSandboxSecurityProfile = { readonly profile_id: string };
+
+async function resolvePublicSandboxSecurityProfile(
+  profileId: string
+): Promise<PublicSandboxSecurityProfile | null> {
+  if (!existsSync(SECURITY_INDEX_PATH)) {
+    return null;
+  }
+
+  try {
+    const securityIndex = (await import(
+      "../../engines/sandbox/src/security/index.ts"
+    )) as {
+      resolveSandboxSecurityProfile?: (
+        requestedProfileId: string
+      ) => PublicSandboxSecurityProfile | null;
+    };
+    return securityIndex.resolveSandboxSecurityProfile?.(profileId) ?? null;
+  } catch (error) {
+    const details = error as { code?: unknown; url?: unknown };
+    if (
+      details.code === "ERR_MODULE_NOT_FOUND" &&
+      String(details.url ?? "").endsWith(SECURITY_INDEX_RELATIVE_PATH)
+    ) {
+      return null;
+    }
+    throw error;
+  }
+}
+
 function readJson(relativePath: string): Record<string, unknown> {
   // Strip only full-line // comments. Avoid block-comment stripping because
   // tsconfig include globs contain "/**/" path segments.
@@ -1084,6 +1148,411 @@ function analyzePositiveVirtualExports() {
   return positiveVirtualExportAnalysis;
 }
 
+function assertForbiddenEngineExportsAbsent(
+  identifiers: readonly string[]
+): void {
+  const inventory = securityIndexInventory();
+  for (const identifier of identifiers) {
+    assert.equal(
+      inventory.named.some((entry) => entry.sourceName === identifier),
+      false,
+      `security index source export must not expose ${identifier}`
+    );
+    assert.equal(
+      inventory.named.some((entry) => entry.exportedName === identifier),
+      false,
+      `security index exported name must not expose ${identifier}`
+    );
+  }
+}
+
+test("REQ-SBX-GENERAL-001 engine runtime exports equal allowlist C", () => {
+  const inventory = securityIndexInventory();
+  assert.deepEqual(
+    sortedNames(namesByKind(inventory, "value")),
+    sortedNames(MASTER_C_RUNTIME)
+  );
+  assert.deepEqual(inventory.starModules, []);
+  assert.deepEqual(inventory.unsupported, []);
+  assert.equal(
+    inventory.named.every((entry) => entry.sourceName === entry.exportedName),
+    true,
+    "engine index must not alias exports"
+  );
+});
+
+test("REQ-SBX-GENERAL-001 engine type exports equal allowlist D", () => {
+  const inventory = securityIndexInventory();
+  assert.deepEqual(
+    sortedNames(namesByKind(inventory, "type")),
+    sortedNames(MASTER_D_TYPES)
+  );
+});
+
+for (const approvedTypeName of [
+  "SandboxSecurityEvaluationRequest",
+  "SandboxSecurityRawDetectorSnapshot",
+  "SandboxSecurityDetectorRegistryInput"
+] as const) {
+  const testName =
+    approvedTypeName === "SandboxSecurityEvaluationRequest"
+      ? "REQ-SBX-GENERAL-001 engine exports approved SandboxSecurityEvaluationRequest"
+      : approvedTypeName === "SandboxSecurityRawDetectorSnapshot"
+        ? "REQ-SBX-GENERAL-001 engine exports SandboxSecurityRawDetectorSnapshot type"
+        : "REQ-SBX-GENERAL-001 engine exports SandboxSecurityDetectorRegistryInput type";
+  test(testName, () => {
+    const inventory = securityIndexInventory();
+    assert.equal(
+      inventory.named.some(
+        (entry) =>
+          entry.exportedName === approvedTypeName &&
+          entry.sourceName === approvedTypeName &&
+          entry.kind === "type"
+      ),
+      true,
+      `engine index must export approved type ${approvedTypeName}`
+    );
+  });
+}
+
+test("REQ-SBX-GENERAL-001 engine exports obligated Judge payload/result types", () => {
+  const inventory = securityIndexInventory();
+  for (const typeName of [
+    "SandboxSecurityRawDetectorResult",
+    "SandboxSecurityExternalDetectorResult",
+    "SandboxSecuritySanitizedJudgePayload",
+    "SandboxSecuritySanitizedJudgeObligation"
+  ]) {
+    assert.equal(
+      inventory.named.some(
+        (entry) => entry.exportedName === typeName && entry.kind === "type"
+      ),
+      true,
+      `engine index must export Judge contract type ${typeName}`
+    );
+  }
+});
+
+const FORBIDDEN_ENGINE_EXPORT_TESTS: ReadonlyArray<
+  readonly [string, readonly string[]]
+> = [
+  [
+    "REQ-SBX-GENERAL-001 engine does not export NormalizedSandboxSecurityEvaluationRequest",
+    ["NormalizedSandboxSecurityEvaluationRequest"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export internal normalizer",
+    ["normalizeSandboxSecurityEvaluationRequest"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export brand symbol",
+    ["sandboxSecurityEvaluationRequestBrand"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export prepareSandboxSecurityInput",
+    ["prepareSandboxSecurityInput"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export PreparedInput or NormalizedContent",
+    ["PreparedInput", "SandboxSecurityPreparedInput", "NormalizedContent", "SandboxSecurityNormalizedContent"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export RawSubjectRegistry",
+    ["RawSubjectRegistry", "SandboxSecurityRawSubjectRegistry"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export ExternalTokenRegistry",
+    ["ExternalTokenRegistry", "SandboxSecurityExternalTokenRegistry"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export resolveSandboxSecurityDetectorsForProfile",
+    ["resolveSandboxSecurityDetectorsForProfile"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export DraftFinding",
+    ["SandboxSecurityDraftFinding"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export AcceptedSubjectEntity",
+    ["SandboxSecurityAcceptedSubjectEntity"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export PublicSubjectTokenMap",
+    ["SandboxSecurityPublicSubjectTokenMap"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export token materializer",
+    ["materializeSandboxSecurityPublicSubjectTokens"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export finding publisher",
+    ["publishSandboxSecurityFindings"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export AuthorityBoundContent",
+    ["SandboxSecurityAuthorityBoundContent"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export trust derivation helper",
+    ["deriveSandboxSecurityTrustClass"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export canonical subject scope helpers",
+    [
+      "SandboxSecurityCanonicalPrivateSubjectScope",
+      "canonicalizeSandboxSecurityPrivateSubjectScopes",
+      "computeSandboxSecuritySubjectKey"
+    ]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export EngineFailure",
+    ["SandboxSecurityEngineFailure"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export EngineFailurePhase",
+    ["SandboxSecurityEngineFailurePhase"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export RunLedger",
+    ["SandboxSecurityRunLedger"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export RunLedger factory",
+    ["createSandboxSecurityRunLedger"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export RunLedgerLifecycle",
+    ["SandboxSecurityRunLedgerLifecycle"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export RunLedgerSlotSnapshot",
+    ["SandboxSecurityRunLedgerSlotSnapshot"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export RunLedgerSnapshot",
+    ["SandboxSecurityRunLedgerSnapshot"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export Judge outcome/application internals",
+    [
+      "SandboxSecurityNormalizedJudgeOutcome",
+      "SandboxSecurityJudgeApplicationResult",
+      "SandboxSecurityJudgeResolutionEvidence"
+    ]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export semantic validator or evidence ledger",
+    [
+      "validateSandboxSecurityDecisionSemantics",
+      "SandboxSecurityEvaluationEvidenceLedger"
+    ]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export SlotEvaluationRecord",
+    ["SandboxSecuritySlotEvaluationRecord"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export JudgeTerminationReason",
+    ["SandboxSecurityJudgeTerminationReason"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export DecisionBearingEngineFailure",
+    ["SandboxSecurityDecisionBearingEngineFailure"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export DecisionBearingBudgetPhase",
+    ["SandboxSecurityDecisionBearingBudgetPhase"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export TerminalEngineErrorCode",
+    ["SandboxSecurityTerminalEngineErrorCode"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export EngineFailureCode",
+    ["SandboxSecurityEngineFailureCode"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export FailedRunErrorCode",
+    ["SandboxDetectorFailedRunErrorCode"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export publication pure verify APIs",
+    ["deriveSandboxSecurityExpectedPublication", "validateSandboxSecurityPublication"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export RoutedObligationRecord",
+    ["SandboxSecurityRoutedObligationRecord"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export EscalationLifecycle",
+    ["SandboxSecurityEscalationLifecycle"]
+  ],
+  [
+    "REQ-SBX-GENERAL-001 engine does not export NormalizedSlotResult",
+    ["SandboxSecurityNormalizedSlotResult"]
+  ]
+];
+
+for (const [testName, forbiddenNames] of FORBIDDEN_ENGINE_EXPORT_TESTS) {
+  test(testName, () => assertForbiddenEngineExportsAbsent(forbiddenNames));
+}
+
+test("REQ-SBX-GENERAL-001 engine forbidden export inventory is complete", () => {
+  assertForbiddenEngineExportsAbsent(FORBIDDEN_ENGINE_EXPORTS);
+});
+
+test("REQ-SBX-GENERAL-001 shared package exports SandboxSecurityReasonCode", () => {
+  const inventory = enumerateDirectExports("shared/index.ts", readText("shared/index.ts"));
+  assert.equal(
+    inventory.named.some(
+      (entry) =>
+        entry.exportedName === "SandboxSecurityReasonCode" &&
+        entry.sourceName === "SandboxSecurityReasonCode" &&
+        entry.kind === "type" &&
+        entry.resolvedModulePath === SANDBOX_SECURITY_TYPES_PATH
+    ),
+    true
+  );
+});
+
+test("REQ-SBX-GENERAL-001 shared package exports all Master A and B symbols", () => {
+  const inventory = enumerateDirectExports("shared/index.ts", readText("shared/index.ts"));
+  for (const symbolName of MASTER_A_RUNTIME) {
+    assert.notEqual(Reflect.get(sharedPackage, symbolName), undefined);
+    assert.equal(
+      inventory.named.some(
+        (entry) => entry.exportedName === symbolName && entry.kind === "value"
+      ),
+      true,
+      `shared package must export runtime symbol ${symbolName}`
+    );
+  }
+  assert.deepEqual(
+    sortedNames(namesByKind(inventory, "type", SANDBOX_SECURITY_TYPES_PATH)),
+    sortedNames(MASTER_B_TYPES)
+  );
+  for (const typeName of MASTER_B_TYPES) {
+    assert.equal(
+      inventory.named.some(
+        (entry) =>
+          entry.exportedName === typeName &&
+          entry.sourceName === typeName &&
+          entry.kind === "type"
+      ),
+      true,
+      `shared package must export type ${typeName}`
+    );
+  }
+});
+
+test("REQ-SBX-GENERAL-001 shared package retains historical non-GENERAL-001 exports", () => {
+  assert.equal(sharedPackage.TRACK1_OPENCLAW_VERSION, "2026.6.10");
+  const historical = analyzePositiveVirtualExports().exports.find(
+    (entry) => entry.exportedName === "HistoricalSharedFixture"
+  );
+  assert.ok(historical);
+  assert.deepEqual(historical.engineOriginPaths, []);
+});
+
+function securitySourceFiles(): string[] {
+  const securityRoot = resolve(REPO_ROOT, "engines/sandbox/src/security");
+  const walk = (directory: string): string[] =>
+    readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+      const file = join(directory, entry.name);
+      return entry.isDirectory() ? walk(file) : entry.isFile() ? [file] : [];
+    });
+  return walk(securityRoot);
+}
+
+test("REQ-SBX-GENERAL-001 production security has no oracle harness exports", () => {
+  for (const file of securitySourceFiles()) {
+    const source = readFileSync(file, "utf8");
+    assert.doesNotMatch(source, /track1-security-regression-harness|APPROVED_TRACK1_ACTION_MAP|nine-case oracle/i);
+    assert.doesNotMatch(source, /expected_action\s*:\s*["'](?:allow|alert|ask|deny)["']/);
+  }
+});
+
+test("REQ-SBX-GENERAL-001 production security module set matches Core ownership structure", () => {
+  const securityRoot = resolve(REPO_ROOT, "engines/sandbox/src/security");
+  const relativeFiles = securitySourceFiles()
+    .map((file) => file.slice(`${securityRoot}${sep}`.length))
+    .sort();
+  assert.deepEqual(relativeFiles, [
+    "adapters/monitor-decision-provider.ts",
+    "adapters/track1-rule-matches.ts",
+    "canonical-fingerprint.ts",
+    "canonical-json.ts",
+    "detector-contract.ts",
+    "detector-output-boundary.ts",
+    "detector-registry.ts",
+    "engine.ts",
+    "escalation-state.ts",
+    "finding-qualification.ts",
+    "index.ts",
+    "input-boundary.ts",
+    "locator.ts",
+    "policy-profiles.ts",
+    "policy-reducer.ts",
+    "run-ledger.ts",
+    "runtime-deadline.ts",
+    "sanitized-boundary.ts",
+    "semantic-validator.ts",
+    "source-authority.ts",
+    "subject-scope.ts"
+  ]);
+});
+
+test("REQ-SBX-GENERAL-001 production security has no contract detector-pipeline or harness module", () => {
+  assert.equal(
+    securitySourceFiles().some((file) => /detector-pipeline|harness/i.test(file)),
+    false
+  );
+  for (const file of securitySourceFiles()) {
+    assert.doesNotMatch(readFileSync(file, "utf8"), /detector-pipeline|security-regression-harness/);
+  }
+});
+
+test("REQ-SBX-GENERAL-001 production security has no network fs or model runtime imports", () => {
+  const forbiddenImport = /^(?:node:(?:fs|net|http|https|http2|dns|dgram|tls|child_process)|(?:openai|anthropic|ollama)(?:\/|$))/;
+  for (const file of securitySourceFiles()) {
+    const sourceFile = ts.createSourceFile(
+      file,
+      readFileSync(file, "utf8"),
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS
+    );
+    for (const statement of sourceFile.statements) {
+      if (
+        ts.isImportDeclaration(statement) &&
+        ts.isStringLiteral(statement.moduleSpecifier)
+      ) {
+        assert.doesNotMatch(statement.moduleSpecifier.text, forbiddenImport, file);
+      }
+    }
+  }
+});
+
+test("REQ-SBX-GENERAL-001 export close does not rename frozen APIs", () => {
+  for (const [relativePath, apiName] of [
+    ["engines/sandbox/src/security/engine.ts", "createSandboxSecurityEngine"],
+    ["engines/sandbox/src/security/canonical-fingerprint.ts", "createSandboxSecurityCanonicalFingerprintService"],
+    ["engines/sandbox/src/security/adapters/monitor-decision-provider.ts", "createSandboxSecurityMonitorDecisionAdapter"],
+    ["engines/sandbox/src/security/adapters/track1-rule-matches.ts", "createTrack1RuleMatchDetectorAdapter"],
+    ["engines/sandbox/src/security/policy-profiles.ts", "resolveSandboxSecurityProfile"],
+    ["engines/sandbox/src/security/detector-registry.ts", "createSandboxSecurityDetectorRegistry"]
+  ] as const) {
+    assert.match(readText(relativePath), new RegExp(`(?:export )[^\\n]*\\b${apiName}\\b`));
+  }
+});
+
+test("REQ-SBX-GENERAL-001 public index resolves the balanced profile", async () => {
+  assert.equal(
+    (await resolvePublicSandboxSecurityProfile("sandbox-security-balanced.v1"))?.profile_id,
+    "sandbox-security-balanced.v1"
+  );
+});
+
 test("REQ-SBX-GENERAL-001 registers public contract gates", () => {
   const rootPackage = readJson("package.json") as {
     scripts?: Record<string, string>;
@@ -1438,7 +1907,7 @@ test("REQ-SBX-GENERAL-001 typecheck anchor is not the isolation probe", () => {
   );
 });
 
-test("REQ-SBX-GENERAL-001 type probes are not registered in node test scripts", () => {
+test("REQ-SBX-GENERAL-001 type probes are not node test entrypoints", () => {
   const rootPackage = readJson("package.json") as { scripts?: Record<string, string> };
   const scripts = Object.values(rootPackage.scripts ?? {}).join("\n");
   assert.doesNotMatch(scripts, /sandbox-security-detector-types\.ts/);

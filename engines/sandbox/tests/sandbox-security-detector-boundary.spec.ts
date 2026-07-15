@@ -717,7 +717,12 @@ test("REQ-SBX-GENERAL-001 raw normalize yields NormalizedSlotResult private hand
 });
 
 test("REQ-SBX-GENERAL-001 normalizeSandboxSecurityRawDetectorResult is engine-internal only", () => {
-  assert.equal(existsSync(new URL("../src/security/index.ts", import.meta.url)), false);
+  const indexPath = new URL("../src/security/index.ts", import.meta.url);
+  assert.equal(existsSync(indexPath), true);
+  assert.doesNotMatch(
+    readFileSync(indexPath, "utf8"),
+    /normalizeSandboxSecurityRawDetectorResult/
+  );
 });
 
 test("REQ-SBX-GENERAL-001 canonical private scope preserves exact locator/component", () => {
@@ -911,7 +916,11 @@ test("REQ-SBX-GENERAL-001 private subject scopes sort by UTF-16 code units not l
 });
 
 test("REQ-SBX-GENERAL-001 subject scope helpers are engine-internal and never exported", () => {
-  assert.equal(existsSync(new URL("../src/security/index.ts", import.meta.url)), false);
+  const indexPath = new URL("../src/security/index.ts", import.meta.url);
+  assert.equal(existsSync(indexPath), true);
+  const indexSource = readFileSync(indexPath, "utf8");
+  assert.doesNotMatch(indexSource, /canonicalizeSandboxSecurityPrivateSubjectScopes/);
+  assert.doesNotMatch(indexSource, /computeSandboxSecuritySubjectKey/);
   const sharedIndex = readFileSync(new URL("../../../shared/index.ts", import.meta.url), "utf8");
   assert.doesNotMatch(sharedIndex, /canonicalizeSandboxSecurityPrivateSubjectScopes/);
   assert.doesNotMatch(sharedIndex, /normalizeSandboxSecurityRawDetectorResult/);

@@ -1578,7 +1578,11 @@ test("REQ-SBX-GENERAL-001 obligation scope maps signal refs through external reg
 });
 
 test("REQ-SBX-GENERAL-001 escalation state is not exported on public decision", () => {
-  assert.equal(existsSync(new URL("../src/security/index.ts", import.meta.url)), false);
+  const indexPath = new URL("../src/security/index.ts", import.meta.url);
+  assert.equal(existsSync(indexPath), true);
+  const indexSource = readFileSync(indexPath, "utf8");
+  assert.doesNotMatch(indexSource, /SandboxSecurityEscalationState/);
+  assert.doesNotMatch(indexSource, /createSandboxSecurityEscalationState/);
   const shared = readFileSync(new URL("../../../shared/index.ts", import.meta.url), "utf8");
   assert.doesNotMatch(shared, /createSandboxSecurityEscalationState/);
 });
