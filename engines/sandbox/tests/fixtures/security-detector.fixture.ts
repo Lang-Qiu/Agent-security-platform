@@ -6,6 +6,7 @@ import type {
   SandboxSecuritySanitizer,
   SanitizedExternalDetector
 } from "../../src/security/detector-contract.ts";
+import { deriveSandboxSecurityExternalTokenRegistry } from "../../src/security/sanitized-boundary.ts";
 
 export type ContentFreeEvidence = {
   readonly source_handles: readonly string[];
@@ -65,16 +66,17 @@ export function createRecordingSanitizer(): SandboxSecuritySanitizer & {
       routed_obligations: readonly SandboxSecuritySanitizedJudgeObligation[]
     ): Promise<SandboxSecuritySanitizedJudgePayload> {
       sanitizer.lastObligations = routed_obligations;
+      const registry = deriveSandboxSecurityExternalTokenRegistry(snapshot);
       const sources = snapshot.contents.map((content, index) => ({
-        source_token: `tok-src-${String(index + 1).padStart(4, "0")}`,
+        source_token: registry.source_tokens[index].source_token,
         source_type: content.source_type,
         media_type: content.media_type,
         sanitized_value: "[redacted]"
       }));
-      const tool_request = snapshot.tool_request
+      const tool_request = snapshot.tool_request && registry.call_token
         ? {
-            call_token: "tok-call-0001",
-            tool_name_token: "tok-tool-0001",
+            call_token: registry.call_token.call_token,
+            tool_name_token: registry.call_token.tool_name_token,
             ...(snapshot.tool_request.has_target
               ? { sanitized_target: "[target]" }
               : {}),
@@ -90,7 +92,7 @@ export function createRecordingSanitizer(): SandboxSecuritySanitizer & {
       };
       return {
         schema_version: "sandbox-security-sanitized-judge.v1",
-        request_token: "tok-req-0001",
+        request_token: registry.request_token,
         stage: snapshot.stage,
         policy_profile_id: snapshot.profile.profile_id,
         sources,

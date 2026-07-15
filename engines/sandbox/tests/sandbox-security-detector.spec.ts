@@ -135,7 +135,7 @@ test("REQ-SBX-GENERAL-001 recording external detector receives sanitized tokens 
   );
   await external.detect(payload as never, new AbortController().signal);
   assert.ok(
-    external.evidence.source_tokens.every((token: string) => token.startsWith("tok-"))
+    external.evidence.source_tokens.every((token: string) => token.startsWith("etok:src:"))
   );
   assert.equal(external.evidence.source_handles.length, 0);
 });
@@ -248,7 +248,7 @@ test("REQ-SBX-GENERAL-001 sanitized tool payload exposes tool_name_token only", 
     [],
     new AbortController().signal
   );
-  assert.equal(payload.tool_request?.tool_name_token.startsWith("tok-tool-"), true);
+  assert.equal(payload.tool_request?.tool_name_token.startsWith("etok:tool-name:"), true);
   assert.equal(Object.hasOwn(payload.tool_request ?? {}, "tool_name"), false);
 });
 

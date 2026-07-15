@@ -1,5 +1,32 @@
 # Progress
 
+## 2026-07-15 - REQ-SBX-GENERAL-001 P3-T4 sanitized external boundary
+
+- scope: Engine-issued etok registry, sanitized payload validation, external
+  result normalization with exact obligation scope equality and zero-Judge
+  failure paths
+- files:
+  - `engines/sandbox/src/security/sanitized-boundary.ts` (create)
+  - `engines/sandbox/tests/sandbox-security-sanitized-boundary.spec.ts` (create)
+  - `engines/sandbox/tests/fixtures/security-detector.fixture.ts` (etok recording)
+  - `engines/sandbox/tests/sandbox-security-detector.spec.ts` (token prefix assert)
+- verification:
+  - sanitized inventory 51/51 (+ helper)
+  - detector+sanitized 72/72
+  - related detector suites 105/105 with boundary
+  - sandbox `tsc --noEmit` pass
+- independent review:
+  - P0/P1: none
+  - etok formula locked (req/src/call/tool-name)
+  - validate before Judge; free tokens rejected
+  - external normalize maps tokens to private handles
+  - no detector-output-boundary modification; no pipeline module
+  - conclusion: APPROVED_WITH_NON_BLOCKING_COMMENTS
+  - non-blocking: tests live in dedicated sanitized-boundary.spec for inventory
+    density while fixture/detector.spec still updated per ownership
+- re-review: APPROVED
+- status: P3-T4 VERIFIED; next P3-T6
+
 ## 2026-07-15 - REQ-SBX-GENERAL-001 P3-T3 raw subject boundary
 
 - scope: canonical private subject scopes + raw detector result normalization
