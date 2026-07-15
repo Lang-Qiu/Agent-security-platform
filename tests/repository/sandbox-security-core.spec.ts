@@ -1381,6 +1381,68 @@ test("REQ-SBX-GENERAL-001 sandbox tsconfig exists for typecheck", () => {
   ]);
 });
 
+
+test("REQ-SBX-GENERAL-001 detector type isolation probe exists", () => {
+  assert.equal(
+    existsSync(
+      join(REPO_ROOT, "engines/sandbox/tests/types/sandbox-security-detector-types.ts")
+    ),
+    true
+  );
+});
+
+test("REQ-SBX-GENERAL-001 typecheck anchor is not the isolation probe", () => {
+  assert.notEqual(
+    "sandbox-security-typecheck-anchor.ts",
+    "sandbox-security-detector-types.ts"
+  );
+  assert.equal(
+    existsSync(
+      join(REPO_ROOT, "engines/sandbox/tests/types/sandbox-security-typecheck-anchor.ts")
+    ),
+    true
+  );
+});
+
+test("REQ-SBX-GENERAL-001 type probes are not registered in node test scripts", () => {
+  const rootPackage = readJson("package.json") as { scripts?: Record<string, string> };
+  const scripts = Object.values(rootPackage.scripts ?? {}).join("\n");
+  assert.doesNotMatch(scripts, /sandbox-security-detector-types\.ts/);
+  assert.doesNotMatch(scripts, /sandbox-security-public-types\.ts/);
+});
+
+test("REQ-SBX-GENERAL-001 sandbox tsconfig includes type probes", () => {
+  const config = readJson("engines/sandbox/tsconfig.json") as { include?: string[] };
+  assert.ok((config.include ?? []).some((item) => item.includes("tests/types")));
+});
+
+test("REQ-SBX-GENERAL-001 repository forbids public export of NormalizedSandboxSecurityEvaluationRequest", () => {
+  const index = readText("shared/index.ts");
+  assert.doesNotMatch(index, /NormalizedSandboxSecurityEvaluationRequest/);
+  const securityIndex = join(REPO_ROOT, "engines/sandbox/src/security/index.ts");
+  if (existsSync(securityIndex)) {
+    assert.doesNotMatch(
+      readFileSync(securityIndex, "utf8"),
+      /NormalizedSandboxSecurityEvaluationRequest/
+    );
+  }
+});
+
+test("REQ-SBX-GENERAL-001 formal detector probe RED when missing even if anchor exists", () => {
+  assert.equal(
+    existsSync(
+      join(REPO_ROOT, "engines/sandbox/tests/types/sandbox-security-detector-types.ts")
+    ),
+    true
+  );
+  assert.equal(
+    existsSync(
+      join(REPO_ROOT, "engines/sandbox/tests/types/sandbox-security-typecheck-anchor.ts")
+    ),
+    true
+  );
+});
+
 test("REQ-SBX-GENERAL-001 sandbox typecheck anchor exists", () => {
   assert.equal(
     existsSync(

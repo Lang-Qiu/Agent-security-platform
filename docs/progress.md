@@ -1,5 +1,25 @@
 # Progress
 
+## 2026-07-15 - REQ-SBX-GENERAL-001 P3-T2 detector type isolation
+
+- scope: formal compile-time isolation probe + repository existence gates
+- files:
+  - `engines/sandbox/tests/types/sandbox-security-detector-types.ts` (create)
+  - `tests/repository/sandbox-security-core.spec.ts` (extend)
+- verification:
+  - repository gate 38/38
+  - sandbox `tsc --noEmit` pass (probes consumed)
+  - shared `tsc --noEmit` pass
+  - detector suite still 20/20
+- independent review:
+  - P0/P1: none
+  - six @ts-expect-error directives on real diagnostic lines; no as any/never
+  - does not import NormalizedSandboxSecurityEvaluationRequest
+  - formal probe path required independent of typecheck anchor
+  - conclusion: APPROVED
+- re-review: APPROVED
+- status: P3-T2 VERIFIED; next P3-T3
+
 
 ## 2026-07-15 - REQ-SBX-GENERAL-001 P3-T1 detector ports
 
