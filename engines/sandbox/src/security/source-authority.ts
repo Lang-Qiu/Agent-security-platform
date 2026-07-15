@@ -49,7 +49,8 @@ export interface SandboxSecurityEvaluationRequest {
   authoritative_context: Readonly<SandboxSecurityAuthoritativeEvaluationContext>;
 }
 
-const sandboxSecurityEvaluationRequestBrand: unique symbol = Symbol(
+/** Engine-internal brand token; never re-exported from security/index.ts. */
+export const sandboxSecurityEvaluationRequestBrand: unique symbol = Symbol(
   "sandboxSecurityEvaluationRequestBrand"
 );
 
