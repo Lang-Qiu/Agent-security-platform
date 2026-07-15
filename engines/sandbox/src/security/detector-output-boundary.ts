@@ -73,10 +73,47 @@ const REASON_CODES = new Set(
   SANDBOX_SECURITY_RISK_CATEGORIES.map((c) => `sandbox_security_${c}`)
 );
 
+function reasonCodeForCategory(category: string): string {
+  return `sandbox_security_${category}`;
+}
+
+function wholeSubjectKey(
+  category: string,
+  refs: readonly SandboxSecurityCandidateSubjectRef[],
+  reason_code?: string
+): string {
+  const scopes = canonicalizeSandboxSecurityPrivateSubjectScopes(refs).map((scope) =>
+    canonicalizeSandboxSecurityJson(scope)
+  );
+  return canonicalizeSandboxSecurityJson(
+    reason_code === undefined
+      ? { category, scopes }
+      : { category, reason_code, scopes }
+  );
+}
+
 function invalid(
   code: "detector_result_invalid" | "detector_content_leak" = "detector_result_invalid"
 ): SandboxSecurityNormalizedDetectorResult {
   return { status: "invalid_result", error_code: code };
+}
+
+function deepFreeze<T>(value: T): T {
+  if (value === null || typeof value !== "object" || Object.isFrozen(value)) {
+    return value;
+  }
+  Object.freeze(value);
+  if (Array.isArray(value)) {
+    for (const item of value) deepFreeze(item);
+    return value;
+  }
+  for (const key of Reflect.ownKeys(value as object)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value as object, key);
+    if (descriptor && "value" in descriptor) {
+      deepFreeze(descriptor.value);
+    }
+  }
+  return value;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -244,10 +281,15 @@ export function normalizeSandboxSecurityRawDetectorResult(
     return invalid();
   }
 
-  const encoded = Buffer.byteLength(
-    canonicalizeSandboxSecurityJson(value),
-    "utf8"
-  );
+  let encoded: number;
+  try {
+    encoded = Buffer.byteLength(
+      canonicalizeSandboxSecurityJson(value),
+      "utf8"
+    );
+  } catch {
+    return invalid();
+  }
   if (encoded > SANDBOX_SECURITY_MAX_DETECTOR_RESULT_BYTES) {
     return invalid();
   }
@@ -261,6 +303,8 @@ export function normalizeSandboxSecurityRawDetectorResult(
   const clearances: SandboxSecurityCategoryClearance[] = [];
   const candidateScopes = new Set<string>();
   const clearanceScopes = new Set<string>();
+  const candidateUniqueness = new Set<string>();
+  const clearanceUniqueness = new Set<string>();
 
   for (const item of value.candidates) {
     if (
@@ -288,14 +332,26 @@ export function normalizeSandboxSecurityRawDetectorResult(
     ) {
       return invalid();
     }
+    if (item.reason_code !== reasonCodeForCategory(item.category)) {
+      return invalid();
+    }
     const refs = normalizeItemRefs(item.subject_refs, registry, contents);
     if (!refs) return invalid();
+    const uniquenessKey = wholeSubjectKey(
+      item.category,
+      refs,
+      item.reason_code
+    );
+    if (candidateUniqueness.has(uniquenessKey)) {
+      return invalid();
+    }
+    candidateUniqueness.add(uniquenessKey);
     for (const scope of scopeSet(refs)) {
-      const key = `${item.category}:${scope}`;
-      if (candidateScopes.has(key)) {
+      const conflictKey = `${item.category}:${scope}`;
+      if (clearanceScopes.has(conflictKey)) {
         return invalid();
       }
-      candidateScopes.add(key);
+      candidateScopes.add(conflictKey);
     }
     candidates.push({
       category: item.category as SandboxSecurityRiskCategory,
@@ -324,12 +380,19 @@ export function normalizeSandboxSecurityRawDetectorResult(
     }
     const refs = normalizeItemRefs(item.subject_refs, registry, contents);
     if (!refs) return invalid();
+    const uniquenessKey = wholeSubjectKey(item.category, refs);
+    if (clearanceUniqueness.has(uniquenessKey)) {
+      return invalid();
+    }
+    clearanceUniqueness.add(uniquenessKey);
     for (const scope of scopeSet(refs)) {
-      const key = `${item.category}:${scope}`;
-      if (candidateScopes.has(key)) {
+      const conflictKey = `${item.category}:${scope}`;
+      // candidate/clearance conflict is per subject/category scope; clearance
+      // self-uniqueness is whole subject-ref set via clearanceUniqueness.
+      if (candidateScopes.has(conflictKey)) {
         return invalid();
       }
-      clearanceScopes.add(key);
+      clearanceScopes.add(conflictKey);
     }
     clearances.push({
       category: item.category as SandboxSecurityRiskCategory,
@@ -338,11 +401,11 @@ export function normalizeSandboxSecurityRawDetectorResult(
     });
   }
 
-  return {
+  return deepFreeze({
     status: "matched",
     result: {
       candidates,
       clearances
     }
-  };
+  });
 }

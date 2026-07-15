@@ -116,12 +116,14 @@ and policy reduction has one engine-owned implementation.
 
 - Documentation-only approval and sprint-switch gate: complete.
 - Phase 1 public shared contracts: complete (prior commits).
-- Phase 2 authority and canonical input (P2-T1..P2-T5): complete in worktree
-  after review-fix residuals (typed authority JSON errors, 512 KiB fingerprint
-  bound, independent port bytes, private brand checker, exact-bound tests,
-  engine-suite registration).
-- Phase 3 modules also exist on branch; Phase 2 residual closure does not reopen
-  Phase 3 scope.
-- Next: durable commit of Phase 2 review-fix set if not yet recorded; Phase 4
-  only after explicit instruction.
+- Phase 2 authority and canonical input (P2-T1..P2-T5): implemented; review
+  P1/P2 fixes verified (typed authority JSON errors, 512 KiB fingerprint bound,
+  independent fingerprint port bytes).
+- Phase 3 detectors/profiles/boundaries/registry (P3-T5 → T1 → T2 → T3 → T4 → T6):
+  implemented; independent review P1/P2 fixes verified (duplicate clearance,
+  non-finite confidence, external locator validation, source_type binding,
+  reason_code pairing/uniqueness).
+- Note: current execution environment may not allow git commits; worktree is
+  source of truth for the restarted sequence.
+- Next: Phase 4 only after clean Phase 3 exit evidence; do not start GENERAL-002.
 

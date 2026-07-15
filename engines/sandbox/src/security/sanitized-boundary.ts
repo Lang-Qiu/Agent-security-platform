@@ -2,6 +2,10 @@ import {
   canonicalizeSandboxSecurityJson
 } from "./canonical-json.ts";
 import {
+  validateSandboxSecurityContentLocator,
+  validateSandboxSecurityToolLocator
+} from "./locator.ts";
+import {
   isSandboxSecurityCallHandle,
   isSandboxSecuritySourceHandle,
   type SandboxSecurityCallHandle,
@@ -36,6 +40,7 @@ import type {
   SandboxSecuritySeverity
 } from "../../../../shared/types/sandbox-security.ts";
 import {
+  SANDBOX_SECURITY_CLAIMED_SOURCE_TYPES,
   SANDBOX_SECURITY_RISK_CATEGORIES,
   SANDBOX_SECURITY_SEVERITIES
 } from "../../../../shared/types/sandbox-security.ts";
@@ -60,6 +65,19 @@ export interface SandboxSecurityExternalTokenRegistry {
   readonly call_token?: Readonly<SandboxSecurityExternalCallTokenEntry>;
 }
 
+type ExternalRegistryValidationContext = {
+  readonly contents_by_handle: ReadonlyMap<
+    string,
+    SandboxSecurityRawDetectorSnapshot["contents"][number]
+  >;
+  readonly tool_request?: SandboxSecurityRawDetectorSnapshot["tool_request"];
+};
+
+const externalRegistryContext = new WeakMap<
+  object,
+  ExternalRegistryValidationContext
+>();
+
 export type SandboxSecurityNormalizedExternalDetectorResult =
   | {
       status: "matched";
@@ -77,6 +95,10 @@ const REASON_CODES = new Set(
     (category) => `sandbox_security_${category}`
   )
 );
+
+function reasonCodeForCategory(category: string): string {
+  return `sandbox_security_${category}`;
+}
 
 const NONCE_PATTERN = /^[a-f0-9]{32}$/;
 const SOURCE_HANDLE_PATTERN = /^hsrc:([a-f0-9]{32}):(0[0-6][0-9]{2})$/;
@@ -254,7 +276,14 @@ export function deriveSandboxSecurityExternalTokenRegistry(
     throw new Error("sandbox_security_external_token_registry_invalid");
   }
 
-  return Object.freeze(registry);
+  const frozen = Object.freeze(registry);
+  externalRegistryContext.set(frozen, {
+    contents_by_handle: new Map(
+      snapshot.contents.map((content) => [content.source_handle, content])
+    ),
+    tool_request: snapshot.tool_request
+  });
+  return frozen;
 }
 
 export function assertSanitizedJudgePayloadBounds(
@@ -292,40 +321,10 @@ function scopeIdentityFromExternalRefs(
   refs: readonly SandboxSecurityExternalCandidateSubjectRef[],
   registry: Readonly<SandboxSecurityExternalTokenRegistry>
 ): string[] | null {
-  const privateRefs: SandboxSecurityCandidateSubjectRef[] = [];
-  for (const ref of refs) {
-    if (ref.kind === "content_source") {
-      const entry = registry.source_tokens.find(
-        (item) => item.source_token === ref.source_token
-      );
-      if (!entry) return null;
-      privateRefs.push({
-        kind: "content_source",
-        source_handle: entry.source_handle,
-        locator: ref.locator
-      });
-      continue;
-    }
-    if (!registry.call_token || ref.call_token !== registry.call_token.call_token) {
-      return null;
-    }
-    if (ref.component === "arguments") {
-      privateRefs.push({
-        kind: "tool_request",
-        call_handle: registry.call_token.call_handle,
-        component: "arguments",
-        locator: ref.locator
-      });
-    } else {
-      privateRefs.push({
-        kind: "tool_request",
-        call_handle: registry.call_token.call_handle,
-        component: ref.component
-      });
-    }
-  }
+  const mapped = mapExternalRefsToPrivate(refs, registry);
+  if (!mapped) return null;
   try {
-    return canonicalizeSandboxSecurityPrivateSubjectScopes(privateRefs).map((scope) =>
+    return canonicalizeSandboxSecurityPrivateSubjectScopes(mapped).map((scope) =>
       canonicalizeSandboxSecurityJson(scope)
     );
   } catch {
@@ -402,9 +401,15 @@ export function validateSandboxSecuritySanitizedJudgePayload(
     ) {
       throw new Error("external_redaction_failed");
     }
+    const expectedContent = snapshot.contents[index];
     if (
+      !expectedContent ||
       source.source_token !== expected.source_token ||
       source.media_type !== expected.media_type ||
+      source.media_type !== expectedContent.media_type ||
+      typeof source.source_type !== "string" ||
+      !SANDBOX_SECURITY_CLAIMED_SOURCE_TYPES.includes(source.source_type as never) ||
+      source.source_type !== expectedContent.source_type ||
       seenSourceTokens.has(source.source_token) ||
       !tokenSet.has(source.source_token)
     ) {
@@ -549,6 +554,8 @@ function mapExternalRefsToPrivate(
 ): SandboxSecurityCandidateSubjectRef[] | null {
   if (!Array.isArray(refsValue) || refsValue.length === 0) return null;
   if (refsValue.length > SANDBOX_SECURITY_MAX_SUBJECT_REFS_PER_ITEM) return null;
+  const context = externalRegistryContext.get(registry as object);
+  if (!context) return null;
   const refs: SandboxSecurityCandidateSubjectRef[] = [];
   for (const ref of refsValue) {
     if (!isPlainRecord(ref) || typeof ref.kind !== "string") return null;
@@ -561,15 +568,30 @@ function mapExternalRefsToPrivate(
         (item) => item.source_token === ref.source_token
       );
       if (!entry) return null;
+      const content = context.contents_by_handle.get(entry.source_handle);
+      if (!content) return null;
+      const locator = validateSandboxSecurityContentLocator(ref.locator, {
+        source_handle: content.source_handle,
+        source_id: content.source_id,
+        source_type: content.source_type,
+        media_type: content.media_type,
+        authority_kind: content.authority_kind,
+        value: content.value,
+        provenance_ref: content.provenance_ref,
+        original_utf8_bytes: content.original_utf8_bytes,
+        original_value_sha256: content.original_value_sha256,
+        comparison_value: content.comparison_value
+      } as never);
+      if (locator === null) return null;
       refs.push({
         kind: "content_source",
         source_handle: entry.source_handle,
-        locator: ref.locator as never
+        locator
       });
       continue;
     }
     if (ref.kind === "tool_request") {
-      if (!registry.call_token) return null;
+      if (!registry.call_token || !context.tool_request) return null;
       if (typeof ref.call_token !== "string" || ref.call_token.startsWith("hcall:")) {
         return null;
       }
@@ -594,11 +616,22 @@ function mapExternalRefsToPrivate(
         hasExactKeys(ref, ["kind", "call_token", "component", "locator"]) &&
         ref.component === "arguments"
       ) {
+        const tool = context.tool_request;
+        const locator = validateSandboxSecurityToolLocator(ref.locator, {
+          call_handle: tool.call_handle,
+          call_id: tool.call_id,
+          authority_kind: tool.authority_kind,
+          tool_name: tool.tool_name,
+          arguments: tool.arguments,
+          arguments_jcs_sha256: tool.arguments_jcs_sha256,
+          has_target: tool.has_target
+        } as never);
+        if (locator === null) return null;
         refs.push({
           kind: "tool_request",
           call_handle: registry.call_token.call_handle,
           component: "arguments",
-          locator: ref.locator as never
+          locator
         });
         continue;
       }
@@ -634,7 +667,12 @@ export function normalizeSandboxSecurityExternalDetectorResult(
   if (value.clearances.length > SANDBOX_SECURITY_MAX_CLEARANCES_PER_RESULT) {
     return invalid();
   }
-  const encoded = Buffer.byteLength(canonicalizeSandboxSecurityJson(value), "utf8");
+  let encoded: number;
+  try {
+    encoded = Buffer.byteLength(canonicalizeSandboxSecurityJson(value), "utf8");
+  } catch {
+    return invalid();
+  }
   if (encoded > SANDBOX_SECURITY_MAX_JUDGE_RESPONSE_BYTES) {
     return invalid();
   }
@@ -676,7 +714,8 @@ export function normalizeSandboxSecurityExternalDetectorResult(
       item.confidence < 0 ||
       item.confidence > 1 ||
       typeof item.reason_code !== "string" ||
-      !REASON_CODES.has(item.reason_code)
+      !REASON_CODES.has(item.reason_code) ||
+      item.reason_code !== reasonCodeForCategory(item.category)
     ) {
       return invalid();
     }
@@ -779,12 +818,12 @@ export function normalizeSandboxSecurityExternalDetectorResult(
     });
   }
 
-  return {
+  return deepFreeze({
     status: "matched",
     result: {
       candidates,
       clearances
     },
     covered_obligation_ids: Object.freeze([...covered].sort())
-  };
+  });
 }

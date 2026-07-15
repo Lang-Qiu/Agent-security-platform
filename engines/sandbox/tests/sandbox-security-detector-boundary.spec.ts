@@ -89,6 +89,8 @@ test("REQ-SBX-GENERAL-001 raw result with candidates maps to matched", () => {
   if (result.status === "matched") {
     assert.equal(result.result.candidates.length, 1);
     assert.equal(result.result.clearances.length, 0);
+    assert.equal(Object.isFrozen(result), true);
+    assert.equal(Object.isFrozen(result.result.candidates), true);
   }
 });
 
@@ -498,6 +500,181 @@ test("REQ-SBX-GENERAL-001 raw rejects reason_code outside SandboxSecurityReasonC
   );
   assert.equal(result.status, "invalid_result");
 });
+
+test("REQ-SBX-GENERAL-001 raw rejects duplicate clearance uniqueness key in one slot", () => {
+  const ref = {
+    kind: "content_source",
+    source_handle: SOURCE,
+    locator: { kind: "whole_source" }
+  };
+  const result = normalizeSandboxSecurityRawDetectorResult(
+    {
+      candidates: [],
+      clearances: [
+        {
+          category: "prompt_injection",
+          confidence: 0.9,
+          subject_refs: [ref]
+        },
+        {
+          category: "prompt_injection",
+          confidence: 0.1,
+          subject_refs: [ref]
+        }
+      ]
+    },
+    registry()
+  );
+  assert.equal(result.status, "invalid_result");
+});
+
+test("REQ-SBX-GENERAL-001 raw allows distinct multi-ref clearance sets that share a scope", () => {
+  const multiRegistry = {
+    evaluation_nonce: NONCE,
+    content_subjects: Object.freeze([
+      Object.freeze({
+        source_handle: SOURCE,
+        media_type: "text/plain" as const,
+        original_utf8_bytes: Object.freeze([104, 101, 108, 108, 111]),
+        value: "hello"
+      }),
+      Object.freeze({
+        source_handle: `hsrc:${NONCE}:0002`,
+        media_type: "text/plain" as const,
+        original_utf8_bytes: Object.freeze([119, 111, 114, 108, 100]),
+        value: "world"
+      })
+    ])
+  };
+  const result = normalizeSandboxSecurityRawDetectorResult(
+    {
+      candidates: [],
+      clearances: [
+        {
+          category: "prompt_injection",
+          confidence: 0.9,
+          subject_refs: [
+            {
+              kind: "content_source",
+              source_handle: SOURCE,
+              locator: { kind: "whole_source" }
+            },
+            {
+              kind: "content_source",
+              source_handle: `hsrc:${NONCE}:0002`,
+              locator: { kind: "whole_source" }
+            }
+          ]
+        },
+        {
+          category: "prompt_injection",
+          confidence: 0.8,
+          subject_refs: [
+            {
+              kind: "content_source",
+              source_handle: SOURCE,
+              locator: { kind: "whole_source" }
+            }
+          ]
+        }
+      ]
+    },
+    multiRegistry as never
+  );
+  assert.equal(result.status, "matched");
+  if (result.status === "matched") {
+    assert.equal(result.result.clearances.length, 2);
+  }
+});
+
+
+test("REQ-SBX-GENERAL-001 raw rejects non-finite confidence as invalid_result not throw", () => {
+  for (const confidence of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+    assert.doesNotThrow(() => {
+      const result = normalizeSandboxSecurityRawDetectorResult(
+        {
+          candidates: [candidate({ confidence })],
+          clearances: []
+        },
+        registry()
+      );
+      assert.equal(result.status, "invalid_result");
+    });
+  }
+});
+
+test("REQ-SBX-GENERAL-001 raw candidate uniqueness key includes reason_code", () => {
+  const ref = {
+    kind: "content_source",
+    source_handle: SOURCE,
+    locator: { kind: "whole_source" }
+  };
+  // paired reason_code is determined by category; duplicate category+reason+scope rejects
+  const duplicate = normalizeSandboxSecurityRawDetectorResult(
+    {
+      candidates: [
+        candidate({
+          category: "prompt_injection",
+          reason_code: "sandbox_security_prompt_injection",
+          subject_refs: [ref]
+        }),
+        candidate({
+          category: "prompt_injection",
+          reason_code: "sandbox_security_prompt_injection",
+          severity: "medium",
+          confidence: 0.8,
+          subject_refs: [ref]
+        })
+      ],
+      clearances: []
+    },
+    registry()
+  );
+  assert.equal(duplicate.status, "invalid_result");
+
+  // different categories (hence different reason_codes) on same scope remain distinct keys
+  const distinct = normalizeSandboxSecurityRawDetectorResult(
+    {
+      candidates: [
+        candidate({
+          category: "prompt_injection",
+          reason_code: "sandbox_security_prompt_injection",
+          subject_refs: [ref]
+        }),
+        candidate({
+          category: "jailbreak",
+          reason_code: "sandbox_security_jailbreak",
+          severity: "medium",
+          confidence: 0.8,
+          subject_refs: [ref]
+        })
+      ],
+      clearances: []
+    },
+    registry()
+  );
+  assert.equal(distinct.status, "matched");
+  if (distinct.status === "matched") {
+    assert.equal(distinct.result.candidates.length, 2);
+  }
+});
+
+test("REQ-SBX-GENERAL-001 raw rejects mismatched reason_code category pairing", () => {
+  const result = normalizeSandboxSecurityRawDetectorResult(
+    {
+      candidates: [
+        candidate({
+          category: "prompt_injection",
+          reason_code: "sandbox_security_jailbreak"
+        })
+      ],
+      clearances: []
+    },
+    registry()
+  );
+  assert.equal(result.status, "invalid_result");
+});
+
 
 test("REQ-SBX-GENERAL-001 raw result boundary does not call Judge or sanitizer", () => {
   const source = readFileSync(new URL("../src/security/detector-output-boundary.ts", import.meta.url), "utf8");

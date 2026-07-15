@@ -1,6 +1,50 @@
 # Progress
 
 
+## 2026-07-15 - Phase 3 final re-review after P1/P2 fixes
+
+- phase: Detectors, Profiles, Boundaries, Registry
+- independent re-probes:
+  - duplicate raw clearances -> invalid_result
+  - non-finite confidence raw/external -> invalid_result (no throw)
+  - unknown/mismatched payload source_type -> external_redaction_failed
+  - external invalid byte-range locator -> invalid_result
+  - reason_code/category pairing enforced
+  - whole-set clearance uniqueness with multi-ref shared scope allowed
+  - construction ≠ resolution for strict local still holds
+- gates: focused 157+/157+, repository 40/40, shared 207/207, repo 185/185,
+  sandbox+shared tsc pass
+- residual non-blocking only:
+  - external locator context derive-bound via WeakMap (cloned registry fails closed)
+- conclusion: APPROVED
+- status: PHASE_3_VERIFIED; stop before Phase 4 unless instructed
+
+## 2026-07-15 - Phase 3 review fix (P1/P2)
+
+- scope: close independent Phase 3 review findings before Phase 4 handoff
+- files:
+  - `engines/sandbox/src/security/detector-output-boundary.ts`
+  - `engines/sandbox/src/security/sanitized-boundary.ts`
+  - `engines/sandbox/tests/sandbox-security-detector-boundary.spec.ts`
+  - `engines/sandbox/tests/sandbox-security-sanitized-boundary.spec.ts`
+  - `docs/progress.md`
+  - `docs/sprint-current.md`
+- fixes:
+  - P1 raw duplicate clearance uniqueness now invalid_result
+  - P1 raw/external non-finite confidence maps to invalid_result (no TypeError)
+  - P1 external locator validation reuses content/tool locator validators via
+    derive-time WeakMap subject context (3-arg normalize API preserved)
+  - P1 sanitized payload source_type closed enum + snapshot binding
+  - P2 candidate uniqueness key includes reason_code; reason_code must pair category
+- verification:
+  - detector+policy+boundary+sanitized focused 157/157
+  - repository gate 40/40
+  - authority+input 78/78
+  - shared/repo tsc gates pass for sandbox+shared
+- residual non-blocking:
+  - external locator context is derive-bound (hand-cloned registries fail closed)
+- status: PHASE_3_REVIEW_FIXES_VERIFIED
+
 ## 2026-07-15 - Phase 2 residual closure (re-review loop)
 
 - scope: clear remaining Phase 2 residual findings after first review-fix pass

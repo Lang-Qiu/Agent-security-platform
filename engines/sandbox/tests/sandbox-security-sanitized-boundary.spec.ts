@@ -137,7 +137,7 @@ function makePayload(snapshot = makeSnapshot(), obligations = [obligation()]) {
     policy_profile_id: snapshot.profile.profile_id,
     sources: registry.source_tokens.map((entry, index) => ({
       source_token: entry.source_token,
-      source_type: "user_input" as const,
+      source_type: (snapshot.contents[index] as { source_type: "user_input" }).source_type,
       media_type: entry.media_type,
       sanitized_value: `[redacted-${index}]`
     })),
@@ -236,12 +236,7 @@ test("REQ-SBX-GENERAL-001 obligations sort by category and canonical tokenized s
   });
   const expected = [first, second];
   const payload = makePayload(snapshot, expected as never);
-  const validated = validateSandboxSecuritySanitizedJudgePayload(
-    payload,
-    registry,
-    snapshot as never,
-    expected as never
-  );
+  const validated = validateSandboxSecuritySanitizedJudgePayload(payload, registry, snapshot as never, expected as never);
   assert.deepEqual(
     validated.routed_obligations.map((item) => item.obligation_id),
     expected.map((item) => item.obligation_id)
@@ -362,6 +357,10 @@ test("REQ-SBX-GENERAL-001 external result accepts token subjects only", () => {
     payload as never
   );
   assert.equal(result.status, "matched");
+  if (result.status === "matched") {
+    assert.equal(Object.isFrozen(result), true);
+    assert.equal(Object.isFrozen(result.result.candidates), true);
+  }
 });
 
 test("REQ-SBX-GENERAL-001 external result rejects private handle subjects", () => {
@@ -1340,6 +1339,151 @@ test("REQ-SBX-GENERAL-001 validateSandboxSecuritySanitizedJudgePayload requires 
     )
   );
 });
+
+test("REQ-SBX-GENERAL-001 validateSandboxSecuritySanitizedJudgePayload rejects unknown source_type", () => {
+  const snapshot = makeSnapshot();
+  const registry = deriveSandboxSecurityExternalTokenRegistry(snapshot as never);
+  const payload = makePayload(snapshot);
+  payload.sources[0] = {
+    ...payload.sources[0],
+    source_type: "not_a_type" as never
+  };
+  assert.throws(() =>
+    validateSandboxSecuritySanitizedJudgePayload(
+      payload,
+      registry,
+      snapshot as never,
+      [obligation()] as never
+    )
+  );
+});
+
+test("REQ-SBX-GENERAL-001 validateSandboxSecuritySanitizedJudgePayload binds source_type to snapshot", () => {
+  const snapshot = makeSnapshot();
+  const registry = deriveSandboxSecurityExternalTokenRegistry(snapshot as never);
+  const payload = makePayload(snapshot);
+  payload.sources[0] = {
+    ...payload.sources[0],
+    source_type: "model_output" as never
+  };
+  assert.throws(() =>
+    validateSandboxSecuritySanitizedJudgePayload(
+      payload,
+      registry,
+      snapshot as never,
+      [obligation()] as never
+    )
+  );
+});
+
+test("REQ-SBX-GENERAL-001 external result rejects invalid UTF-8 byte range locator", () => {
+  const snapshot = makeSnapshot();
+  const registry = deriveSandboxSecurityExternalTokenRegistry(snapshot as never);
+  const invalidLocator = {
+    kind: "text_byte_range" as const,
+    start_byte: 0,
+    end_byte: 999
+  };
+  const obl = obligation({
+    subject_refs: [
+      {
+        kind: "content_source",
+        source_token: SOURCE_TOKEN,
+        locator: invalidLocator
+      }
+    ]
+  });
+  const payload = makePayload(snapshot, [obl]);
+  const result = normalizeSandboxSecurityExternalDetectorResult(
+    {
+      candidates: [
+        {
+          obligation_id: OBLIGATION_ID,
+          category: "prompt_injection",
+          severity: "high",
+          confidence: 0.9,
+          reason_code: "sandbox_security_prompt_injection",
+          subject_refs: [
+            {
+              kind: "content_source",
+              source_token: SOURCE_TOKEN,
+              locator: invalidLocator
+            }
+          ]
+        }
+      ],
+      clearances: []
+    },
+    registry,
+    payload as never
+  );
+  assert.equal(result.status, "invalid_result");
+});
+
+test("REQ-SBX-GENERAL-001 external result rejects non-finite confidence as invalid_result not throw", () => {
+  const snapshot = makeSnapshot();
+  const registry = deriveSandboxSecurityExternalTokenRegistry(snapshot as never);
+  const payload = makePayload(snapshot);
+  for (const confidence of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+    assert.doesNotThrow(() => {
+      const result = normalizeSandboxSecurityExternalDetectorResult(
+        {
+          candidates: [
+            {
+              obligation_id: OBLIGATION_ID,
+              category: "prompt_injection",
+              severity: "high",
+              confidence,
+              reason_code: "sandbox_security_prompt_injection",
+              subject_refs: [
+                {
+                  kind: "content_source",
+                  source_token: SOURCE_TOKEN,
+                  locator: { kind: "whole_source" }
+                }
+              ]
+            }
+          ],
+          clearances: []
+        },
+        registry,
+        payload as never
+      );
+      assert.equal(result.status, "invalid_result");
+    });
+  }
+});
+
+test("REQ-SBX-GENERAL-001 external rejects mismatched reason_code category pairing", () => {
+  const snapshot = makeSnapshot();
+  const registry = deriveSandboxSecurityExternalTokenRegistry(snapshot as never);
+  const payload = makePayload(snapshot);
+  const result = normalizeSandboxSecurityExternalDetectorResult(
+    {
+      candidates: [
+        {
+          obligation_id: OBLIGATION_ID,
+          category: "prompt_injection",
+          severity: "high",
+          confidence: 0.9,
+          reason_code: "sandbox_security_jailbreak",
+          subject_refs: [
+            {
+              kind: "content_source",
+              source_token: SOURCE_TOKEN,
+              locator: { kind: "whole_source" }
+            }
+          ]
+        }
+      ],
+      clearances: []
+    },
+    registry,
+    payload as never
+  );
+  assert.equal(result.status, "invalid_result");
+});
+
 
 test("REQ-SBX-GENERAL-001 external Judge never receives SandboxSecurityRawDetectorSnapshot", async () => {
   const source = readFileSync(modulePath, "utf8");
