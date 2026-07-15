@@ -129,3 +129,43 @@ export function createRecordingExternalDetector(): SanitizedExternalDetector & {
   };
   return detector;
 }
+
+export function createFrozenRawSubjectRegistry(input?: {
+  readonly evaluation_nonce?: string;
+  readonly source_handle?: string;
+  readonly call_handle?: string;
+  readonly has_target?: boolean;
+  readonly media_type?: "text/plain" | "application/json";
+  readonly value?: string | Record<string, unknown>;
+}) {
+  const nonce = input?.evaluation_nonce ?? "a".repeat(32);
+  const source_handle = input?.source_handle ?? `hsrc:${nonce}:0001`;
+  const call_handle = input?.call_handle ?? `hcall:${nonce}:0000`;
+  const media_type = input?.media_type ?? "text/plain";
+  const value = input?.value ?? "hello";
+  const original_utf8_bytes = Object.freeze(
+    Array.from(
+      Buffer.from(
+        typeof value === "string" ? value : JSON.stringify(value),
+        "utf8"
+      )
+    )
+  );
+  return Object.freeze({
+    evaluation_nonce: nonce,
+    content_subjects: Object.freeze([
+      Object.freeze({
+        source_handle: source_handle as never,
+        media_type,
+        original_utf8_bytes,
+        value: value as never
+      })
+    ]),
+    tool_subject: Object.freeze({
+      call_handle: call_handle as never,
+      has_target: input?.has_target ?? true,
+      arguments: Object.freeze({ path: "/tmp/x" })
+    })
+  });
+}
+

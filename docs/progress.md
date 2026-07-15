@@ -1,5 +1,31 @@
 # Progress
 
+## 2026-07-15 - REQ-SBX-GENERAL-001 P3-T3 raw subject boundary
+
+- scope: canonical private subject scopes + raw detector result normalization
+  with fail-closed handle/locator/limit validation
+- files:
+  - `engines/sandbox/src/security/subject-scope.ts` (create)
+  - `engines/sandbox/src/security/detector-output-boundary.ts` (create)
+  - `engines/sandbox/tests/sandbox-security-detector-boundary.spec.ts` (create)
+  - `engines/sandbox/tests/fixtures/security-detector.fixture.ts` (extend)
+  - `engines/sandbox/tests/sandbox-security-detector.spec.ts` (ownership smoke)
+- verification:
+  - boundary inventory 33/33
+  - detector+boundary 54/54
+  - sandbox `tsc --noEmit` pass
+- independent review:
+  - P0/P1: none
+  - full plan RED inventory covered
+  - registry is frozen arrays (not Map)
+  - no Judge/sanitizer/pipeline leakage
+  - candidate/clearance same-scope conflict rejected
+  - conclusion: APPROVED_WITH_NON_BLOCKING_COMMENTS
+  - non-blocking: oversize case uses padding key on subject_ref to exercise
+    pre-validation size gate; content-leak helper covered by implementation
+- re-review: APPROVED
+- status: P3-T3 VERIFIED; next P3-T4
+
 ## 2026-07-15 - REQ-SBX-GENERAL-001 P3-T2 detector type isolation
 
 - scope: formal compile-time isolation probe + repository existence gates

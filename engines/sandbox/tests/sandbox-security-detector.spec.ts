@@ -324,3 +324,11 @@ test("REQ-SBX-GENERAL-001 adapter unsupported error rejects lookalike identity",
   };
   assert.equal(lookalike instanceof SandboxSecurityAdapterUnsupportedError, false);
 });
+
+test("REQ-SBX-GENERAL-001 detector suite remains isolated from raw boundary ownership", () => {
+  const boundary = new URL("../src/security/detector-output-boundary.ts", import.meta.url);
+  assert.equal(existsSync(boundary), true);
+  const source = readFileSync(boundary, "utf8");
+  assert.match(source, /export function normalizeSandboxSecurityRawDetectorResult/);
+});
+
