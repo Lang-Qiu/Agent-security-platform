@@ -125,6 +125,6 @@ and policy reduction has one engine-owned implementation.
   reason_code pairing/uniqueness).
 - Note: current execution environment may not allow git commits; worktree is
   source of truth for the restarted sequence.
-- Phase 4 engine/policy (P4-T1..T6): in progress; P4-T1/T2 verified.
-- Next: P4-T3 deadline primitives + run ledger.
+- Phase 4 engine/policy (P4-T1..T6): in progress; P4-T1..T3 verified.
+- Next: P4-T4 policy reducer.
 

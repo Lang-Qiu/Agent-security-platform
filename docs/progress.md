@@ -1,5 +1,25 @@
 # Progress
 
+## 2026-07-15 - REQ-SBX-GENERAL-001 P4-T3 deadline + run ledger
+
+- scope: injected monotonic deadline leases and immutable run-ledger state machine
+- files:
+  - `engines/sandbox/src/security/runtime-deadline.ts` (create)
+  - `engines/sandbox/src/security/run-ledger.ts` (create)
+  - `engines/sandbox/tests/sandbox-security-engine.spec.ts` (extend)
+- verification:
+  - engine suite 141/141
+  - sandbox `tsc --noEmit` pass
+- independent review:
+  - P0/P1: none
+  - effective timeout = min(slot, remaining); work_budget wins simultaneous expiry
+  - caller_cancelled distinct; dispose cancels timer/listener
+  - ledger: not_started→skipped|running→terminal; attach once; finalize closes
+  - findings attach only to matched producer runs; manifest order preserved
+  - conclusion: APPROVED
+- re-review: APPROVED
+- status: P4-T3 VERIFIED; next P4-T4
+
 ## 2026-07-15 - REQ-SBX-GENERAL-001 P4-T2 escalation state
 
 - scope: escalation-only Judge routing state machine, obligation materialization,

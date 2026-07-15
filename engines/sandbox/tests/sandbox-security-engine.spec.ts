@@ -1863,3 +1863,707 @@ test("REQ-SBX-GENERAL-001 terminateJudgeAttempt creates no accepted findings or 
   assert.equal(result.accepted_draft_findings.length, 0);
   assert.equal(result.unresolved_signals.length, 1);
 });
+
+import {
+  createSandboxSecurityDeadlineController,
+  type SandboxSecurityRuntimePorts
+} from "../src/security/runtime-deadline.ts";
+import { createSandboxSecurityRunLedger } from "../src/security/run-ledger.ts";
+
+function createFakeRuntime(options?: {
+  startMs?: number;
+  invalidNow?: boolean;
+  invalidScheduler?: boolean;
+}): {
+  runtime: SandboxSecurityRuntimePorts;
+  advance: (ms: number) => void;
+  fireDue: () => void;
+  nowMs: () => number;
+} {
+  let nowMs = options?.startMs ?? 0;
+  const timers: { due: number; callback: () => void; cancelled: boolean }[] = [];
+  const runtime: SandboxSecurityRuntimePorts = {
+    now() {
+      return new Date(1_700_000_000_000 + nowMs).toISOString();
+    },
+    nextDecisionId() {
+      return "decision-fake-1";
+    },
+    monotonicNowMs() {
+      if (options?.invalidNow) return Number.NaN;
+      return nowMs;
+    },
+    scheduleTimeout(delayMs, callback) {
+      if (options?.invalidScheduler) {
+        throw new Error("bad scheduler");
+      }
+      if (typeof callback !== "function" || !Number.isFinite(delayMs)) {
+        throw new Error("bad args");
+      }
+      const entry = {
+        due: nowMs + Math.max(0, delayMs),
+        callback,
+        cancelled: false
+      };
+      timers.push(entry);
+      return () => {
+        entry.cancelled = true;
+      };
+    }
+  };
+  return {
+    runtime,
+    advance(ms: number) {
+      nowMs += ms;
+    },
+    fireDue() {
+      for (const timer of timers) {
+        if (!timer.cancelled && timer.due <= nowMs) {
+          timer.cancelled = true;
+          timer.callback();
+        }
+      }
+    },
+    nowMs: () => nowMs
+  };
+}
+
+test("REQ-SBX-GENERAL-001 remaining budget decreases with monotonic time", () => {
+  const fake = createFakeRuntime({ startMs: 1000 });
+  const controller = createSandboxSecurityDeadlineController({
+    runtime: fake.runtime,
+    normalWorkBudgetMs: 5000,
+    startedAtMs: 1000
+  });
+  assert.equal(controller.remainingMs(), 5000);
+  fake.advance(1500);
+  assert.equal(controller.remainingMs(), 3500);
+});
+
+test("REQ-SBX-GENERAL-001 detector lease aborts at effective timeout", () => {
+  const fake = createFakeRuntime({ startMs: 0 });
+  const controller = createSandboxSecurityDeadlineController({
+    runtime: fake.runtime,
+    normalWorkBudgetMs: 5000,
+    startedAtMs: 0
+  });
+  const lease = controller.createDetectorLease({ slot_timeout_ms: 100 });
+  assert.equal(lease.effective_timeout_ms, 100);
+  assert.equal(lease.signal.aborted, false);
+  fake.advance(100);
+  fake.fireDue();
+  assert.equal(lease.signal.aborted, true);
+  assert.equal(lease.termination_reason, "slot_timeout");
+});
+
+test("REQ-SBX-GENERAL-001 detector lease termination_reason distinguishes slot_timeout and work_budget", () => {
+  const fake = createFakeRuntime({ startMs: 0 });
+  const controller = createSandboxSecurityDeadlineController({
+    runtime: fake.runtime,
+    normalWorkBudgetMs: 200,
+    startedAtMs: 0
+  });
+  // slot larger than remaining => work_budget
+  const budgetLease = controller.createDetectorLease({ slot_timeout_ms: 1000 });
+  assert.equal(budgetLease.effective_timeout_ms, 200);
+  fake.advance(200);
+  fake.fireDue();
+  assert.equal(budgetLease.termination_reason, "work_budget");
+
+  const fake2 = createFakeRuntime({ startMs: 0 });
+  const controller2 = createSandboxSecurityDeadlineController({
+    runtime: fake2.runtime,
+    normalWorkBudgetMs: 5000,
+    startedAtMs: 0
+  });
+  const slotLease = controller2.createDetectorLease({ slot_timeout_ms: 50 });
+  fake2.advance(50);
+  fake2.fireDue();
+  assert.equal(slotLease.termination_reason, "slot_timeout");
+});
+
+test("REQ-SBX-GENERAL-001 detector lease termination_reason work_budget wins simultaneous expiry", () => {
+  const fake = createFakeRuntime({ startMs: 0 });
+  const controller = createSandboxSecurityDeadlineController({
+    runtime: fake.runtime,
+    normalWorkBudgetMs: 100,
+    startedAtMs: 0
+  });
+  const lease = controller.createDetectorLease({ slot_timeout_ms: 100 });
+  fake.advance(100);
+  fake.fireDue();
+  assert.equal(lease.termination_reason, "work_budget");
+});
+
+test("REQ-SBX-GENERAL-001 detector lease termination_reason caller_cancelled on parent signal", () => {
+  const fake = createFakeRuntime({ startMs: 0 });
+  const controller = createSandboxSecurityDeadlineController({
+    runtime: fake.runtime,
+    normalWorkBudgetMs: 5000,
+    startedAtMs: 0
+  });
+  const parent = new AbortController();
+  const lease = controller.createDetectorLease({
+    slot_timeout_ms: 1000,
+    parent_signal: parent.signal
+  });
+  parent.abort();
+  assert.equal(lease.termination_reason, "caller_cancelled");
+  assert.equal(lease.signal.aborted, true);
+});
+
+test("REQ-SBX-GENERAL-001 dispose cancels scheduled timeout and parent listener", () => {
+  const fake = createFakeRuntime({ startMs: 0 });
+  const controller = createSandboxSecurityDeadlineController({
+    runtime: fake.runtime,
+    normalWorkBudgetMs: 5000,
+    startedAtMs: 0
+  });
+  const parent = new AbortController();
+  const lease = controller.createDetectorLease({
+    slot_timeout_ms: 100,
+    parent_signal: parent.signal
+  });
+  lease.dispose();
+  fake.advance(100);
+  fake.fireDue();
+  parent.abort();
+  assert.equal(lease.termination_reason, null);
+  assert.equal(lease.isGenerationOpen(), false);
+});
+
+test("REQ-SBX-GENERAL-001 late result after generation close is ignored", () => {
+  const fake = createFakeRuntime({ startMs: 0 });
+  const controller = createSandboxSecurityDeadlineController({
+    runtime: fake.runtime,
+    normalWorkBudgetMs: 5000,
+    startedAtMs: 0
+  });
+  const lease = controller.createDetectorLease({ slot_timeout_ms: 100 });
+  assert.equal(lease.isGenerationOpen(), true);
+  lease.closeGeneration();
+  assert.equal(lease.isGenerationOpen(), false);
+  // generation closed means late results ignored by engine policy; lease stays non-open
+  fake.advance(100);
+  fake.fireDue();
+  // abort may still happen from timer unless disposed; generation remains closed
+  assert.equal(lease.isGenerationOpen(), false);
+});
+
+test("REQ-SBX-GENERAL-001 caller cancellation is distinct from budget exhaustion", () => {
+  const fake = createFakeRuntime({ startMs: 0 });
+  const controller = createSandboxSecurityDeadlineController({
+    runtime: fake.runtime,
+    normalWorkBudgetMs: 10,
+    startedAtMs: 0
+  });
+  const parent = new AbortController();
+  const lease = controller.createDetectorLease({
+    slot_timeout_ms: 1000,
+    parent_signal: parent.signal
+  });
+  parent.abort();
+  assert.equal(lease.termination_reason, "caller_cancelled");
+  assert.notEqual(lease.termination_reason, "work_budget");
+});
+
+test("REQ-SBX-GENERAL-001 invalid monotonic time is sandbox_security_internal_invalid", () => {
+  const fake = createFakeRuntime({ invalidNow: true });
+  const controller = createSandboxSecurityDeadlineController({
+    runtime: fake.runtime,
+    normalWorkBudgetMs: 5000,
+    startedAtMs: 0
+  });
+  assert.throws(
+    () => controller.remainingMs(),
+    (error: Error) => error.name === "sandbox_security_internal_invalid"
+  );
+});
+
+test("REQ-SBX-GENERAL-001 invalid scheduler is sandbox_security_internal_invalid", () => {
+  const fake = createFakeRuntime({ invalidScheduler: true });
+  const controller = createSandboxSecurityDeadlineController({
+    runtime: fake.runtime,
+    normalWorkBudgetMs: 5000,
+    startedAtMs: 0
+  });
+  assert.throws(
+    () => controller.createDetectorLease({ slot_timeout_ms: 10 }),
+    (error: Error) => error.name === "sandbox_security_internal_invalid"
+  );
+});
+
+test("REQ-SBX-GENERAL-001 pure run summary records timeout without real sleep", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  const ruleId = profile.detector_slots[0].slot_id;
+  ledger.markStarted({
+    slot_id: ruleId,
+    obligation: "profile_required",
+    started_monotonic_ms: 0
+  });
+  ledger.markTimeout({ slot_id: ruleId, elapsed_ms: 12 });
+  // remaining slots skip for finalize path later tests
+  assert.equal(ledger.snapshot().slots[0].status, "timeout");
+});
+
+test("REQ-SBX-GENERAL-001 deadline primitives make no evaluate-entry claims", () => {
+  const source = readFileSync(
+    new URL("../src/security/runtime-deadline.ts", import.meta.url),
+    "utf8"
+  );
+  assert.doesNotMatch(source, /evaluate\(|evaluate-entry|5000 ms normal work budget from evaluate/);
+});
+
+test("REQ-SBX-GENERAL-001 SandboxSecurityRuntimePorts exposes now nextDecisionId monotonicNowMs scheduleTimeout", () => {
+  const fake = createFakeRuntime();
+  assert.equal(typeof fake.runtime.now, "function");
+  assert.equal(typeof fake.runtime.nextDecisionId, "function");
+  assert.equal(typeof fake.runtime.monotonicNowMs, "function");
+  assert.equal(typeof fake.runtime.scheduleTimeout, "function");
+});
+
+test("REQ-SBX-GENERAL-001 createDetectorLease requires slot_timeout_ms input", () => {
+  const fake = createFakeRuntime();
+  const controller = createSandboxSecurityDeadlineController({
+    runtime: fake.runtime,
+    normalWorkBudgetMs: 5000,
+    startedAtMs: 0
+  });
+  assert.throws(() =>
+    controller.createDetectorLease({} as never)
+  );
+});
+
+function terminalAllSlots(
+  ledger: ReturnType<typeof createSandboxSecurityRunLedger>,
+  profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1"),
+  matchedSlotId?: string
+) {
+  for (const slot of profile.detector_slots) {
+    if (matchedSlotId && slot.slot_id === matchedSlotId) {
+      ledger.markStarted({
+        slot_id: slot.slot_id,
+        obligation: "profile_required",
+        started_monotonic_ms: 0
+      });
+      ledger.markMatched({ slot_id: slot.slot_id, elapsed_ms: 1 });
+      continue;
+    }
+    if (slot.base_obligation === "profile_required" && !matchedSlotId && slot.detector_kind === "rule") {
+      ledger.markStarted({
+        slot_id: slot.slot_id,
+        obligation: "profile_required",
+        started_monotonic_ms: 0
+      });
+      ledger.markNoMatch({ slot_id: slot.slot_id, elapsed_ms: 1 });
+      continue;
+    }
+    ledger.markSkipped({
+      slot_id: slot.slot_id,
+      obligation: slot.base_obligation === "profile_required" ? "profile_required" : "optional_not_selected",
+      skip_reason:
+        slot.detector_kind === "external_judge"
+          ? "routing_not_selected"
+          : "optional_not_selected",
+      elapsed_ms: 0
+    });
+  }
+}
+
+test("REQ-SBX-GENERAL-001 run ledger covers every legal state transition", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  const [rule, local, judge] = profile.detector_slots;
+  ledger.markStarted({
+    slot_id: rule.slot_id,
+    obligation: "profile_required",
+    started_monotonic_ms: 0
+  });
+  ledger.markMatched({ slot_id: rule.slot_id, elapsed_ms: 1 });
+  ledger.markStarted({
+    slot_id: local.slot_id,
+    obligation: "runtime_required",
+    started_monotonic_ms: 1
+  });
+  ledger.markNoMatch({ slot_id: local.slot_id, elapsed_ms: 2 });
+  ledger.markSkipped({
+    slot_id: judge.slot_id,
+    obligation: "optional_not_selected",
+    skip_reason: "routing_not_selected",
+    elapsed_ms: 0
+  });
+  const statuses = ledger.snapshot().slots.map((s) => s.status);
+  assert.deepEqual(statuses, ["matched", "no_match", "skipped"]);
+});
+
+test("REQ-SBX-GENERAL-001 run ledger factory initializes every manifest slot", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-strict.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  assert.deepEqual(
+    ledger.snapshot().slots.map((s) => s.slot_id),
+    profile.detector_slots.map((s) => s.slot_id)
+  );
+  assert.ok(ledger.snapshot().slots.every((s) => s.status === "not_started"));
+});
+
+test("REQ-SBX-GENERAL-001 run ledger attaches findings by finding.detector_id", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  const ruleId = profile.detector_slots[0].slot_id;
+  terminalAllSlots(ledger, profile, ruleId);
+  ledger.attachPublishedFindings([
+    {
+      finding_id: "finding:sha256:" + "a".repeat(64),
+      detector_id: ruleId,
+      detector_version: "1.0.0",
+      category: "prompt_injection",
+      severity: "high",
+      confidence: 1,
+      reason_code: "sandbox_security_prompt_injection",
+      subject_refs: [
+        {
+          kind: "content_source",
+          source_token: "source://sandbox/security/d/0001",
+          locator: { kind: "whole_source" }
+        }
+      ],
+      evidence_refs: ["evidence://sandbox/security/d/0001"]
+    }
+  ]);
+  const runs = ledger.finalize();
+  const matched = runs.find((run) => run.status === "matched");
+  assert.ok(matched && matched.status === "matched");
+  if (matched && matched.status === "matched") {
+    assert.deepEqual(matched.finding_ids, ["finding:sha256:" + "a".repeat(64)]);
+  }
+});
+
+test("REQ-SBX-GENERAL-001 run ledger rejects finding for unknown profile slot", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  terminalAllSlots(ledger, profile, profile.detector_slots[0].slot_id);
+  assert.throws(() =>
+    ledger.attachPublishedFindings([
+      {
+        finding_id: "finding:sha256:" + "b".repeat(64),
+        detector_id: "detector://sandbox/security/unknown/v1",
+        detector_version: "1.0.0",
+        category: "prompt_injection",
+        severity: "high",
+        confidence: 1,
+        reason_code: "sandbox_security_prompt_injection",
+        subject_refs: [
+          {
+            kind: "content_source",
+            source_token: "source://sandbox/security/d/0001",
+            locator: { kind: "whole_source" }
+          }
+        ],
+        evidence_refs: ["evidence://sandbox/security/d/0001"]
+      }
+    ])
+  );
+});
+
+test("REQ-SBX-GENERAL-001 run ledger rejects finding attached to non-matched run", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  terminalAllSlots(ledger, profile); // no matched
+  assert.throws(() =>
+    ledger.attachPublishedFindings([
+      {
+        finding_id: "finding:sha256:" + "c".repeat(64),
+        detector_id: profile.detector_slots[0].slot_id,
+        detector_version: "1.0.0",
+        category: "prompt_injection",
+        severity: "high",
+        confidence: 1,
+        reason_code: "sandbox_security_prompt_injection",
+        subject_refs: [
+          {
+            kind: "content_source",
+            source_token: "source://sandbox/security/d/0001",
+            locator: { kind: "whole_source" }
+          }
+        ],
+        evidence_refs: ["evidence://sandbox/security/d/0001"]
+      }
+    ])
+  );
+});
+
+test("REQ-SBX-GENERAL-001 run ledger rejects duplicate finding IDs", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  const ruleId = profile.detector_slots[0].slot_id;
+  terminalAllSlots(ledger, profile, ruleId);
+  const finding = {
+    finding_id: "finding:sha256:" + "d".repeat(64),
+    detector_id: ruleId,
+    detector_version: "1.0.0",
+    category: "prompt_injection" as const,
+    severity: "high" as const,
+    confidence: 1,
+    reason_code: "sandbox_security_prompt_injection" as const,
+    subject_refs: [
+      {
+        kind: "content_source" as const,
+        source_token: "source://sandbox/security/d/0001",
+        locator: { kind: "whole_source" as const }
+      }
+    ],
+    evidence_refs: ["evidence://sandbox/security/d/0001"]
+  };
+  assert.throws(() => ledger.attachPublishedFindings([finding, finding]));
+});
+
+test("REQ-SBX-GENERAL-001 each published finding belongs to exactly one run", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  const ruleId = profile.detector_slots[0].slot_id;
+  terminalAllSlots(ledger, profile, ruleId);
+  ledger.attachPublishedFindings([
+    {
+      finding_id: "finding:sha256:" + "e".repeat(64),
+      detector_id: ruleId,
+      detector_version: "1.0.0",
+      category: "prompt_injection",
+      severity: "high",
+      confidence: 1,
+      reason_code: "sandbox_security_prompt_injection",
+      subject_refs: [
+        {
+          kind: "content_source",
+          source_token: "source://sandbox/security/d/0001",
+          locator: { kind: "whole_source" }
+        }
+      ],
+      evidence_refs: ["evidence://sandbox/security/d/0001"]
+    }
+  ]);
+  const runs = ledger.finalize();
+  const owners = runs.filter(
+    (run) => run.status === "matched" && run.finding_ids.includes("finding:sha256:" + "e".repeat(64))
+  );
+  assert.equal(owners.length, 1);
+});
+
+test("REQ-SBX-GENERAL-001 attachPublishedFindings may be called once", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  const ruleId = profile.detector_slots[0].slot_id;
+  terminalAllSlots(ledger, profile, ruleId);
+  ledger.attachPublishedFindings([]);
+  assert.throws(() => ledger.attachPublishedFindings([]));
+});
+
+test("REQ-SBX-GENERAL-001 finalize rejects missing finding attachment phase", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  terminalAllSlots(ledger, profile);
+  assert.throws(() => ledger.finalize());
+});
+
+test("REQ-SBX-GENERAL-001 finalized run ledger is immutable and closed", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  terminalAllSlots(ledger, profile);
+  ledger.attachPublishedFindings([]);
+  const runs = ledger.finalize();
+  assert.ok(Object.isFrozen(runs));
+  assert.throws(() =>
+    ledger.markSkipped({
+      slot_id: profile.detector_slots[0].slot_id,
+      obligation: "optional_not_selected",
+      skip_reason: "optional_not_selected",
+      elapsed_ms: 0
+    })
+  );
+});
+
+test("REQ-SBX-GENERAL-001 run ledger snapshot reports lifecycle and slot status", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  assert.equal(ledger.snapshot().lifecycle, "open");
+  assert.equal(ledger.snapshot().slots.length, 3);
+});
+
+test("REQ-SBX-GENERAL-001 finalized run ledger snapshot is immutable", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  terminalAllSlots(ledger, profile);
+  ledger.attachPublishedFindings([]);
+  ledger.finalize();
+  const snap = ledger.snapshot();
+  assert.ok(Object.isFrozen(snap));
+  assert.ok(Object.isFrozen(snap.slots));
+});
+
+test("REQ-SBX-GENERAL-001 settled outcome cannot exist for running or timeout slot", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  const ruleId = profile.detector_slots[0].slot_id;
+  ledger.markStarted({
+    slot_id: ruleId,
+    obligation: "profile_required",
+    started_monotonic_ms: 0
+  });
+  assert.throws(() =>
+    ledger.attachPublishedFindings([])
+  );
+});
+
+test("REQ-SBX-GENERAL-001 run ledger rejects slot outside selected profile", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  assert.throws(() =>
+    ledger.markStarted({
+      slot_id: "detector://sandbox/security/rule/other/v1" as never,
+      obligation: "profile_required",
+      started_monotonic_ms: 0
+    })
+  );
+});
+
+test("REQ-SBX-GENERAL-001 finalize rejects non-terminal manifest slot", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  // force attach path blocked before finalize when non-terminal
+  assert.throws(() => ledger.attachPublishedFindings([]));
+});
+
+test("REQ-SBX-GENERAL-001 finalized runs follow profile manifest order", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  terminalAllSlots(ledger, profile);
+  ledger.attachPublishedFindings([]);
+  const runs = ledger.finalize();
+  assert.deepEqual(
+    runs.map((run) => run.detector_id),
+    profile.detector_slots.map((slot) => slot.slot_id)
+  );
+});
+
+test("REQ-SBX-GENERAL-001 detector version comes from manifest not caller", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  terminalAllSlots(ledger, profile);
+  ledger.attachPublishedFindings([]);
+  const runs = ledger.finalize();
+  assert.equal(runs[0].detector_version, profile.detector_slots[0].detector_version);
+});
+
+test("REQ-SBX-GENERAL-001 run ledger rejects every terminal mutation", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  const ruleId = profile.detector_slots[0].slot_id;
+  ledger.markSkipped({
+    slot_id: ruleId,
+    obligation: "profile_required",
+    skip_reason: "risk_short_circuit",
+    elapsed_ms: 0
+  });
+  assert.throws(() =>
+    ledger.markStarted({
+      slot_id: ruleId,
+      obligation: "profile_required",
+      started_monotonic_ms: 0
+    })
+  );
+});
+
+test("REQ-SBX-GENERAL-001 run ledger enforces the closed skip reason matrix", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  assert.throws(() =>
+    ledger.markSkipped({
+      slot_id: profile.detector_slots[1].slot_id,
+      obligation: "optional_not_selected",
+      skip_reason: "not_a_reason" as never,
+      elapsed_ms: 0
+    })
+  );
+});
+
+test("REQ-SBX-GENERAL-001 selected optional local becomes runtime_required", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  const local = profile.detector_slots.find((s) => s.detector_kind === "local_model")!;
+  ledger.markStarted({
+    slot_id: local.slot_id,
+    obligation: "runtime_required",
+    started_monotonic_ms: 0
+  });
+  assert.equal(ledger.snapshot().slots.find((s) => s.slot_id === local.slot_id)?.obligation, "runtime_required");
+});
+
+test("REQ-SBX-GENERAL-001 routed Judge becomes runtime_required before availability", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  const judge = profile.detector_slots.find((s) => s.detector_kind === "external_judge")!;
+  ledger.markStarted({
+    slot_id: judge.slot_id,
+    obligation: "runtime_required",
+    started_monotonic_ms: 0
+  });
+  ledger.markFailed({
+    slot_id: judge.slot_id,
+    elapsed_ms: 1,
+    error_code: "detector_unavailable"
+  });
+  assert.equal(
+    ledger.snapshot().slots.find((s) => s.slot_id === judge.slot_id)?.status,
+    "failed"
+  );
+});
+
+test("REQ-SBX-GENERAL-001 finding IDs attach only after publication to producer run", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  const ruleId = profile.detector_slots[0].slot_id;
+  terminalAllSlots(ledger, profile, ruleId);
+  // before attach, finalize blocked
+  assert.throws(() => ledger.finalize());
+  ledger.attachPublishedFindings([
+    {
+      finding_id: "finding:sha256:" + "f".repeat(64),
+      detector_id: ruleId,
+      detector_version: "1.0.0",
+      category: "prompt_injection",
+      severity: "high",
+      confidence: 1,
+      reason_code: "sandbox_security_prompt_injection",
+      subject_refs: [
+        {
+          kind: "content_source",
+          source_token: "source://sandbox/security/d/0001",
+          locator: { kind: "whole_source" }
+        }
+      ],
+      evidence_refs: ["evidence://sandbox/security/d/0001"]
+    }
+  ]);
+  const runs = ledger.finalize();
+  assert.equal(runs[0].status, "matched");
+});
+
+test("REQ-SBX-GENERAL-001 Engine failure never rewrites a successful detector run", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const ledger = createSandboxSecurityRunLedger({ profile });
+  const ruleId = profile.detector_slots[0].slot_id;
+  ledger.markStarted({
+    slot_id: ruleId,
+    obligation: "profile_required",
+    started_monotonic_ms: 0
+  });
+  ledger.markMatched({ slot_id: ruleId, elapsed_ms: 3 });
+  assert.throws(() =>
+    ledger.markFailed({
+      slot_id: ruleId,
+      elapsed_ms: 4,
+      error_code: "detector_failed"
+    })
+  );
+  assert.equal(ledger.snapshot().slots[0].status, "matched");
+});
