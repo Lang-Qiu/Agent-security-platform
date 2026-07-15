@@ -1,6 +1,24 @@
 # Progress
 
 
+## 2026-07-15 - REQ-SBX-GENERAL-001 P3-T5 policy profiles
+
+- scope: immutable balanced/strict manifests, sole trust derivation, slot tables
+- files:
+  - `engines/sandbox/src/security/policy-profiles.ts`
+  - `engines/sandbox/tests/sandbox-security-policy.spec.ts`
+- verification: policy 23/23; authority+input+policy focused green; sandbox tsc pass
+- independent review:
+  - P0/P1: none
+  - exact Spec thresholds/timeouts/slots/trust table/action matrices verified
+  - short-circuit restrictiveness ranking: lower severity floor is more restrictive
+  - no registry/reducer leakage
+  - conclusion: APPROVED
+- re-review: APPROVED
+- status: P3-T5 VERIFIED; next P3-T1
+
+
+
 ## 2026-07-15 - REQ-SBX-GENERAL-001 P2-T5 fingerprint + Phase 2 exit
 
 - scope: keyed canonical fingerprint service reusing internal authority
