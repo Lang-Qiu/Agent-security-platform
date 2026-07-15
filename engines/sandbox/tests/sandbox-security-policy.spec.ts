@@ -527,3 +527,436 @@ test("REQ-SBX-GENERAL-001 phase 3 production files have unique ownership", () =>
     assert.ok(names.includes(file), file);
   }
 });
+
+
+import { reduceSandboxSecurityPolicy } from "../src/security/policy-reducer.ts";
+
+function finding(severity: "low"|"medium"|"high"|"critical", detector_id = "detector://sandbox/security/rule/default/v1") {
+  return {
+    finding_id: "finding:sha256:" + severity.padEnd(64, "0").slice(0,64),
+    detector_id,
+    detector_version: "1.0.0",
+    category: "prompt_injection" as const,
+    severity,
+    confidence: 1,
+    reason_code: "sandbox_security_prompt_injection" as const,
+    subject_refs: [
+      {
+        kind: "content_source" as const,
+        source_token: "source://sandbox/security/d/0001",
+        locator: { kind: "whole_source" as const }
+      }
+    ],
+    evidence_refs: ["evidence://sandbox/security/d/0001"]
+  };
+}
+
+function run(status: "matched"|"no_match"|"failed"|"timeout"|"invalid_result"|"skipped" = "no_match", obligation: "profile_required"|"runtime_required"|"optional_not_selected" = "profile_required") {
+  if (status === "matched" || status === "no_match") {
+    return {
+      detector_id: "detector://sandbox/security/rule/default/v1",
+      detector_version: "1.0.0",
+      detector_kind: "rule" as const,
+      obligation,
+      elapsed_ms: 1,
+      status,
+      finding_ids: [] as string[]
+    };
+  }
+  if (status === "skipped") {
+    return {
+      detector_id: "detector://sandbox/security/rule/default/v1",
+      detector_version: "1.0.0",
+      detector_kind: "rule" as const,
+      obligation,
+      elapsed_ms: 0,
+      status,
+      skip_reason: "optional_not_selected" as const
+    };
+  }
+  if (status === "timeout") {
+    return {
+      detector_id: "detector://sandbox/security/rule/default/v1",
+      detector_version: "1.0.0",
+      detector_kind: "rule" as const,
+      obligation,
+      elapsed_ms: 1,
+      status,
+      error_code: "detector_timeout" as const
+    };
+  }
+  if (status === "invalid_result") {
+    return {
+      detector_id: "detector://sandbox/security/rule/default/v1",
+      detector_version: "1.0.0",
+      detector_kind: "rule" as const,
+      obligation,
+      elapsed_ms: 1,
+      status,
+      error_code: "detector_result_invalid" as const
+    };
+  }
+  return {
+    detector_id: "detector://sandbox/security/rule/default/v1",
+    detector_version: "1.0.0",
+    detector_kind: "rule" as const,
+    obligation,
+    elapsed_ms: 1,
+    status,
+    error_code: "detector_failed" as const
+  };
+}
+
+function reduce(input: Record<string, unknown>) {
+  return reduceSandboxSecurityPolicy(input as never);
+}
+
+test("REQ-SBX-GENERAL-001 reducer deny for accepted critical high all stages", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  for (const profileId of ["sandbox-security-balanced.v1", "sandbox-security-strict.v1"]) {
+    const profile = resolveSandboxSecurityProfile(profileId);
+    for (const stage of ["user_input", "model_output", "tool_request"] as const) {
+      for (const severity of ["critical", "high"] as const) {
+        const out = reduce({
+          stage,
+          evaluation_mode: "enforcement",
+          profile,
+          findings: [finding(severity)],
+          detector_runs: [run("matched")],
+          unresolved_escalation_signals: [],
+          engine_failure: null
+        });
+        assert.equal(out.action, "deny");
+        assert.equal(out.verdict, "risk_detected");
+      }
+    }
+  }
+});
+
+test("REQ-SBX-GENERAL-001 reducer balanced medium ask user-model and deny tool", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  assert.equal(reduce({ stage: "user_input", evaluation_mode: "simulation", profile, findings: [finding("medium")], detector_runs: [run()], unresolved_escalation_signals: [], engine_failure: null }).action, "ask");
+  assert.equal(reduce({ stage: "model_output", evaluation_mode: "simulation", profile, findings: [finding("medium")], detector_runs: [run()], unresolved_escalation_signals: [], engine_failure: null }).action, "ask");
+  assert.equal(reduce({ stage: "tool_request", evaluation_mode: "simulation", profile, findings: [finding("medium")], detector_runs: [run()], unresolved_escalation_signals: [], engine_failure: null }).action, "deny");
+});
+
+test("REQ-SBX-GENERAL-001 reducer strict medium deny user-model and tool", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-strict.v1");
+  for (const stage of ["user_input", "model_output", "tool_request"] as const) {
+    assert.equal(reduce({ stage, evaluation_mode: "enforcement", profile, findings: [finding("medium")], detector_runs: [run()], unresolved_escalation_signals: [], engine_failure: null }).action, "deny");
+  }
+});
+
+test("REQ-SBX-GENERAL-001 reducer balanced low alert user-model and tool", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  for (const stage of ["user_input", "model_output", "tool_request"] as const) {
+    assert.equal(reduce({ stage, evaluation_mode: "enforcement", profile, findings: [finding("low")], detector_runs: [run()], unresolved_escalation_signals: [], engine_failure: null }).action, "alert");
+  }
+});
+
+test("REQ-SBX-GENERAL-001 reducer strict low ask user-model and deny tool", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-strict.v1");
+  assert.equal(reduce({ stage: "user_input", evaluation_mode: "enforcement", profile, findings: [finding("low")], detector_runs: [run()], unresolved_escalation_signals: [], engine_failure: null }).action, "ask");
+  assert.equal(reduce({ stage: "tool_request", evaluation_mode: "enforcement", profile, findings: [finding("low")], detector_runs: [run()], unresolved_escalation_signals: [], engine_failure: null }).action, "deny");
+});
+
+test("REQ-SBX-GENERAL-001 reducer allow when no findings and all resolved", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const out = reduce({
+    stage: "user_input",
+    evaluation_mode: "enforcement",
+    profile,
+    findings: [],
+    detector_runs: [run("no_match")],
+    unresolved_escalation_signals: [],
+    engine_failure: null
+  });
+  assert.equal(out.action, "allow");
+  assert.equal(out.verdict, "no_detected_risk");
+  assert.equal(out.risk_level, "info");
+});
+
+test("REQ-SBX-GENERAL-001 reducer unresolved required asks user-model and denies tool", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const failed = run("failed", "profile_required");
+  assert.equal(reduce({ stage: "user_input", evaluation_mode: "enforcement", profile, findings: [], detector_runs: [failed], unresolved_escalation_signals: [], engine_failure: null }).action, "ask");
+  assert.equal(reduce({ stage: "tool_request", evaluation_mode: "enforcement", profile, findings: [], detector_runs: [failed], unresolved_escalation_signals: [], engine_failure: null }).action, "deny");
+});
+
+test("REQ-SBX-GENERAL-001 reducer unresolved escalation signals fail closed by stage", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const signal = {
+    category: "prompt_injection",
+    subject_key: "a".repeat(64),
+    subject_refs: [],
+    origin_slot_ids: ["detector://sandbox/security/rule/default/v1"],
+    severity: "high",
+    confidence: 0.6,
+    reason_code: "sandbox_security_prompt_injection"
+  };
+  assert.equal(reduce({ stage: "model_output", evaluation_mode: "enforcement", profile, findings: [], detector_runs: [run()], unresolved_escalation_signals: [signal], engine_failure: null }).action, "ask");
+  assert.equal(reduce({ stage: "tool_request", evaluation_mode: "enforcement", profile, findings: [], detector_runs: [run()], unresolved_escalation_signals: [signal], engine_failure: null }).action, "deny");
+});
+
+test("REQ-SBX-GENERAL-001 reducer risk_detected never allows", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const out = reduce({ stage: "user_input", evaluation_mode: "enforcement", profile, findings: [finding("low")], detector_runs: [run()], unresolved_escalation_signals: [], engine_failure: null });
+  assert.equal(out.verdict, "risk_detected");
+  assert.notEqual(out.action, "allow");
+});
+
+test("REQ-SBX-GENERAL-001 reducer combines accepted findings with unresolved stricter action", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const signal = {
+    category: "prompt_injection",
+    subject_key: "a".repeat(64),
+    subject_refs: [],
+    origin_slot_ids: ["detector://sandbox/security/rule/default/v1"],
+    severity: "medium",
+    confidence: 0.6,
+    reason_code: "sandbox_security_prompt_injection"
+  };
+  // low alone is alert; unresolved asks => ask
+  const out = reduce({ stage: "user_input", evaluation_mode: "enforcement", profile, findings: [finding("low")], detector_runs: [run()], unresolved_escalation_signals: [signal], engine_failure: null });
+  assert.equal(out.action, "ask");
+  assert.equal(out.verdict, "risk_detected");
+});
+
+test("REQ-SBX-GENERAL-001 reducer risk level uses highest accepted severity", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const out = reduce({ stage: "user_input", evaluation_mode: "enforcement", profile, findings: [finding("low"), finding("high")], detector_runs: [run()], unresolved_escalation_signals: [], engine_failure: null });
+  assert.equal(out.risk_level, "high");
+});
+
+test("REQ-SBX-GENERAL-001 reducer indeterminate floors medium and high by stage", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const failed = run("timeout", "runtime_required");
+  assert.equal(reduce({ stage: "user_input", evaluation_mode: "enforcement", profile, findings: [], detector_runs: [failed], unresolved_escalation_signals: [], engine_failure: null }).risk_level, "medium");
+  assert.equal(reduce({ stage: "tool_request", evaluation_mode: "enforcement", profile, findings: [], detector_runs: [failed], unresolved_escalation_signals: [], engine_failure: null }).risk_level, "high");
+});
+
+test("REQ-SBX-GENERAL-001 reducer input has no duplicate clearance or boolean fields", () => {
+  const source = readFileSync(new URL("../src/security/policy-reducer.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /unresolved_required\s*\?:/);
+  assert.doesNotMatch(source, /readonly qualified_clearances|qualified_clearances\s*:/);
+  assert.match(source, /interface SandboxSecurityPolicyReducerInput/);
+  assert.doesNotMatch(
+    source,
+    /interface SandboxSecurityPolicyReducerInput[\s\S]*unresolved_required\s*:/
+  );
+});
+
+test("REQ-SBX-GENERAL-001 reducer input exact shape includes mode profile and Engine failure", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  assert.throws(() =>
+    reduce({
+      stage: "user_input",
+      evaluation_mode: "enforcement",
+      profile,
+      findings: [],
+      detector_runs: [],
+      unresolved_escalation_signals: [],
+      engine_failure: null,
+      extra: true
+    })
+  );
+});
+
+test("REQ-SBX-GENERAL-001 Engine failure always yields indeterminate", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const out = reduce({
+    stage: "user_input",
+    evaluation_mode: "enforcement",
+    profile,
+    findings: [],
+    detector_runs: [run()],
+    unresolved_escalation_signals: [],
+    engine_failure: { code: "evaluation_budget_exhausted", phase: "detector_execution" }
+  });
+  assert.equal(out.verdict, "indeterminate");
+});
+
+test("REQ-SBX-GENERAL-001 Engine failure asks user-model and denies tool", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const failure = { code: "semantic_validation_failed", phase: "semantic_validation" };
+  assert.equal(reduce({ stage: "user_input", evaluation_mode: "enforcement", profile, findings: [], detector_runs: [run()], unresolved_escalation_signals: [], engine_failure: failure }).action, "ask");
+  assert.equal(reduce({ stage: "tool_request", evaluation_mode: "enforcement", profile, findings: [], detector_runs: [run()], unresolved_escalation_signals: [], engine_failure: failure }).action, "deny");
+});
+
+test("REQ-SBX-GENERAL-001 Engine failure cannot lower accepted risk action", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const out = reduce({
+    stage: "user_input",
+    evaluation_mode: "enforcement",
+    profile,
+    findings: [finding("critical")],
+    detector_runs: [run("matched")],
+    unresolved_escalation_signals: [],
+    engine_failure: { code: "evaluation_budget_exhausted", phase: "reduction" }
+  });
+  assert.equal(out.action, "deny");
+  assert.equal(out.verdict, "indeterminate");
+});
+
+test("REQ-SBX-GENERAL-001 successful detector runs do not clear Engine failure", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const out = reduce({
+    stage: "user_input",
+    evaluation_mode: "enforcement",
+    profile,
+    findings: [],
+    detector_runs: [run("no_match")],
+    unresolved_escalation_signals: [],
+    engine_failure: { code: "evaluation_budget_exhausted", phase: "publication" }
+  });
+  assert.equal(out.verdict, "indeterminate");
+});
+
+test("REQ-SBX-GENERAL-001 evaluation_budget_exhausted accepts only DecisionBearingBudgetPhase", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  assert.doesNotThrow(() =>
+    reduce({
+      stage: "user_input",
+      evaluation_mode: "enforcement",
+      profile,
+      findings: [],
+      detector_runs: [],
+      unresolved_escalation_signals: [],
+      engine_failure: { code: "evaluation_budget_exhausted", phase: "qualification" }
+    })
+  );
+});
+
+test("REQ-SBX-GENERAL-001 evaluation_budget_exhausted rejects pre-ID phases", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  assert.throws(() =>
+    reduce({
+      stage: "user_input",
+      evaluation_mode: "enforcement",
+      profile,
+      findings: [],
+      detector_runs: [],
+      unresolved_escalation_signals: [],
+      engine_failure: { code: "evaluation_budget_exhausted", phase: "authority" as never }
+    })
+  );
+});
+
+test("REQ-SBX-GENERAL-001 pre-ID phase budget exhaustion is terminal not decision-bearing", () => {
+  const source = readFileSync(new URL("../src/security/policy-reducer.ts", import.meta.url), "utf8");
+  assert.match(source, /pre_id_evaluation_budget_exhausted/);
+  assert.match(source, /SandboxSecurityTerminalEngineErrorCode/);
+});
+
+test("REQ-SBX-GENERAL-001 decision_identity budget phase requires prior successful nextDecisionId", async () => {
+  // reducer accepts the phase; engine ownership is separate. Ensure accepted.
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const out = reduce({
+    stage: "user_input",
+    evaluation_mode: "enforcement",
+    profile,
+    findings: [],
+    detector_runs: [],
+    unresolved_escalation_signals: [],
+    engine_failure: { code: "evaluation_budget_exhausted", phase: "decision_identity" }
+  });
+  assert.equal(out.verdict, "indeterminate");
+});
+
+test("REQ-SBX-GENERAL-001 semantic_validation_failed requires semantic_validation phase only", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  assert.throws(() =>
+    reduce({
+      stage: "user_input",
+      evaluation_mode: "enforcement",
+      profile,
+      findings: [],
+      detector_runs: [],
+      unresolved_escalation_signals: [],
+      engine_failure: { code: "semantic_validation_failed", phase: "reduction" as never }
+    })
+  );
+});
+
+test("REQ-SBX-GENERAL-001 decision-bearing Engine failure rejects terminal codes", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  assert.throws(() =>
+    reduce({
+      stage: "user_input",
+      evaluation_mode: "enforcement",
+      profile,
+      findings: [],
+      detector_runs: [],
+      unresolved_escalation_signals: [],
+      engine_failure: { code: "decision_identity_invalid", phase: "decision_identity" } as never
+    })
+  );
+});
+
+test("REQ-SBX-GENERAL-001 Engine failure rejects incompatible code-phase pair", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  assert.throws(() =>
+    reduce({
+      stage: "user_input",
+      evaluation_mode: "enforcement",
+      profile,
+      findings: [],
+      detector_runs: [],
+      unresolved_escalation_signals: [],
+      engine_failure: { code: "semantic_validation_failed", phase: "detector_execution" } as never
+    })
+  );
+});
+
+test("REQ-SBX-GENERAL-001 reducer output contains no raw content fields", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const out = reduce({
+    stage: "user_input",
+    evaluation_mode: "enforcement",
+    profile,
+    findings: [finding("high")],
+    detector_runs: [run("matched")],
+    unresolved_escalation_signals: [],
+    engine_failure: null
+  });
+  assert.deepEqual(Object.keys(out).sort(), ["action", "risk_level", "verdict"]);
+  assert.doesNotMatch(JSON.stringify(out), /raw_content|hello|source_handle/);
+});
+
+test("REQ-SBX-GENERAL-001 reducer property strict never less restrictive than balanced", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const balanced = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const strict = resolveSandboxSecurityProfile("sandbox-security-strict.v1");
+  const rank = { allow: 0, alert: 1, ask: 2, deny: 3 } as const;
+  for (const stage of ["user_input", "model_output", "tool_request"] as const) {
+    for (const severity of ["low", "medium", "high", "critical"] as const) {
+      const b = reduce({ stage, evaluation_mode: "enforcement", profile: balanced, findings: [finding(severity)], detector_runs: [run()], unresolved_escalation_signals: [], engine_failure: null });
+      const s = reduce({ stage, evaluation_mode: "enforcement", profile: strict, findings: [finding(severity)], detector_runs: [run()], unresolved_escalation_signals: [], engine_failure: null });
+      assert.ok(rank[s.action] >= rank[b.action]);
+    }
+  }
+});
+

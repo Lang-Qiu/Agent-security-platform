@@ -1,5 +1,23 @@
 # Progress
 
+## 2026-07-15 - REQ-SBX-GENERAL-001 P4-T4 policy reducer
+
+- scope: stage-aware pure policy reduction over findings/runs/signals/engine failure
+- files:
+  - `engines/sandbox/src/security/policy-reducer.ts` (create)
+  - `engines/sandbox/tests/sandbox-security-policy.spec.ts` (extend)
+- verification:
+  - policy suite 54/54
+  - sandbox `tsc --noEmit` pass
+- independent review:
+  - P0/P1: none
+  - exact seven-field input; no clearance/boolean alternate fields
+  - matrix covers critical/high/medium/low + unresolved + engine failure
+  - strict never less restrictive than balanced
+  - conclusion: APPROVED
+- re-review: APPROVED
+- status: P4-T4 VERIFIED; next P4-T5
+
 ## 2026-07-15 - REQ-SBX-GENERAL-001 P4-T3 deadline + run ledger
 
 - scope: injected monotonic deadline leases and immutable run-ledger state machine
