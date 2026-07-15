@@ -39,6 +39,33 @@ const {
   validateSandboxSecurityPublication() {}
 }) as typeof import("../src/security/finding-qualification.ts");
 
+
+const semanticModulePath = new URL("../src/security/semantic-validator.ts", import.meta.url);
+const semanticModule = existsSync(semanticModulePath)
+  ? await import("../src/security/semantic-validator.ts")
+  : null;
+
+const {
+  validateSandboxSecurityDecisionSemantics
+} = (semanticModule ?? {
+  validateSandboxSecurityDecisionSemantics(decision: unknown) {
+    // Guarded stub accepts every candidate so forgery tests remain RED
+    // until the real module is present.
+    return decision as never;
+  }
+}) as typeof import("../src/security/semantic-validator.ts");
+
+const reducerModulePath = new URL("../src/security/policy-reducer.ts", import.meta.url);
+const reducerModule = existsSync(reducerModulePath)
+  ? await import("../src/security/policy-reducer.ts")
+  : null;
+const { reduceSandboxSecurityPolicy } = (reducerModule ?? {
+  reduceSandboxSecurityPolicy() {
+    return { verdict: "no_detected_risk", action: "allow", risk_level: "info" };
+  }
+}) as typeof import("../src/security/policy-reducer.ts");
+
+
 const NONCE = "a".repeat(32);
 const SOURCE = `hsrc:${NONCE}:0001`;
 const SOURCE2 = `hsrc:${NONCE}:0002`;
@@ -2567,3 +2594,1205 @@ test("REQ-SBX-GENERAL-001 Engine failure never rewrites a successful detector ru
   );
   assert.equal(ledger.snapshot().slots[0].status, "matched");
 });
+
+
+// ---------------------------------------------------------------------------
+// P4-T5 semantic validator
+// ---------------------------------------------------------------------------
+
+function baseRuns(profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1")) {
+  return profile.detector_slots.map((slot, index) => {
+    if (slot.detector_kind === "rule") {
+      return {
+        detector_id: slot.slot_id,
+        detector_version: slot.detector_version,
+        detector_kind: slot.detector_kind,
+        obligation: "profile_required" as const,
+        elapsed_ms: 1 + index,
+        status: "matched" as const,
+        finding_ids: [] as string[]
+      };
+    }
+    if (slot.detector_kind === "local_model") {
+      return {
+        detector_id: slot.slot_id,
+        detector_version: slot.detector_version,
+        detector_kind: slot.detector_kind,
+        obligation: "optional_not_selected" as const,
+        elapsed_ms: 0,
+        status: "skipped" as const,
+        skip_reason: "optional_not_selected" as const
+      };
+    }
+    return {
+      detector_id: slot.slot_id,
+      detector_version: slot.detector_version,
+      detector_kind: slot.detector_kind,
+      obligation: "optional_not_selected" as const,
+      elapsed_ms: 0,
+      status: "skipped" as const,
+      skip_reason: "routing_not_selected" as const
+    };
+  });
+}
+
+function buildConsistentScenario(options?: {
+  includeFinding?: boolean;
+  confidence?: number;
+  severity?: "low" | "medium" | "high" | "critical";
+  stage?: "user_input" | "model_output" | "tool_request";
+  evaluation_mode?: "simulation" | "enforcement";
+  engine_failure?: { code: "evaluation_budget_exhausted"; phase: "reduction" } | { code: "semantic_validation_failed"; phase: "semantic_validation" } | null;
+  unresolved?: boolean;
+}) {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const stage = options?.stage ?? "user_input";
+  const evaluation_mode = options?.evaluation_mode ?? "enforcement";
+  const decision_id = DECISION;
+  const request_id = "req-engine-1";
+  const created_at = "2026-07-15T12:00:00.000Z";
+  const map = subjectMap();
+  const rule = ruleSlot();
+  const includeFinding = options?.includeFinding ?? true;
+  const confidence = options?.confidence ?? 1.0;
+  const severity = options?.severity ?? "high";
+
+  const candidates = includeFinding
+    ? [candidate({ confidence, severity })]
+    : [];
+  const normalized_result = { candidates, clearances: [] as never[] };
+  const qualified = qualifySandboxSecuritySlotEvidence({
+    slot: rule,
+    result: normalized_result as never,
+    decision_id,
+    subject_map: map
+  });
+  const publication = deriveSandboxSecurityExpectedPublication({
+    decision_id,
+    draft_findings: qualified.accepted_draft_findings
+  });
+
+  const runs: any[] = baseRuns(profile);
+  // fix no_match shape
+  if (!includeFinding && candidates.length === 0) {
+    runs[0] = {
+      detector_id: rule.slot_id,
+      detector_version: rule.detector_version,
+      detector_kind: "rule" as const,
+      obligation: "profile_required" as const,
+      elapsed_ms: 1,
+      status: "no_match" as const,
+      finding_ids: [] as string[]
+    };
+  } else {
+    runs[0] = {
+      detector_id: rule.slot_id,
+      detector_version: rule.detector_version,
+      detector_kind: "rule" as const,
+      obligation: "profile_required" as const,
+      elapsed_ms: 1,
+      status: "matched" as const,
+      finding_ids: publication.findings.map((f) => f.finding_id)
+    };
+  }
+
+  const slot_records = profile.detector_slots.map((slot) => {
+    if (slot.slot_id === rule.slot_id) {
+      if (runs[0].status === "matched") {
+        return {
+          slot_id: slot.slot_id,
+          status: "matched" as const,
+          normalized_result,
+          qualified_evidence: qualified
+        };
+      }
+      return { slot_id: slot.slot_id, status: "no_match" as const };
+    }
+    if (slot.detector_kind === "local_model") {
+      return {
+        slot_id: slot.slot_id,
+        status: "skipped" as const,
+        skip_reason: "optional_not_selected" as const
+      };
+    }
+    return {
+      slot_id: slot.slot_id,
+      status: "skipped" as const,
+      skip_reason: "routing_not_selected" as const
+    };
+  });
+
+  const unresolved_escalation_signals = options?.unresolved
+    ? [
+        {
+          category: "prompt_injection" as const,
+          subject_key: "sk",
+          subject_refs: [contentRef()],
+          origin_slot_ids: [rule.slot_id],
+          severity: "medium" as const,
+          confidence: 0.55,
+          reason_code: "sandbox_security_prompt_injection" as const
+        }
+      ]
+    : [];
+
+  const engine_failure = options?.engine_failure === undefined ? null : options.engine_failure;
+
+  const reduced = reduceSandboxSecurityPolicy({
+    stage,
+    evaluation_mode,
+    profile,
+    findings: publication.findings,
+    detector_runs: runs as never,
+    unresolved_escalation_signals: unresolved_escalation_signals as never,
+    engine_failure: engine_failure as never
+  });
+
+  const evidence_refs = [
+    ...publication.findings.flatMap((f) => f.evidence_refs)
+  ];
+  if (engine_failure) {
+    evidence_refs.push(`evidence://sandbox/security/${decision_id}/engine-0001`);
+  }
+  // unique preserve order
+  const seen = new Set<string>();
+  const flat = evidence_refs.filter((ref) => {
+    if (seen.has(ref)) return false;
+    seen.add(ref);
+    return true;
+  });
+
+  const decision = {
+    schema_version: "sandbox-security-decision.v1" as const,
+    decision_id,
+    request_id,
+    evaluation_mode,
+    stage,
+    policy_profile_id: profile.profile_id,
+    verdict: reduced.verdict,
+    action: reduced.action,
+    risk_level: reduced.risk_level,
+    findings: publication.findings,
+    detector_runs: runs,
+    evidence_refs: flat,
+    created_at
+  };
+
+  const ledger = {
+    decision_id,
+    request_id,
+    created_at,
+    evaluation_mode,
+    stage,
+    profile,
+    subject_map: map,
+    slot_records,
+    public_subject_token_map: publication.token_map,
+    routed_obligations: [] as const,
+    judge_resolution_evidence: [] as const,
+    published_findings: publication.findings,
+    detector_runs: runs,
+    unresolved_escalation_signals,
+    engine_failure
+  };
+
+  return { decision, ledger, profile, publication, qualified, normalized_result, rule, map };
+}
+
+function assertSemanticRejects(mutate: (ctx: ReturnType<typeof buildConsistentScenario>) => { decision: unknown; ledger: unknown }) {
+  const ctx = buildConsistentScenario();
+  const { decision, ledger } = mutate(ctx);
+  assert.throws(() =>
+    validateSandboxSecurityDecisionSemantics(decision as never, ledger as never)
+  );
+}
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects risk_detected with allow", () => {
+  assertSemanticRejects((ctx) => {
+    const decision = { ...ctx.decision, verdict: "risk_detected", action: "allow" };
+    return { decision, ledger: ctx.ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects no_detected_risk with findings", () => {
+  assertSemanticRejects((ctx) => {
+    const decision = {
+      ...ctx.decision,
+      verdict: "no_detected_risk",
+      action: "allow",
+      risk_level: "info"
+    };
+    return { decision, ledger: ctx.ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects under-restrictive action", () => {
+  assertSemanticRejects((ctx) => {
+    // high severity on user_input balanced expects alert or higher; force allow
+    const decision = { ...ctx.decision, action: "allow" };
+    return { decision, ledger: ctx.ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects finding detector not in runs", () => {
+  assertSemanticRejects((ctx) => {
+    const findings = ctx.decision.findings.map((f) => ({
+      ...f,
+      detector_id: "detector://sandbox/security/rule/other/v1"
+    }));
+    const decision = { ...ctx.decision, findings };
+    const ledger = { ...ctx.ledger, published_findings: findings };
+    return { decision, ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects finding detector_id not in selected profile.detector_slots", () => {
+  assertSemanticRejects((ctx) => {
+    const findings = ctx.decision.findings.map((f) => ({
+      ...f,
+      detector_id: "detector://sandbox/security/rule/forged/v1"
+    }));
+    // also forge a matching run so only profile membership fails if runs allowed, but
+    // our validator checks profile first / membership.
+    const decision = { ...ctx.decision, findings };
+    const ledger = { ...ctx.ledger, published_findings: findings };
+    return { decision, ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator does not treat shared detector_id grammar as closed-slot authority", () => {
+  // Grammar-valid detector id outside selected slots must still reject.
+  assertSemanticRejects((ctx) => {
+    const foreign = "detector://sandbox/security/rule/default/v2";
+    const findings = ctx.decision.findings.map((f) => ({
+      ...f,
+      detector_id: foreign
+    }));
+    const decision = { ...ctx.decision, findings };
+    const ledger = { ...ctx.ledger, published_findings: findings };
+    return { decision, ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator requires one run per manifest slot in manifest order", () => {
+  assertSemanticRejects((ctx) => {
+    const detector_runs = [...ctx.ledger.detector_runs].reverse();
+    const decision = { ...ctx.decision, detector_runs };
+    const ledger = { ...ctx.ledger, detector_runs };
+    return { decision, ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects duplicate run detector IDs", () => {
+  assertSemanticRejects((ctx) => {
+    const detector_runs = ctx.ledger.detector_runs.map((run, index) =>
+      index === 1
+        ? { ...run, detector_id: ctx.ledger.detector_runs[0].detector_id }
+        : run
+    );
+    const decision = { ...ctx.decision, detector_runs };
+    const ledger = { ...ctx.ledger, detector_runs };
+    return { decision, ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator requires run.detector_id equals manifest slot_id", () => {
+  assertSemanticRejects((ctx) => {
+    const detector_runs = ctx.ledger.detector_runs.map((run, index) =>
+      index === 0
+        ? { ...run, detector_id: "detector://sandbox/security/rule/forged/v1" }
+        : run
+    );
+    const decision = { ...ctx.decision, detector_runs };
+    const ledger = { ...ctx.ledger, detector_runs };
+    return { decision, ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator requires run.detector_version equals manifest version", () => {
+  assertSemanticRejects((ctx) => {
+    const detector_runs = ctx.ledger.detector_runs.map((run, index) =>
+      index === 0 ? { ...run, detector_version: "9.9.9" } : run
+    );
+    const decision = { ...ctx.decision, detector_runs };
+    const ledger = { ...ctx.ledger, detector_runs };
+    return { decision, ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator requires run.detector_kind equals manifest kind", () => {
+  assertSemanticRejects((ctx) => {
+    const detector_runs = ctx.ledger.detector_runs.map((run, index) =>
+      index === 0 ? { ...run, detector_kind: "local_model" as const } : run
+    );
+    const decision = { ...ctx.decision, detector_runs };
+    const ledger = { ...ctx.ledger, detector_runs };
+    return { decision, ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 finding detector version matches its producer run and manifest", () => {
+  assertSemanticRejects((ctx) => {
+    const findings = ctx.decision.findings.map((f) => ({
+      ...f,
+      detector_version: "0.0.1"
+    }));
+    const decision = { ...ctx.decision, findings };
+    const ledger = { ...ctx.ledger, published_findings: findings };
+    return { decision, ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects duplicate finding IDs", () => {
+  assertSemanticRejects((ctx) => {
+    // forge ledger cache with duplicated drafts by mutating published findings only
+    // is insufficient; force duplicate by doubling published findings with same id
+    const findings = [...ctx.decision.findings, ...ctx.decision.findings];
+    const decision = { ...ctx.decision, findings };
+    const ledger = { ...ctx.ledger, published_findings: findings };
+    return { decision, ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects forged evidence refs", () => {
+  assertSemanticRejects((ctx) => {
+    const decision = {
+      ...ctx.decision,
+      evidence_refs: [`evidence://sandbox/security/${DECISION}/9999`]
+    };
+    return { decision, ledger: ctx.ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects stage profile mode forgery", () => {
+  assertSemanticRejects((ctx) => {
+    const decision = { ...ctx.decision, stage: "tool_request" as const };
+    return { decision, ledger: ctx.ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects request_id forgery", () => {
+  assertSemanticRejects((ctx) => {
+    const decision = { ...ctx.decision, request_id: "forged-req" };
+    return { decision, ledger: ctx.ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects evaluation_mode forgery", () => {
+  assertSemanticRejects((ctx) => {
+    const decision = { ...ctx.decision, evaluation_mode: "simulation" as const };
+    return { decision, ledger: ctx.ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects created_at forgery or invalid date", () => {
+  assertSemanticRejects((ctx) => {
+    const decision = { ...ctx.decision, created_at: "not-a-date" };
+    const ledger = { ...ctx.ledger, created_at: "not-a-date" };
+    return { decision, ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects decision_id forgery with findings", () => {
+  assertSemanticRejects((ctx) => {
+    const decision = { ...ctx.decision, decision_id: "forged-dec" };
+    return { decision, ledger: ctx.ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects decision_id forgery on clean decision", () => {
+  const ctx = buildConsistentScenario({ includeFinding: false });
+  const decision = { ...ctx.decision, decision_id: "forged-clean" };
+  assert.throws(() =>
+    validateSandboxSecurityDecisionSemantics(decision as never, ctx.ledger as never)
+  );
+});
+
+test("REQ-SBX-GENERAL-001 JudgeResolutionEvidence is exact discriminated union", () => {
+  // Type-level ownership: module re-exports P4-T2 type; runtime accepts empty array.
+  const ctx = buildConsistentScenario();
+  assert.doesNotThrow(() =>
+    validateSandboxSecurityDecisionSemantics(ctx.decision as never, ctx.ledger as never)
+  );
+  const source = readFileSync(new URL("../src/security/semantic-validator.ts", import.meta.url), "utf8");
+  assert.match(source, /export type \{ SandboxSecurityJudgeResolutionEvidence \}/);
+  assert.doesNotMatch(source, /export type SandboxSecurityJudgeResolutionEvidence =/);
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects forged unresolved signal set", () => {
+  assertSemanticRejects((ctx) => {
+    // inject unresolved into ledger without recomputing action/verdict on decision
+    const ledger = {
+      ...ctx.ledger,
+      unresolved_escalation_signals: [
+        {
+          category: "prompt_injection",
+          subject_key: "x",
+          subject_refs: [contentRef()],
+          origin_slot_ids: [ctx.rule.slot_id],
+          severity: "medium",
+          confidence: 0.55,
+          reason_code: "sandbox_security_prompt_injection"
+        }
+      ]
+    };
+    return { decision: ctx.decision, ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects forged finding order", () => {
+  const ctx = buildConsistentScenario();
+  // create two findings
+  const two = buildConsistentScenario();
+  // force two candidates
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const map = subjectMap();
+  const rule = ruleSlot();
+  const normalized_result = {
+    candidates: [
+      candidate({ confidence: 1.0, severity: "low", category: "jailbreak", reason_code: "sandbox_security_jailbreak" }),
+      candidate({ confidence: 1.0, severity: "critical", subject_refs: [contentRef(SOURCE, { kind: "text_byte_range", start_byte: 0, end_byte: 2 })] })
+    ],
+    clearances: []
+  };
+  const qualified = qualifySandboxSecuritySlotEvidence({
+    slot: rule,
+    result: normalized_result as never,
+    decision_id: DECISION,
+    subject_map: map
+  });
+  const publication = deriveSandboxSecurityExpectedPublication({
+    decision_id: DECISION,
+    draft_findings: qualified.accepted_draft_findings
+  });
+  const base = buildConsistentScenario();
+  // rebuild with two findings via helper mutation
+  const runs = base.ledger.detector_runs.map((run, index) =>
+    index === 0
+      ? {
+          ...run,
+          status: "matched" as const,
+          finding_ids: publication.findings.map((f) => f.finding_id)
+        }
+      : run
+  );
+  const reduced = reduceSandboxSecurityPolicy({
+    stage: "user_input",
+    evaluation_mode: "enforcement",
+    profile,
+    findings: publication.findings,
+    detector_runs: runs as never,
+    unresolved_escalation_signals: [],
+    engine_failure: null
+  });
+  const evidence_refs = publication.findings.flatMap((f) => f.evidence_refs);
+  const decision = {
+    schema_version: "sandbox-security-decision.v1" as const,
+    decision_id: DECISION,
+    request_id: "req-engine-1",
+    evaluation_mode: "enforcement" as const,
+    stage: "user_input" as const,
+    policy_profile_id: profile.profile_id,
+    verdict: reduced.verdict,
+    action: reduced.action,
+    risk_level: reduced.risk_level,
+    findings: [...publication.findings].reverse(),
+    detector_runs: runs,
+    evidence_refs,
+    created_at: "2026-07-15T12:00:00.000Z"
+  };
+  const ledger = {
+    decision_id: DECISION,
+    request_id: "req-engine-1",
+    created_at: "2026-07-15T12:00:00.000Z",
+    evaluation_mode: "enforcement" as const,
+    stage: "user_input" as const,
+    profile,
+    subject_map: map,
+    slot_records: profile.detector_slots.map((slot) => {
+      if (slot.slot_id === rule.slot_id) {
+        return {
+          slot_id: slot.slot_id,
+          status: "matched" as const,
+          normalized_result,
+          qualified_evidence: qualified
+        };
+      }
+      if (slot.detector_kind === "local_model") {
+        return { slot_id: slot.slot_id, status: "skipped" as const, skip_reason: "optional_not_selected" as const };
+      }
+      return { slot_id: slot.slot_id, status: "skipped" as const, skip_reason: "routing_not_selected" as const };
+    }),
+    public_subject_token_map: publication.token_map,
+    routed_obligations: [] as const,
+    judge_resolution_evidence: [] as const,
+    published_findings: [...publication.findings].reverse(),
+    detector_runs: runs,
+    unresolved_escalation_signals: [],
+    engine_failure: null
+  };
+  assert.throws(() =>
+    validateSandboxSecurityDecisionSemantics(decision as never, ledger as never)
+  );
+  void ctx;
+  void two;
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator accepts consistent reduced decision", () => {
+  const ctx = buildConsistentScenario();
+  const result = validateSandboxSecurityDecisionSemantics(
+    ctx.decision as never,
+    ctx.ledger as never
+  );
+  assert.equal(result.decision_id, DECISION);
+  assert.equal(result.verdict, "risk_detected");
+  assert.ok(Object.isFrozen(result));
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator does not re-run detectors", () => {
+  const source = readFileSync(new URL("../src/security/semantic-validator.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /\.detect\(/);
+  assert.doesNotMatch(source, /createSandboxSecurityEngine/);
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator recomputes verdict action risk from ledger", () => {
+  assertSemanticRejects((ctx) => {
+    const decision = {
+      ...ctx.decision,
+      verdict: "indeterminate",
+      action: "deny",
+      risk_level: "critical"
+    };
+    return { decision, ledger: ctx.ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator requires EvaluationEvidenceLedger input", () => {
+  const ctx = buildConsistentScenario();
+  assert.throws(() =>
+    validateSandboxSecurityDecisionSemantics(ctx.decision as never, null as never)
+  );
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator recomputes finding IDs from accepted risk evidence", () => {
+  assertSemanticRejects((ctx) => {
+    // mutate cache qualified evidence finding_id without changing normalized result
+    const slot_records = ctx.ledger.slot_records.map((record) => {
+      if (record.status !== "matched") return record;
+      return {
+        ...record,
+        qualified_evidence: {
+          ...record.qualified_evidence,
+          accepted_draft_findings: record.qualified_evidence.accepted_draft_findings.map((d) => ({
+            ...d,
+            finding_id: "finding:sha256:" + "0".repeat(64)
+          })),
+          accepted_risks: record.qualified_evidence.accepted_risks.map((r) => ({
+            ...r,
+            finding_id: "finding:sha256:" + "0".repeat(64)
+          }))
+        }
+      };
+    });
+    return { decision: ctx.decision, ledger: { ...ctx.ledger, slot_records } };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator recomputes Judge resolution from ledger", () => {
+  // empty judge path is consistent; forged obligation id must fail
+  assertSemanticRejects((ctx) => {
+    const ledger = {
+      ...ctx.ledger,
+      judge_resolution_evidence: [
+        {
+          kind: "accepted_risk",
+          obligation_id: "obligation://sandbox/security/x/0001",
+          category: "prompt_injection",
+          subject_key: "sk",
+          finding_id: "finding:sha256:" + "a".repeat(64)
+        }
+      ]
+    };
+    return { decision: ctx.decision, ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator validates the recorded sole publication without republishing", () => {
+  const source = readFileSync(new URL("../src/security/semantic-validator.ts", import.meta.url), "utf8");
+  assert.match(source, /validateSandboxSecurityPublication/);
+  assert.doesNotMatch(source, /publishSandboxSecurityFindings\(/);
+  assert.doesNotMatch(source, /materializeSandboxSecurityPublicSubjectTokens\(/);
+  const ctx = buildConsistentScenario();
+  assert.doesNotThrow(() =>
+    validateSandboxSecurityDecisionSemantics(ctx.decision as never, ctx.ledger as never)
+  );
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator accepts valid Engine failure indeterminate", () => {
+  const ctx = buildConsistentScenario({
+    includeFinding: false,
+    engine_failure: { code: "evaluation_budget_exhausted", phase: "reduction" }
+  });
+  const result = validateSandboxSecurityDecisionSemantics(
+    ctx.decision as never,
+    ctx.ledger as never
+  );
+  assert.equal(result.verdict, "indeterminate");
+  assert.ok(
+    result.evidence_refs.includes(`evidence://sandbox/security/${DECISION}/engine-0001`)
+  );
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects missing or forged engine-0001 evidence", () => {
+  assertSemanticRejects((ctx) => {
+    const base = buildConsistentScenario({
+      includeFinding: false,
+      engine_failure: { code: "evaluation_budget_exhausted", phase: "reduction" }
+    });
+    const decision = { ...base.decision, evidence_refs: [] };
+    return { decision, ledger: base.ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator checks exact decision evidence flattening", () => {
+  assertSemanticRejects((ctx) => {
+    const decision = {
+      ...ctx.decision,
+      evidence_refs: [
+        ...ctx.decision.evidence_refs,
+        `evidence://sandbox/security/${DECISION}/engine-0001`
+      ]
+    };
+    return { decision, ledger: ctx.ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator checks obligation resolution from applyJudgeOutcome", () => {
+  // reuses judge resolution check with partial_coverage unknown ids
+  assertSemanticRejects((ctx) => {
+    const ledger = {
+      ...ctx.ledger,
+      judge_resolution_evidence: [
+        {
+          kind: "partial_coverage",
+          covered_obligation_ids: ["obligation://sandbox/security/x/0001"],
+          uncovered_obligation_ids: []
+        }
+      ]
+    };
+    return { decision: ctx.decision, ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects missing source_slot_id", () => {
+  assertSemanticRejects((ctx) => {
+    const slot_records = ctx.ledger.slot_records.map((record) => {
+      if (record.status !== "matched") return record;
+      return {
+        ...record,
+        qualified_evidence: {
+          ...record.qualified_evidence,
+          source_slot_id: "detector://sandbox/security/rule/other/v1" as never
+        }
+      };
+    });
+    return { decision: ctx.decision, ledger: { ...ctx.ledger, slot_records } };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects mismatched slot evidence order", () => {
+  assertSemanticRejects((ctx) => {
+    const slot_records = [...ctx.ledger.slot_records].reverse();
+    return { decision: ctx.decision, ledger: { ...ctx.ledger, slot_records } };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects omitted above-threshold candidate", () => {
+  assertSemanticRejects((ctx) => {
+    const slot_records = ctx.ledger.slot_records.map((record) => {
+      if (record.status !== "matched") return record;
+      return {
+        ...record,
+        qualified_evidence: {
+          ...record.qualified_evidence,
+          accepted_draft_findings: [],
+          accepted_risks: [],
+          discarded_count: record.qualified_evidence.discarded_count + 1
+        }
+      };
+    });
+    return { decision: ctx.decision, ledger: { ...ctx.ledger, slot_records } };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects accepted below-threshold candidate", () => {
+  // forge normalized result with low confidence but cache says accepted
+  assertSemanticRejects((ctx) => {
+    const slot_records = ctx.ledger.slot_records.map((record) => {
+      if (record.status !== "matched") return record;
+      return {
+        ...record,
+        normalized_result: {
+          candidates: [candidate({ confidence: 0.1, severity: "low" })],
+          clearances: []
+        }
+      };
+    });
+    return { decision: ctx.decision, ledger: { ...ctx.ledger, slot_records } };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects forged discarded_count", () => {
+  assertSemanticRejects((ctx) => {
+    const slot_records = ctx.ledger.slot_records.map((record) => {
+      if (record.status !== "matched") return record;
+      return {
+        ...record,
+        qualified_evidence: {
+          ...record.qualified_evidence,
+          discarded_count: 99
+        }
+      };
+    });
+    return { decision: ctx.decision, ledger: { ...ctx.ledger, slot_records } };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects omitted routing-floor evidence", () => {
+  assertSemanticRejects((ctx) => {
+    // candidate between routing floor and qualify threshold must appear in routing_risks
+    const normalized_result = {
+      candidates: [candidate({ confidence: 0.6, severity: "medium" })],
+      clearances: []
+    };
+    const real = qualifySandboxSecuritySlotEvidence({
+      slot: ctx.rule,
+      result: normalized_result as never,
+      decision_id: DECISION,
+      subject_map: ctx.map
+    });
+    assert.ok(real.routing_risks.length > 0);
+    const slot_records = ctx.ledger.slot_records.map((record) => {
+      if (record.status !== "matched") return record;
+      return {
+        ...record,
+        normalized_result,
+        qualified_evidence: {
+          ...real,
+          routing_risks: []
+        }
+      };
+    });
+    // no findings in this case
+    const publication = deriveSandboxSecurityExpectedPublication({
+      decision_id: DECISION,
+      draft_findings: []
+    });
+    const runs = ctx.ledger.detector_runs.map((run, index) =>
+      index === 0
+        ? {
+            detector_id: ctx.rule.slot_id,
+            detector_version: ctx.rule.detector_version,
+            detector_kind: ctx.rule.detector_kind,
+            obligation: "profile_required" as const,
+            elapsed_ms: 1,
+            status: "matched" as const,
+            finding_ids: [] as string[]
+          }
+        : run
+    );
+    const reduced = reduceSandboxSecurityPolicy({
+      stage: "user_input",
+      evaluation_mode: "enforcement",
+      profile: ctx.profile,
+      findings: [],
+      detector_runs: runs as never,
+      unresolved_escalation_signals: [],
+      engine_failure: null
+    });
+    const decision = {
+      ...ctx.decision,
+      findings: [],
+      detector_runs: runs,
+      verdict: reduced.verdict,
+      action: reduced.action,
+      risk_level: reduced.risk_level,
+      evidence_refs: []
+    };
+    const ledger = {
+      ...ctx.ledger,
+      slot_records,
+      published_findings: [],
+      public_subject_token_map: publication.token_map,
+      detector_runs: runs
+    };
+    return { decision, ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects misclassified clearance", () => {
+  assertSemanticRejects((ctx) => {
+    const normalized_result = {
+      candidates: [],
+      clearances: [
+        {
+          category: "prompt_injection",
+          confidence: 0.9,
+          subject_refs: [contentRef()]
+        }
+      ]
+    };
+    const real = qualifySandboxSecuritySlotEvidence({
+      slot: ctx.rule,
+      result: normalized_result as never,
+      decision_id: DECISION,
+      subject_map: ctx.map
+    });
+    const slot_records = ctx.ledger.slot_records.map((record) => {
+      if (record.status !== "matched") return record;
+      return {
+        ...record,
+        normalized_result,
+        qualified_evidence: {
+          ...real,
+          qualified_clearances: []
+        }
+      };
+    });
+    const publication = deriveSandboxSecurityExpectedPublication({
+      decision_id: DECISION,
+      draft_findings: []
+    });
+    const runs = ctx.ledger.detector_runs.map((run, index) =>
+      index === 0
+        ? {
+            detector_id: ctx.rule.slot_id,
+            detector_version: ctx.rule.detector_version,
+            detector_kind: ctx.rule.detector_kind,
+            obligation: "profile_required" as const,
+            elapsed_ms: 1,
+            status: "matched" as const,
+            finding_ids: [] as string[]
+          }
+        : run
+    );
+    const reduced = reduceSandboxSecurityPolicy({
+      stage: "user_input",
+      evaluation_mode: "enforcement",
+      profile: ctx.profile,
+      findings: [],
+      detector_runs: runs as never,
+      unresolved_escalation_signals: [],
+      engine_failure: null
+    });
+    const decision = {
+      ...ctx.decision,
+      findings: [],
+      detector_runs: runs,
+      verdict: reduced.verdict,
+      action: reduced.action,
+      risk_level: reduced.risk_level,
+      evidence_refs: []
+    };
+    return {
+      decision,
+      ledger: {
+        ...ctx.ledger,
+        slot_records,
+        published_findings: [],
+        public_subject_token_map: publication.token_map,
+        detector_runs: runs
+      }
+    };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects slot record and slot manifest mismatch", () => {
+  assertSemanticRejects((ctx) => {
+    const slot_records = ctx.ledger.slot_records.map((record, index) =>
+      index === 0
+        ? { ...record, slot_id: "detector://sandbox/security/local/default/v1" as never }
+        : record
+    );
+    return { decision: ctx.decision, ledger: { ...ctx.ledger, slot_records } };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator recomputes Judge obligation coverage", () => {
+  assertSemanticRejects((ctx) => {
+    const ledger = {
+      ...ctx.ledger,
+      routed_obligations: [
+        {
+          obligation_id: "obligation://sandbox/security/dec-engine-1/0001",
+          category: "prompt_injection",
+          subject_refs: [
+            {
+              kind: "content_source",
+              source_token: "etok:src:x",
+              locator: { kind: "whole_source" }
+            }
+          ],
+          signal_subject_key: "sk",
+          signal_category: "jailbreak"
+        }
+      ]
+    };
+    return { decision: ctx.decision, ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator requires one slot record per manifest slot", () => {
+  assertSemanticRejects((ctx) => {
+    const slot_records = ctx.ledger.slot_records.slice(0, 2);
+    return { decision: ctx.decision, ledger: { ...ctx.ledger, slot_records } };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator requires record.status equals detector_run.status", () => {
+  assertSemanticRejects((ctx) => {
+    const slot_records = ctx.ledger.slot_records.map((record, index) =>
+      index === 0 ? { slot_id: record.slot_id, status: "no_match" as const } : record
+    );
+    return { decision: ctx.decision, ledger: { ...ctx.ledger, slot_records } };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects matched record without normalized_result", () => {
+  assertSemanticRejects((ctx) => {
+    const slot_records = ctx.ledger.slot_records.map((record, index) => {
+      if (index !== 0) return record;
+      return {
+        slot_id: record.slot_id,
+        status: "matched" as const
+      } as never;
+    });
+    return { decision: ctx.decision, ledger: { ...ctx.ledger, slot_records } };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects non-matched record with qualified_evidence", () => {
+  assertSemanticRejects((ctx) => {
+    const slot_records = ctx.ledger.slot_records.map((record, index) => {
+      if (index !== 1) return record;
+      return {
+        slot_id: record.slot_id,
+        status: "skipped" as const,
+        skip_reason: "optional_not_selected" as const,
+        qualified_evidence: ctx.qualified
+      } as never;
+    });
+    return { decision: ctx.decision, ledger: { ...ctx.ledger, slot_records } };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects terminal engine failure in ledger", () => {
+  assertSemanticRejects((ctx) => {
+    const ledger = {
+      ...ctx.ledger,
+      engine_failure: {
+        code: "decision_identity_invalid",
+        phase: "decision_identity"
+      } as never
+    };
+    // also put failure into decision reduction path
+    const decision = {
+      ...ctx.decision,
+      verdict: "indeterminate",
+      action: "ask",
+      risk_level: "medium",
+      evidence_refs: [
+        ...ctx.decision.evidence_refs,
+        `evidence://sandbox/security/${DECISION}/engine-0001`
+      ]
+    };
+    return { decision, ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects forged failed error_code mismatch", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const rule = ruleSlot();
+  const map = subjectMap();
+  const runs = baseRuns(profile).map((run, index) =>
+    index === 0
+      ? {
+          detector_id: rule.slot_id,
+          detector_version: rule.detector_version,
+          detector_kind: rule.detector_kind,
+          obligation: "profile_required" as const,
+          elapsed_ms: 2,
+          status: "failed" as const,
+          error_code: "detector_failed" as const
+        }
+      : run
+  );
+  const slot_records = profile.detector_slots.map((slot, index) => {
+    if (index === 0) {
+      return {
+        slot_id: slot.slot_id,
+        status: "failed" as const,
+        error_code: "detector_unavailable" as const
+      };
+    }
+    if (slot.detector_kind === "local_model") {
+      return { slot_id: slot.slot_id, status: "skipped" as const, skip_reason: "optional_not_selected" as const };
+    }
+    return { slot_id: slot.slot_id, status: "skipped" as const, skip_reason: "routing_not_selected" as const };
+  });
+  const reduced = reduceSandboxSecurityPolicy({
+    stage: "user_input",
+    evaluation_mode: "enforcement",
+    profile,
+    findings: [],
+    detector_runs: runs as never,
+    unresolved_escalation_signals: [],
+    engine_failure: null
+  });
+  const decision = {
+    schema_version: "sandbox-security-decision.v1" as const,
+    decision_id: DECISION,
+    request_id: "req-engine-1",
+    evaluation_mode: "enforcement" as const,
+    stage: "user_input" as const,
+    policy_profile_id: profile.profile_id,
+    verdict: reduced.verdict,
+    action: reduced.action,
+    risk_level: reduced.risk_level,
+    findings: [],
+    detector_runs: runs,
+    evidence_refs: [] as string[],
+    created_at: "2026-07-15T12:00:00.000Z"
+  };
+  const ledger = {
+    decision_id: DECISION,
+    request_id: "req-engine-1",
+    created_at: "2026-07-15T12:00:00.000Z",
+    evaluation_mode: "enforcement" as const,
+    stage: "user_input" as const,
+    profile,
+    subject_map: map,
+    slot_records,
+    public_subject_token_map: { decision_id: DECISION, sources: [] },
+    routed_obligations: [] as const,
+    judge_resolution_evidence: [] as const,
+    published_findings: [],
+    detector_runs: runs,
+    unresolved_escalation_signals: [],
+    engine_failure: null
+  };
+  assert.throws(() =>
+    validateSandboxSecurityDecisionSemantics(decision as never, ledger as never)
+  );
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects forged skip_reason mismatch", () => {
+  assertSemanticRejects((ctx) => {
+    const slot_records = ctx.ledger.slot_records.map((record, index) =>
+      index === 1
+        ? {
+            slot_id: record.slot_id,
+            status: "skipped" as const,
+            skip_reason: "risk_short_circuit" as const
+          }
+        : record
+    );
+    return { decision: ctx.decision, ledger: { ...ctx.ledger, slot_records } };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects timeout without detector_timeout", () => {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const rule = ruleSlot();
+  const map = subjectMap();
+  const runs = baseRuns(profile).map((run, index) =>
+    index === 0
+      ? {
+          detector_id: rule.slot_id,
+          detector_version: rule.detector_version,
+          detector_kind: rule.detector_kind,
+          obligation: "profile_required" as const,
+          elapsed_ms: 2,
+          status: "timeout" as const,
+          error_code: "detector_failed" as const
+        }
+      : run
+  );
+  const slot_records = profile.detector_slots.map((slot, index) => {
+    if (index === 0) return { slot_id: slot.slot_id, status: "timeout" as const };
+    if (slot.detector_kind === "local_model") {
+      return { slot_id: slot.slot_id, status: "skipped" as const, skip_reason: "optional_not_selected" as const };
+    }
+    return { slot_id: slot.slot_id, status: "skipped" as const, skip_reason: "routing_not_selected" as const };
+  });
+  const reduced = reduceSandboxSecurityPolicy({
+    stage: "user_input",
+    evaluation_mode: "enforcement",
+    profile,
+    findings: [],
+    detector_runs: runs as never,
+    unresolved_escalation_signals: [],
+    engine_failure: null
+  });
+  const decision = {
+    schema_version: "sandbox-security-decision.v1" as const,
+    decision_id: DECISION,
+    request_id: "req-engine-1",
+    evaluation_mode: "enforcement" as const,
+    stage: "user_input" as const,
+    policy_profile_id: profile.profile_id,
+    verdict: reduced.verdict,
+    action: reduced.action,
+    risk_level: reduced.risk_level,
+    findings: [],
+    detector_runs: runs,
+    evidence_refs: [] as string[],
+    created_at: "2026-07-15T12:00:00.000Z"
+  };
+  const ledger = {
+    decision_id: DECISION,
+    request_id: "req-engine-1",
+    created_at: "2026-07-15T12:00:00.000Z",
+    evaluation_mode: "enforcement" as const,
+    stage: "user_input" as const,
+    profile,
+    subject_map: map,
+    slot_records,
+    public_subject_token_map: { decision_id: DECISION, sources: [] },
+    routed_obligations: [] as const,
+    judge_resolution_evidence: [] as const,
+    published_findings: [],
+    detector_runs: runs,
+    unresolved_escalation_signals: [],
+    engine_failure: null
+  };
+  assert.throws(() =>
+    validateSandboxSecurityDecisionSemantics(decision as never, ledger as never)
+  );
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects matched record with error_code", () => {
+  assertSemanticRejects((ctx) => {
+    const slot_records = ctx.ledger.slot_records.map((record, index) => {
+      if (index !== 0 || record.status !== "matched") return record;
+      return {
+        ...record,
+        error_code: "detector_failed"
+      } as never;
+    });
+    return { decision: ctx.decision, ledger: { ...ctx.ledger, slot_records } };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator uses P4-T1 publication verify API", () => {
+  const source = readFileSync(new URL("../src/security/semantic-validator.ts", import.meta.url), "utf8");
+  assert.match(source, /validateSandboxSecurityPublication/);
+  assert.match(source, /qualifySandboxSecuritySlotEvidence/);
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator does not commit a second publication", () => {
+  const source = readFileSync(new URL("../src/security/semantic-validator.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /publishSandboxSecurityFindings\s*\(/);
+  assert.doesNotMatch(source, /materializeSandboxSecurityPublicSubjectTokens\s*\(/);
+});
+

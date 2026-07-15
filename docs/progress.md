@@ -1,3 +1,54 @@
+## 2026-07-15 - REQ-SBX-GENERAL-001 P4-T5 semantic validator
+
+- scope: single-decision semantic validation against EvaluationEvidenceLedger
+- files:
+  - `engines/sandbox/src/security/semantic-validator.ts` (create)
+  - `engines/sandbox/tests/sandbox-security-engine.spec.ts` (extend)
+- verification:
+  - engine+policy suite 249/249
+  - sandbox `tsc --noEmit` pass
+- independent review:
+  - P0/P1: none
+  - recomputes qualification from normalized_result; ignores cache as authority
+  - publication verified via P4-T1 pure API only (no second publish)
+  - reducer recompute for verdict/action/risk; engine-0001 flattening checked
+  - unresolved recompute via escalation state when Judge not routed
+  - JudgeResolutionEvidence imported/re-exported from P4-T2 only
+  - conclusion: APPROVED
+- re-review: APPROVED
+- status: P4-T5 VERIFIED; next P4-T6
+
+## 2026-07-15 - Phase 3 re-review residual fix (profile_invalid)
+
+- scope: independent Phase 3 re-review found strict missing-local resolution
+  used the wrong stable error identity
+- files:
+  - `engines/sandbox/src/security/detector-registry.ts`
+  - `engines/sandbox/tests/sandbox-security-detector.spec.ts`
+  - `docs/progress.md`
+- issue:
+  - P1: `resolveSandboxSecurityDetectorsForProfile` threw
+    `sandbox_security_detector_resolution_invalid:local_required` when strict
+    profile-required local was absent; Spec requires
+    `sandbox_security_profile_invalid` before decision ID / detector calls
+- fix:
+  - throw `SandboxSecurityProfileError` with
+    `code === "sandbox_security_profile_invalid"` for missing profile-required
+    local
+  - regression tests assert code/message and reject detector_resolution_invalid
+- verification:
+  - detector suite 38/38
+  - Phase 3 focused suites 405/405 (authority/input/detector/policy/boundary/
+    sanitized/engine)
+  - repository gate 40/40
+  - `npm run test:shared` 207/207
+  - `npm run test:repo` 185/185
+  - shared + sandbox `tsc --noEmit` pass
+- residual non-blocking:
+  - external locator context remains derive-bound via WeakMap
+  - other structural resolution mismatches still use detector_resolution_invalid
+- status: PHASE_3_REVIEW_RESIDUAL_FIXED; re-review pending
+
 # Progress
 
 ## 2026-07-15 - REQ-SBX-GENERAL-001 P4-T4 policy reducer
