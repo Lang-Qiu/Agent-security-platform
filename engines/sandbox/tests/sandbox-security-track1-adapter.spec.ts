@@ -21,6 +21,13 @@ const contractPath = new URL(
   "../src/security/detector-contract.ts",
   import.meta.url
 );
+const harnessPath = new URL(
+  "./helpers/track1-security-regression-harness.ts",
+  import.meta.url
+);
+const harnessSource = existsSync(harnessPath)
+  ? readFileSync(harnessPath, "utf8")
+  : "";
 
 const monitorModule = existsSync(monitorPath)
   ? await import("../src/security/adapters/monitor-decision-provider.ts")
@@ -1025,5 +1032,166 @@ test("REQ-SBX-GENERAL-001 Engine records Track1 unsupported path as failed adapt
   assert.equal(ruleRun.status, "failed");
   if (ruleRun.status === "failed" || ruleRun.status === "invalid_result" || ruleRun.status === "timeout") {
     assert.equal((ruleRun as { error_code?: string }).error_code, "adapter_unsupported");
+  }
+});
+// ---------------------------------------------------------------------------
+// P5-T3 compatibility harness
+// ---------------------------------------------------------------------------
+
+const harnessModule = existsSync(harnessPath)
+  ? await import("./helpers/track1-security-regression-harness.ts")
+  : {
+      APPROVED_TRACK1_ACTION_MAP: {},
+      runTrack1SecurityCompatibilityHarness: async () => []
+    };
+
+const {
+  APPROVED_TRACK1_ACTION_MAP,
+  runTrack1SecurityCompatibilityHarness
+} = harnessModule as typeof import("./helpers/track1-security-regression-harness.ts");
+
+test("REQ-SBX-GENERAL-001 compatibility harness uses balanced v1", async () => {
+  const report = await runTrack1SecurityCompatibilityHarness(runtime());
+  assert.ok(report.every((row) => row.profile_id === "sandbox-security-balanced.v1"));
+});
+
+test("REQ-SBX-GENERAL-001 compatibility harness does not register local or Judge", async () => {
+  assert.doesNotMatch(harnessSource, /local:\s*create/);
+  assert.doesNotMatch(harnessSource, /judge:\s*/);
+  assert.match(harnessSource, /createTrack1RuleMatchDetectorAdapter/);
+});
+
+test("REQ-SBX-GENERAL-001 compatibility harness profile is not agent or env selectable", async () => {
+  assert.doesNotMatch(harnessSource, /process\.env/);
+  assert.match(harnessSource, /sandbox-security-balanced\.v1/);
+  assert.doesNotMatch(harnessSource, /sandbox-security-strict\.v1/);
+});
+
+test("REQ-SBX-GENERAL-001 legacy alert ask deny retain identical generic actions", async () => {
+  const adapter = createTrack1RuleMatchDetectorAdapter();
+  const signal = new AbortController().signal;
+
+  const alertResult = await adapter.detect(
+    snapshotForTrack1({
+      stage: "tool_request",
+      tool: {
+        tool_name: "send_email",
+        target: "a@b.c",
+        arguments: { recipient: "a@b.c", subject: "s", body: "b" }
+      }
+    }) as never,
+    signal
+  );
+  assert.equal(alertResult.candidates.length, 1);
+  assert.equal(alertResult.candidates[0]?.severity, "low");
+
+  const askResult = await adapter.detect(
+    snapshotForTrack1({
+      stage: "tool_request",
+      retrieved: "untrusted substitute protected path",
+      tool: {
+        tool_name: "read_file",
+        target: "sandbox://fixtures/protected/secret.txt",
+        arguments: { path: "sandbox://fixtures/protected/secret.txt" }
+      }
+    }) as never,
+    signal
+  );
+  assert.ok(askResult.candidates.some((candidate) => candidate.severity === "medium"));
+
+  const denyResult = await adapter.detect(
+    snapshotForTrack1({ model: "track1_test_secret" }) as never,
+    signal
+  );
+  assert.ok(denyResult.candidates.some((candidate) => candidate.severity === "high"));
+});
+
+test("REQ-SBX-GENERAL-001 harness generic input does not select content by policy action", () => {
+  assert.match(harnessSource, /model_behavior/);
+  assert.doesNotMatch(harnessSource, /expected_outcome\.policy_action/);
+  assert.doesNotMatch(harnessSource, /policy_action\s*===\s*["']deny["']/);
+});
+
+test("REQ-SBX-GENERAL-001 harness propagates generic engine runtime errors", async () => {
+  const throwingRuntime = {
+    ...runtime(),
+    monotonicNowMs() {
+      throw new Error("generic evaluation runtime failure");
+    }
+  };
+  await assert.rejects(
+    runTrack1SecurityCompatibilityHarness(throwingRuntime),
+    /generic evaluation runtime failure/
+  );
+});
+
+test("REQ-SBX-GENERAL-001 preserves the nine Track 1 legacy actions", async () => {
+  const report = await runTrack1SecurityCompatibilityHarness(runtime());
+  const actual = Object.fromEntries(
+    report.map((row) => [row.case_id, row.legacy_action])
+  );
+  assert.deepEqual(actual, APPROVED_TRACK1_ACTION_MAP);
+  assert.equal(Object.keys(actual).length, 9);
+  assert.ok(report.every((row) => row.action_matches));
+  assert.ok(
+    report.every((row) => row.profile_id === "sandbox-security-balanced.v1")
+  );
+});
+
+test("REQ-SBX-GENERAL-001 harness lives only under tests/helpers", () => {
+  assert.equal(existsSync(harnessPath), true);
+  assert.equal(
+    existsSync(
+      new URL("../src/security/track1-security-regression-harness.ts", import.meta.url)
+    ),
+    false
+  );
+});
+
+test("REQ-SBX-GENERAL-001 adapters directory allowlists only two production files", () => {
+  const adaptersDir = fileURLToPath(
+    new URL("../src/security/adapters", import.meta.url)
+  );
+  const files = readdirSync(adaptersDir).filter((name) => name.endsWith(".ts")).sort();
+  assert.deepEqual(files, [
+    "monitor-decision-provider.ts",
+    "track1-rule-matches.ts"
+  ]);
+});
+
+test("REQ-SBX-GENERAL-001 production security tree has no harness oracle case maps", () => {
+  const securityRoot = fileURLToPath(new URL("../src/security", import.meta.url));
+  function walk(dir: string): string[] {
+    const out: string[] = [];
+    for (const name of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, name.name);
+      if (name.isDirectory()) out.push(...walk(full));
+      else if (name.name.endsWith(".ts")) out.push(full);
+    }
+    return out;
+  }
+  for (const file of walk(securityRoot)) {
+    const source = readFileSync(file, "utf8");
+    assert.doesNotMatch(source, /APPROVED_TRACK1_ACTION_MAP/);
+    assert.doesNotMatch(source, /track1-security-regression-harness/);
+    assert.doesNotMatch(source, /T1-SC-\d{3}-C\d{3}/);
+  }
+});
+
+test("REQ-SBX-GENERAL-001 production security tree has no fixture oracle strings", () => {
+  const securityRoot = fileURLToPath(new URL("../src/security", import.meta.url));
+  function walk(dir: string): string[] {
+    const out: string[] = [];
+    for (const name of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, name.name);
+      if (name.isDirectory()) out.push(...walk(full));
+      else if (name.name.endsWith(".ts")) out.push(full);
+    }
+    return out;
+  }
+  for (const file of walk(securityRoot)) {
+    const source = readFileSync(file, "utf8");
+    assert.doesNotMatch(source, /nine-case oracle/i);
+    assert.doesNotMatch(source, /expected_action\s*:\s*"deny"/);
   }
 });

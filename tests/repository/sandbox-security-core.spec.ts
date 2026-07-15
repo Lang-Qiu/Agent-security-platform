@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -1108,6 +1108,40 @@ test("REQ-SBX-GENERAL-001 registers public contract gates", () => {
     scripts["test:repo"] ?? "",
     /tests\/repository\/sandbox-security-core\.spec\.ts/,
     "root test:repo must include sandbox-security-core repository gate"
+  );
+});
+
+test("REQ-SBX-GENERAL-001 repository permanently isolates Track1 harness oracles", () => {
+  const securityRoot = resolve(REPO_ROOT, "engines/sandbox/src/security");
+  const adaptersRoot = resolve(securityRoot, "adapters");
+  const forbidden = [
+    /track1-security-regression-harness/,
+    /APPROVED_TRACK1_ACTION_MAP/,
+    /T1-SC-\d{3}-C\d{3}/,
+    /nine-case oracle/i,
+    /expected_action\s*:\s*["'](?:allow|alert|ask|deny)["']/
+  ];
+  function walk(directory: string): string[] {
+    return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+      const file = join(directory, entry.name);
+      return entry.isDirectory()
+        ? walk(file)
+        : entry.name.endsWith(".ts")
+          ? [file]
+          : [];
+    });
+  }
+
+  for (const file of walk(securityRoot)) {
+    const source = readFileSync(file, "utf8");
+    for (const pattern of forbidden) assert.doesNotMatch(source, pattern, file);
+  }
+
+  assert.deepEqual(
+    readdirSync(adaptersRoot)
+      .filter((name) => name.endsWith(".ts"))
+      .sort(),
+    ["monitor-decision-provider.ts", "track1-rule-matches.ts"]
   );
 });
 
