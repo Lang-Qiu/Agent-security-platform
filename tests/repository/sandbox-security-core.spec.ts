@@ -1126,7 +1126,7 @@ test("REQ-SBX-GENERAL-001 repository permanently isolates Track1 harness oracles
       const file = join(directory, entry.name);
       return entry.isDirectory()
         ? walk(file)
-        : entry.name.endsWith(".ts")
+        : entry.isFile()
           ? [file]
           : [];
     });
@@ -1137,10 +1137,10 @@ test("REQ-SBX-GENERAL-001 repository permanently isolates Track1 harness oracles
     for (const pattern of forbidden) assert.doesNotMatch(source, pattern, file);
   }
 
+  const adapterEntries = readdirSync(adaptersRoot, { withFileTypes: true });
+  assert.ok(adapterEntries.every((entry) => entry.isFile()));
   assert.deepEqual(
-    readdirSync(adaptersRoot)
-      .filter((name) => name.endsWith(".ts"))
-      .sort(),
+    adapterEntries.map((entry) => entry.name).sort(),
     ["monitor-decision-provider.ts", "track1-rule-matches.ts"]
   );
 });

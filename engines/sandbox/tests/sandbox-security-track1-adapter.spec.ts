@@ -1152,7 +1152,9 @@ test("REQ-SBX-GENERAL-001 adapters directory allowlists only two production file
   const adaptersDir = fileURLToPath(
     new URL("../src/security/adapters", import.meta.url)
   );
-  const files = readdirSync(adaptersDir).filter((name) => name.endsWith(".ts")).sort();
+  const entries = readdirSync(adaptersDir, { withFileTypes: true });
+  assert.ok(entries.every((entry) => entry.isFile()));
+  const files = entries.map((entry) => entry.name).sort();
   assert.deepEqual(files, [
     "monitor-decision-provider.ts",
     "track1-rule-matches.ts"
@@ -1166,7 +1168,7 @@ test("REQ-SBX-GENERAL-001 production security tree has no harness oracle case ma
     for (const name of readdirSync(dir, { withFileTypes: true })) {
       const full = join(dir, name.name);
       if (name.isDirectory()) out.push(...walk(full));
-      else if (name.name.endsWith(".ts")) out.push(full);
+      else if (name.isFile()) out.push(full);
     }
     return out;
   }
@@ -1185,7 +1187,7 @@ test("REQ-SBX-GENERAL-001 production security tree has no fixture oracle strings
     for (const name of readdirSync(dir, { withFileTypes: true })) {
       const full = join(dir, name.name);
       if (name.isDirectory()) out.push(...walk(full));
-      else if (name.name.endsWith(".ts")) out.push(full);
+      else if (name.isFile()) out.push(full);
     }
     return out;
   }
