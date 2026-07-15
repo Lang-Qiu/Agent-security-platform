@@ -2,9 +2,10 @@ import type {
   RawLocalDetector,
   SanitizedExternalDetector
 } from "./detector-contract.ts";
-import type {
-  SandboxSecurityDetectorSlotId,
-  SandboxSecurityPolicyProfileManifest
+import {
+  SandboxSecurityProfileError,
+  type SandboxSecurityDetectorSlotId,
+  type SandboxSecurityPolicyProfileManifest
 } from "./policy-profiles.ts";
 
 export interface SandboxSecurityDetectorRegistryInput {
@@ -123,7 +124,11 @@ export function resolveSandboxSecurityDetectorsForProfile(
         throw new Error("sandbox_security_detector_resolution_invalid:local_access");
       }
       if (slot.base_obligation === "profile_required" && !registry.local) {
-        throw new Error("sandbox_security_detector_resolution_invalid:local_required");
+        // Spec: profile-required detector registration missing fails profile
+        // resolution with sandbox_security_profile_invalid before decision ID.
+        throw new SandboxSecurityProfileError(
+          "sandbox_security_profile_invalid:local_required"
+        );
       }
     }
     if (slot.detector_kind === "external_judge") {

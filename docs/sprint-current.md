@@ -121,12 +121,11 @@ and policy reduction has one engine-owned implementation.
   P1/P2 fixes verified (typed authority JSON errors, 512 KiB fingerprint bound,
   independent fingerprint port bytes).
 - Phase 3 detectors/profiles/boundaries/registry (P3-T5 → T1 → T2 → T3 → T4 → T6):
-  implemented; independent review residuals closed (duplicate clearance,
-  non-finite confidence, external locator validation, source_type binding,
-  reason_code pairing/uniqueness, strict missing-local
-  `sandbox_security_profile_invalid`).
+  implemented and independently APPROVED (subject_key `subjects` field, strict
+  missing-local `sandbox_security_profile_invalid`, boundary fail-closed
+  uniqueness/confidence/reason_code/source_type/locator gates closed).
 - Note: current execution environment may not allow git commits; worktree is
   source of truth for the restarted sequence.
-- Phase 4 engine/policy (P4-T1..T6): in progress; P4-T1..T3 verified.
-- Next: P4-T4 policy reducer.
+- Phase 4 engine/policy (P4-T1..T6): independently APPROVED after review/fix loop.
+- Next: Phase 5 compatibility closure (only on explicit instruction).
 

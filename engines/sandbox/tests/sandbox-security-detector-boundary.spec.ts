@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import {
+  canonicalizeSandboxSecurityJson,
+  sha256CanonicalJson
+} from "../src/security/canonical-json.ts";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
@@ -801,6 +805,108 @@ test("REQ-SBX-GENERAL-001 subject scope helper rejects duplicates before hashing
         locator: { kind: "whole_source" }
       }
     ])
+  );
+});
+
+test("REQ-SBX-GENERAL-001 subject_key hashes Spec subjects field not scopes", () => {
+  const refs = [
+    {
+      kind: "content_source" as const,
+      source_handle: SOURCE as never,
+      locator: { kind: "whole_source" as const }
+    }
+  ];
+  const subjects = canonicalizeSandboxSecurityPrivateSubjectScopes(refs);
+  const expected = sha256CanonicalJson({
+    category: "prompt_injection",
+    subjects
+  });
+  const wrongField = sha256CanonicalJson({
+    category: "prompt_injection",
+    scopes: subjects
+  });
+  const actual = computeSandboxSecuritySubjectKey({
+    category: "prompt_injection",
+    subject_refs: refs
+  });
+  assert.equal(actual, expected);
+  assert.notEqual(actual, wrongField);
+});
+
+test("REQ-SBX-GENERAL-001 subject_key JCS payload uses subjects key name", () => {
+  const refs = [
+    {
+      kind: "content_source" as const,
+      source_handle: SOURCE as never,
+      locator: { kind: "whole_source" as const }
+    }
+  ];
+  const subjects = canonicalizeSandboxSecurityPrivateSubjectScopes(refs);
+  const payload = canonicalizeSandboxSecurityJson({
+    category: "tool_hijacking",
+    subjects
+  });
+  assert.match(payload, /"subjects"/);
+  assert.doesNotMatch(payload, /"scopes"/);
+  assert.equal(
+    computeSandboxSecuritySubjectKey({
+      category: "tool_hijacking",
+      subject_refs: refs
+    }),
+    sha256CanonicalJson({
+      category: "tool_hijacking",
+      subjects
+    })
+  );
+});
+
+test("REQ-SBX-GENERAL-001 private subject scopes sort by UTF-16 code units not localeCompare", () => {
+  // Spec subject identity is JCS over sorted private scopes. Sorting must be
+  // locale-independent so the same refs yield one subject_key across runtimes.
+  const refs = [
+    {
+      kind: "content_source" as const,
+      source_handle: SOURCE as never,
+      locator: { kind: "json_pointer" as const, pointer: "/path" }
+    },
+    {
+      kind: "content_source" as const,
+      source_handle: SOURCE as never,
+      locator: { kind: "json_pointer" as const, pointer: "/Path" }
+    }
+  ];
+  const scopes = canonicalizeSandboxSecurityPrivateSubjectScopes(refs);
+  const identities = scopes.map((scope) => canonicalizeSandboxSecurityJson(scope));
+  const codeUnitOrder = [...identities].sort((left, right) =>
+    left < right ? -1 : left > right ? 1 : 0
+  );
+  const localeOrder = [...identities].sort((left, right) =>
+    left.localeCompare(right)
+  );
+  assert.notDeepEqual(
+    codeUnitOrder,
+    localeOrder,
+    "fixture must distinguish localeCompare from code-unit order"
+  );
+  assert.deepEqual(identities, codeUnitOrder);
+  assert.equal(
+    computeSandboxSecuritySubjectKey({
+      category: "prompt_injection",
+      subject_refs: refs
+    }),
+    sha256CanonicalJson({
+      category: "prompt_injection",
+      subjects: scopes
+    })
+  );
+  // Reverse input order must still canonicalize to code-unit order.
+  const reversed = canonicalizeSandboxSecurityPrivateSubjectScopes([
+    refs[1],
+    refs[0]
+  ]);
+  assert.deepEqual(
+    reversed.map((scope) => canonicalizeSandboxSecurityJson(scope)),
+    codeUnitOrder
   );
 });
 

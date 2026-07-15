@@ -145,6 +145,32 @@ function actionForAcceptedSeverity(
   return matrix.accepted_low[stage];
 }
 
+function severityRank(value: SandboxSecuritySeverity): number {
+  return SEVERITY_RANK[value];
+}
+
+function hasValidatedShortCircuitFinding(
+  profile: Readonly<SandboxSecurityPolicyProfileManifest>,
+  findings: readonly SandboxSecurityFinding[]
+): boolean {
+  const floor = profile.detector_slots
+    .map((slot) => slot.short_circuit_min_severity)
+    .find((value) => value !== null);
+  if (floor === null || floor === undefined) {
+    return false;
+  }
+  return findings.some(
+    (finding) => severityRank(finding.severity) >= severityRank(floor)
+  );
+}
+
+function hasRiskShortCircuitRuns(runs: readonly SandboxDetectorRun[]): boolean {
+  return runs.some(
+    (run) =>
+      run.status === "skipped" && run.skip_reason === "risk_short_circuit"
+  );
+}
+
 function hasUnresolvedRequiredRuns(
   runs: readonly SandboxDetectorRun[]
 ): boolean {
@@ -157,6 +183,13 @@ function hasUnresolvedRequiredRuns(
       run.status === "failed" ||
       run.status === "timeout" ||
       run.status === "invalid_result"
+    ) {
+      return true;
+    }
+    // Spec: profile_required|runtime_required + evaluation_terminated is unresolved.
+    if (
+      run.status === "skipped" &&
+      run.skip_reason === "evaluation_terminated"
     ) {
       return true;
     }
@@ -237,7 +270,12 @@ export function reduceSandboxSecurityPolicy(
   const findings = input.findings;
   const unresolvedSignals = input.unresolved_escalation_signals.length > 0;
   const unresolvedRequiredRuns = hasUnresolvedRequiredRuns(input.detector_runs);
-  const unresolved = unresolvedSignals || unresolvedRequiredRuns;
+  // Spec: risk_short_circuit is resolved only with a validated short-circuit finding.
+  const unvalidatedShortCircuit =
+    hasRiskShortCircuitRuns(input.detector_runs) &&
+    !hasValidatedShortCircuitFinding(input.profile, input.findings);
+  const unresolved =
+    unresolvedSignals || unresolvedRequiredRuns || unvalidatedShortCircuit;
   const highest = highestAcceptedSeverity(findings);
   const matrix = input.profile.action_matrix;
 

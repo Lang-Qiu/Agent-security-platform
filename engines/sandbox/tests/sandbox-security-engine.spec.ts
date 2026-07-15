@@ -140,7 +140,7 @@ function subjectMap(options?: { tool?: boolean; second?: boolean }) {
   });
 }
 
-function contentRef(handle = SOURCE, locator: { kind: "whole_source" } | { kind: "text_byte_range"; start_byte: number; end_byte: number } = { kind: "whole_source" }) {
+function contentRef(handle = SOURCE, locator: { kind: "whole_source" } | { kind: "text_byte_range"; start_byte: number; end_byte: number } | { kind: "json_pointer"; pointer: string } = { kind: "whole_source" }) {
   return {
     kind: "content_source" as const,
     source_handle: handle,
@@ -517,6 +517,29 @@ test("REQ-SBX-GENERAL-001 canonical entity order determines the global four-digi
   assert.equal(tokens.tool!.public_call_token.endsWith("/0002"), true);
 });
 
+
+test("REQ-SBX-GENERAL-001 public entity ordinals use UTF-16 byte order not localeCompare", () => {
+  // Plan: sort by kind then private-handle byte order. localeCompare can invert
+  // ASCII case pairs (A vs a) and must not decide token ordinals.
+  const lower = (`hsrc:${"a".repeat(32)}:0001`) as never;
+  const upper = (`hsrc:${"A".repeat(32)}:0001`) as never;
+  const tokens = materializeSandboxSecurityPublicSubjectTokens({
+    decision_id: DECISION,
+    accepted_entities: [
+      { kind: "content_source", source_handle: lower },
+      { kind: "content_source", source_handle: upper }
+    ]
+  });
+  assert.equal(tokens.sources[0].source_handle, upper);
+  assert.equal(tokens.sources[1].source_handle, lower);
+  assert.equal(tokens.sources[0].public_source_token.endsWith("/0001"), true);
+  assert.equal(tokens.sources[1].public_source_token.endsWith("/0002"), true);
+  // Guard the production sort implementation itself.
+  const source = readFileSync(modulePath, "utf8");
+  assert.doesNotMatch(source, /entitySortKey\([^)]*\)\.localeCompare/);
+  assert.doesNotMatch(source, /localeCompare\(right\.category\)/);
+});
+
 test("REQ-SBX-GENERAL-001 same decision and accepted entity set produce identical tokens", () => {
   const a = materializeSandboxSecurityPublicSubjectTokens({
     decision_id: DECISION,
@@ -606,6 +629,54 @@ test("REQ-SBX-GENERAL-001 DraftFinding contains no public tokens or evidence ref
   const evidence = qualify({ candidates: [candidate({ confidence: 1.0 })] });
   const text = JSON.stringify(evidence.accepted_draft_findings[0]);
   assert.doesNotMatch(text, /source:\/\/|call:\/\/|evidence:\/\//);
+});
+
+
+test("REQ-SBX-GENERAL-001 published finding order uses UTF-16 subject sort not localeCompare", () => {
+  const slot = ruleSlot();
+  const drafts = [
+    {
+      finding_id: "finding:sha256:" + "1".repeat(64),
+      category: "prompt_injection" as const,
+      severity: "medium" as const,
+      confidence: 0.8,
+      detector_id: slot.slot_id,
+      detector_version: slot.detector_version,
+      reason_code: "sandbox_security_prompt_injection" as const,
+      subject_key: "k1",
+      subject_refs: [
+        contentRef(SOURCE, { kind: "json_pointer", pointer: "/path" })
+      ]
+    },
+    {
+      finding_id: "finding:sha256:" + "2".repeat(64),
+      category: "prompt_injection" as const,
+      severity: "medium" as const,
+      confidence: 0.8,
+      detector_id: slot.slot_id,
+      detector_version: slot.detector_version,
+      reason_code: "sandbox_security_prompt_injection" as const,
+      subject_key: "k2",
+      subject_refs: [
+        contentRef(SOURCE, { kind: "json_pointer", pointer: "/Path" })
+      ]
+    }
+  ];
+  const token_map = materializeSandboxSecurityPublicSubjectTokens({
+    decision_id: DECISION,
+    accepted_entities: [{ kind: "content_source", source_handle: SOURCE as never }]
+  });
+  const findings = publishSandboxSecurityFindings({
+    decision_id: DECISION,
+    draft_findings: drafts as never,
+    token_map
+  });
+  assert.equal(findings.length, 2);
+  const pointers = findings.map((finding) => {
+    const ref = finding.subject_refs[0] as { locator?: { pointer?: string } };
+    return ref.locator?.pointer;
+  });
+  assert.deepEqual(pointers, ["/Path", "/path"]);
 });
 
 test("REQ-SBX-GENERAL-001 publish converts every private handle to a public token", () => {
@@ -1539,6 +1610,38 @@ test("REQ-SBX-GENERAL-001 obligations use decision-scoped deterministic IDs", ()
     obligations[0].obligation_id,
     new RegExp(`^obligation://sandbox/security/${DECISION}/0001$`)
   );
+});
+
+
+test("REQ-SBX-GENERAL-001 obligations sort by UTF-16 code units not localeCompare", () => {
+  const state = createSandboxSecurityEscalationState();
+  const pathLower = routingEvidence({
+    category: "prompt_injection",
+    subject_refs: [contentRef(SOURCE, { kind: "json_pointer", pointer: "/path" })]
+  }) as never;
+  const pathUpper = routingEvidence({
+    category: "prompt_injection",
+    subject_refs: [contentRef(SOURCE, { kind: "json_pointer", pointer: "/Path" })]
+  }) as never;
+  // Both are routing-only; different pointers => independent signals.
+  state.addSlotEvidence(pathLower);
+  state.addSlotEvidence(pathUpper);
+  const obligations = state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  assert.equal(obligations.length, 2);
+  const pointers = obligations.map((item) => {
+    const ref = item.subject_refs[0] as { locator?: { pointer?: string } };
+    return ref.locator?.pointer;
+  });
+  // UTF-16: "/Path" (P=0x50) before "/path" (p=0x70)
+  assert.deepEqual(pointers, ["/Path", "/path"]);
+  const source = readFileSync(
+    new URL("../src/security/escalation-state.ts", import.meta.url),
+    "utf8"
+  );
+  assert.doesNotMatch(source, /obligationSortKey\([\s\S]*?\)\.localeCompare/);
 });
 
 test("REQ-SBX-GENERAL-001 obligations sort by category and canonical tokenized scope", () => {
@@ -3841,6 +3944,143 @@ test("REQ-SBX-GENERAL-001 semantic validator does not commit a second publicatio
 
 
 // ---------------------------------------------------------------------------
+
+test("REQ-SBX-GENERAL-001 profile-required short-circuit requires a valid short-circuit finding", () => {
+  // Spec/Plan: risk_short_circuit is resolved only when semantic validation
+  // confirms a finding that satisfies the profile short-circuit condition.
+  assertSemanticRejects((ctx) => {
+    const profile = ctx.profile;
+    const rule = profile.detector_slots.find((s) => s.detector_kind === "rule")!;
+    const local = profile.detector_slots.find((s) => s.detector_kind === "local_model")!;
+    const judge = profile.detector_slots.find((s) => s.detector_kind === "external_judge")!;
+    // Forged: local/judge short-circuited, but no findings and rule is no_match.
+    const detector_runs = [
+      {
+        detector_id: rule.slot_id,
+        detector_version: rule.detector_version,
+        detector_kind: "rule" as const,
+        obligation: "profile_required" as const,
+        elapsed_ms: 1,
+        status: "no_match" as const,
+        finding_ids: [] as string[]
+      },
+      {
+        detector_id: local.slot_id,
+        detector_version: local.detector_version,
+        detector_kind: "local_model" as const,
+        obligation: "profile_required" as const,
+        elapsed_ms: 0,
+        status: "skipped" as const,
+        skip_reason: "risk_short_circuit" as const
+      },
+      {
+        detector_id: judge.slot_id,
+        detector_version: judge.detector_version,
+        detector_kind: "external_judge" as const,
+        obligation: "optional_not_selected" as const,
+        elapsed_ms: 0,
+        status: "skipped" as const,
+        skip_reason: "risk_short_circuit" as const
+      }
+    ];
+    const slot_records = [
+      { slot_id: rule.slot_id, status: "no_match" as const },
+      {
+        slot_id: local.slot_id,
+        status: "skipped" as const,
+        skip_reason: "risk_short_circuit" as const
+      },
+      {
+        slot_id: judge.slot_id,
+        status: "skipped" as const,
+        skip_reason: "risk_short_circuit" as const
+      }
+    ];
+    // Forged allow decision that would pass a naive reducer treating SC as always resolved.
+    const decision = {
+      ...ctx.decision,
+      verdict: "no_detected_risk" as const,
+      action: "allow" as const,
+      risk_level: "info" as const,
+      findings: [],
+      detector_runs,
+      evidence_refs: []
+    };
+    const ledger = {
+      ...ctx.ledger,
+      published_findings: [],
+      public_subject_token_map: {
+        decision_id: ctx.decision.decision_id,
+        sources: []
+      },
+      slot_records,
+      detector_runs,
+      unresolved_escalation_signals: []
+    };
+    return { decision, ledger };
+  });
+});
+
+test("REQ-SBX-GENERAL-001 semantic validator rejects risk_short_circuit without short-circuit finding", () => {
+  assertSemanticRejects((ctx) => {
+    const profile = ctx.profile;
+    const local = profile.detector_slots.find((s) => s.detector_kind === "local_model")!;
+    const detector_runs = ctx.decision.detector_runs.map((run) => {
+      if (run.detector_id !== local.slot_id) return run;
+      return {
+        ...run,
+        status: "skipped" as const,
+        skip_reason: "risk_short_circuit" as const,
+        obligation: "optional_not_selected" as const
+      };
+    });
+    // Keep high finding from scenario but force local SC without re-reducing — or
+    // use empty findings with SC marks for fail-open forgery.
+    const slot_records = ctx.ledger.slot_records.map((record) => {
+      if (record.slot_id !== local.slot_id) return record;
+      return {
+        slot_id: local.slot_id,
+        status: "skipped" as const,
+        skip_reason: "risk_short_circuit" as const
+      };
+    });
+    // Strip findings so SC is unvalidated.
+    const publication = deriveSandboxSecurityExpectedPublication({
+      decision_id: ctx.decision.decision_id,
+      draft_findings: []
+    });
+    const reduced = reduceSandboxSecurityPolicy({
+      stage: ctx.decision.stage,
+      evaluation_mode: ctx.decision.evaluation_mode,
+      profile,
+      findings: [],
+      detector_runs: detector_runs as never,
+      unresolved_escalation_signals: [],
+      engine_failure: null
+    });
+    // If reducer already fail-closed, force allow to prove validator rejects under-restrictive SC.
+    const decision = {
+      ...ctx.decision,
+      findings: [],
+      detector_runs,
+      verdict: "no_detected_risk" as const,
+      action: "allow" as const,
+      risk_level: "info" as const,
+      evidence_refs: []
+    };
+    void reduced;
+    const ledger = {
+      ...ctx.ledger,
+      published_findings: [],
+      public_subject_token_map: publication.token_map,
+      slot_records,
+      detector_runs,
+      unresolved_escalation_signals: []
+    };
+    return { decision, ledger };
+  });
+});
+
 // P4-T6 engine orchestration
 // ---------------------------------------------------------------------------
 
@@ -4829,3 +5069,641 @@ test("REQ-SBX-GENERAL-001 complete ledger is never built before runtime.now", as
   assert.ok(nowIdx > 0 && ledgerIdx > nowIdx);
 });
 
+
+test("REQ-SBX-GENERAL-001 engine short-circuit with unrelated routing signal terminates Judge and preserves unresolved", async () => {
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: {
+        async detect(snapshot: { contents: Array<{ source_handle: string }> }) {
+          const handle = snapshot.contents[0]!.source_handle;
+          return {
+            candidates: [
+              {
+                category: "prompt_injection",
+                severity: "high",
+                confidence: 1.0,
+                reason_code: "sandbox_security_prompt_injection",
+                subject_refs: [
+                  {
+                    kind: "content_source",
+                    source_handle: handle,
+                    locator: { kind: "whole_source" }
+                  }
+                ]
+              },
+              {
+                category: "tool_hijacking",
+                severity: "medium",
+                confidence: 0.6,
+                reason_code: "sandbox_security_tool_hijacking",
+                subject_refs: [
+                  {
+                    kind: "content_source",
+                    source_handle: handle,
+                    locator: { kind: "whole_source" }
+                  }
+                ]
+              }
+            ],
+            clearances: []
+          };
+        }
+      } as never
+    }),
+    runtime: createRuntime().ports
+  });
+
+  const decision = await engine.evaluate(makeEvalRequest() as never);
+  assert.equal(decision.verdict, "risk_detected");
+  assert.equal(decision.action, "deny");
+  assert.equal(decision.findings.length, 1);
+  assert.equal(decision.findings[0]!.category, "prompt_injection");
+  // Unrelated routing-floor risk remains unresolved, so risk floor applies.
+  assert.equal(decision.risk_level, "high");
+  const judgeRun = decision.detector_runs.find((run) =>
+    String(run.detector_id).includes("/judge/")
+  )!;
+  assert.equal(judgeRun.status, "skipped");
+  if (judgeRun.status === "skipped") {
+    assert.equal(judgeRun.skip_reason, "risk_short_circuit");
+  }
+  const localRun = decision.detector_runs.find((run) =>
+    String(run.detector_id).includes("/local/")
+  )!;
+  assert.equal(localRun.status, "skipped");
+  if (localRun.status === "skipped") {
+    assert.equal(localRun.skip_reason, "risk_short_circuit");
+  }
+});
+
+test("REQ-SBX-GENERAL-001 engine short-circuit with unresolved signals does not throw signals_present", async () => {
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: {
+        async detect(snapshot: { contents: Array<{ source_handle: string }> }) {
+          const handle = snapshot.contents[0]!.source_handle;
+          return {
+            candidates: [
+              {
+                category: "prompt_injection",
+                severity: "high",
+                confidence: 1.0,
+                reason_code: "sandbox_security_prompt_injection",
+                subject_refs: [
+                  {
+                    kind: "content_source",
+                    source_handle: handle,
+                    locator: { kind: "whole_source" }
+                  }
+                ]
+              },
+              {
+                category: "jailbreak",
+                severity: "low",
+                confidence: 0.6,
+                reason_code: "sandbox_security_jailbreak",
+                subject_refs: [
+                  {
+                    kind: "content_source",
+                    source_handle: handle,
+                    locator: { kind: "whole_source" }
+                  }
+                ]
+              }
+            ],
+            clearances: []
+          };
+        }
+      } as never
+    }),
+    runtime: createRuntime().ports
+  });
+  await assert.doesNotReject(() => engine.evaluate(makeEvalRequest() as never));
+});
+
+
+test("REQ-SBX-GENERAL-001 short-circuit under budget exhaustion still marks Judge risk_short_circuit", async () => {
+  // Spec matrix: short-circuit terminates remaining slots with risk_short_circuit.
+  // Budget exhaustion after a validated short-circuit must not rewrite Judge to
+  // runtime_required + evaluation_terminated (that would invent Judge selection).
+  let mono = 0;
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: {
+        async detect(snapshot: { contents: Array<{ source_handle: string }> }) {
+          const handle = snapshot.contents[0]!.source_handle;
+          mono = 5000;
+          return {
+            candidates: [
+              {
+                category: "prompt_injection",
+                severity: "high",
+                confidence: 1.0,
+                reason_code: "sandbox_security_prompt_injection",
+                subject_refs: [
+                  {
+                    kind: "content_source",
+                    source_handle: handle,
+                    locator: { kind: "whole_source" }
+                  }
+                ]
+              }
+            ],
+            clearances: []
+          };
+        }
+      } as never
+    }),
+    runtime: {
+      now: () => "2026-07-15T12:00:00.000Z",
+      nextDecisionId: () => DECISION,
+      monotonicNowMs: () => mono,
+      scheduleTimeout: () => () => {}
+    }
+  });
+  const decision = await engine.evaluate(makeEvalRequest() as never);
+  const local = decision.detector_runs.find(
+    (run) => run.detector_kind === "local_model"
+  )!;
+  const judge = decision.detector_runs.find(
+    (run) => run.detector_kind === "external_judge"
+  )!;
+  assert.equal(local.status, "skipped");
+  assert.equal(local.obligation, "optional_not_selected");
+  if (local.status === "skipped") {
+    assert.equal(local.skip_reason, "risk_short_circuit");
+  }
+  assert.equal(judge.status, "skipped");
+  assert.equal(
+    judge.obligation,
+    "optional_not_selected",
+    "short-circuit must not fabricate runtime_required for Judge"
+  );
+  if (judge.status === "skipped") {
+    assert.equal(judge.skip_reason, "risk_short_circuit");
+  }
+  assert.equal(decision.findings.length, 1);
+  // engine_failure still fail-closes the verdict
+  assert.equal(decision.verdict, "indeterminate");
+});
+
+test("REQ-SBX-GENERAL-001 short-circuit residual signals under budget do not select Judge", async () => {
+  let mono = 0;
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: {
+        async detect(snapshot: { contents: Array<{ source_handle: string }> }) {
+          const handle = snapshot.contents[0]!.source_handle;
+          mono = 5000;
+          return {
+            candidates: [
+              {
+                category: "prompt_injection",
+                severity: "high",
+                confidence: 1.0,
+                reason_code: "sandbox_security_prompt_injection",
+                subject_refs: [
+                  {
+                    kind: "content_source",
+                    source_handle: handle,
+                    locator: { kind: "whole_source" }
+                  }
+                ]
+              },
+              {
+                category: "tool_hijacking",
+                severity: "medium",
+                confidence: 0.6,
+                reason_code: "sandbox_security_tool_hijacking",
+                subject_refs: [
+                  {
+                    kind: "content_source",
+                    source_handle: handle,
+                    locator: { kind: "whole_source" }
+                  }
+                ]
+              }
+            ],
+            clearances: []
+          };
+        }
+      } as never
+    }),
+    runtime: {
+      now: () => "2026-07-15T12:00:00.000Z",
+      nextDecisionId: () => DECISION,
+      monotonicNowMs: () => mono,
+      scheduleTimeout: () => () => {}
+    }
+  });
+  const decision = await engine.evaluate(makeEvalRequest() as never);
+  const judge = decision.detector_runs.find(
+    (run) => run.detector_kind === "external_judge"
+  )!;
+  assert.equal(judge.obligation, "optional_not_selected");
+  if (judge.status === "skipped") {
+    assert.equal(judge.skip_reason, "risk_short_circuit");
+  }
+  // Residual unrelated signal remains unresolved evidence, not Judge selection.
+  assert.equal(decision.verdict, "indeterminate");
+  assert.equal(decision.action, "deny");
+});
+
+test("REQ-SBX-GENERAL-001 semantic recovery is gated by remaining normal work budget", async () => {
+  const source = readFileSync(
+    new URL("../src/security/engine.ts", import.meta.url),
+    "utf8"
+  );
+  const recoveryIdx = source.indexOf("// one recovery path");
+  assert.ok(recoveryIdx > 0, "recovery path marker missing");
+  const recoveryBlock = source.slice(recoveryIdx, recoveryIdx + 1200);
+  assert.match(
+    recoveryBlock,
+    /remainingMs\s*\(/,
+    "semantic recovery must re-check remaining normal work budget before recovery"
+  );
+  assert.match(
+    recoveryBlock,
+    /evaluation_budget_exhausted|work_budget|epilogue|Scheme B|throwNamed\(INTERNAL/,
+    "exhausted recovery budget must fail closed rather than unrestricted recovery"
+  );
+});
+
+
+test("REQ-SBX-GENERAL-001 multi-signal same-category obligations recompute distinct subject keys", () => {
+  const NONCE = "b".repeat(32);
+  const S1 = `hsrc:${NONCE}:0001`;
+  const S2 = `hsrc:${NONCE}:0002`;
+  const localMap = Object.freeze({
+    evaluation_nonce: NONCE,
+    sources: Object.freeze([
+      Object.freeze({ source_handle: S1 as never }),
+      Object.freeze({ source_handle: S2 as never })
+    ])
+  });
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const slot = profile.detector_slots.find((item) => item.detector_kind === "rule")!;
+  const evidence = qualifySandboxSecuritySlotEvidence({
+    slot,
+    decision_id: DECISION,
+    subject_map: localMap as never,
+    result: {
+      candidates: [
+        {
+          category: "prompt_injection",
+          severity: "medium",
+          confidence: 0.6,
+          reason_code: "sandbox_security_prompt_injection",
+          subject_refs: [
+            {
+              kind: "content_source",
+              source_handle: S1,
+              locator: { kind: "whole_source" }
+            }
+          ]
+        },
+        {
+          category: "prompt_injection",
+          severity: "medium",
+          confidence: 0.6,
+          reason_code: "sandbox_security_prompt_injection",
+          subject_refs: [
+            {
+              kind: "content_source",
+              source_handle: S2,
+              locator: { kind: "whole_source" }
+            }
+          ]
+        }
+      ],
+      clearances: []
+    }
+  });
+  assert.equal(evidence.routing_risks.length, 2);
+  assert.notEqual(
+    evidence.routing_risks[0]!.subject_key,
+    evidence.routing_risks[1]!.subject_key
+  );
+
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(evidence);
+  const signals = state.unresolvedSignals();
+  assert.equal(signals.length, 2);
+
+  const registry = {
+    evaluation_nonce: NONCE,
+    request_token: "etok:req:x",
+    source_tokens: [
+      {
+        source_token: "etok:src:x:0001",
+        source_handle: S1 as never,
+        media_type: "text/plain" as const
+      },
+      {
+        source_token: "etok:src:x:0002",
+        source_handle: S2 as never,
+        media_type: "text/plain" as const
+      }
+    ]
+  };
+  const obligations = state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: registry as never
+  });
+  assert.equal(obligations.length, 2);
+
+  const keys = obligations.map((obligation) => {
+    const privateRefs = obligation.subject_refs.map((ref) => {
+      if (ref.kind !== "content_source") {
+        throw new Error("expected content refs");
+      }
+      const entry = registry.source_tokens.find(
+        (item) => item.source_token === ref.source_token
+      )!;
+      return {
+        kind: "content_source" as const,
+        source_handle: entry.source_handle,
+        locator: ref.locator
+      };
+    });
+    return computeSandboxSecuritySubjectKey({
+      category: obligation.category,
+      subject_refs: privateRefs as never
+    });
+  });
+  assert.equal(new Set(keys).size, 2);
+  assert.deepEqual(
+    [...keys].sort(),
+    [...signals.map((signal) => signal.subject_key)].sort()
+  );
+
+  const collapsed = obligations.map((obligation) => {
+    const signal = signals.find((item) => item.category === obligation.category);
+    return signal?.subject_key;
+  });
+  assert.equal(new Set(collapsed).size, 1);
+});
+
+test("REQ-SBX-GENERAL-001 engine obligation mapping rejects category-only signal linkage", () => {
+  const source = readFileSync(
+    new URL("../src/security/engine.ts", import.meta.url),
+    "utf8"
+  );
+  assert.match(source, /computeSandboxSecuritySubjectKey/);
+  assert.match(source, /obligation_signal_unlinked/);
+  assert.doesNotMatch(
+    source,
+    /signals\.find\(\s*\(item\)\s*=>\s*item\.category === obligation\.category\s*\)/
+  );
+});
+
+
+test("REQ-SBX-GENERAL-001 not-started required slot becomes evaluation_terminated", async () => {
+  let mono = 0;
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime: {
+      now: () => "2026-07-15T12:00:00.000Z",
+      nextDecisionId: () => {
+        mono = 5000;
+        return DECISION;
+      },
+      monotonicNowMs: () => mono,
+      scheduleTimeout: () => () => {}
+    }
+  });
+  const decision = await engine.evaluate(makeEvalRequest() as never);
+  const rule = decision.detector_runs.find((run) => run.detector_kind === "rule");
+  assert.ok(rule);
+  assert.equal(rule.status, "skipped");
+  assert.equal(rule.obligation, "profile_required");
+  assert.equal(rule.status, "skipped");
+  if (rule.status === "skipped") {
+    assert.equal(rule.skip_reason, "evaluation_terminated");
+  }
+});
+
+test("REQ-SBX-GENERAL-001 never-selected optional termination uses optional_not_selected", async () => {
+  let mono = 0;
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+      // local/judge absent => never selected on post-ID exhaustion
+    }),
+    runtime: {
+      now: () => "2026-07-15T12:00:00.000Z",
+      nextDecisionId: () => {
+        mono = 5000;
+        return DECISION;
+      },
+      monotonicNowMs: () => mono,
+      scheduleTimeout: () => () => {}
+    }
+  });
+  const decision = await engine.evaluate(makeEvalRequest() as never);
+  const local = decision.detector_runs.find((run) => run.detector_kind === "local_model");
+  const judge = decision.detector_runs.find((run) => run.detector_kind === "external_judge");
+  assert.ok(local);
+  assert.ok(judge);
+  assert.equal(local.status, "skipped");
+  assert.equal(local.obligation, "optional_not_selected");
+  assert.equal(local.status, "skipped");
+  if (local.status === "skipped") {
+    assert.equal(local.skip_reason, "evaluation_terminated");
+  }
+  assert.equal(judge.status, "skipped");
+  assert.equal(judge.obligation, "optional_not_selected");
+  assert.equal(judge.status, "skipped");
+  if (judge.status === "skipped") {
+    assert.equal(judge.skip_reason, "evaluation_terminated");
+  }
+});
+
+test("REQ-SBX-GENERAL-001 already-selected optional local termination uses runtime_required", async () => {
+  let mono = 0;
+  const localCounter = { n: 0 };
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: {
+        async detect() {
+          mono = 5000;
+          return { candidates: [], clearances: [] };
+        }
+      } as never,
+      local: {
+        async detect() {
+          localCounter.n += 1;
+          return { candidates: [], clearances: [] };
+        }
+      } as never
+    }),
+    runtime: {
+      now: () => "2026-07-15T12:00:00.000Z",
+      nextDecisionId: () => DECISION,
+      monotonicNowMs: () => mono,
+      scheduleTimeout: () => () => {}
+    }
+  });
+  const decision = await engine.evaluate(makeEvalRequest() as never);
+  assert.equal(localCounter.n, 0);
+  const local = decision.detector_runs.find((run) => run.detector_kind === "local_model");
+  assert.ok(local);
+  assert.equal(local.status, "skipped");
+  assert.equal(
+    local.obligation,
+    "runtime_required",
+    "configured optional local already selected for execution must retain runtime_required"
+  );
+  if (local.status === "skipped") {
+    assert.equal(local.status, "skipped");
+    if (local.status === "skipped") {
+      assert.equal(local.skip_reason, "evaluation_terminated");
+    }
+  }
+});
+
+test("REQ-SBX-GENERAL-001 runtime-required Judge not started becomes evaluation_terminated", async () => {
+  let mono = 0;
+  const sanitizer = { n: 0 };
+  const judge = { n: 0 };
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: {
+        async detect(snapshot: { contents: Array<{ source_handle: string }> }) {
+          const handle = snapshot.contents[0]?.source_handle;
+          return {
+            candidates: [
+              {
+                category: "prompt_injection",
+                severity: "medium",
+                confidence: 0.6,
+                reason_code: "sandbox_security_prompt_injection",
+                subject_refs: [
+                  {
+                    kind: "content_source",
+                    source_handle: handle,
+                    locator: { kind: "whole_source" }
+                  }
+                ]
+              }
+            ],
+            clearances: []
+          };
+        }
+      } as never,
+      local: {
+        async detect() {
+          mono = 5000;
+          return { candidates: [], clearances: [] };
+        }
+      } as never,
+      judge: {
+        async detect() {
+          judge.n += 1;
+          return { candidates: [], clearances: [] };
+        }
+      } as never
+    }),
+    sanitizer: {
+      async sanitize() {
+        sanitizer.n += 1;
+        throw new Error("sanitizer should not run after budget exhaustion");
+      }
+    },
+    runtime: {
+      now: () => "2026-07-15T12:00:00.000Z",
+      nextDecisionId: () => DECISION,
+      monotonicNowMs: () => mono,
+      scheduleTimeout: () => () => {}
+    }
+  });
+  const decision = await engine.evaluate(makeEvalRequest() as never);
+  assert.equal(sanitizer.n, 0);
+  assert.equal(judge.n, 0);
+  const judgeRun = decision.detector_runs.find(
+    (run) => run.detector_kind === "external_judge"
+  );
+  assert.ok(judgeRun);
+  assert.equal(judgeRun.status, "skipped");
+  assert.equal(judgeRun.obligation, "runtime_required");
+  assert.equal(judgeRun.status, "skipped");
+  if (judgeRun.status === "skipped") {
+    assert.equal(judgeRun.skip_reason, "evaluation_terminated");
+  }
+  assert.equal(decision.verdict, "indeterminate");
+});
+
+test("REQ-SBX-GENERAL-001 runtime-required evaluation termination is unresolved", async () => {
+  // Unit-level: reducer treats runtime_required + evaluation_terminated as unresolved.
+  // Integration: already-selected local termination must not collapse to optional absence.
+  let mono = 0;
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: {
+        async detect() {
+          mono = 5000;
+          return { candidates: [], clearances: [] };
+        }
+      } as never,
+      local: {
+        async detect() {
+          return { candidates: [], clearances: [] };
+        }
+      } as never
+    }),
+    runtime: {
+      now: () => "2026-07-15T12:00:00.000Z",
+      nextDecisionId: () => DECISION,
+      monotonicNowMs: () => mono,
+      scheduleTimeout: () => () => {}
+    }
+  });
+  const decision = await engine.evaluate(makeEvalRequest() as never);
+  const local = decision.detector_runs.find((run) => run.detector_kind === "local_model");
+  assert.ok(local);
+  assert.equal(local.obligation, "runtime_required");
+  assert.equal(local.status, "skipped");
+  if (local.status === "skipped") {
+    assert.equal(local.status, "skipped");
+    if (local.status === "skipped") {
+      assert.equal(local.skip_reason, "evaluation_terminated");
+    }
+  }
+  // engine_failure + unresolved required both fail closed; stage user_input => ask
+  assert.equal(decision.verdict, "indeterminate");
+  assert.equal(decision.action, "ask");
+});
+
+test("REQ-SBX-GENERAL-001 optional evaluation termination before selection has no independent effect", async () => {
+  // Pure reducer check is in policy suite; integration: post-ID zero-detect path.
+  let mono = 0;
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never,
+      local: noMatchDetector() as never
+    }),
+    runtime: {
+      now: () => "2026-07-15T12:00:00.000Z",
+      nextDecisionId: () => {
+        mono = 5000;
+        return DECISION;
+      },
+      monotonicNowMs: () => mono,
+      scheduleTimeout: () => () => {}
+    }
+  });
+  const decision = await engine.evaluate(makeEvalRequest() as never);
+  const local = decision.detector_runs.find((run) => run.detector_kind === "local_model");
+  assert.ok(local);
+  // never reached selection because detectors never started
+  assert.equal(local.obligation, "optional_not_selected");
+  assert.equal(local.status, "skipped");
+  if (local.status === "skipped") {
+    assert.equal(local.status, "skipped");
+    if (local.status === "skipped") {
+      assert.equal(local.skip_reason, "evaluation_terminated");
+    }
+  }
+});

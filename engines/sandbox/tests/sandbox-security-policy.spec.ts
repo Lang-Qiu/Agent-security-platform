@@ -471,11 +471,19 @@ test("REQ-SBX-GENERAL-001 no Phase 2 module derives trust_class", () => {
     assert.doesNotMatch(source, /deriveSandboxSecurityTrustClass/);
     assert.doesNotMatch(source, /SandboxSecurityTrustClass/);
   }
-  // directory scan safety: policy-profiles is the only current producer
+  // Sole implementation owner is policy-profiles.ts. Downstream modules may
+  // import and call deriveSandboxSecurityTrustClass, but must not redeclare it.
   for (const entry of readdirSync(securityDir)) {
     if (!entry.endsWith(".ts") || entry === "policy-profiles.ts") continue;
     const source = readFileSync(join(securityDir, entry), "utf8");
-    assert.doesNotMatch(source, /deriveSandboxSecurityTrustClass/);
+    assert.doesNotMatch(
+      source,
+      /export\s+function\s+deriveSandboxSecurityTrustClass/
+    );
+    assert.doesNotMatch(
+      source,
+      /function\s+deriveSandboxSecurityTrustClass/
+    );
   }
 });
 
@@ -958,5 +966,126 @@ test("REQ-SBX-GENERAL-001 reducer property strict never less restrictive than ba
       assert.ok(rank[s.action] >= rank[b.action]);
     }
   }
+});
+
+
+test("REQ-SBX-GENERAL-001 profile-required short-circuit requires a valid short-circuit finding", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const shortCircuitedLocal = {
+    detector_id: "detector://sandbox/security/local/default/v1",
+    detector_version: "1.0.0",
+    detector_kind: "local_model" as const,
+    obligation: "profile_required" as const,
+    elapsed_ms: 0,
+    status: "skipped" as const,
+    skip_reason: "risk_short_circuit" as const
+  };
+  const matchedRuleNoFinding = {
+    detector_id: "detector://sandbox/security/rule/default/v1",
+    detector_version: "1.0.0",
+    detector_kind: "rule" as const,
+    obligation: "profile_required" as const,
+    elapsed_ms: 1,
+    status: "matched" as const,
+    finding_ids: [] as string[]
+  };
+  // Spec: risk_short_circuit is resolved only with a validated short-circuit finding.
+  // Without such a finding, fail closed (must not allow / no_detected_risk).
+  const out = reduce({
+    stage: "user_input",
+    evaluation_mode: "enforcement",
+    profile,
+    findings: [],
+    detector_runs: [matchedRuleNoFinding, shortCircuitedLocal],
+    unresolved_escalation_signals: [],
+    engine_failure: null
+  });
+  assert.notEqual(out.action, "allow");
+  assert.notEqual(out.verdict, "no_detected_risk");
+  assert.equal(out.verdict, "indeterminate");
+  assert.equal(out.action, "ask");
+});
+
+test("REQ-SBX-GENERAL-001 risk_short_circuit without short-circuit-severity finding is unresolved", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  // balanced rule short_circuit_min_severity is high; low finding does not validate SC.
+  const out = reduce({
+    stage: "user_input",
+    evaluation_mode: "enforcement",
+    profile,
+    findings: [finding("low")],
+    detector_runs: [
+      {
+        detector_id: "detector://sandbox/security/rule/default/v1",
+        detector_version: "1.0.0",
+        detector_kind: "rule" as const,
+        obligation: "profile_required" as const,
+        elapsed_ms: 1,
+        status: "matched" as const,
+        finding_ids: ["finding:sha256:" + "low".padEnd(64, "0").slice(0, 64)]
+      },
+      {
+        detector_id: "detector://sandbox/security/local/default/v1",
+        detector_version: "1.0.0",
+        detector_kind: "local_model" as const,
+        obligation: "optional_not_selected" as const,
+        elapsed_ms: 0,
+        status: "skipped" as const,
+        skip_reason: "risk_short_circuit" as const
+      }
+    ],
+    unresolved_escalation_signals: [],
+    engine_failure: null
+  });
+  // low alone would be alert; invalid SC must fail closed at least ask
+  assert.equal(out.action, "ask");
+  assert.equal(out.verdict, "risk_detected");
+});
+
+test("REQ-SBX-GENERAL-001 risk_short_circuit with validated high finding remains risk_detected", async () => {
+  const { resolveSandboxSecurityProfile } = await loadPolicyModule();
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const out = reduce({
+    stage: "user_input",
+    evaluation_mode: "enforcement",
+    profile,
+    findings: [finding("high")],
+    detector_runs: [
+      {
+        detector_id: "detector://sandbox/security/rule/default/v1",
+        detector_version: "1.0.0",
+        detector_kind: "rule" as const,
+        obligation: "profile_required" as const,
+        elapsed_ms: 1,
+        status: "matched" as const,
+        finding_ids: ["finding:sha256:" + "high".padEnd(64, "0").slice(0, 64)]
+      },
+      {
+        detector_id: "detector://sandbox/security/local/default/v1",
+        detector_version: "1.0.0",
+        detector_kind: "local_model" as const,
+        obligation: "optional_not_selected" as const,
+        elapsed_ms: 0,
+        status: "skipped" as const,
+        skip_reason: "risk_short_circuit" as const
+      },
+      {
+        detector_id: "detector://sandbox/security/judge/default/v1",
+        detector_version: "1.0.0",
+        detector_kind: "external_judge" as const,
+        obligation: "optional_not_selected" as const,
+        elapsed_ms: 0,
+        status: "skipped" as const,
+        skip_reason: "risk_short_circuit" as const
+      }
+    ],
+    unresolved_escalation_signals: [],
+    engine_failure: null
+  });
+  assert.equal(out.verdict, "risk_detected");
+  assert.equal(out.action, "deny");
+  assert.equal(out.risk_level, "high");
 });
 

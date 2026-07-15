@@ -320,19 +320,19 @@ export function createSandboxSecurityEscalationState(): SandboxSecurityEscalatio
             input.token_registry
           )
         }))
-        .sort((left, right) =>
-          obligationSortKey({
+        .sort((left, right) => {
+          const leftKey = obligationSortKey({
             obligation_id: "",
             category: left.signal.category,
             subject_refs: left.external_refs
-          }).localeCompare(
-            obligationSortKey({
-              obligation_id: "",
-              category: right.signal.category,
-              subject_refs: right.external_refs
-            })
-          )
-        );
+          });
+          const rightKey = obligationSortKey({
+            obligation_id: "",
+            category: right.signal.category,
+            subject_refs: right.external_refs
+          });
+          return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+        });
       obligationToSignal = new Map();
       const materialized = paired.map((item, index) => {
         const obligation_id = `obligation://sandbox/security/${input.decision_id}/${String(index + 1).padStart(4, "0")}`;

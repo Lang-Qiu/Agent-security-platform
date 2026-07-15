@@ -37,6 +37,9 @@ import {
   type SandboxSecurityPolicyProfileManifest
 } from "./policy-profiles.ts";
 import {
+  computeSandboxSecuritySubjectKey
+} from "./subject-scope.ts";
+import {
   reduceSandboxSecurityPolicy,
   type SandboxSecurityDecisionBearingBudgetPhase,
   type SandboxSecurityDecisionBearingEngineFailure
@@ -331,6 +334,8 @@ export function createSandboxSecurityEngine(deps: {
         [];
       let routedObligationRecords: SandboxSecurityRoutedObligationRecord[] = [];
       let shortCircuited = false;
+      let localSelected = false;
+      let judgeRouted = false;
       let publication: {
         token_map: SandboxSecurityPublicSubjectTokenMap;
         findings: readonly SandboxSecurityFinding[];
@@ -339,7 +344,7 @@ export function createSandboxSecurityEngine(deps: {
       let created_at: string | null = null;
       let completeLedger: SandboxSecurityEvaluationEvidenceLedger | null = null;
 
-      const rawRegistry = {
+      const rawRegistry = deepFreeze({
         evaluation_nonce: prepared.evaluation_nonce,
         content_subjects: snapshot.contents.map((content) => ({
           source_handle: content.source_handle,
@@ -356,7 +361,7 @@ export function createSandboxSecurityEngine(deps: {
               }
             }
           : {})
-      };
+      });
 
       const markSkip = (
         slot: Readonly<SandboxSecurityDetectorSlotManifest>,
@@ -385,6 +390,26 @@ export function createSandboxSecurityEngine(deps: {
             skip_reason
           })
         );
+      };
+
+      const markEvaluationTerminated = (
+        slot: Readonly<SandboxSecurityDetectorSlotManifest>
+      ): void => {
+        let obligation:
+          | "profile_required"
+          | "runtime_required"
+          | "optional_not_selected";
+        if (slot.base_obligation === "profile_required") {
+          obligation = "profile_required";
+        } else if (
+          (slot.detector_kind === "local_model" && localSelected) ||
+          (slot.detector_kind === "external_judge" && judgeRouted)
+        ) {
+          obligation = "runtime_required";
+        } else {
+          obligation = "optional_not_selected";
+        }
+        markSkip(slot, obligation, "evaluation_terminated");
       };
 
       const settleMatchedLocal = async (
@@ -588,30 +613,40 @@ export function createSandboxSecurityEngine(deps: {
         }
 
         // LOCAL
-        if (!engineFailure) {
-          if (shortCircuited) {
+        // Selection is decided after rule short-circuit even if budget is already
+        // exhausted; epilogue terminalization must retain runtime_required for
+        // already-selected optional local (Spec Scheme B matrix).
+        if (shortCircuited) {
+          if (!slotRecords.has(localSlot.slot_id)) {
             const obligation =
               localSlot.base_obligation === "profile_required"
                 ? "profile_required"
                 : "optional_not_selected";
             markSkip(localSlot, obligation, "risk_short_circuit");
-          } else if (
-            localSlot.base_obligation === "optional" &&
-            !resolved.local
-          ) {
+          }
+        } else if (
+          localSlot.base_obligation === "optional" &&
+          !resolved.local
+        ) {
+          if (!engineFailure && !slotRecords.has(localSlot.slot_id)) {
             markSkip(
               localSlot,
               "optional_not_selected",
               "optional_not_configured"
             );
-          } else if (!resolved.local) {
+          }
+        } else if (!resolved.local) {
+          if (!engineFailure && !slotRecords.has(localSlot.slot_id)) {
             // profile required missing already fails at resolve
             markSkip(
               localSlot,
               "optional_not_selected",
               "optional_not_configured"
             );
-          } else {
+          }
+        } else {
+          localSelected = true;
+          if (!engineFailure) {
             const obligation =
               localSlot.base_obligation === "profile_required"
                 ? "profile_required"
@@ -634,17 +669,30 @@ export function createSandboxSecurityEngine(deps: {
         }
 
         // JUDGE
-        if (!engineFailure) {
-          if (shortCircuited) {
+        // Short-circuit terminalization must run even when the work budget is
+        // already exhausted after the rule atomic section. Spec matrix requires
+        // optional_not_selected + risk_short_circuit (never fabricated
+        // runtime_required + evaluation_terminated for an unselected Judge).
+        if (shortCircuited) {
+          if (!slotRecords.has(judgeSlot.slot_id)) {
             markSkip(
               judgeSlot,
               "optional_not_selected",
               "risk_short_circuit"
             );
-            if (escalation.lifecycle() === "collecting") {
+          }
+          // Spec/Plan: short-circuit with unresolved signals terminates Judge
+          // attempt; closeWithoutJudge only when no signals remain.
+          if (escalation.lifecycle() === "collecting") {
+            if (escalation.unresolvedSignals().length === 0) {
               escalation.closeWithoutJudge();
+            } else {
+              escalation.terminateJudgeAttempt({
+                reason: "risk_short_circuit"
+              });
             }
-          } else {
+          }
+        } else if (!engineFailure) {
             const signals = escalation.unresolvedSignals();
             if (signals.length === 0) {
               markSkip(
@@ -655,6 +703,7 @@ export function createSandboxSecurityEngine(deps: {
               escalation.closeWithoutJudge();
             } else if (!resolved.judge) {
               // routed but unavailable
+              judgeRouted = true;
               runLedger.markStarted({
                 slot_id: judgeSlot.slot_id,
                 obligation: "runtime_required",
@@ -678,6 +727,7 @@ export function createSandboxSecurityEngine(deps: {
               });
             } else {
               // route Judge
+              judgeRouted = true;
               const externalRegistry =
                 deriveSandboxSecurityExternalTokenRegistry(snapshot);
               const obligations = escalation.materializeRoutedObligations({
@@ -685,13 +735,54 @@ export function createSandboxSecurityEngine(deps: {
                 token_registry: externalRegistry
               });
               routedObligationRecords = obligations.map((obligation) => {
+                // Reverse etok refs to private handles, then recompute subject_key
+                // so multi-signal same-category routing cannot collide.
+                const privateRefs = obligation.subject_refs.map((ref) => {
+                  if (ref.kind === "content_source") {
+                    const entry = externalRegistry.source_tokens.find(
+                      (item) => item.source_token === ref.source_token
+                    );
+                    if (!entry) {
+                      throwNamed(INTERNAL, "obligation_source_token_missing");
+                    }
+                    return {
+                      kind: "content_source" as const,
+                      source_handle: entry.source_handle,
+                      locator: ref.locator
+                    };
+                  }
+                  if (!externalRegistry.call_token) {
+                    throwNamed(INTERNAL, "obligation_call_token_missing");
+                  }
+                  if (ref.component === "arguments") {
+                    return {
+                      kind: "tool_request" as const,
+                      call_handle: externalRegistry.call_token.call_handle,
+                      component: "arguments" as const,
+                      locator: ref.locator
+                    };
+                  }
+                  return {
+                    kind: "tool_request" as const,
+                    call_handle: externalRegistry.call_token.call_handle,
+                    component: ref.component
+                  };
+                });
+                const signal_subject_key = computeSandboxSecuritySubjectKey({
+                  category: obligation.category,
+                  subject_refs: privateRefs as never
+                });
                 const signal = signals.find(
                   (item) =>
-                    item.category === obligation.category
+                    item.category === obligation.category &&
+                    item.subject_key === signal_subject_key
                 );
+                if (!signal) {
+                  throwNamed(INTERNAL, "obligation_signal_unlinked");
+                }
                 return deepFreeze({
                   ...obligation,
-                  signal_subject_key: signal?.subject_key ?? "",
+                  signal_subject_key: signal.subject_key,
                   signal_category: obligation.category
                 });
               });
@@ -1028,21 +1119,27 @@ export function createSandboxSecurityEngine(deps: {
               }
             }
           }
-        }
 
         // Ensure all slots terminal if budget failure mid-flight
         if (engineFailure) {
+          // Short-circuit residual signals are not Judge selection. Only mark
+          // Judge runtime_required when routing actually selected Judge.
+          if (
+            !judgeRouted &&
+            !shortCircuited &&
+            (escalation.lifecycle() === "collecting" ||
+              escalation.lifecycle() === "obligations_materialized") &&
+            escalation.unresolvedSignals().length > 0
+          ) {
+            judgeRouted = true;
+          }
           for (const slot of profile.detector_slots) {
             if (slotRecords.has(slot.slot_id)) continue;
             const snap = runLedger.snapshot().slots.find(
               (item) => item.slot_id === slot.slot_id
             );
             if (!snap || snap.status === "not_started") {
-              const obligation =
-                slot.base_obligation === "profile_required"
-                  ? "profile_required"
-                  : "optional_not_selected";
-              markSkip(slot, obligation, "evaluation_terminated");
+              markEvaluationTerminated(slot);
             } else if (snap.status === "running") {
               runLedger.markTimeout({
                 slot_id: slot.slot_id,
@@ -1074,11 +1171,7 @@ export function createSandboxSecurityEngine(deps: {
       } else {
         // decision_identity budget exhaustion: zero detectors, Scheme B
         for (const slot of profile.detector_slots) {
-          const obligation =
-            slot.base_obligation === "profile_required"
-              ? "profile_required"
-              : "optional_not_selected";
-          markSkip(slot, obligation, "evaluation_terminated");
+          markEvaluationTerminated(slot);
         }
         try {
           escalation.closeWithoutJudge();
@@ -1116,13 +1209,7 @@ export function createSandboxSecurityEngine(deps: {
             (item) => item.slot_id === slot.slot_id
           );
           if (snap?.status === "not_started") {
-            markSkip(
-              slot,
-              slot.base_obligation === "profile_required"
-                ? "profile_required"
-                : "optional_not_selected",
-              "evaluation_terminated"
-            );
+            markEvaluationTerminated(slot);
           }
         }
       }
@@ -1247,7 +1334,7 @@ export function createSandboxSecurityEngine(deps: {
         void snapshot;
         return deepFreeze(validated);
       } catch {
-        // one recovery path
+        // one recovery path under remaining normal work budget only
         if (
           engineFailure !== null &&
           (engineFailure as SandboxSecurityDecisionBearingEngineFailure).code ===
@@ -1255,10 +1342,21 @@ export function createSandboxSecurityEngine(deps: {
         ) {
           throwNamed(INTERNAL, "semantic_validation_failed");
         }
-        const recoveryFailure: SandboxSecurityDecisionBearingEngineFailure = {
-          code: "semantic_validation_failed",
-          phase: "semantic_validation"
-        };
+
+        // Plan: recovery requires remaining normal work budget; otherwise
+        // enter fail-closed epilogue semantics (no unrestricted recovery).
+        const remainingBeforeRecovery = deadline.remainingMs();
+        const recoveryFailure: SandboxSecurityDecisionBearingEngineFailure =
+          remainingBeforeRecovery > 0
+            ? {
+                code: "semantic_validation_failed",
+                phase: "semantic_validation"
+              }
+            : {
+                code: "evaluation_budget_exhausted",
+                phase: "semantic_validation"
+              };
+
         const recoveryReduced = reduceSandboxSecurityPolicy({
           stage: prepared.stage,
           evaluation_mode: prepared.evaluation_mode,
@@ -1296,6 +1394,7 @@ export function createSandboxSecurityEngine(deps: {
         if (!recoveryNormalized) {
           throwNamed(INTERNAL, "decision_materialization_invalid");
         }
+        // Exhausted-budget path is epilogue-style: one validate, no second recovery.
         try {
           return deepFreeze(
             validateSandboxSecurityDecisionSemantics(

@@ -87,21 +87,28 @@ export function canonicalizeSandboxSecurityPrivateSubjectScopes(
     seen.add(identity);
     out.push(scope);
   }
-  // stable order by identity for hashing, preserve exact locator/component values
-  return out
-    .slice()
-    .sort((left, right) => scopeIdentity(left).localeCompare(scopeIdentity(right)));
+  // stable order by identity for hashing, preserve exact locator/component values.
+  // Use UTF-16 code-unit order (not localeCompare) so subject_key is locale-independent.
+  return out.slice().sort((left, right) => {
+    const leftIdentity = scopeIdentity(left);
+    const rightIdentity = scopeIdentity(right);
+    return leftIdentity < rightIdentity
+      ? -1
+      : leftIdentity > rightIdentity
+        ? 1
+        : 0;
+  });
 }
 
 export function computeSandboxSecuritySubjectKey(input: {
   readonly category: SandboxSecurityRiskCategory;
   readonly subject_refs: readonly SandboxSecurityCandidateSubjectRef[];
 }): string {
-  const scopes = canonicalizeSandboxSecurityPrivateSubjectScopes(
+  const subjects = canonicalizeSandboxSecurityPrivateSubjectScopes(
     input.subject_refs
   );
   return sha256CanonicalJson({
     category: input.category,
-    scopes
+    subjects
   });
 }

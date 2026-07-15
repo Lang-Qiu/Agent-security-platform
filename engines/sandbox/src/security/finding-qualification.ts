@@ -340,6 +340,10 @@ export function qualifySandboxSecuritySlotEvidence(input: {
   });
 }
 
+function compareUtf16(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function entitySortKey(entity: SandboxSecurityAcceptedSubjectEntity): string {
   if (entity.kind === "content_source") {
     return `0:${entity.source_handle}`;
@@ -382,7 +386,7 @@ export function materializeSandboxSecurityPublicSubjectTokens(input: {
   }
 
   entities.sort((left, right) =>
-    entitySortKey(left).localeCompare(entitySortKey(right))
+    compareUtf16(entitySortKey(left), entitySortKey(right))
   );
 
   const sources: {
@@ -462,23 +466,23 @@ function compareFindings(left: SandboxSecurityFinding, right: SandboxSecurityFin
   const severityDelta =
     SEVERITY_RANK[right.severity] - SEVERITY_RANK[left.severity];
   if (severityDelta !== 0) return severityDelta;
-  const category = left.category.localeCompare(right.category);
+  const category = compareUtf16(left.category, right.category);
   if (category !== 0) return category;
-  const detector = left.detector_id.localeCompare(right.detector_id);
+  const detector = compareUtf16(left.detector_id, right.detector_id);
   if (detector !== 0) return detector;
-  const reason = left.reason_code.localeCompare(right.reason_code);
+  const reason = compareUtf16(left.reason_code, right.reason_code);
   if (reason !== 0) return reason;
   const leftSubjects = left.subject_refs
     .map(publicSubjectSortKey)
-    .sort()
+    .sort(compareUtf16)
     .join("|");
   const rightSubjects = right.subject_refs
     .map(publicSubjectSortKey)
-    .sort()
+    .sort(compareUtf16)
     .join("|");
-  const subjects = leftSubjects.localeCompare(rightSubjects);
+  const subjects = compareUtf16(leftSubjects, rightSubjects);
   if (subjects !== 0) return subjects;
-  return left.finding_id.localeCompare(right.finding_id);
+  return compareUtf16(left.finding_id, right.finding_id);
 }
 
 function entitiesFromDrafts(

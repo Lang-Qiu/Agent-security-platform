@@ -418,7 +418,28 @@ test("REQ-SBX-GENERAL-001 resolveSandboxSecurityDetectorsForProfile strict missi
     rule: createRecordingRawLocalDetector()
   });
   const profile = resolveSandboxSecurityProfile("sandbox-security-strict.v1");
-  assert.throws(() => resolveSandboxSecurityDetectorsForProfile(registry, profile));
+  assert.throws(
+    () => resolveSandboxSecurityDetectorsForProfile(registry, profile),
+    (error: unknown) =>
+      error instanceof Error &&
+      (error as { code?: string }).code === "sandbox_security_profile_invalid" &&
+      error.message.includes("sandbox_security_profile_invalid")
+  );
+});
+
+test("REQ-SBX-GENERAL-001 strict missing local resolution uses sandbox_security_profile_invalid not detector_resolution_invalid", () => {
+  const registry = createSandboxSecurityDetectorRegistry({
+    rule: createRecordingRawLocalDetector()
+  });
+  const profile = resolveSandboxSecurityProfile("sandbox-security-strict.v1");
+  try {
+    resolveSandboxSecurityDetectorsForProfile(registry, profile);
+    assert.fail("expected strict missing local to fail resolution");
+  } catch (error) {
+    assert.ok(error instanceof Error);
+    assert.equal((error as { code?: string }).code, "sandbox_security_profile_invalid");
+    assert.doesNotMatch(error.message, /detector_resolution_invalid/);
+  }
 });
 
 test("REQ-SBX-GENERAL-001 resolveSandboxSecurityDetectorsForProfile does not fail construction", () => {

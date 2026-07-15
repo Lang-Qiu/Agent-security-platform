@@ -264,6 +264,69 @@ function assertUnresolvedSignals(
   void decision;
 }
 
+
+function severityRank(value: "low" | "medium" | "high" | "critical"): number {
+  switch (value) {
+    case "low":
+      return 1;
+    case "medium":
+      return 2;
+    case "high":
+      return 3;
+    case "critical":
+      return 4;
+  }
+}
+
+function hasValidatedShortCircuitFinding(
+  ledger: Readonly<SandboxSecurityEvaluationEvidenceLedger>
+): boolean {
+  const floor = ledger.profile.detector_slots
+    .map((slot) => slot.short_circuit_min_severity)
+    .find((value) => value !== null);
+  if (floor === null || floor === undefined) {
+    return false;
+  }
+  return ledger.published_findings.some(
+    (finding) => severityRank(finding.severity) >= severityRank(floor)
+  );
+}
+
+function assertRiskShortCircuitResolved(
+  ledger: Readonly<SandboxSecurityEvaluationEvidenceLedger>
+): void {
+  const hasShortCircuit = ledger.detector_runs.some(
+    (run) =>
+      run.status === "skipped" && run.skip_reason === "risk_short_circuit"
+  );
+  if (!hasShortCircuit) {
+    return;
+  }
+  if (!hasValidatedShortCircuitFinding(ledger)) {
+    fail("risk_short_circuit_without_finding");
+  }
+  // Short-circuit must originate from accepted rule risk evidence, not forgery.
+  const ruleSlot = ledger.profile.detector_slots.find(
+    (slot) => slot.short_circuit_min_severity !== null
+  );
+  if (!ruleSlot) {
+    fail("risk_short_circuit_without_rule_floor");
+  }
+  const ruleRecord = ledger.slot_records.find(
+    (record) => record.slot_id === ruleSlot.slot_id
+  );
+  if (!ruleRecord || ruleRecord.status !== "matched") {
+    fail("risk_short_circuit_without_matched_rule");
+  }
+  const floor = ruleSlot.short_circuit_min_severity!;
+  const accepted = ruleRecord.qualified_evidence.accepted_risks.some(
+    (risk) => severityRank(risk.severity) >= severityRank(floor)
+  );
+  if (!accepted) {
+    fail("risk_short_circuit_without_rule_accepted_risk");
+  }
+}
+
 export function validateSandboxSecurityDecisionSemantics(
   decision: Readonly<SandboxSecurityDecision>,
   ledger: Readonly<SandboxSecurityEvaluationEvidenceLedger>
@@ -500,6 +563,7 @@ export function validateSandboxSecurityDecisionSemantics(
 
   assertJudgeResolutionConsistency(ledger);
   assertUnresolvedSignals(ledger, decision);
+  assertRiskShortCircuitResolved(ledger);
 
   // Unresolved forgery: decision does not embed unresolved, but reducer uses
   // ledger unresolved + runs. Compare reducer against decision.
@@ -533,16 +597,30 @@ export function validateSandboxSecurityDecisionSemantics(
       const required =
         run.obligation === "profile_required" ||
         run.obligation === "runtime_required";
+      if (!required) return false;
+      if (
+        run.status === "failed" ||
+        run.status === "timeout" ||
+        run.status === "invalid_result"
+      ) {
+        return true;
+      }
       return (
-        required &&
-        (run.status === "failed" ||
-          run.status === "timeout" ||
-          run.status === "invalid_result")
+        run.status === "skipped" &&
+        run.skip_reason === "evaluation_terminated"
       );
     });
+    // Defense-in-depth: unvalidated risk_short_circuit is unresolved evidence.
+    // Primary gate is assertRiskShortCircuitResolved (rejects forgeries).
+    const unvalidatedShortCircuit =
+      ledger.detector_runs.some(
+        (run) =>
+          run.status === "skipped" && run.skip_reason === "risk_short_circuit"
+      ) && !hasValidatedShortCircuitFinding(ledger);
     if (
       ledger.unresolved_escalation_signals.length === 0 &&
       !unresolvedRequired &&
+      !unvalidatedShortCircuit &&
       ledger.engine_failure === null
     ) {
       fail("indeterminate_without_unresolved");

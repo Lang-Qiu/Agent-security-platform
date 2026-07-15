@@ -1,3 +1,460 @@
+## 2026-07-15 - Phase 4 independent review / fix / re-review FINAL (short-circuit + budget)
+
+- phase: Phase 4 Qualification and Engine Policy (P4-T1..P4-T6)
+- Spec: `docs/superpowers/specs/2026-07-10-sandbox-security-core-spec.md`
+- Plan: `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-phase-4-engine-policy.md`
+- Master: `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-master.md`
+- modules reviewed:
+  - `engines/sandbox/src/security/finding-qualification.ts`
+  - `engines/sandbox/src/security/escalation-state.ts`
+  - `engines/sandbox/src/security/runtime-deadline.ts`
+  - `engines/sandbox/src/security/run-ledger.ts`
+  - `engines/sandbox/src/security/policy-reducer.ts`
+  - `engines/sandbox/src/security/semantic-validator.ts`
+  - `engines/sandbox/src/security/engine.ts`
+  - residual Phase 3 deps: subject_key `subjects`, UTF-16 sort, profile_invalid local_required
+- findings fixed this independent loop:
+  - P1 short-circuit under post-rule work-budget exhaustion left Judge unmarked, then Scheme B terminalization invented `runtime_required`/`optional` + `evaluation_terminated` instead of Spec `optional_not_selected + risk_short_circuit`
+  - P1 residual short-circuit signals under budget set `judgeRouted=true` from unresolved signals alone, fabricating Judge selection
+  - retained prior residual fixes: validated short-circuit findings, semantic recovery budget gate, multi-signal subject_key linkage, Scheme B evaluation_terminated obligation matrix, subject_key `subjects`, UTF-16 public/private sorts, strict profile_invalid
+- regression tests added:
+  - short-circuit under budget exhaustion still marks Judge risk_short_circuit
+  - short-circuit residual signals under budget do not select Judge
+- verification:
+  - Phase 2–4 focused authority/input/detector/policy/engine: 435/435 pass
+  - detector + sanitized boundary suites: 97/97 pass (boundary) / combined detector-boundary+sanitized green
+  - `npm run test:shared`: 207/207 pass
+  - `npm run test:repo`: 185/185 pass
+  - shared + sandbox `tsc --noEmit`: pass
+  - `git diff --check`: clean
+  - `process.platform`: linux
+  - behavioral probe: high short-circuit + mono=5000 → local/judge `optional_not_selected + risk_short_circuit`, verdict indeterminate with engine-0001
+- residual non-blocking (P3):
+  - full 181-plan mid-slot lease race inventory not one-test-per-line; main Scheme B obligation + short-circuit budget matrix covered
+  - engine local `entitiesFromDrafts` helper mirrors P4-T1 private shape while still calling P4-T1 materialize/publish APIs
+- conclusion: APPROVED
+- status: PHASE_4_APPROVED
+- next-stage admission: yes (Phase 5 only on explicit instruction)
+
+## 2026-07-15 - Phase 3 independent review / fix / re-review FINAL APPROVED (fresh loop)
+
+- phase: Phase 3 Detector Boundary and Profiles (P3-T5 → T1 → T2 → T3 → T4 → T6)
+- Spec: `docs/superpowers/specs/2026-07-10-sandbox-security-core-spec.md`
+- Plan: `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-phase-3-detectors-profiles.md`
+- Master: `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-master.md`
+- review-scope modules:
+  - `engines/sandbox/src/security/policy-profiles.ts` (P3-T5)
+  - `engines/sandbox/src/security/detector-contract.ts` (P3-T1)
+  - `engines/sandbox/tests/types/sandbox-security-detector-types.ts` (P3-T2)
+  - `engines/sandbox/src/security/subject-scope.ts` (P3-T3)
+  - `engines/sandbox/src/security/detector-output-boundary.ts` (P3-T3)
+  - `engines/sandbox/src/security/sanitized-boundary.ts` (P3-T4)
+  - `engines/sandbox/src/security/detector-registry.ts` (P3-T6)
+- worktree residuals verified (not reintroduced regressions):
+  - `subject_key` JCS field is Spec `subjects` (not `scopes`)
+  - private subject scope sort is UTF-16 code-unit order (not `localeCompare`)
+  - strict missing profile-required local throws `SandboxSecurityProfileError` /
+    `sandbox_security_profile_invalid` at resolution, before `nextDecisionId`
+- independent verification (not implementer summary):
+  - subject_key digest equals `sha256(JCS({category, subjects}))` and differs from `scopes` digest
+  - multi-ref sort order is code-unit and stable under input permutation; fixture distinguishes localeCompare
+  - `resolveSandboxSecurityDetectorsForProfile` strict rule-only → `SandboxSecurityProfileError`
+  - balanced rule-only resolves; registry construction remains profile-agnostic; absent Judge OK
+  - manifests thresholds/timeouts/budgets/obligations/access/routing/short-circuit/action matrix/trust rules match Spec
+  - raw/external boundaries: exact keys, limits, reason_code pairing, handle/token binding, obligation exact-scope equality, empty obligations reject, zero-Judge on invalid payload
+  - type isolation probe present; no `detector-pipeline.ts`; no `security/index.ts`; resolve helper non-public
+- verification:
+  - Phase 3 focused detector/policy: 95/95 pass
+  - Phase 2+3 authority/input/detector/policy/boundary/sanitized: 270/270 pass
+  - engine suite (consumer of P3 contracts): 260/260 pass
+  - repository `sandbox-security-core`: 40/40 pass
+  - `npm run test:shared`: 207/207 pass
+  - `npm run test:repo`: 185/185 pass
+  - shared + sandbox `tsc --noEmit`: pass
+  - `git diff --check`: clean
+  - `process.platform`: linux
+  - behavioral probes (subjects digest, UTF-16 sort, ProfileError code, zero decision ID): pass
+- findings this loop:
+  - P0: none
+  - P1: none
+  - P2 blocking: none
+  - P3 non-blocking:
+    - raw/sanitized uniqueness intermediates may still name temporary maps/keys `scopes`; public subject_key formula uses Spec `subjects`
+    - external registry locator context remains WeakMap-bound (cloned registries fail closed by design)
+    - engine evaluate strict-missing-local tests assert rejection + zero decision IDs; detector resolution tests already assert exact ProfileError code
+- conclusion: APPROVED
+- status: PHASE_3_APPROVED
+- next-stage admission: yes (Phase 4 already present; Phase 5 only on explicit instruction)
+
+## 2026-07-15 - Phase 4 independent review / fix / re-review FINAL (UTF-16 sort residual)
+
+- phase: Phase 4 Qualification and Engine Policy (P4-T1..P4-T6)
+- Spec: `docs/superpowers/specs/2026-07-10-sandbox-security-core-spec.md`
+- Plan: `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-phase-4-engine-policy.md`
+- round: independent review found residual deterministic-identity defects after prior APPROVED notes
+- issues found and fixed:
+  - P1 public entity token ordinals sorted with `localeCompare` instead of private-handle byte / UTF-16 order (Plan P4-T1)
+  - P1 published finding order used `localeCompare` on category/detector/reason/subjects/finding_id
+  - P1 obligation materialization ordinals used `localeCompare` on category+canonical scope
+  - P2 engine evaluation `rawRegistry` was not deep-frozen (defense-in-depth residual from Phase 3 notes)
+- fix:
+  - `finding-qualification.ts`: `compareUtf16` for entity ordinals and finding sort
+  - `escalation-state.ts`: UTF-16 compare for obligation ordering
+  - `engine.ts`: `deepFreeze(rawRegistry)` before raw detector normalize
+- regression tests:
+  - public entity ordinals use UTF-16 byte order not localeCompare
+  - published finding order uses UTF-16 subject sort not localeCompare
+  - obligations sort by UTF-16 code units not localeCompare
+- verification:
+  - focused security specs: 530/530 pass
+  - Phase 4 exit five-file suite: 433/433 pass
+  - `npm run test:shared`: 207/207 pass
+  - `npm run test:repo`: 185/185 pass
+  - `tsc --noEmit -p engines/sandbox` and `shared`: pass
+- retained prior residual fixes in worktree (short-circuit validation, semantic recovery budget gate, runtime_required termination, subject_key `subjects` field, strict missing-local profile_invalid)
+- conclusion: APPROVED
+- status: PHASE_4_APPROVED
+
+## 2026-07-15 - Phase 3 independent review / fix / re-review FINAL APPROVED (standalone loop)
+
+- phase: Phase 3 Detector Boundary and Profiles (P3-T5 → T1 → T2 → T3 → T4 → T6)
+- Spec: `docs/superpowers/specs/2026-07-10-sandbox-security-core-spec.md`
+- Plan: `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-phase-3-detectors-profiles.md`
+- Master: `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-master.md`
+- review-scope modules:
+  - `engines/sandbox/src/security/policy-profiles.ts` (P3-T5)
+  - `engines/sandbox/src/security/detector-contract.ts` (P3-T1)
+  - `engines/sandbox/tests/types/sandbox-security-detector-types.ts` (P3-T2)
+  - `engines/sandbox/src/security/subject-scope.ts` (P3-T3)
+  - `engines/sandbox/src/security/detector-output-boundary.ts` (P3-T3)
+  - `engines/sandbox/src/security/sanitized-boundary.ts` (P3-T4)
+  - `engines/sandbox/src/security/detector-registry.ts` (P3-T6)
+- committed HEAD baseline defects closed in worktree (not reintroduced):
+  - P1 `computeSandboxSecuritySubjectKey` JCS field was `scopes`; Spec/Master require `subjects`
+  - P1 private subject-scope sort used `localeCompare` (locale-dependent); Spec JCS order is UTF-16 code units
+  - P1 strict missing profile-required local threw `detector_resolution_invalid` instead of
+    `SandboxSecurityProfileError` / `sandbox_security_profile_invalid` before decision ID
+- independent verification (not implementer summary):
+  - subject_key digest equals `sha256(JCS({category, subjects}))` and differs from `scopes` digest
+  - multi-ref sort order is code-unit and stable under input permutation; fixture distinguishes localeCompare
+  - `resolveSandboxSecurityDetectorsForProfile` strict rule-only → `SandboxSecurityProfileError`
+    with code `sandbox_security_profile_invalid`; engine evaluate issues zero `nextDecisionId`
+  - balanced rule-only resolves; registry construction remains profile-agnostic; absent Judge OK
+  - manifests thresholds/timeouts/budgets/obligations/access/routing/short-circuit/action matrix/trust rules match Spec
+  - raw/external boundaries: exact keys, limits, reason_code pairing, handle/token binding, obligation exact-scope equality, empty obligations reject, zero-Judge on invalid payload
+  - type isolation probe present; no `detector-pipeline.ts`; no `security/index.ts`; resolve helper non-public
+- regression tests retained/strengthened:
+  - subject_key hashes Spec `subjects` field not `scopes`
+  - subject_key JCS payload uses `subjects` key name
+  - private subject scopes sort by UTF-16 code units not localeCompare
+  - strict missing local resolution uses `sandbox_security_profile_invalid` not `detector_resolution_invalid`
+- verification:
+  - Phase 3 focused detector/policy/boundary/sanitized: 192/192 pass
+  - Phase 2+3 authority/input + Phase 3 suites: 270/270 pass
+  - engine suite (consumer of P3 contracts): 257/257 pass
+  - repository `sandbox-security-core`: 40/40 pass
+  - `npm run test:shared`: 207/207 pass
+  - `npm run test:repo`: 185/185 pass
+  - shared + sandbox `tsc --noEmit`: pass
+  - `git diff --check`: clean
+  - `process.platform`: linux
+- residual non-blocking (P3):
+  - external locator subject context remains derive-bound via WeakMap (cloned registries fail closed)
+  - Phase 4 `engine.ts` may build evaluation `rawRegistry` without freezing arrays; Phase 3 normalizers do not require mutability for correctness
+  - internal uniqueness keys in raw/sanitized boundaries may still name intermediate maps `scopes`; public subject_key formula uses Spec `subjects`
+- conclusion: APPROVED
+- status: PHASE_3_APPROVED
+- next-stage admission: yes (Phase 4 already present; Phase 5 only on explicit instruction)
+
+## 2026-07-15 - Phase 4 independent review / fix / re-review FINAL (short-circuit residual)
+
+- phase: Phase 4 Qualification and Engine Policy (P4-T1..P4-T6)
+- Spec: `docs/superpowers/specs/2026-07-10-sandbox-security-core-spec.md`
+- Plan: `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-phase-4-engine-policy.md`
+- Master: `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-master.md`
+- modules reviewed:
+  - `engines/sandbox/src/security/finding-qualification.ts`
+  - `engines/sandbox/src/security/escalation-state.ts`
+  - `engines/sandbox/src/security/runtime-deadline.ts`
+  - `engines/sandbox/src/security/run-ledger.ts`
+  - `engines/sandbox/src/security/policy-reducer.ts`
+  - `engines/sandbox/src/security/semantic-validator.ts`
+  - `engines/sandbox/src/security/engine.ts`
+  - residual Phase 3 deps: subject_key `subjects`, UTF-16 sort, profile_invalid local_required
+- findings fixed this independent loop:
+  - P1 `risk_short_circuit` treated as always-resolved; forged/empty-finding SC reduced to `allow`/`no_detected_risk` (Spec: resolved only with validated short-circuit finding)
+  - P1 semantic validator did not reject SC runs lacking matched rule accepted risk at short-circuit floor
+  - retained prior loop fixes: short-circuit terminateJudge, recovery budget gate, multi-signal subject_key linkage, Scheme B evaluation_terminated obligation matrix, required+evaluation_terminated unresolved
+- regression tests added:
+  - profile-required short-circuit requires a valid short-circuit finding (policy + semantic)
+  - risk_short_circuit without short-circuit-severity finding is unresolved
+  - risk_short_circuit with validated high finding remains risk_detected
+  - semantic validator rejects risk_short_circuit without short-circuit finding
+- verification:
+  - Phase 2–4 focused authority/input/detector/policy/engine/boundary/sanitized: 527/527 pass
+  - engine+policy suites: 314/314 pass
+  - `npm run test:shared`: 207/207 pass
+  - `npm run test:repo`: 185/185 pass
+  - shared + sandbox `tsc --noEmit`: pass
+  - probes: SC without findings → indeterminate/ask; SC with high → risk_detected/deny
+- residual non-blocking (P3):
+  - full 181-plan mid-slot lease race inventory not one-test-per-line; atomic settle + main Scheme B matrix covered
+  - engine local `entitiesFromDrafts` mirrors P4-T1 private helper while still calling P4-T1 publication APIs
+- conclusion: APPROVED
+- status: PHASE_4_APPROVED
+- next-stage admission: yes (Phase 5 only on explicit instruction)
+
+## 2026-07-15 - Phase 3 independent review loop reconfirmation (FINAL)
+
+- phase: Phase 3 Detector Boundary and Profiles (P3-T5 → T1 → T2 → T3 → T4 → T6)
+- Spec: `docs/superpowers/specs/2026-07-10-sandbox-security-core-spec.md`
+- Plan: `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-phase-3-detectors-profiles.md`
+- Master: `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-master.md`
+- review-scope modules:
+  - `engines/sandbox/src/security/policy-profiles.ts` (P3-T5)
+  - `engines/sandbox/src/security/detector-contract.ts` (P3-T1)
+  - `engines/sandbox/tests/types/sandbox-security-detector-types.ts` (P3-T2)
+  - `engines/sandbox/src/security/subject-scope.ts` (P3-T3)
+  - `engines/sandbox/src/security/detector-output-boundary.ts` (P3-T3)
+  - `engines/sandbox/src/security/sanitized-boundary.ts` (P3-T4)
+  - `engines/sandbox/src/security/detector-registry.ts` (P3-T6)
+- independent checks (not implementer summary only):
+  - Spec subject_key formula uses JCS field `subjects`; worktree `computeSandboxSecuritySubjectKey` matches; differs from wrong `scopes` digest
+  - private subject-scope sort is UTF-16 code-unit order (locale-independent)
+  - strict missing profile-required local resolution throws `SandboxSecurityProfileError` /
+    `sandbox_security_profile_invalid` before `nextDecisionId` (engine `track.nextId === 0`)
+  - construction still allows rule-only; balanced rule-only resolves; absent Judge OK at resolution
+  - manifests: slot thresholds/timeouts/budgets/obligations/access/routing/short-circuit match Spec
+  - action matrices and trust_rules match Spec; unknown trust pair fail-closed
+  - type isolation probe present; no `detector-pipeline.ts`; no `security/index.ts`; unique ownership files present
+  - raw/external boundaries: exact keys, limits, reason_code pairing, handle/token binding, obligation exact-scope equality
+  - `resolveSandboxSecurityDetectorsForProfile` remains non-public (repository gate)
+  - Phase 4 consumers import P3-T3 subject helpers and use `subjects` uniqueness material
+- verification:
+  - Phase 2+3 focused suites: 267/267 pass
+  - Phase 3 detector/policy/boundary/sanitized: 189/189 pass (subset of above)
+  - `tests/repository/sandbox-security-core.spec.ts`: 40/40 pass
+  - `npm run test:shared`: 207/207 pass
+  - `npm run test:repo`: 185/185 pass
+  - shared + sandbox `tsc --noEmit`: pass
+  - `git diff --check`: pass
+  - phase 3 modules load under strip-types: pass
+  - behavioral probes (subjects digest, UTF-16 sort, ProfileError code): pass
+  - engine suite: 255/255 pass (includes strict missing local / no decision ID)
+- findings this loop:
+  - P0: none
+  - P1: none (prior residual defects already fixed in worktree)
+  - P2 blocking: none
+  - P3 non-blocking:
+    - engine strict-missing-local tests assert rejection + zero decision IDs but do not assert
+      `error.code === "sandbox_security_profile_invalid"` (covered by detector resolution tests)
+    - external registry locator context remains WeakMap-bound (cloned registries fail closed)
+    - Phase 4 engine raw registry `content_subjects` freeze hardening remains out of Phase 3 scope
+- conclusion: APPROVED
+- status: PHASE_3_APPROVED
+- next-stage admission: yes (Phase 4 already present downstream; Phase 3 no longer blocks)
+
+## 2026-07-15 - Phase 4 independent review / fix / re-review FINAL
+
+- phase: Phase 4 Qualification and Engine Policy (P4-T1..P4-T6)
+- Spec: `docs/superpowers/specs/2026-07-10-sandbox-security-core-spec.md`
+- Plan: `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-phase-4-engine-policy.md`
+- Master: `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-master.md`
+- modules reviewed:
+  - `engines/sandbox/src/security/finding-qualification.ts`
+  - `engines/sandbox/src/security/escalation-state.ts`
+  - `engines/sandbox/src/security/runtime-deadline.ts`
+  - `engines/sandbox/src/security/run-ledger.ts`
+  - `engines/sandbox/src/security/policy-reducer.ts`
+  - `engines/sandbox/src/security/semantic-validator.ts`
+  - `engines/sandbox/src/security/engine.ts`
+- residual Phase 3 worktree dependencies retained:
+  - subject_key JCS field `subjects` (not `scopes`)
+  - strict missing local → `SandboxSecurityProfileError` / `sandbox_security_profile_invalid`
+  - subject scope sort uses UTF-16 code-unit order (locale-independent)
+- findings fixed this independent loop:
+  - P1 short-circuit with unresolved routing signals called `closeWithoutJudge()`
+    and threw `signals_present` instead of `terminateJudgeAttempt({reason:"risk_short_circuit"})`
+  - P1 semantic recovery path did not re-check remaining normal work budget before recovery
+  - P1/P2 Judge obligation→signal linkage used first category match and could collapse
+    multi-signal same-category routes; now recomputes subject_key from reversed etok refs
+  - P1 Scheme B terminalization labeled already-selected optional local / routed Judge as
+    `optional_not_selected + evaluation_terminated` instead of Spec
+    `runtime_required + evaluation_terminated` (unresolved required evidence)
+  - P1 reducer / semantic indeterminate checks ignored
+    `profile_required|runtime_required + evaluation_terminated` as unresolved required runs
+- regression tests added:
+  - engine short-circuit with unrelated routing signal terminates Judge and preserves unresolved
+  - short-circuit with unresolved signals does not throw signals_present
+  - semantic recovery is gated by remaining normal work budget
+  - multi-signal same-category obligations recompute distinct subject keys
+  - engine obligation mapping rejects category-only signal linkage
+  - not-started required / never-selected optional / already-selected optional local /
+    runtime-required Judge not started evaluation_terminated matrix
+  - reducer treats runtime_required/profile_required evaluation_terminated as unresolved
+  - reducer optional_not_selected evaluation_terminated has no independent effect
+- verification:
+  - Phase 2–4 focused authority/input/detector/policy/engine/boundary/sanitized: 522/522 pass
+  - engine+policy suites: 309/309 pass
+  - `npm run test:shared`: 207/207 pass
+  - `npm run test:repo`: 185/185 pass
+  - shared + sandbox `tsc --noEmit`: pass
+  - `git diff --check`: pass
+  - behavioral probes: post-rule budget exhaustion keeps local `runtime_required`;
+    subject_key equals subjects-hash and differs from scopes-hash
+- residual non-blocking (P3):
+  - full 181-plan edge inventory for mid-slot lease races not exhaustively encoded as
+    one-test-per-line; main Scheme B obligation matrix + atomic settle path covered
+  - engine local `entitiesFromDrafts` helper duplicates P4-T1 private helper shape while
+    still calling P4-T1 materialize/publish APIs (no second identity algorithm)
+- conclusion: APPROVED
+- status: PHASE_4_APPROVED
+- next-stage admission: yes (Phase 5 only on explicit instruction)
+
+## 2026-07-15 - Phase 3 independent review / fix / re-review FINAL APPROVED (UTF-16 sort residual)
+
+- phase: Phase 3 Detector Boundary and Profiles (P3-T5 → T1 → T2 → T3 → T4 → T6)
+- Spec: `docs/superpowers/specs/2026-07-10-sandbox-security-core-spec.md`
+- Plan: `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-phase-3-detectors-profiles.md`
+- review-scope modules:
+  - `engines/sandbox/src/security/policy-profiles.ts` (P3-T5)
+  - `engines/sandbox/src/security/detector-contract.ts` (P3-T1)
+  - `engines/sandbox/tests/types/sandbox-security-detector-types.ts` (P3-T2)
+  - `engines/sandbox/src/security/subject-scope.ts` (P3-T3)
+  - `engines/sandbox/src/security/detector-output-boundary.ts` (P3-T3)
+  - `engines/sandbox/src/security/sanitized-boundary.ts` (P3-T4)
+  - `engines/sandbox/src/security/detector-registry.ts` (P3-T6)
+- findings fixed this loop:
+  - P1 subject_key JCS payload field `subjects` (not `scopes`)
+  - P1 strict missing local resolution → `SandboxSecurityProfileError` /
+    `sandbox_security_profile_invalid` (not `detector_resolution_invalid`)
+  - P2 private subject-scope sort uses UTF-16 code-unit order instead of
+    `localeCompare` so multi-ref `subject_key` is locale-independent
+  - P2 trust-class ownership gate asserts sole definition, allows import/call
+- regression tests:
+  - subject_key hashes Spec `subjects` field not `scopes`
+  - subject_key JCS payload uses `subjects` key name
+  - private subject scopes sort by UTF-16 code units not localeCompare
+  - strict missing local resolution uses `sandbox_security_profile_invalid`
+- verification:
+  - Phase 3 focused detector/policy/boundary/sanitized: 189/189 pass
+  - Phase 2+3 authority/input + Phase 3 suites: 267/267 pass
+  - repository sandbox-security-core gate: 40/40 pass
+  - `npm run test:shared`: 207/207 pass
+  - `npm run test:repo`: 185/185 pass
+  - shared + sandbox `tsc --noEmit`: pass
+  - phase 3 modules load under strip-types: pass
+  - independent probes: subjects-field digest, profile_invalid code, UTF-16
+    sort order for `/Path` before `/path`
+- residual non-blocking:
+  - external locator subject context remains derive-bound via WeakMap
+  - concurrent Phase 4 worktree files (`engine.ts`, engine.spec growth) are out
+    of Phase 3 acceptance scope
+- conclusion: APPROVED
+- status: PHASE_3_APPROVED
+- next-stage admission: yes (Phase 4 may continue on explicit instruction)
+
+## 2026-07-15 - Phase 4 independent review / fix / re-review
+
+- phase: Phase 4 Qualification and Engine Policy (P4-T1..P4-T6)
+- Spec: `docs/superpowers/specs/2026-07-10-sandbox-security-core-spec.md`
+- Plan: `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-phase-4-engine-policy.md`
+- modules reviewed:
+  - `engines/sandbox/src/security/finding-qualification.ts`
+  - `engines/sandbox/src/security/escalation-state.ts`
+  - `engines/sandbox/src/security/runtime-deadline.ts`
+  - `engines/sandbox/src/security/run-ledger.ts`
+  - `engines/sandbox/src/security/policy-reducer.ts`
+  - `engines/sandbox/src/security/semantic-validator.ts`
+  - `engines/sandbox/src/security/engine.ts`
+- findings fixed this loop:
+  - P1 short-circuit with unresolved routing signals called `closeWithoutJudge()`
+    and threw `signals_present` instead of `terminateJudgeAttempt({reason:"risk_short_circuit"})`
+  - P1 semantic recovery path did not re-check remaining normal work budget before recovery
+  - P2 Judge obligation→signal ledger linkage used first category match and could collapse
+    multi-signal same-category routes; now recomputes subject_key from reversed etok refs
+- residual Phase 3 worktree fixes kept because Phase 4 depends on them:
+  - subject_key JCS field `subjects`
+  - strict missing local → `sandbox_security_profile_invalid`
+  - trust-class sole definition gate
+- regression tests:
+  - engine short-circuit with unrelated routing signal terminates Judge and preserves unresolved
+  - short-circuit with unresolved signals does not throw signals_present
+  - semantic recovery is gated by remaining normal work budget
+  - multi-signal same-category obligations recompute distinct subject keys
+  - engine obligation mapping rejects category-only signal linkage
+- verification:
+  - Phase 4 focused authority/input/detector/policy/engine/boundary/sanitized: 515/515 pass
+  - `npm run test:shared`: 207/207 pass
+  - `npm run test:repo`: 185/185 pass
+  - shared + sandbox `tsc --noEmit`: pass
+  - `git diff --check`: pass
+- residual non-blocking:
+  - full 181-plan inventory edge matrix for mid-slot lease races remains largely covered by
+    unit primitives + main orchestration paths; deeper concurrency races deferred only if
+    new evidence appears in Phase 5 integration
+- conclusion: APPROVED
+- status: PHASE_4_APPROVED
+- next-stage admission: yes (Phase 5 only on explicit instruction)
+
+## 2026-07-15 - Phase 3 independent review / fix / re-review FINAL APPROVED
+
+- phase: Phase 3 Detector Boundary and Profiles (P3-T5 → T1 → T2 → T3 → T4 → T6)
+- Spec: `docs/superpowers/specs/2026-07-10-sandbox-security-core-spec.md`
+- Plan: `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-phase-3-detectors-profiles.md`
+- review-scope modules:
+  - `engines/sandbox/src/security/policy-profiles.ts` (P3-T5)
+  - `engines/sandbox/src/security/detector-contract.ts` (P3-T1)
+  - `engines/sandbox/tests/types/sandbox-security-detector-types.ts` (P3-T2)
+  - `engines/sandbox/src/security/subject-scope.ts` (P3-T3)
+  - `engines/sandbox/src/security/detector-output-boundary.ts` (P3-T3)
+  - `engines/sandbox/src/security/sanitized-boundary.ts` (P3-T4)
+  - `engines/sandbox/src/security/detector-registry.ts` (P3-T6)
+- residual worktree fixes verified (not only implementer claims):
+  - P1 FIXED: `computeSandboxSecuritySubjectKey` JCS payload field is Spec/Master
+    `subjects` (not `scopes`); regression tests prove digest equals subjects-hash
+    and differs from scopes-hash
+  - P1 FIXED: strict missing profile-required local resolution throws
+    `SandboxSecurityProfileError` with `code === "sandbox_security_profile_invalid"`
+    before decision ID / detector calls; not `detector_resolution_invalid`
+  - P2 FIXED: permanent trust-class ownership gate asserts sole *definition*
+    in `policy-profiles.ts` and allows downstream import/call sites
+- independent checks this round:
+  - Spec slot tables / thresholds / budgets / obligations match manifests
+  - action matrices match Spec/Plan (balanced medium ask/deny; strict medium deny;
+    low alert vs ask/deny; unresolved ask/deny)
+  - trust_rules fixed table + unknown pair fail-closed
+  - raw/external normalize: exact keys, limits, non-finite confidence, reason_code
+    pairing, duplicate clearance/candidate, candidate/clearance scope conflict,
+    token/handle binding, obligation exact-scope equality
+  - type isolation probe + repository non-public resolution export
+  - no `detector-pipeline.ts`; unique production ownership files present
+  - Phase 4 consumers (`engine`, `finding-qualification`) use `subjects` subject_key
+- verification commands:
+  - Phase 3 focused detector/policy/boundary/sanitized: 188/188 pass
+  - Phase 2+3 authority/input + Phase 3 suites: 266/266 pass
+  - `tests/repository/sandbox-security-core.spec.ts`: 40/40 pass
+  - `npm run test:shared`: 207/207 pass
+  - `npm run test:repo`: 185/185 pass
+  - shared + sandbox `tsc --noEmit`: pass
+  - `git diff --check`: pass
+  - phase 3 modules load under strip-types: pass
+  - engine gates for strict missing local (no decision ID): pass
+- findings:
+  - P0: none
+  - P1: none open (prior residuals fixed and re-verified)
+  - P2 blocking: none
+  - P3 non-blocking:
+    - external locator subject context remains derive-bound via WeakMap
+      (cloned registries fail closed; intentional fail-closed binding)
+    - Phase 4 `engine.ts` builds evaluation `rawRegistry` without freezing
+      `content_subjects` arrays; Phase 3 boundaries do not require mutability
+      for correctness; freeze hardening remains a Phase 4 defense-in-depth item
+- conclusion: APPROVED
+- status: PHASE_3_APPROVED
+- next-stage admission: yes (Phase 4 already present downstream; Phase 3 no longer
+  blocks continuation)
+
 ## 2026-07-15 - REQ-SBX-GENERAL-001 P4-T6 engine orchestration
 
 - scope: full SandboxSecurityEngine.evaluate orchestration with 5000ms budget,
