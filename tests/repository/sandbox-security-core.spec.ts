@@ -1598,4 +1598,3 @@ test("REQ-SBX-GENERAL-001 resolveSandboxSecurityDetectorsForProfile remains non-
     );
   }
 });
-

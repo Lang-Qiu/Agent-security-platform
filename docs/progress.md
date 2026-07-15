@@ -1,5 +1,21 @@
 # Progress
 
+## 2026-07-15 - REQ-SBX-GENERAL-001 Phase 3 final independent review
+
+- phase: Detectors, Profiles, Boundaries, Registry (P3-T5 → T1 → T2 → T3 → T4 → T6)
+- modules: policy-profiles, detector-contract, subject-scope,
+  detector-output-boundary, sanitized-boundary, detector-registry
+- contract checks:
+  - immutable profiles sole trust derivation
+  - raw snapshot carries full frozen profile (no policy_profile_id)
+  - raw/external boundaries fail closed on limits, handles/tokens, scopes
+  - etok tokens engine-issued; Judge never receives raw snapshot
+  - registry construction profile-agnostic; strict local fails at resolution
+  - no detector-pipeline module
+- gates: detector suites + policy + repository + shared/repo + tsc green
+- conclusion: APPROVED
+- status: PHASE_3_VERIFIED; stop before Phase 4 unless instructed
+
 ## 2026-07-15 - REQ-SBX-GENERAL-001 P3-T6 detector registry + phase gates
 
 - scope: registry construction (rule required; no profile knowledge) and
