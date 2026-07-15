@@ -459,10 +459,10 @@ export class MonitoredSession {
           rawResult = await next(callbackRequest as unknown as SimulatedToolRequest);
           // Detect callback-result correlation mismatch rather than silently fixing it
           if (
-            (rawResult as Record<string, unknown>).call_id !== normalizedRequest.call_id ||
-            (rawResult as Record<string, unknown>).session_id !== normalizedRequest.session_id ||
-            (rawResult as Record<string, unknown>).scenario_id !== normalizedRequest.scenario_id ||
-            (rawResult as Record<string, unknown>).case_id !== normalizedRequest.case_id
+            rawResult.call_id !== normalizedRequest.call_id ||
+            rawResult.session_id !== normalizedRequest.session_id ||
+            rawResult.scenario_id !== normalizedRequest.scenario_id ||
+            rawResult.case_id !== normalizedRequest.case_id
           ) {
             this.#failed = true;
             throw new Track1MonitorError("monitor_tool_failed");
@@ -808,16 +808,23 @@ export class MonitoredSession {
     const sensitiveValues = [modelInput.content, modelOutput.content];
     // Also collect all tool argument string values
     const toolArgValues: string[] = [];
-    const toolArgs = toolRequest.arguments as Record<string, unknown>;
-    if (typeof toolArgs === "object" && toolArgs !== null && !Array.isArray(toolArgs)) {
-      for (const v of Object.values(toolArgs)) {
-        if (typeof v === "string") toolArgValues.push(v);
-        else if (typeof v === "object" && v !== null && !Array.isArray(v)) {
-          for (const sv of Object.values(v as Record<string, unknown>)) {
-            if (typeof sv === "string") toolArgValues.push(sv);
-          }
+    const { tool_name: toolName, arguments: toolArgs } = toolRequest;
+    switch (toolName) {
+      case "send_email":
+        toolArgValues.push(toolArgs.recipient, toolArgs.subject, toolArgs.body);
+        break;
+      case "read_file":
+        toolArgValues.push(toolArgs.path);
+        break;
+      case "write_file":
+        toolArgValues.push(toolArgs.path, toolArgs.content);
+        break;
+      case "call_api":
+        toolArgValues.push(toolArgs.endpoint, toolArgs.method);
+        if (toolArgs.body !== undefined) {
+          toolArgValues.push(...Object.values(toolArgs.body));
         }
-      }
+        break;
     }
     // Filter out empty strings — ".includes('')" is always true
     const allSensitive = [...sensitiveValues, ...toolArgValues].filter((v) => v.length > 0);

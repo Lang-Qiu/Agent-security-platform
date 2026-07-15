@@ -59,7 +59,7 @@ function extractToolTarget(request: SimulatedToolRequest): string {
 }
 
 function extractToolArguments(request: SimulatedToolRequest): string[] {
-  const args = request.arguments as Record<string, unknown>;
+  const { tool_name: toolName, arguments: args } = request;
   const leaves: string[] = [];
 
   function collectLeaves(obj: Record<string, unknown>, prefix: string): void {
@@ -89,7 +89,7 @@ function extractToolArguments(request: SimulatedToolRequest): string[] {
   // For send_email: skip recipient (it's the target), collect subject, body
   // For read_file/write_file: skip path (it's the target), collect content
   // For call_api: skip endpoint (it's the target), collect body leaves
-  switch (request.tool_name) {
+  switch (toolName) {
     case "send_email": {
       if (typeof args.subject !== "string" || typeof args.body !== "string") {
         throw new Track1BaseFilterError("base_filter_context_invalid");
@@ -120,7 +120,7 @@ function extractToolArguments(request: SimulatedToolRequest): string[] {
         throw new Track1BaseFilterError("base_filter_context_invalid");
       }
       if (args.body !== undefined) {
-        collectLeaves(args.body as Record<string, unknown>, "");
+        collectLeaves(args.body, "");
       }
       break;
     }

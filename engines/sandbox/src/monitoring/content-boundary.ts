@@ -205,6 +205,13 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function isOneOf<T extends string>(
+  allowed: readonly T[],
+  value: unknown
+): value is T {
+  return typeof value === "string" && (allowed as readonly string[]).includes(value);
+}
+
 function isSafeCorrelationId(value: unknown): value is string {
   return (
     typeof value === "string" &&
@@ -246,7 +253,7 @@ export function normalizeMonitorToolResultPayload(
     return null;
   }
 
-  if (!STATE_CHANGES.includes(value.state_change)) {
+  if (!isOneOf(STATE_CHANGES, value.state_change)) {
     return null;
   }
 
@@ -292,7 +299,7 @@ export function normalizeMonitorToolResult(
   if (value.evidence.simulated !== true) return null;
   if (!isSafeReference(value.evidence.evidence_ref)) return null;
   if (!isNonEmptyString(value.evidence.target_ref)) return null;
-  if (!STATE_CHANGES.includes(value.evidence.state_change)) return null;
+  if (!isOneOf(STATE_CHANGES, value.evidence.state_change)) return null;
 
   // Validate status-specific fields
   const status = value.status;
@@ -381,8 +388,8 @@ export function normalizeMonitorToolResult(
       return null;
     }
 
-    const validRejectionCodes = ["target_not_allowed", "resource_not_found"];
-    if (!validRejectionCodes.includes(value.rejection_code)) return null;
+    const validRejectionCodes = ["target_not_allowed", "resource_not_found"] as const;
+    if (!isOneOf(validRejectionCodes, value.rejection_code)) return null;
     if (!isNonEmptyString(value.summary)) return null;
 
     return {

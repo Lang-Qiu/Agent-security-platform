@@ -652,10 +652,12 @@ export function parseTrack1CaseFixture(
       policy_action: expectedOutcome.policy_action as Track1CaseFixture["expected_outcome"]["policy_action"],
       tool_behavior: {
         disposition: toolBehavior.disposition as "must_not_execute" | "not_requested",
-        tools: [...(toolBehavior.tools as string[])]
+        tools: [
+          ...(toolBehavior.tools as Track1CaseFixture["expected_outcome"]["tool_behavior"]["tools"])
+        ]
       },
       evidence_requirements: [
-        ...(expectedOutcome.evidence_requirements as string[])
+        ...(expectedOutcome.evidence_requirements as Track1CaseFixture["expected_outcome"]["evidence_requirements"])
       ]
     },
     safety: {
