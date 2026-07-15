@@ -751,3 +751,409 @@ test("REQ-SBX-GENERAL-001 tool has_target reflects optional target presence", as
     false
   );
 });
+
+// ---- P2-T4 locator validation --------------------------------------------
+
+type LocatorApi = {
+  validateSandboxSecurityContentLocator: (
+    locator: unknown,
+    content: unknown
+  ) => unknown;
+  validateSandboxSecurityToolLocator: (
+    locator: unknown,
+    tool: unknown
+  ) => unknown;
+};
+
+const locatorPath = resolve(
+  import.meta.dirname,
+  "..",
+  "src",
+  "security",
+  "locator.ts"
+);
+
+const inertLocator: LocatorApi = {
+  validateSandboxSecurityContentLocator: () => null,
+  validateSandboxSecurityToolLocator: () => null
+};
+
+let locatorApi: LocatorApi;
+if (!existsSync(locatorPath)) {
+  locatorApi = inertLocator;
+} else {
+  const loaded = await import("../src/security/locator.ts");
+  if (
+    typeof loaded.validateSandboxSecurityContentLocator !== "function" ||
+    typeof loaded.validateSandboxSecurityToolLocator !== "function"
+  ) {
+    throw new Error("locator.ts does not expose the locked validator API");
+  }
+  locatorApi = loaded as unknown as LocatorApi;
+}
+
+const {
+  validateSandboxSecurityContentLocator,
+  validateSandboxSecurityToolLocator
+} = locatorApi;
+
+async function preparedTextContent() {
+  const prepared = prepareSandboxSecurityInput(await makeNormalizedSimulationRequest());
+  return (prepared.contents as unknown[])[0];
+}
+
+async function preparedJsonContent() {
+  const authority = await loadAuthority();
+  const branded = authority.normalizeSandboxSecurityEvaluationRequest({
+    submission: {
+      schema_version: "sandbox-security-request.v1",
+      request_id: "req-json-locator",
+      stage: "user_input",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      content_items: [
+        {
+          source_id: "src-json",
+          claimed_source_type: "user_input",
+          media_type: "application/json",
+          value: { items: [{ id: 1 }, { id: 2 }], note: "ok" },
+          provenance_ref: "source://fixture/json"
+        }
+      ]
+    },
+    authoritative_context: {
+      schema_version: "sandbox-security-authoritative-context.v1",
+      evaluation_mode: "simulation",
+      stage: "user_input",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      sources: [
+        {
+          source_id: "src-json",
+          authority_kind: "simulation_observation",
+          source_type: "user_input",
+          media_type: "application/json",
+          value: { items: [{ id: 1 }, { id: 2 }], note: "ok" },
+          provenance_ref: "source://fixture/json"
+        }
+      ]
+    }
+  });
+  const prepared = prepareSandboxSecurityInput(branded);
+  return (prepared.contents as unknown[])[0];
+}
+
+async function preparedTool() {
+  const authority = await loadAuthority();
+  const branded = authority.normalizeSandboxSecurityEvaluationRequest({
+    submission: {
+      schema_version: "sandbox-security-request.v1",
+      request_id: "req-tool-locator",
+      stage: "tool_request",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      content_items: [
+        {
+          source_id: "src-model",
+          claimed_source_type: "model_output",
+          media_type: "text/plain",
+          value: "tool",
+          provenance_ref: "source://fixture/model"
+        }
+      ],
+      tool_request: {
+        call_id: "call-1",
+        tool_name: "send_message",
+        target: "endpoint",
+        arguments: { channel: "security", nested: { n: 1 } }
+      }
+    },
+    authoritative_context: {
+      schema_version: "sandbox-security-authoritative-context.v1",
+      evaluation_mode: "simulation",
+      stage: "tool_request",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      sources: [
+        {
+          source_id: "src-model",
+          authority_kind: "simulation_observation",
+          source_type: "model_output",
+          media_type: "text/plain",
+          value: "tool",
+          provenance_ref: "source://fixture/model"
+        }
+      ],
+      tool_request: {
+        authority_kind: "simulation_observation",
+        call_id: "call-1",
+        tool_name: "send_message",
+        target: "endpoint",
+        arguments: { channel: "security", nested: { n: 1 } }
+      }
+    }
+  });
+  const prepared = prepareSandboxSecurityInput(branded);
+  return prepared.tool_request;
+}
+
+async function preparedMultibyteContent() {
+  // "é" is U+00E9 => C3 A9 in UTF-8 (2 bytes)
+  const request = await makeNormalizedSimulationRequest({ contentValue: "aéb" });
+  const prepared = prepareSandboxSecurityInput(request);
+  return (prepared.contents as unknown[])[0];
+}
+
+test("REQ-SBX-GENERAL-001 accepts whole_source content locator", async () => {
+  const content = await preparedTextContent();
+  assert.deepEqual(
+    validateSandboxSecurityContentLocator({ kind: "whole_source" }, content),
+    { kind: "whole_source" }
+  );
+});
+
+test("REQ-SBX-GENERAL-001 accepts exact half-open code-point-aligned text_byte_range", async () => {
+  const content = await preparedTextContent();
+  // "hello" bytes 0..5
+  assert.deepEqual(
+    validateSandboxSecurityContentLocator(
+      { kind: "text_byte_range", start_byte: 0, end_byte: 5 },
+      content
+    ),
+    { kind: "text_byte_range", start_byte: 0, end_byte: 5 }
+  );
+  assert.deepEqual(
+    validateSandboxSecurityContentLocator(
+      { kind: "text_byte_range", start_byte: 1, end_byte: 4 },
+      content
+    ),
+    { kind: "text_byte_range", start_byte: 1, end_byte: 4 }
+  );
+});
+
+test("REQ-SBX-GENERAL-001 rejects text_byte_range that splits multi-byte code points", async () => {
+  const content = await preparedMultibyteContent();
+  // "aéb" => 61 C3 A9 62; split after first byte of é
+  assert.equal(
+    validateSandboxSecurityContentLocator(
+      { kind: "text_byte_range", start_byte: 0, end_byte: 2 },
+      content
+    ),
+    null
+  );
+  assert.equal(
+    validateSandboxSecurityContentLocator(
+      { kind: "text_byte_range", start_byte: 2, end_byte: 4 },
+      content
+    ),
+    null
+  );
+});
+
+test("REQ-SBX-GENERAL-001 falls back to whole_source when byte range mapping is unproven", async () => {
+  const content = await preparedTextContent();
+  // non-integer / float boundaries are unproven mapping -> whole_source fallback
+  assert.deepEqual(
+    validateSandboxSecurityContentLocator(
+      { kind: "text_byte_range", start_byte: 0.5 as never, end_byte: 2 },
+      content
+    ),
+    { kind: "whole_source" }
+  );
+});
+
+test("REQ-SBX-GENERAL-001 accepts restricted RFC 6901 json_pointer on content", async () => {
+  const content = await preparedJsonContent();
+  assert.deepEqual(
+    validateSandboxSecurityContentLocator(
+      { kind: "json_pointer", pointer: "/items/0/id" },
+      content
+    ),
+    { kind: "json_pointer", pointer: "/items/0/id" }
+  );
+  assert.deepEqual(
+    validateSandboxSecurityContentLocator(
+      { kind: "json_pointer", pointer: "/note" },
+      content
+    ),
+    { kind: "json_pointer", pointer: "/note" }
+  );
+});
+
+test("REQ-SBX-GENERAL-001 rejects over-long json_pointer and illegal tokens", async () => {
+  const content = await preparedJsonContent();
+  const overlong = "/" + "a".repeat(520);
+  assert.equal(
+    validateSandboxSecurityContentLocator(
+      { kind: "json_pointer", pointer: overlong },
+      content
+    ),
+    null
+  );
+  assert.equal(
+    validateSandboxSecurityContentLocator(
+      { kind: "json_pointer", pointer: "/bad token" },
+      content
+    ),
+    null
+  );
+  assert.equal(
+    validateSandboxSecurityContentLocator(
+      { kind: "json_pointer", pointer: "/~2" },
+      content
+    ),
+    null
+  );
+});
+
+test("REQ-SBX-GENERAL-001 rejects array tokens with leading zeros except zero", async () => {
+  const content = await preparedJsonContent();
+  assert.equal(
+    validateSandboxSecurityContentLocator(
+      { kind: "json_pointer", pointer: "/items/01/id" },
+      content
+    ),
+    null
+  );
+  assert.deepEqual(
+    validateSandboxSecurityContentLocator(
+      { kind: "json_pointer", pointer: "/items/0/id" },
+      content
+    ),
+    { kind: "json_pointer", pointer: "/items/0/id" }
+  );
+});
+
+test("REQ-SBX-GENERAL-001 accepts whole_arguments tool locator", async () => {
+  const tool = await preparedTool();
+  assert.deepEqual(
+    validateSandboxSecurityToolLocator({ kind: "whole_arguments" }, tool),
+    { kind: "whole_arguments" }
+  );
+});
+
+test("REQ-SBX-GENERAL-001 accepts tool json_pointer on arguments only", async () => {
+  const tool = await preparedTool();
+  assert.deepEqual(
+    validateSandboxSecurityToolLocator(
+      { kind: "json_pointer", pointer: "/channel" },
+      tool
+    ),
+    { kind: "json_pointer", pointer: "/channel" }
+  );
+  assert.deepEqual(
+    validateSandboxSecurityToolLocator(
+      { kind: "json_pointer", pointer: "/nested/n" },
+      tool
+    ),
+    { kind: "json_pointer", pointer: "/nested/n" }
+  );
+});
+
+test("REQ-SBX-GENERAL-001 rejects tool locator on tool_name or target components", async () => {
+  const tool = await preparedTool();
+  // validators only accept whole_arguments | json_pointer; component-style fields rejected
+  assert.equal(
+    validateSandboxSecurityToolLocator(
+      { kind: "tool_name" },
+      tool
+    ),
+    null
+  );
+  assert.equal(
+    validateSandboxSecurityToolLocator(
+      { kind: "target" },
+      tool
+    ),
+    null
+  );
+  assert.equal(
+    validateSandboxSecurityToolLocator(
+      { kind: "json_pointer", pointer: "/tool_name" },
+      tool
+    ),
+    null
+  );
+});
+
+test("REQ-SBX-GENERAL-001 rejects unknown locator kinds and extra keys", async () => {
+  const content = await preparedTextContent();
+  const tool = await preparedTool();
+  assert.equal(
+    validateSandboxSecurityContentLocator({ kind: "unknown" }, content),
+    null
+  );
+  assert.equal(
+    validateSandboxSecurityContentLocator(
+      { kind: "whole_source", extra: true },
+      content
+    ),
+    null
+  );
+  assert.equal(
+    validateSandboxSecurityToolLocator(
+      { kind: "whole_arguments", extra: true },
+      tool
+    ),
+    null
+  );
+});
+
+test("REQ-SBX-GENERAL-001 rejects negative and inverted byte ranges", async () => {
+  const content = await preparedTextContent();
+  assert.equal(
+    validateSandboxSecurityContentLocator(
+      { kind: "text_byte_range", start_byte: -1, end_byte: 2 },
+      content
+    ),
+    null
+  );
+  assert.equal(
+    validateSandboxSecurityContentLocator(
+      { kind: "text_byte_range", start_byte: 3, end_byte: 1 },
+      content
+    ),
+    null
+  );
+  assert.equal(
+    validateSandboxSecurityContentLocator(
+      { kind: "text_byte_range", start_byte: 1, end_byte: 1 },
+      content
+    ),
+    null
+  );
+});
+
+test("REQ-SBX-GENERAL-001 rejects text_byte_range beyond original_utf8_bytes length", async () => {
+  const content = await preparedTextContent();
+  assert.equal(
+    validateSandboxSecurityContentLocator(
+      { kind: "text_byte_range", start_byte: 0, end_byte: 99 },
+      content
+    ),
+    null
+  );
+});
+
+test("REQ-SBX-GENERAL-001 rejects inherited and accessor locator fields", async () => {
+  const content = await preparedTextContent();
+  const proto = { kind: "whole_source" };
+  const polluted = Object.create(proto);
+  assert.equal(validateSandboxSecurityContentLocator(polluted, content), null);
+
+  const accessor: Record<string, unknown> = {};
+  Object.defineProperty(accessor, "kind", {
+    get() {
+      return "whole_source";
+    },
+    enumerable: true
+  });
+  assert.equal(validateSandboxSecurityContentLocator(accessor, content), null);
+});
+
+test("REQ-SBX-GENERAL-001 rejects json_pointer on text/plain content when path is non-applicable", async () => {
+  const content = await preparedTextContent();
+  assert.equal(
+    validateSandboxSecurityContentLocator(
+      { kind: "json_pointer", pointer: "/x" },
+      content
+    ),
+    null
+  );
+});
