@@ -1157,3 +1157,234 @@ test("REQ-SBX-GENERAL-001 rejects json_pointer on text/plain content when path i
     null
   );
 });
+
+// ---- P2-T5 canonical fingerprint ----------------------------------------
+
+type FingerprintApi = {
+  createSandboxSecurityCanonicalFingerprintService: () => {
+    fingerprint: (request: unknown, port: {
+      fingerprintCanonicalBytes: (bytes: Uint8Array) => string;
+    }) => string;
+  };
+};
+
+const fingerprintPath = resolve(
+  import.meta.dirname,
+  "..",
+  "src",
+  "security",
+  "canonical-fingerprint.ts"
+);
+
+const inertFingerprint: FingerprintApi = {
+  createSandboxSecurityCanonicalFingerprintService: () => ({
+    fingerprint: () => "inert"
+  })
+};
+
+let fingerprintApi: FingerprintApi;
+if (!existsSync(fingerprintPath)) {
+  fingerprintApi = inertFingerprint;
+} else {
+  const loaded = await import("../src/security/canonical-fingerprint.ts");
+  if (typeof loaded.createSandboxSecurityCanonicalFingerprintService !== "function") {
+    throw new Error("canonical-fingerprint.ts missing factory");
+  }
+  fingerprintApi = loaded as unknown as FingerprintApi;
+}
+
+const { createSandboxSecurityCanonicalFingerprintService } = fingerprintApi;
+
+function makeEvaluationRequest(
+  requestId = "req-fp-001",
+  value = "hello"
+) {
+  return {
+    submission: {
+      schema_version: "sandbox-security-request.v1",
+      request_id: requestId,
+      stage: "user_input",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      content_items: [
+        {
+          source_id: "src-user",
+          claimed_source_type: "user_input",
+          media_type: "text/plain",
+          value,
+          provenance_ref: "source://workbench/user/input"
+        }
+      ]
+    },
+    authoritative_context: {
+      schema_version: "sandbox-security-authoritative-context.v1",
+      evaluation_mode: "simulation",
+      stage: "user_input",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      sources: [
+        {
+          source_id: "src-user",
+          authority_kind: "simulation_observation",
+          source_type: "user_input",
+          media_type: "text/plain",
+          value,
+          provenance_ref: "source://workbench/user/input"
+        }
+      ]
+    }
+  };
+}
+
+test("REQ-SBX-GENERAL-001 fingerprints the authoritative JCS projection", () => {
+  const service = createSandboxSecurityCanonicalFingerprintService();
+  let seen: Uint8Array | undefined;
+  const out = service.fingerprint(makeEvaluationRequest(), {
+    fingerprintCanonicalBytes(bytes) {
+      seen = bytes;
+      return `hmac-sha256:${"a".repeat(64)}`;
+    }
+  });
+  assert.equal(out, `hmac-sha256:${"a".repeat(64)}`);
+  assert.ok(seen instanceof Uint8Array);
+  // bytes must be non-empty JCS projection encoding
+  assert.ok((seen?.byteLength ?? 0) > 0);
+  const text = Buffer.from(seen!).toString("utf8");
+  assert.match(text, /sandbox-security-canonical-evaluation\.v1/);
+  assert.doesNotMatch(text, /req-fp-001/);
+});
+
+test("REQ-SBX-GENERAL-001 fingerprint ignores correlation request ID", () => {
+  const service = createSandboxSecurityCanonicalFingerprintService();
+  const digests: string[] = [];
+  for (const requestId of ["req-a", "req-b"]) {
+    service.fingerprint(makeEvaluationRequest(requestId), {
+      fingerprintCanonicalBytes(bytes) {
+        digests.push(createHash("sha256").update(bytes).digest("hex"));
+        return `hmac-sha256:${"b".repeat(64)}`;
+      }
+    });
+  }
+  assert.equal(digests[0], digests[1]);
+});
+
+test("REQ-SBX-GENERAL-001 rejects invalid and throwing fingerprint ports", () => {
+  const service = createSandboxSecurityCanonicalFingerprintService();
+  assert.throws(
+    () =>
+      service.fingerprint(makeEvaluationRequest(), {
+        fingerprintCanonicalBytes() {
+          return "not-a-valid-fingerprint";
+        }
+      }),
+    (error: unknown) =>
+      error instanceof Error &&
+      (error as { code?: string }).code === "sandbox_security_internal_invalid"
+  );
+  assert.throws(
+    () =>
+      service.fingerprint(makeEvaluationRequest(), {
+        fingerprintCanonicalBytes() {
+          throw new Error("port boom");
+        }
+      }),
+    (error: unknown) =>
+      error instanceof Error &&
+      (error as { code?: string }).code === "sandbox_security_internal_invalid"
+  );
+});
+
+test("REQ-SBX-GENERAL-001 service does not expose canonical bytes after callback", () => {
+  const service = createSandboxSecurityCanonicalFingerprintService();
+  const result = service.fingerprint(makeEvaluationRequest(), {
+    fingerprintCanonicalBytes() {
+      return `hmac-sha256:${"c".repeat(64)}`;
+    }
+  });
+  assert.equal(typeof result, "string");
+  assert.equal(Object.hasOwn(service as object, "canonicalBytes"), false);
+  assert.equal(Object.hasOwn(service as object, "lastBytes"), false);
+});
+
+test("REQ-SBX-GENERAL-001 fingerprint rejects authority mismatch before port call", () => {
+  const service = createSandboxSecurityCanonicalFingerprintService();
+  let calls = 0;
+  const bad = makeEvaluationRequest();
+  (bad.authoritative_context.sources[0] as { value: string }).value = "forged";
+  assert.throws(
+    () =>
+      service.fingerprint(bad, {
+        fingerprintCanonicalBytes() {
+          calls += 1;
+          return `hmac-sha256:${"d".repeat(64)}`;
+        }
+      }),
+    (error: unknown) =>
+      error instanceof Error &&
+      (error as { code?: string }).code === "sandbox_security_authority_mismatch"
+  );
+  assert.equal(calls, 0);
+});
+
+test("REQ-SBX-GENERAL-001 fingerprint port output must match hmac-sha256 64hex grammar", () => {
+  const service = createSandboxSecurityCanonicalFingerprintService();
+  assert.throws(() =>
+    service.fingerprint(makeEvaluationRequest(), {
+      fingerprintCanonicalBytes() {
+        return `hmac-sha256:${"A".repeat(64)}`;
+      }
+    })
+  );
+  assert.throws(() =>
+    service.fingerprint(makeEvaluationRequest(), {
+      fingerprintCanonicalBytes() {
+        return `hmac-sha256:${"a".repeat(63)}`;
+      }
+    })
+  );
+  const ok = service.fingerprint(makeEvaluationRequest(), {
+    fingerprintCanonicalBytes() {
+      return `hmac-sha256:${"e".repeat(64)}`;
+    }
+  });
+  assert.match(ok, /^hmac-sha256:[a-f0-9]{64}$/);
+});
+
+test("REQ-SBX-GENERAL-001 fingerprint accepts approved SandboxSecurityEvaluationRequest shape", () => {
+  const service = createSandboxSecurityCanonicalFingerprintService();
+  const out = service.fingerprint(makeEvaluationRequest(), {
+    fingerprintCanonicalBytes() {
+      return `hmac-sha256:${"f".repeat(64)}`;
+    }
+  });
+  assert.match(out, /^hmac-sha256:[a-f0-9]{64}$/);
+  assert.equal("SandboxSecurityEvaluationRequestInput" in makeEvaluationRequest(), false);
+});
+
+test("REQ-SBX-GENERAL-001 fingerprint reuses internal normalizer not a second JCS implementation", async () => {
+  const service = createSandboxSecurityCanonicalFingerprintService();
+  const request = makeEvaluationRequest();
+  let fpBytes: Uint8Array | undefined;
+  service.fingerprint(request, {
+    fingerprintCanonicalBytes(bytes) {
+      fpBytes = bytes;
+      return `hmac-sha256:${"1".repeat(64)}`;
+    }
+  });
+  const branded = await (await loadAuthority()).normalizeSandboxSecurityEvaluationRequest(
+    request
+  );
+  const prepared = prepareSandboxSecurityInput(branded);
+  const prepareBytes = encodeSandboxSecurityCanonicalProjection(
+    prepared.canonical_projection
+  );
+  assert.deepEqual(Array.from(fpBytes!), Array.from(prepareBytes));
+});
+
+test("REQ-SBX-GENERAL-001 fingerprint encoding is independent of PreparedInput fields", () => {
+  const source = readFileSync(
+    new URL("../src/security/canonical-fingerprint.ts", import.meta.url),
+    "utf8"
+  );
+  assert.match(source, /encodeSandboxSecurityCanonicalProjection/);
+  assert.doesNotMatch(source, /canonical_projection_bytes/);
+  assert.doesNotMatch(source, /prepareSandboxSecurityInput/);
+});

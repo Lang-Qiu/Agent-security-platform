@@ -1,6 +1,117 @@
 # Progress
 
 
+## 2026-07-15 - REQ-SBX-GENERAL-001 P2-T5 fingerprint + Phase 2 exit
+
+- scope: keyed canonical fingerprint service reusing internal authority
+  normalizer + P2-T3 projection encoder; returns only hmac-sha256 digests
+- files:
+  - `engines/sandbox/src/security/canonical-fingerprint.ts` (create)
+  - `engines/sandbox/tests/sandbox-security-input.spec.ts` (extend)
+  - `docs/progress.md`
+- verification:
+  - authority+input focused suites pass (70 tests combined via runner files)
+  - input suite 56/56, authority 14/14
+  - `npm run test:shared` 207/207
+  - `npm run test:repo` 177/177
+  - shared/sandbox typecheck pass
+- independent review:
+  - P0/P1: none
+  - reuses `normalizeSandboxSecurityEvaluationRequest` +
+    `encodeSandboxSecurityCanonicalProjection`; no second JCS path
+  - authority mismatch has zero port invocations
+  - port grammar/throws map to `sandbox_security_internal_invalid`
+  - conclusion: APPROVED
+- Phase 2 status: COMPLETE_PENDING_FINAL_PHASE_REVIEW
+- blocker note: `.git` is read-only in this environment; filesystem worktree is
+  reimplemented from P2-T2 and verified, but commits could not be created
+- next: Phase 2 final review summary, then stop before Phase 3 unless instructed
+
+
+## 2026-07-15 - Phase 2 final independent review
+
+- phase: Authority and Canonical Input (P2-T1..P2-T5)
+- modules: canonical-json, source-authority, input-boundary, locator,
+  canonical-fingerprint
+- contract checks:
+  - approved evaluation request shape locked
+  - branded normalized request remains engine-internal (not public index)
+  - projection excludes request_id; prepared retains request_id for correlation
+  - 512 KiB projection bound enforced
+  - authority-bound content has no trust_class
+  - handles hsrc/hcall evaluation-bound
+  - locators fail closed; fingerprint does not retain canonical bytes
+- gates: shared/repo/tsc green
+- conclusion: APPROVED
+- status: PHASE_2_COMPLETE_PENDING_REVIEW (docs/code verified; commits pending
+  writable git)
+
+
+
+## 2026-07-15 - REQ-SBX-GENERAL-001 P2-T4 locators
+
+- scope: fail-closed content/tool locator validation with code-point-aligned
+  byte ranges and restricted RFC 6901 JSON pointers
+- files:
+  - `engines/sandbox/src/security/locator.ts` (create)
+  - `engines/sandbox/tests/sandbox-security-input.spec.ts` (extend)
+- verification: focused input suite 47/47; authority 14/14; sandbox tsc pass
+- independent review:
+  - P0/P1: none
+  - P2: non-integer byte ranges intentionally fall back to `whole_source`
+    (per plan); illegal/overlong/split-code-point remain hard null
+  - conclusion: APPROVED
+- status: P2-T4 VERIFIED; next P2-T5
+
+
+
+## 2026-07-15 - REQ-SBX-GENERAL-001 restart from P2-T3
+
+- context: user directed restart from P2-T3 with per-stage independent code
+  review; subsequent Phase 2/3 work discarded from the workspace filesystem.
+- note: `.git` is currently read-only in this environment, so commits could not
+  be created; worktree files are restored/reimplemented from the P2-T2 baseline.
+- P2-T3 status: IMPLEMENTED + focused tests green; independent review next.
+
+
+## 2026-07-15 - REQ-SBX-GENERAL-001 P2-T3 input boundary
+
+- scope: authority-bound prepared input, JCS projection, 512 KiB bound,
+  evaluation-local handles, private ordinary hashes, no trust derivation
+- files:
+  - `engines/sandbox/src/security/input-boundary.ts` (create)
+  - `engines/sandbox/tests/sandbox-security-input.spec.ts` (extend)
+  - `engines/sandbox/src/security/source-authority.ts` (export engine-internal brand token for prepare verification)
+- verification:
+  - focused input suite: 32/32 pass
+  - authority suite: 14/14 pass
+  - `npm run test:shared` 207/207
+  - repository sandbox-security-core gate: 32/32
+  - sandbox typecheck pass
+- review: pending independent P2-T3 review in this turn
+- next: independent P2-T3 review, then P2-T4
+
+## 2026-07-15 - P2-T3 independent code review
+
+- scope: `input-boundary.ts` + extended `sandbox-security-input.spec.ts`
+- checks: Spec/Plan contracts, authority-only projection, 512 KiB bound,
+  handle grammar, freeze/byte ownership, no trust derivation, no locator/fingerprint
+  leakage, focused+shared+repo+tsc gates
+- findings:
+  - P0: none
+  - P1: none
+  - P2: engine-internal brand token is exported from `source-authority.ts` for
+    prepare-time brand verification; must remain excluded from final security
+    public index in P5-T4 (tracked, not blocking)
+  - P3: comparison_value NFKC is private and untested for multi-codepoint edge
+    cases beyond current suite (non-blocking)
+- conclusion: APPROVED_WITH_NON_BLOCKING_COMMENTS
+- status: P2-T3 VERIFIED for continuation to P2-T4
+
+
+
+
+
 ## 2026-07-14 - REQ-SBX-GENERAL-001 P1-T4 public exports and gates
 
 - scope: additive shared package A/B exports, sandbox typecheck anchor/tsconfig, repository permanent gates, public type probes

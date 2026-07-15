@@ -114,7 +114,11 @@ and policy reduction has one engine-owned implementation.
 
 ## Current Implementation Status
 
-- Documentation-only approval and sprint-switch gate: complete in the active
-  gate commit.
-- Production implementation: not started.
-- Next DAG task after the Master baseline gate: `P1-T1`.
+- Documentation-only approval and sprint-switch gate: complete.
+- Phase 1 public shared contracts: complete (prior commits).
+- Phase 2 authority and canonical input (P2-T1..P2-T5): implemented and
+  independently reviewed in worktree; focused/shared/repo/tsc gates green.
+- Note: current execution environment has a read-only `.git` directory, so
+  task commits for the restarted P2-T3..T5 sequence could not be recorded.
+- Next DAG task after Phase 2 formal closure: `P3-T5` (profile manifests first).
+
