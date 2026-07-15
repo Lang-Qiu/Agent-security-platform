@@ -97,6 +97,55 @@ const MASTER_D_TYPES = [
   "SandboxSecurityActionMatrix"
 ] as const;
 
+const EXPECTED_ENGINE_EXPORT_OWNER_RELATIVE_PATHS = new Map<string, string>([
+  ["createSandboxSecurityEngine", "engine.ts"],
+  [
+    "createSandboxSecurityCanonicalFingerprintService",
+    "canonical-fingerprint.ts"
+  ],
+  [
+    "createSandboxSecurityMonitorDecisionAdapter",
+    "adapters/monitor-decision-provider.ts"
+  ],
+  [
+    "createTrack1RuleMatchDetectorAdapter",
+    "adapters/track1-rule-matches.ts"
+  ],
+  ["resolveSandboxSecurityProfile", "policy-profiles.ts"],
+  ["createSandboxSecurityDetectorRegistry", "detector-registry.ts"],
+  ["SandboxSecurityEvaluationRequest", "source-authority.ts"],
+  ["SandboxSecurityAuthoritativeEvaluationContext", "source-authority.ts"],
+  ["AuthenticatedSourceObservation", "source-authority.ts"],
+  ["AuthenticatedToolObservation", "source-authority.ts"],
+  ["SandboxSecurityEngine", "engine.ts"],
+  ["SandboxSecurityRuntimePorts", "runtime-deadline.ts"],
+  ["SandboxSecurityCanonicalFingerprintPort", "canonical-fingerprint.ts"],
+  ["SandboxSecurityCanonicalFingerprintService", "canonical-fingerprint.ts"],
+  ["SandboxSecurityDetectorRegistry", "detector-registry.ts"],
+  ["SandboxSecurityDetectorRegistryInput", "detector-registry.ts"],
+  ["RawLocalDetector", "detector-contract.ts"],
+  ["SandboxSecuritySanitizer", "detector-contract.ts"],
+  ["SanitizedExternalDetector", "detector-contract.ts"],
+  ["SandboxSecurityRawDetectorSnapshot", "detector-contract.ts"],
+  ["SandboxSecurityRiskCandidate", "detector-contract.ts"],
+  ["SandboxSecurityCategoryClearance", "detector-contract.ts"],
+  ["SandboxSecurityRawDetectorResult", "detector-contract.ts"],
+  ["SandboxSecurityExternalDetectorResult", "detector-contract.ts"],
+  ["SandboxSecurityExternalRiskCandidate", "detector-contract.ts"],
+  ["SandboxSecurityExternalCategoryClearance", "detector-contract.ts"],
+  ["SandboxSecuritySanitizedJudgePayload", "detector-contract.ts"],
+  ["SandboxSecuritySanitizedJudgeObligation", "detector-contract.ts"],
+  ["SandboxSecurityCandidateSubjectRef", "detector-contract.ts"],
+  ["SandboxSecurityExternalCandidateSubjectRef", "detector-contract.ts"],
+  ["SandboxSecurityPolicyProfileManifest", "policy-profiles.ts"],
+  ["SandboxSecurityDetectorSlotManifest", "policy-profiles.ts"],
+  ["SandboxSecurityDetectorSlotId", "policy-profiles.ts"],
+  ["SandboxSecurityTrustClass", "policy-profiles.ts"],
+  ["SandboxSecurityTrustRule", "policy-profiles.ts"],
+  ["SandboxSecurityActionByStage", "policy-profiles.ts"],
+  ["SandboxSecurityActionMatrix", "policy-profiles.ts"]
+]);
+
 const MASTER_A_TYPE_RUNTIME = [
   "SANDBOX_SECURITY_STAGES",
   "SANDBOX_SECURITY_CLAIMED_SOURCE_TYPES",
@@ -247,6 +296,27 @@ type ExportInventory = {
   named: NamedExport[];
   starModules: ModuleReference[];
   unsupported: string[];
+};
+
+type CapabilityModuleReferenceKind =
+  | "static-import"
+  | "export-from"
+  | "export-star"
+  | "export-namespace"
+  | "import-equals"
+  | "require"
+  | "dynamic-import";
+
+type CapabilityModuleReference = {
+  sourcePath: string;
+  kind: CapabilityModuleReferenceKind;
+  moduleSpecifier: string | null;
+  resolvedPath: string | null;
+};
+
+type CapabilityModuleReferenceExtraction = {
+  references: CapabilityModuleReference[];
+  violations: string[];
 };
 
 type SandboxSecurityExportSources = {
@@ -711,6 +781,300 @@ function securityIndexInventory(): ExportInventory {
   );
 }
 
+function evaluateEngineIndexExportGate(source: string): string[] {
+  const violations: string[] = [];
+  const inventory = enumerateDirectExports(SECURITY_INDEX_RELATIVE_PATH, source);
+  recordExactNames(
+    violations,
+    "engine runtime exports",
+    namesByKind(inventory, "value"),
+    MASTER_C_RUNTIME
+  );
+  recordExactNames(
+    violations,
+    "engine type exports",
+    namesByKind(inventory, "type"),
+    MASTER_D_TYPES
+  );
+  if (inventory.starModules.length > 0) {
+    violations.push("engine index must not use export star");
+  }
+  if (inventory.unsupported.length > 0) {
+    violations.push(
+      `engine index has unsupported exports: ${inventory.unsupported.join(", ")}`
+    );
+  }
+  if (inventory.named.some((entry) => entry.sourceName !== entry.exportedName)) {
+    violations.push("engine index must not alias exports");
+  }
+
+  recordExactNames(
+    violations,
+    "engine export owner map",
+    [...EXPECTED_ENGINE_EXPORT_OWNER_RELATIVE_PATHS.keys()],
+    [...MASTER_C_RUNTIME, ...MASTER_D_TYPES]
+  );
+  const runtimeNames = new Set<string>(MASTER_C_RUNTIME);
+  for (const [exportedName, ownerRelativePath] of
+    EXPECTED_ENGINE_EXPORT_OWNER_RELATIVE_PATHS) {
+    const rows = inventory.named.filter(
+      (entry) => entry.exportedName === exportedName
+    );
+    if (rows.length !== 1) {
+      violations.push(
+        `engine index must contain exactly one export row for ${exportedName}`
+      );
+      continue;
+    }
+    const row = rows[0]!;
+    const expectedKind: ExportKind = runtimeNames.has(exportedName)
+      ? "value"
+      : "type";
+    if (row.kind !== expectedKind) {
+      violations.push(
+        `engine index export ${exportedName} must have kind ${expectedKind}`
+      );
+    }
+    if (row.sourceName !== exportedName) {
+      violations.push(
+        `engine index export ${exportedName} must preserve its source name`
+      );
+    }
+    if (row.moduleSpecifier === null) {
+      violations.push(
+        `engine index export ${exportedName} must be a direct module re-export`
+      );
+    }
+    const expectedOwnerPath = resolve(
+      REPO_ROOT,
+      "engines/sandbox/src/security",
+      ownerRelativePath
+    );
+    if (row.resolvedModulePath !== expectedOwnerPath) {
+      violations.push(
+        `engine index export ${exportedName} must resolve to ${expectedOwnerPath}`
+      );
+    }
+  }
+  return violations;
+}
+
+function assertEngineExportRows(
+  inventory: ExportInventory,
+  expectedNames: readonly string[],
+  expectedKind: ExportKind
+): void {
+  for (const exportedName of expectedNames) {
+    const rows = inventory.named.filter(
+      (entry) => entry.exportedName === exportedName
+    );
+    assert.equal(rows.length, 1, `expected one export row for ${exportedName}`);
+    const row = rows[0]!;
+    const ownerRelativePath = EXPECTED_ENGINE_EXPORT_OWNER_RELATIVE_PATHS.get(
+      exportedName
+    );
+    assert.ok(ownerRelativePath, `missing expected owner for ${exportedName}`);
+    assert.equal(row.sourceName, exportedName);
+    assert.equal(row.exportedName, exportedName);
+    assert.equal(row.kind, expectedKind);
+    assert.notEqual(row.moduleSpecifier, null);
+    assert.equal(
+      row.resolvedModulePath,
+      resolve(
+        REPO_ROOT,
+        "engines/sandbox/src/security",
+        ownerRelativePath
+      )
+    );
+  }
+}
+
+function replaceSecurityIndexExportStatement(
+  source: string,
+  exportedName: string,
+  replacement: string
+): string {
+  const sourceFile = ts.createSourceFile(
+    SECURITY_INDEX_RELATIVE_PATH,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  const statement = sourceFile.statements.find(
+    (candidate) =>
+      ts.isExportDeclaration(candidate) &&
+      candidate.exportClause !== undefined &&
+      ts.isNamedExports(candidate.exportClause) &&
+      candidate.exportClause.elements.some(
+        (specifier) => specifier.name.text === exportedName
+      )
+  );
+  assert.ok(statement, `missing export statement for ${exportedName}`);
+  return `${source.slice(0, statement.getStart(sourceFile))}${replacement}${source.slice(statement.getEnd())}`;
+}
+
+const APPROVED_SECURITY_EXTERNAL_MODULES = new Set(["node:crypto"]);
+
+function extractSecurityCapabilityModuleReferences(
+  fileName: string,
+  source: string
+): CapabilityModuleReferenceExtraction {
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  const references: CapabilityModuleReference[] = [];
+  const violations: string[] = [];
+
+  const resolveRelativeTypeScriptModule = (
+    moduleSpecifier: string
+  ): string | null => {
+    if (!moduleSpecifier.startsWith(".")) {
+      return null;
+    }
+    const unresolvedPath = resolve(dirname(fileName), moduleSpecifier);
+    const normalizedRepositoryRoot = resolve(REPO_ROOT);
+    const candidates = /\.(?:[cm]?ts|tsx)$/.test(unresolvedPath)
+      ? [unresolvedPath]
+      : /\.(?:[cm]?js|jsx)$/.test(unresolvedPath)
+        ? [unresolvedPath.replace(/\.(?:[cm]?js|jsx)$/, ".ts")]
+        : [
+            `${unresolvedPath}.ts`,
+            `${unresolvedPath}.tsx`,
+            join(unresolvedPath, "index.ts"),
+            join(unresolvedPath, "index.tsx")
+          ];
+    return (
+      candidates.find(
+        (candidate) =>
+          (candidate === normalizedRepositoryRoot ||
+            candidate.startsWith(`${normalizedRepositoryRoot}${sep}`)) &&
+          existsSync(candidate)
+      ) ?? null
+    );
+  };
+
+  const addReference = (
+    kind: CapabilityModuleReferenceKind,
+    moduleSpecifierNode: ts.Expression | undefined
+  ): void => {
+    if (
+      moduleSpecifierNode === undefined ||
+      !ts.isStringLiteralLike(moduleSpecifierNode)
+    ) {
+      references.push({
+        sourcePath: fileName,
+        kind,
+        moduleSpecifier: null,
+        resolvedPath: null
+      });
+      violations.push(`${fileName}: nonliteral ${kind} is forbidden`);
+      return;
+    }
+
+    const moduleSpecifier = moduleSpecifierNode.text;
+    const resolvedPath = resolveRelativeTypeScriptModule(moduleSpecifier);
+    references.push({
+      sourcePath: fileName,
+      kind,
+      moduleSpecifier,
+      resolvedPath
+    });
+    if (moduleSpecifier.startsWith(".") && resolvedPath === null) {
+      violations.push(
+        `${fileName}: unresolved relative ${kind} ${moduleSpecifier}`
+      );
+    }
+  };
+
+  for (const statement of sourceFile.statements) {
+    if (ts.isImportDeclaration(statement)) {
+      addReference("static-import", statement.moduleSpecifier);
+      continue;
+    }
+    if (ts.isExportDeclaration(statement) && statement.moduleSpecifier) {
+      const kind: CapabilityModuleReferenceKind =
+        statement.exportClause === undefined
+          ? "export-star"
+          : ts.isNamespaceExport(statement.exportClause)
+            ? "export-namespace"
+            : "export-from";
+      addReference(kind, statement.moduleSpecifier);
+      continue;
+    }
+    if (
+      ts.isImportEqualsDeclaration(statement) &&
+      ts.isExternalModuleReference(statement.moduleReference)
+    ) {
+      addReference("import-equals", statement.moduleReference.expression);
+    }
+  }
+
+  const unwrapExpression = (expression: ts.Expression): ts.Expression => {
+    let current = expression;
+    while (ts.isParenthesizedExpression(current)) {
+      current = current.expression;
+    }
+    return current;
+  };
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const expression = unwrapExpression(node.expression);
+      const isRequire =
+        (ts.isIdentifier(expression) && expression.text === "require") ||
+        (ts.isPropertyAccessExpression(expression) &&
+          expression.name.text === "require");
+      if (isRequire) {
+        addReference(
+          "require",
+          node.arguments.length === 1 ? node.arguments[0] : undefined
+        );
+      } else if (expression.kind === ts.SyntaxKind.ImportKeyword) {
+        addReference(
+          "dynamic-import",
+          node.arguments.length === 1 ? node.arguments[0] : undefined
+        );
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+
+  return { references, violations };
+}
+
+function evaluateSecurityCapabilitySource(
+  fileName: string,
+  source: string
+): string[] {
+  const extraction = extractSecurityCapabilityModuleReferences(fileName, source);
+  return [
+    ...extraction.violations,
+    ...extraction.references
+      .map(securityExternalModuleViolation)
+      .filter((violation): violation is string => violation !== null)
+  ];
+}
+
+function securityExternalModuleViolation(
+  reference: CapabilityModuleReference
+): string | null {
+  const moduleSpecifier = reference.moduleSpecifier;
+  if (
+    moduleSpecifier === null ||
+    moduleSpecifier.startsWith(".") ||
+    APPROVED_SECURITY_EXTERNAL_MODULES.has(moduleSpecifier)
+  ) {
+    return null;
+  }
+  return `${reference.sourcePath}: unapproved external ${reference.kind} ${moduleSpecifier}`;
+}
+
 type PublicSandboxSecurityProfile = { readonly profile_id: string };
 
 async function resolvePublicSandboxSecurityProfile(
@@ -1166,6 +1530,23 @@ function assertForbiddenEngineExportsAbsent(
   }
 }
 
+test("REQ-SBX-GENERAL-001 engine export provenance rejects local and wrong-module mutations", () => {
+  const source = readSecurityIndexSource();
+  const localDeclaration = replaceSecurityIndexExportStatement(
+    source,
+    "createSandboxSecurityEngine",
+    "export function createSandboxSecurityEngine() {}"
+  );
+  const wrongModule = replaceSecurityIndexExportStatement(
+    source,
+    "createSandboxSecurityEngine",
+    'export { createSandboxSecurityEngine } from "./policy-profiles.ts";'
+  );
+
+  assert.notDeepEqual(evaluateEngineIndexExportGate(localDeclaration), []);
+  assert.notDeepEqual(evaluateEngineIndexExportGate(wrongModule), []);
+});
+
 test("REQ-SBX-GENERAL-001 engine runtime exports equal allowlist C", () => {
   const inventory = securityIndexInventory();
   assert.deepEqual(
@@ -1179,6 +1560,8 @@ test("REQ-SBX-GENERAL-001 engine runtime exports equal allowlist C", () => {
     true,
     "engine index must not alias exports"
   );
+  assertEngineExportRows(inventory, MASTER_C_RUNTIME, "value");
+  assert.deepEqual(evaluateEngineIndexExportGate(readSecurityIndexSource()), []);
 });
 
 test("REQ-SBX-GENERAL-001 engine type exports equal allowlist D", () => {
@@ -1187,6 +1570,8 @@ test("REQ-SBX-GENERAL-001 engine type exports equal allowlist D", () => {
     sortedNames(namesByKind(inventory, "type")),
     sortedNames(MASTER_D_TYPES)
   );
+  assertEngineExportRows(inventory, MASTER_D_TYPES, "type");
+  assert.deepEqual(evaluateEngineIndexExportGate(readSecurityIndexSource()), []);
 });
 
 for (const approvedTypeName of [
@@ -1464,6 +1849,58 @@ function securitySourceFiles(): string[] {
   return walk(securityRoot);
 }
 
+function analyzeSecurityCapabilityGraph(
+  roots: readonly string[] = securitySourceFiles()
+): {
+  visitedPaths: string[];
+  references: CapabilityModuleReference[];
+  violations: string[];
+} {
+  const pending = [...roots].sort();
+  const visited = new Set<string>();
+  const references: CapabilityModuleReference[] = [];
+  const violations: string[] = [];
+
+  while (pending.length > 0) {
+    const sourcePath = pending.shift()!;
+    if (visited.has(sourcePath)) {
+      continue;
+    }
+    visited.add(sourcePath);
+    if (!existsSync(sourcePath)) {
+      violations.push(`missing transitive TypeScript module ${sourcePath}`);
+      continue;
+    }
+
+    const extraction = extractSecurityCapabilityModuleReferences(
+      sourcePath,
+      readFileSync(sourcePath, "utf8")
+    );
+    references.push(...extraction.references);
+    violations.push(...extraction.violations);
+
+    for (const reference of extraction.references) {
+      const externalViolation = securityExternalModuleViolation(reference);
+      if (externalViolation !== null) {
+        violations.push(externalViolation);
+      }
+      if (
+        reference.moduleSpecifier?.startsWith(".") &&
+        reference.resolvedPath !== null &&
+        !visited.has(reference.resolvedPath)
+      ) {
+        pending.push(reference.resolvedPath);
+      }
+    }
+  }
+
+  return {
+    visitedPaths: [...visited].sort(),
+    references,
+    violations: [...new Set(violations)].sort()
+  };
+}
+
 test("REQ-SBX-GENERAL-001 production security has no oracle harness exports", () => {
   for (const file of securitySourceFiles()) {
     const source = readFileSync(file, "utf8");
@@ -1512,25 +1949,103 @@ test("REQ-SBX-GENERAL-001 production security has no contract detector-pipeline 
   }
 });
 
-test("REQ-SBX-GENERAL-001 production security has no network fs or model runtime imports", () => {
-  const forbiddenImport = /^(?:node:(?:fs|net|http|https|http2|dns|dgram|tls|child_process)|(?:openai|anthropic|ollama)(?:\/|$))/;
-  for (const file of securitySourceFiles()) {
-    const sourceFile = ts.createSourceFile(
-      file,
-      readFileSync(file, "utf8"),
-      ts.ScriptTarget.Latest,
-      true,
-      ts.ScriptKind.TS
+for (const [mutationName, source, expectedKind] of [
+  [
+    "static import node:fs",
+    'import { readFileSync } from "node:fs";',
+    "static-import"
+  ],
+  [
+    "static import model runtime",
+    'import "@mistralai/mistralai";',
+    "static-import"
+  ],
+  [
+    "export-from node:fs",
+    'export { readFileSync } from "node:fs";',
+    "export-from"
+  ],
+  ["export-star node:fs", 'export * from "node:fs";', "export-star"],
+  [
+    "export-namespace node:fs",
+    'export * as Fs from "node:fs";',
+    "export-namespace"
+  ],
+  [
+    "import-equals node:fs",
+    'import Fs = require("node:fs");',
+    "import-equals"
+  ],
+  [
+    "literal require node:fs",
+    'export const fsModule = require("node:fs");',
+    "require"
+  ],
+  [
+    "literal dynamic import node:fs",
+    'export async function loadFs() { return import("node:fs"); }',
+    "dynamic-import"
+  ],
+  [
+    "nonliteral dynamic import",
+    'const moduleName = "node:fs"; export function loadFs() { return import(moduleName); }',
+    "dynamic-import"
+  ],
+  [
+    "nonliteral require",
+    'const moduleName = "node:fs"; export const fsModule = require(moduleName);',
+    "require"
+  ],
+  [
+    "unresolved relative import",
+    'import "./missing-security-module.ts";',
+    "static-import"
+  ]
+] as const) {
+  test(`REQ-SBX-GENERAL-001 dependency capability gate rejects ${mutationName}`, () => {
+    const extraction = extractSecurityCapabilityModuleReferences(
+      "engines/sandbox/src/security/dependency-mutation.ts",
+      source
     );
-    for (const statement of sourceFile.statements) {
-      if (
-        ts.isImportDeclaration(statement) &&
-        ts.isStringLiteral(statement.moduleSpecifier)
-      ) {
-        assert.doesNotMatch(statement.moduleSpecifier.text, forbiddenImport, file);
-      }
-    }
-  }
+    assert.ok(
+      extraction.references.some((reference) => reference.kind === expectedKind),
+      `mutation must exercise ${expectedKind}`
+    );
+    assert.notDeepEqual(
+      evaluateSecurityCapabilitySource(
+        "engines/sandbox/src/security/dependency-mutation.ts",
+        source
+      ),
+      []
+    );
+  });
+}
+
+test("REQ-SBX-GENERAL-001 dependency capability gate permits approved node crypto", () => {
+  assert.deepEqual(
+    evaluateSecurityCapabilitySource(
+      "engines/sandbox/src/security/crypto-mutation.ts",
+      'import { createHash } from "node:crypto";'
+    ),
+    []
+  );
+});
+
+test("REQ-SBX-GENERAL-001 production security has no network fs or model runtime imports", () => {
+  const analysis = analyzeSecurityCapabilityGraph();
+  assert.deepEqual(analysis.violations, []);
+  assert.ok(
+    analysis.visitedPaths.some((file) =>
+      file.endsWith(`${sep}base-filter${sep}evaluator.ts`)
+    ),
+    "capability graph must follow the Track1 adapter dependency"
+  );
+  assert.ok(
+    analysis.visitedPaths.some((file) =>
+      file.endsWith(`${sep}monitoring${sep}contract.ts`)
+    ),
+    "capability graph must follow the Monitor adapter dependency"
+  );
 });
 
 test("REQ-SBX-GENERAL-001 export close does not rename frozen APIs", () => {
