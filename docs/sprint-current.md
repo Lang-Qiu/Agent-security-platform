@@ -125,5 +125,6 @@ and policy reduction has one engine-owned implementation.
   reason_code pairing/uniqueness).
 - Note: current execution environment may not allow git commits; worktree is
   source of truth for the restarted sequence.
-- Next: Phase 4 only after clean Phase 3 exit evidence; do not start GENERAL-002.
+- Phase 4 engine/policy (P4-T1..T6): in progress; P4-T1 verified.
+- Next: P4-T2 escalation state.
 

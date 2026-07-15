@@ -1,5 +1,24 @@
 # Progress
 
+## 2026-07-15 - REQ-SBX-GENERAL-001 P4-T1 finding qualification
+
+- scope: slot qualification thresholds, draft findings, public token mint +
+  publish/verify pure APIs
+- files:
+  - `engines/sandbox/src/security/finding-qualification.ts` (create)
+  - `engines/sandbox/tests/sandbox-security-engine.spec.ts` (create)
+- verification:
+  - engine qualification inventory 55/55
+  - sandbox `tsc --noEmit` pass
+- independent review:
+  - P0/P1: none
+  - subject_key via P3 helper only; no local subject identity hash
+  - drafts private-handle only; public tokens post-qualify only
+  - evidence refs assigned after final sort; etok rejected
+  - conclusion: APPROVED
+- re-review: APPROVED
+- status: P4-T1 VERIFIED; next P4-T2
+
 
 ## 2026-07-15 - Phase 3 final re-review after P1/P2 fixes
 
