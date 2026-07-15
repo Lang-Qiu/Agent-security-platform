@@ -4,6 +4,7 @@ import {
   encodeSandboxSecurityCanonicalProjection,
   type SandboxSecurityCanonicalEvaluationProjection
 } from "./input-boundary.ts";
+import { SANDBOX_SECURITY_MAX_REQUEST_BYTES } from "../../../../shared/types/sandbox-security.ts";
 import type {
   AuthenticatedSourceObservation,
   AuthenticatedToolObservation
@@ -105,10 +106,18 @@ export function createSandboxSecurityCanonicalFingerprintService(): SandboxSecur
       const normalized = normalizeSandboxSecurityEvaluationRequest(request);
       const projection = buildAuthoritativeProjection(normalized);
       const canonicalBytes = encodeSandboxSecurityCanonicalProjection(projection);
+      if (canonicalBytes.byteLength > SANDBOX_SECURITY_MAX_REQUEST_BYTES) {
+        throw new SandboxSecurityFingerprintError(
+          "canonical projection exceeds 512 KiB"
+        );
+      }
+
+      // Independent ephemeral copy for the port boundary.
+      const portBytes = Uint8Array.from(canonicalBytes);
 
       let output: string;
       try {
-        output = port.fingerprintCanonicalBytes(canonicalBytes);
+        output = port.fingerprintCanonicalBytes(portBytes);
       } catch {
         throw new SandboxSecurityFingerprintError();
       }

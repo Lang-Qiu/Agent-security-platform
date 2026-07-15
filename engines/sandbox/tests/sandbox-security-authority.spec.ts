@@ -550,3 +550,115 @@ test("REQ-SBX-GENERAL-001 defensive copy freezes submission and authoritative_co
     [1, 2]
   );
 });
+
+test("REQ-SBX-GENERAL-001 rejects non-finite authoritative JSON with typed source_authority_invalid", () => {
+  const submission = makeUserInputRequest([
+    makeContent("user_input", "user_json", { n: 1 })
+  ]);
+  const evaluation = makeSimulationEvaluation(submission);
+  const poisoned = {
+    ...evaluation,
+    authoritative_context: {
+      ...evaluation.authoritative_context,
+      sources: [
+        {
+          ...evaluation.authoritative_context.sources[0],
+          value: { n: Number.NaN }
+        }
+      ]
+    }
+  };
+  assertErrorCode(
+    () => normalizeSandboxSecurityEvaluationRequest(poisoned),
+    "sandbox_security_source_authority_invalid"
+  );
+});
+
+test("REQ-SBX-GENERAL-001 rejects forbidden JSON keys on authoritative observations with typed codes", () => {
+  const submission = makeUserInputRequest([
+    makeContent("user_input", "user_json", { a: 1 })
+  ]);
+  const evaluation = makeSimulationEvaluation(submission);
+
+  for (const badKey of ["constructor", "prototype"] as const) {
+    const value: Record<string, unknown> = { a: 1 };
+    Object.defineProperty(value, badKey, {
+      value: 1,
+      enumerable: true,
+      writable: true,
+      configurable: true
+    });
+    const poisoned = {
+      ...evaluation,
+      authoritative_context: {
+        ...evaluation.authoritative_context,
+        sources: [
+          {
+            ...evaluation.authoritative_context.sources[0],
+            value
+          }
+        ]
+      }
+    };
+    assertErrorCode(
+      () => normalizeSandboxSecurityEvaluationRequest(poisoned),
+      "sandbox_security_source_authority_invalid"
+    );
+  }
+});
+
+test("REQ-SBX-GENERAL-001 does not silently strip authoritative own __proto__ JSON keys", () => {
+  const submission = makeUserInputRequest([
+    makeContent("user_input", "user_json", { a: 1 })
+  ]);
+  const evaluation = makeSimulationEvaluation(submission);
+  const value: Record<string, unknown> = { a: 1 };
+  Object.defineProperty(value, "__proto__", {
+    value: 1,
+    enumerable: true,
+    writable: true,
+    configurable: true
+  });
+  const poisoned = {
+    ...evaluation,
+    authoritative_context: {
+      ...evaluation.authoritative_context,
+      sources: [
+        {
+          ...evaluation.authoritative_context.sources[0],
+          value
+        }
+      ]
+    }
+  };
+  assert.throws(
+    () => normalizeSandboxSecurityEvaluationRequest(poisoned),
+    (error: unknown) => {
+      const code = errorCode(error);
+      return (
+        code === "sandbox_security_source_authority_invalid" ||
+        code === "sandbox_security_authority_mismatch"
+      );
+    }
+  );
+});
+
+test("REQ-SBX-GENERAL-001 brand token is not a public engine export", async () => {
+  const loaded = await import("../src/security/source-authority.ts");
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(loaded, "sandboxSecurityEvaluationRequestBrand"),
+    false
+  );
+  assert.equal("sandboxSecurityEvaluationRequestBrand" in loaded, false);
+  assert.equal(typeof loaded.isNormalizedSandboxSecurityEvaluationRequest, "function");
+  const normalized = normalizeSandboxSecurityEvaluationRequest(makeSimulationEvaluation());
+  assert.equal(loaded.isNormalizedSandboxSecurityEvaluationRequest(normalized), true);
+  assert.equal(
+    loaded.isNormalizedSandboxSecurityEvaluationRequest({
+      submission: makeUserInputRequest(),
+      authoritative_context: makeSimulationEvaluation().authoritative_context
+    }),
+    false
+  );
+});
+

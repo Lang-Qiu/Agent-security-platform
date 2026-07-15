@@ -10,7 +10,7 @@ import type {
   NormalizedSandboxSecurityEvaluationRequest,
   SandboxSecurityEvaluationMode
 } from "./source-authority.ts";
-import { sandboxSecurityEvaluationRequestBrand } from "./source-authority.ts";
+import { isNormalizedSandboxSecurityEvaluationRequest } from "./source-authority.ts";
 import type {
   SandboxSecurityClaimedSourceType,
   SandboxSecurityJsonValue,
@@ -238,11 +238,7 @@ export function encodeSandboxSecurityCanonicalProjection(
 function assertBrandedRequest(
   request: Readonly<NormalizedSandboxSecurityEvaluationRequest>
 ): void {
-  if (
-    request === null ||
-    typeof request !== "object" ||
-    Reflect.get(request, sandboxSecurityEvaluationRequestBrand) !== true
-  ) {
+  if (!isNormalizedSandboxSecurityEvaluationRequest(request)) {
     throw new SandboxSecurityInputBoundaryError("unbranded evaluation request");
   }
 }

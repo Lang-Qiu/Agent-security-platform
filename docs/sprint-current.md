@@ -116,9 +116,12 @@ and policy reduction has one engine-owned implementation.
 
 - Documentation-only approval and sprint-switch gate: complete.
 - Phase 1 public shared contracts: complete (prior commits).
-- Phase 2 authority and canonical input (P2-T1..P2-T5): implemented and
-  independently reviewed in worktree; focused/shared/repo/tsc gates green.
-- Note: current execution environment has a read-only `.git` directory, so
-  task commits for the restarted P2-T3..T5 sequence could not be recorded.
-- Next DAG task after Phase 2 formal closure: `P3-T5` (profile manifests first).
+- Phase 2 authority and canonical input (P2-T1..P2-T5): complete in worktree
+  after review-fix residuals (typed authority JSON errors, 512 KiB fingerprint
+  bound, independent port bytes, private brand checker, exact-bound tests,
+  engine-suite registration).
+- Phase 3 modules also exist on branch; Phase 2 residual closure does not reopen
+  Phase 3 scope.
+- Next: durable commit of Phase 2 review-fix set if not yet recorded; Phase 4
+  only after explicit instruction.
 

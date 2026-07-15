@@ -1300,8 +1300,14 @@ test("REQ-SBX-GENERAL-001 service does not expose canonical bytes after callback
     }
   });
   assert.equal(typeof result, "string");
+  assert.match(result, /^hmac-sha256:[a-f0-9]{64}$/);
   assert.equal(Object.hasOwn(service as object, "canonicalBytes"), false);
   assert.equal(Object.hasOwn(service as object, "lastBytes"), false);
+  for (const key of Reflect.ownKeys(service as object)) {
+    const value = Reflect.get(service as object, key);
+    assert.equal(value instanceof Uint8Array, false);
+    assert.equal(Buffer.isBuffer(value), false);
+  }
 });
 
 test("REQ-SBX-GENERAL-001 fingerprint rejects authority mismatch before port call", () => {
@@ -1388,3 +1394,209 @@ test("REQ-SBX-GENERAL-001 fingerprint encoding is independent of PreparedInput f
   assert.doesNotMatch(source, /canonical_projection_bytes/);
   assert.doesNotMatch(source, /prepareSandboxSecurityInput/);
 });
+
+test("REQ-SBX-GENERAL-001 fingerprint rejects oversize projection before port call", () => {
+  const service = createSandboxSecurityCanonicalFingerprintService();
+  const items = [];
+  const sources = [];
+  for (let index = 1; index <= 10; index += 1) {
+    const value = "y".repeat(60 * 1024);
+    const sourceId = `src${index}`;
+    const sourceType = index === 10 ? "model_output" : "retrieved_content";
+    items.push({
+      source_id: sourceId,
+      claimed_source_type: sourceType,
+      media_type: "text/plain",
+      value,
+      provenance_ref: `source://fixture/${sourceId}`
+    });
+    sources.push({
+      source_id: sourceId,
+      authority_kind: "simulation_observation",
+      source_type: sourceType,
+      media_type: "text/plain",
+      value,
+      provenance_ref: `source://fixture/${sourceId}`
+    });
+  }
+  const request = {
+    submission: {
+      schema_version: "sandbox-security-request.v1",
+      request_id: "req-fp-oversize",
+      stage: "model_output",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      content_items: items
+    },
+    authoritative_context: {
+      schema_version: "sandbox-security-authoritative-context.v1",
+      evaluation_mode: "simulation",
+      stage: "model_output",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      sources
+    }
+  };
+  let calls = 0;
+  assert.throws(
+    () =>
+      service.fingerprint(request, {
+        fingerprintCanonicalBytes(bytes) {
+          calls += 1;
+          return `hmac-sha256:${"0".repeat(64)}`;
+        }
+      }),
+    (error: unknown) =>
+      error instanceof Error &&
+      (error as { code?: string }).code === "sandbox_security_internal_invalid"
+  );
+  assert.equal(calls, 0);
+});
+
+test("REQ-SBX-GENERAL-001 fingerprint port receives an independent byte copy", () => {
+  const service = createSandboxSecurityCanonicalFingerprintService();
+  const request = makeEvaluationRequest();
+  let portBytes: Uint8Array | undefined;
+  service.fingerprint(request, {
+    fingerprintCanonicalBytes(bytes) {
+      portBytes = bytes;
+      bytes[0] = (bytes[0] + 1) % 256;
+      return `hmac-sha256:${"2".repeat(64)}`;
+    }
+  });
+  assert.ok(portBytes);
+  // Encode path must still produce original authoritative bytes after port mutation.
+  // Independent copy: mutating port buffer cannot be the only live encoding buffer.
+  const source = readFileSync(
+    new URL("../src/security/canonical-fingerprint.ts", import.meta.url),
+    "utf8"
+  );
+  assert.match(
+    source,
+    /Uint8Array\.from\(|new Uint8Array\(|Buffer\.from\([^\n]*canonicalBytes/
+  );
+  // Second call still succeeds with intact projection encoding
+  const again = service.fingerprint(request, {
+    fingerprintCanonicalBytes(bytes) {
+      assert.notEqual(bytes, portBytes);
+      assert.notDeepEqual(Array.from(bytes), Array.from(portBytes!));
+      return `hmac-sha256:${"3".repeat(64)}`;
+    }
+  });
+  assert.match(again, /^hmac-sha256:[a-f0-9]{64}$/);
+});
+
+test("REQ-SBX-GENERAL-001 prepare rejects forged evaluation brand tokens", async () => {
+  const fakeBrand = Symbol("sandboxSecurityEvaluationRequestBrand");
+  const forged = {
+    submission: {
+      schema_version: "sandbox-security-request.v1",
+      request_id: "req-forge",
+      stage: "user_input",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      content_items: [
+        {
+          source_id: "s",
+          claimed_source_type: "user_input",
+          media_type: "text/plain",
+          value: "x",
+          provenance_ref: "source://fixture/s"
+        }
+      ]
+    },
+    authoritative_context: {
+      schema_version: "sandbox-security-authoritative-context.v1",
+      evaluation_mode: "simulation",
+      stage: "user_input",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      sources: [
+        {
+          source_id: "s",
+          authority_kind: "simulation_observation",
+          source_type: "user_input",
+          media_type: "text/plain",
+          value: "x",
+          provenance_ref: "source://fixture/s"
+        }
+      ]
+    },
+    [fakeBrand]: true
+  };
+  assert.throws(() => prepareSandboxSecurityInput(forged as never));
+});
+
+test("REQ-SBX-GENERAL-001 accepts projection at exactly 512 KiB boundary", async () => {
+  const authority = await loadAuthority();
+  const itemBytes = 104652;
+  const items = [];
+  const sources = [];
+  for (let index = 1; index <= 5; index += 1) {
+    const sourceId = `s${index}`;
+    const sourceType = index === 5 ? "model_output" : "retrieved_content";
+    const value = "y".repeat(itemBytes);
+    items.push({
+      source_id: sourceId,
+      claimed_source_type: sourceType,
+      media_type: "text/plain",
+      value,
+      provenance_ref: `source://fixture/${sourceId}`
+    });
+    sources.push({
+      source_id: sourceId,
+      authority_kind: "simulation_observation",
+      source_type: sourceType,
+      media_type: "text/plain",
+      value,
+      provenance_ref: `source://fixture/${sourceId}`
+    });
+  }
+  const request = authority.normalizeSandboxSecurityEvaluationRequest({
+    submission: {
+      schema_version: "sandbox-security-request.v1",
+      request_id: "req-exact-512",
+      stage: "model_output",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      content_items: items
+    },
+    authoritative_context: {
+      schema_version: "sandbox-security-authoritative-context.v1",
+      evaluation_mode: "simulation",
+      stage: "model_output",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      sources
+    }
+  });
+  const prepared = prepareSandboxSecurityInput(request);
+  const bytes = encodeSandboxSecurityCanonicalProjection(prepared.canonical_projection);
+  assert.equal(bytes.byteLength, 512 * 1024);
+
+  // fingerprint accepts the same exact-bound authority envelope
+  const service = createSandboxSecurityCanonicalFingerprintService();
+  let calls = 0;
+  const out = service.fingerprint(
+    {
+      submission: {
+        schema_version: "sandbox-security-request.v1",
+        request_id: "req-exact-512",
+        stage: "model_output",
+        policy_profile_id: "sandbox-security-balanced.v1",
+        content_items: items
+      },
+      authoritative_context: {
+        schema_version: "sandbox-security-authoritative-context.v1",
+        evaluation_mode: "simulation",
+        stage: "model_output",
+        policy_profile_id: "sandbox-security-balanced.v1",
+        sources
+      }
+    },
+    {
+      fingerprintCanonicalBytes(portBytes) {
+        calls += 1;
+        assert.equal(portBytes.byteLength, 512 * 1024);
+        return `hmac-sha256:${"4".repeat(64)}`;
+      }
+    }
+  );
+  assert.equal(calls, 1);
+  assert.match(out, /^hmac-sha256:[a-f0-9]{64}$/);
+});
+

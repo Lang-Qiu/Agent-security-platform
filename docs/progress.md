@@ -1,5 +1,58 @@
 # Progress
 
+
+## 2026-07-15 - Phase 2 residual closure (re-review loop)
+
+- scope: clear remaining Phase 2 residual findings after first review-fix pass
+- files:
+  - `engines/sandbox/src/security/source-authority.ts` (brand private +
+    `isNormalizedSandboxSecurityEvaluationRequest`)
+  - `engines/sandbox/src/security/input-boundary.ts` (checker-based brand assert)
+  - `engines/sandbox/src/security/canonical-fingerprint.ts` (prior 512 KiB + copy)
+  - `engines/sandbox/tests/sandbox-security-authority.spec.ts`
+  - `engines/sandbox/tests/sandbox-security-input.spec.ts`
+  - root `package.json` (`test:engine:sandbox` includes authority+input)
+  - `tests/repository/root-test-entry.spec.ts` (permanent gate strings)
+  - `docs/progress.md`, `docs/sprint-current.md`
+- residuals closed:
+  - brand token no longer module-exported; prepare rejects fake brand symbols
+  - exact 512 KiB projection acceptance covered for prepare + fingerprint
+  - Phase 2 suites registered on default engine gate
+  - review-fix delta retained for commit durability
+- verification:
+  - focused authority+input 78/78
+  - brand export probe fails closed
+  - exact-bound itemBytes=104652 → 524288 bytes accepted; +1 rejects
+- status: PHASE_2_COMPLETE_PENDING_FINAL_RE_REVIEW
+
+
+
+## 2026-07-15 - Phase 2 review fix (P1/P2)
+
+- scope: close independent Phase 2 review findings before Phase 3 handoff
+- files:
+  - `engines/sandbox/src/security/source-authority.ts`
+  - `engines/sandbox/src/security/canonical-fingerprint.ts`
+  - `engines/sandbox/tests/sandbox-security-authority.spec.ts`
+  - `engines/sandbox/tests/sandbox-security-input.spec.ts`
+  - `docs/progress.md`
+- fixes:
+  - P1 authority JSON non-finite / forbidden keys map to typed
+    `sandbox_security_source_authority_invalid` (no raw TypeError leak)
+  - P1 own `__proto__` JSON keys no longer silently stripped on clone
+  - P1 fingerprint enforces 512 KiB projection bound with zero port calls
+  - P2 fingerprint port receives `Uint8Array.from(...)` independent copy
+  - P2 fingerprint no-retain / oversize / independent-copy tests strengthened
+- verification:
+  - focused authority+input suites 75/75
+  - NaN authority path returns SandboxSecurityAuthorityError code
+  - oversize fingerprint returns sandbox_security_internal_invalid, calls=0
+- residual non-blocking notes from review:
+  - brand export remains engine-internal (P5 public-index closure)
+  - `test:engine:sandbox` permanent registration still deferred to Phase 5
+- status: PHASE_2_REVIEW_FIXES_VERIFIED
+
+
 ## 2026-07-15 - REQ-SBX-GENERAL-001 Phase 3 final independent review
 
 - phase: Detectors, Profiles, Boundaries, Registry (P3-T5 → T1 → T2 → T3 → T4 → T6)

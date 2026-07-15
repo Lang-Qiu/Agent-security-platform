@@ -110,6 +110,16 @@ test("root quality gate delegates to test:all and includes frontend coverage", (
     );
   }
 
+  for (const securityCoreTest of [
+    "engines/sandbox/tests/sandbox-security-authority.spec.ts",
+    "engines/sandbox/tests/sandbox-security-input.spec.ts"
+  ]) {
+    assert.ok(
+      scripts["test:engine:sandbox"]?.includes(securityCoreTest),
+      `sandbox gate should include ${securityCoreTest}`
+    );
+  }
+
   assert.match(
     scripts["test:repo"] ?? "",
     /\btests\/repository\/fofa-portscan-workflow\.spec\.ts\b/,

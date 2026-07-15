@@ -49,8 +49,11 @@ export interface SandboxSecurityEvaluationRequest {
   authoritative_context: Readonly<SandboxSecurityAuthoritativeEvaluationContext>;
 }
 
-/** Engine-internal brand token; never re-exported from security/index.ts. */
-export const sandboxSecurityEvaluationRequestBrand: unique symbol = Symbol(
+/**
+ * Engine-private brand token. Not exported from this module or security/index.ts.
+ * Other engine modules must use isNormalizedSandboxSecurityEvaluationRequest().
+ */
+const sandboxSecurityEvaluationRequestBrand: unique symbol = Symbol(
   "sandboxSecurityEvaluationRequestBrand"
 );
 
@@ -59,6 +62,16 @@ export type NormalizedSandboxSecurityEvaluationRequest = {
   readonly authoritative_context: SandboxSecurityAuthoritativeEvaluationContext;
   readonly [sandboxSecurityEvaluationRequestBrand]: true;
 };
+
+export function isNormalizedSandboxSecurityEvaluationRequest(
+  value: unknown
+): value is Readonly<NormalizedSandboxSecurityEvaluationRequest> {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    Reflect.get(value, sandboxSecurityEvaluationRequestBrand) === true
+  );
+}
 
 export class SandboxSecurityAuthorityError extends Error {
   readonly code:
@@ -132,16 +145,39 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
+const FORBIDDEN_JSON_KEYS = new Set(["__proto__", "prototype", "constructor"]);
+
 function deepCloneJson(value: SandboxSecurityJsonValue): SandboxSecurityJsonValue {
-  if (value === null || typeof value === "boolean" || typeof value === "number" || typeof value === "string") {
+  if (value === null || typeof value === "boolean" || typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) {
+      throw new TypeError("non-finite JSON number");
+    }
     return value;
   }
   if (Array.isArray(value)) {
-    return value.map((item) => deepCloneJson(item));
+    return value.map((item) => deepCloneJson(item as SandboxSecurityJsonValue));
   }
+  if (typeof value !== "object") {
+    throw new TypeError("unsupported JSON value");
+  }
+
   const out: { [key: string]: SandboxSecurityJsonValue } = {};
-  for (const [key, nested] of Object.entries(value)) {
-    out[key] = deepCloneJson(nested);
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string" || FORBIDDEN_JSON_KEYS.has(key)) {
+      throw new TypeError("forbidden JSON key");
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (
+      descriptor === undefined ||
+      !descriptor.enumerable ||
+      !("value" in descriptor)
+    ) {
+      throw new TypeError("unsupported JSON property");
+    }
+    out[key] = deepCloneJson(descriptor.value as SandboxSecurityJsonValue);
   }
   return out;
 }
@@ -203,7 +239,26 @@ function valuesEqual(
   if (mediaType === "text/plain") {
     return typeof left === "string" && typeof right === "string" && left === right;
   }
-  return sandboxSecurityJsonCanonicalEqual(left, right);
+  try {
+    return sandboxSecurityJsonCanonicalEqual(left, right);
+  } catch {
+    throw new SandboxSecurityAuthorityError(
+      "sandbox_security_source_authority_invalid"
+    );
+  }
+}
+
+function toolArgumentsEqual(
+  left: SandboxSecurityJsonValue,
+  right: SandboxSecurityJsonValue
+): boolean {
+  try {
+    return sandboxSecurityJsonCanonicalEqual(left, right);
+  } catch {
+    throw new SandboxSecurityAuthorityError(
+      "sandbox_security_source_authority_invalid"
+    );
+  }
 }
 
 function isAuthorityKind(value: unknown): value is SandboxSecurityAuthorityKind {
@@ -441,10 +496,7 @@ function assertToolMatch(
     submissionTool.call_id !== authorityTool.call_id ||
     submissionTool.tool_name !== authorityTool.tool_name ||
     (submissionTool.target ?? undefined) !== (authorityTool.target ?? undefined) ||
-    !sandboxSecurityJsonCanonicalEqual(
-      submissionTool.arguments,
-      authorityTool.arguments
-    )
+    !toolArgumentsEqual(submissionTool.arguments, authorityTool.arguments)
   ) {
     throw new SandboxSecurityAuthorityError(
       "sandbox_security_authority_mismatch"
