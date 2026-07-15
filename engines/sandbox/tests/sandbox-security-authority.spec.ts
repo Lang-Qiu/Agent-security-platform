@@ -48,14 +48,28 @@ function makeContent(
   sourceId: string,
   value: string | SandboxSecurityJsonValue = `value-${sourceId}`,
   overrides: Record<string, unknown> = {}
-) {
+): {
+  source_id: string;
+  claimed_source_type: SandboxSecurityClaimedSourceType;
+  media_type: "text/plain" | "application/json";
+  value: string | SandboxSecurityJsonValue;
+  provenance_ref: string;
+} {
+  const media_type: "text/plain" | "application/json" =
+    typeof value === "string" ? "text/plain" : "application/json";
   return {
     source_id: sourceId,
     claimed_source_type: claimedSourceType,
-    media_type: typeof value === "string" ? "text/plain" : "application/json",
+    media_type,
     value,
     provenance_ref: `source://fixture/${sourceId}`,
     ...overrides
+  } as {
+    source_id: string;
+    claimed_source_type: SandboxSecurityClaimedSourceType;
+    media_type: "text/plain" | "application/json";
+    value: string | SandboxSecurityJsonValue;
+    provenance_ref: string;
   };
 }
 
