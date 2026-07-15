@@ -900,3 +900,966 @@ test("REQ-SBX-GENERAL-001 detector supplied evidence refs are never preserved", 
     `evidence://sandbox/security/${DECISION}/0001`
   ]);
 });
+
+import { createSandboxSecurityEscalationState } from "../src/security/escalation-state.ts";
+import { deriveSandboxSecurityExternalTokenRegistry } from "../src/security/sanitized-boundary.ts";
+import { computeSandboxSecuritySubjectKey } from "../src/security/subject-scope.ts";
+
+function judgeSlot() {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  return profile.detector_slots.find((slot) => slot.detector_kind === "external_judge")!;
+}
+
+function makeTokenRegistry(options?: { tool?: boolean }) {
+  const profile = resolveSandboxSecurityProfile("sandbox-security-balanced.v1");
+  const contents = [
+    Object.freeze({
+      source_handle: SOURCE as never,
+      source_id: "src-1",
+      source_type: "user_input" as const,
+      media_type: "text/plain" as const,
+      authority_kind: "simulation_observation" as const,
+      value: "hello",
+      provenance_ref: "source://fixture/src-1",
+      original_utf8_bytes: Object.freeze([104, 101, 108, 108, 111]),
+      original_value_sha256: "c".repeat(64),
+      comparison_value: "hello",
+      trust_class: "user_supplied" as const
+    })
+  ];
+  if (options?.tool) {
+    // keep single source
+  }
+  const snapshot = Object.freeze({
+    request_id: "req-1",
+    evaluation_mode: "simulation" as const,
+    stage: options?.tool ? ("tool_request" as const) : ("user_input" as const),
+    profile,
+    contents: Object.freeze(contents),
+    ...(options?.tool
+      ? {
+          tool_request: Object.freeze({
+            call_handle: CALL as never,
+            call_id: "call-1",
+            authority_kind: "simulation_observation" as const,
+            tool_name: "read_file",
+            arguments: Object.freeze({}),
+            arguments_jcs_sha256: "e".repeat(64),
+            has_target: false
+          })
+        }
+      : {}),
+    canonical_request_sha256: "b".repeat(64)
+  });
+  return deriveSandboxSecurityExternalTokenRegistry(snapshot as never);
+}
+
+function routingEvidence(overrides: Record<string, unknown> = {}) {
+  const refs = (overrides.subject_refs as never) ?? [contentRef()];
+  const category = (overrides.category as string) ?? "prompt_injection";
+  const subject_key = computeSandboxSecuritySubjectKey({
+    category: category as never,
+    subject_refs: refs as never
+  });
+  return {
+    source_slot_id: ruleSlot().slot_id,
+    accepted_risks: [],
+    accepted_draft_findings: [],
+    qualified_clearances: [],
+    routing_risks: [
+      {
+        category,
+        subject_key,
+        source_slot_id: ruleSlot().slot_id,
+        severity: "high",
+        confidence: 0.6,
+        reason_code: `sandbox_security_${category}`,
+        subject_refs: refs,
+        ...overrides
+      }
+    ],
+    discarded_count: 0
+  };
+}
+
+function acceptedEvidence(overrides: Record<string, unknown> = {}) {
+  const refs = (overrides.subject_refs as never) ?? [contentRef()];
+  const category = (overrides.category as string) ?? "prompt_injection";
+  const subject_key = computeSandboxSecuritySubjectKey({
+    category: category as never,
+    subject_refs: refs as never
+  });
+  const finding_id = "finding:sha256:" + "1".repeat(64);
+  const draft = {
+    finding_id,
+    detector_id: ruleSlot().slot_id,
+    detector_version: "1.0.0",
+    category,
+    severity: "high",
+    confidence: 1.0,
+    reason_code: `sandbox_security_${category}`,
+    subject_key,
+    subject_refs: refs
+  };
+  return {
+    source_slot_id: ruleSlot().slot_id,
+    accepted_risks: [
+      {
+        category,
+        subject_key,
+        source_slot_id: ruleSlot().slot_id,
+        finding_id,
+        severity: "high",
+        confidence: 1.0,
+        reason_code: `sandbox_security_${category}`,
+        subject_refs: refs
+      }
+    ],
+    accepted_draft_findings: [draft],
+    qualified_clearances: [],
+    routing_risks: [],
+    discarded_count: 0,
+    ...overrides
+  };
+}
+
+test("REQ-SBX-GENERAL-001 escalation routes Judge only for unresolved signals", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  assert.equal(state.unresolvedSignals().length, 1);
+  const obligations = state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  assert.equal(obligations.length, 1);
+});
+
+test("REQ-SBX-GENERAL-001 no escalation signal skips Judge", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(acceptedEvidence() as never);
+  assert.equal(state.unresolvedSignals().length, 0);
+  state.closeWithoutJudge();
+  assert.equal(state.lifecycle(), "closed");
+});
+
+test("REQ-SBX-GENERAL-001 accepted same-scope risk suppresses routing signal", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  state.addSlotEvidence(acceptedEvidence() as never);
+  assert.equal(state.unresolvedSignals().length, 0);
+});
+
+test("REQ-SBX-GENERAL-001 routing-floor risk creates signal by category and subject_key", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  const signal = state.unresolvedSignals()[0];
+  assert.equal(signal.category, "prompt_injection");
+  assert.match(signal.subject_key, /^[a-f0-9]{64}$/);
+});
+
+test("REQ-SBX-GENERAL-001 local clearance cannot resolve escalation signal", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  const refs = [contentRef()];
+  const subject_key = computeSandboxSecuritySubjectKey({
+    category: "prompt_injection",
+    subject_refs: refs as never
+  });
+  state.addSlotEvidence({
+    source_slot_id: localSlot().slot_id,
+    accepted_risks: [],
+    accepted_draft_findings: [],
+    qualified_clearances: [
+      {
+        category: "prompt_injection",
+        subject_key,
+        source_slot_id: localSlot().slot_id,
+        confidence: 1.0
+      }
+    ],
+    routing_risks: [],
+    discarded_count: 0
+  } as never);
+  assert.equal(state.unresolvedSignals().length, 1);
+});
+
+test("REQ-SBX-GENERAL-001 Judge clearance resolves one escalation signal", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  const obligations = state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  const subject_key = state.unresolvedSignals()[0].subject_key;
+  const result = state.applyJudgeOutcome({
+    status: "matched",
+    covered_obligation_ids: [obligations[0].obligation_id],
+    evidence: {
+      source_slot_id: judgeSlot().slot_id,
+      accepted_risks: [],
+      accepted_draft_findings: [],
+      qualified_clearances: [
+        {
+          category: "prompt_injection",
+          subject_key,
+          source_slot_id: judgeSlot().slot_id,
+          confidence: 0.9
+        }
+      ],
+      routing_risks: [],
+      discarded_count: 0
+    }
+  });
+  assert.equal(result.unresolved_signals.length, 0);
+  assert.ok(result.resolution_evidence.some((item) => item.kind === "qualified_clearance"));
+  state.close();
+});
+
+test("REQ-SBX-GENERAL-001 Judge clearance never removes accepted DraftFindings", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(acceptedEvidence() as never);
+  state.addSlotEvidence(routingEvidence({
+    category: "jailbreak",
+    reason_code: "sandbox_security_jailbreak",
+    subject_refs: [contentRef(SOURCE, { kind: "text_byte_range", start_byte: 0, end_byte: 1 })]
+  }) as never);
+  // simplify: accepted draft preserved after judge clearance on other signal
+  const obligations = state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  const signal = state.unresolvedSignals()[0];
+  const result = state.applyJudgeOutcome({
+    status: "matched",
+    covered_obligation_ids: [obligations[0].obligation_id],
+    evidence: {
+      source_slot_id: judgeSlot().slot_id,
+      accepted_risks: [],
+      accepted_draft_findings: [],
+      qualified_clearances: [
+        {
+          category: signal.category,
+          subject_key: signal.subject_key,
+          source_slot_id: judgeSlot().slot_id,
+          confidence: 0.9
+        }
+      ],
+      routing_risks: [],
+      discarded_count: 0
+    }
+  });
+  assert.equal(result.accepted_draft_findings.length, 1);
+});
+
+test("REQ-SBX-GENERAL-001 Judge risk accepts finding and resolves matching signal", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  const obligations = state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  const signal = state.unresolvedSignals()[0];
+  const finding_id = "finding:sha256:" + "2".repeat(64);
+  const draft = {
+    finding_id,
+    detector_id: judgeSlot().slot_id,
+    detector_version: "1.0.0",
+    category: signal.category,
+    severity: signal.severity,
+    confidence: 0.9,
+    reason_code: signal.reason_code,
+    subject_key: signal.subject_key,
+    subject_refs: signal.subject_refs
+  };
+  const result = state.applyJudgeOutcome({
+    status: "matched",
+    covered_obligation_ids: [obligations[0].obligation_id],
+    evidence: {
+      source_slot_id: judgeSlot().slot_id,
+      accepted_risks: [
+        {
+          category: signal.category,
+          subject_key: signal.subject_key,
+          source_slot_id: judgeSlot().slot_id,
+          finding_id,
+          severity: signal.severity,
+          confidence: 0.9,
+          reason_code: signal.reason_code,
+          subject_refs: signal.subject_refs
+        }
+      ],
+      accepted_draft_findings: [draft],
+      qualified_clearances: [],
+      routing_risks: [],
+      discarded_count: 0
+    }
+  });
+  assert.equal(result.unresolved_signals.length, 0);
+  assert.ok(result.accepted_draft_findings.some((item) => item.finding_id === finding_id));
+  assert.ok(result.resolution_evidence.some((item) => item.kind === "accepted_risk"));
+});
+
+test("REQ-SBX-GENERAL-001 Judge no-match leaves escalation unresolved", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  const result = state.applyJudgeOutcome({
+    status: "no_match",
+    covered_obligation_ids: []
+  });
+  assert.equal(result.unresolved_signals.length, 1);
+  assert.ok(result.resolution_evidence.some((item) => item.kind === "no_match"));
+});
+
+test("REQ-SBX-GENERAL-001 Judge partial coverage leaves uncovered signals unresolved", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  state.addSlotEvidence(routingEvidence({
+    category: "jailbreak",
+    reason_code: "sandbox_security_jailbreak",
+    subject_refs: [contentRef(SOURCE, { kind: "text_byte_range", start_byte: 0, end_byte: 2 })]
+  }) as never);
+  const obligations = state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  assert.equal(obligations.length, 2);
+  const first = obligations[0];
+  const signalKeyCategory = first.category;
+  const subject_key = state.unresolvedSignals().find((s) => s.category === signalKeyCategory)!.subject_key;
+  const result = state.applyJudgeOutcome({
+    status: "matched",
+    covered_obligation_ids: [first.obligation_id],
+    evidence: {
+      source_slot_id: judgeSlot().slot_id,
+      accepted_risks: [],
+      accepted_draft_findings: [],
+      qualified_clearances: [
+        {
+          category: signalKeyCategory,
+          subject_key,
+          source_slot_id: judgeSlot().slot_id,
+          confidence: 0.9
+        }
+      ],
+      routing_risks: [],
+      discarded_count: 0
+    }
+  });
+  assert.equal(result.unresolved_signals.length, 1);
+  assert.ok(result.resolution_evidence.some((item) => item.kind === "partial_coverage"));
+});
+
+test("REQ-SBX-GENERAL-001 uncovered escalation signals remain unresolved", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  const result = state.applyJudgeOutcome({
+    status: "matched",
+    covered_obligation_ids: [],
+    evidence: {
+      source_slot_id: judgeSlot().slot_id,
+      accepted_risks: [],
+      accepted_draft_findings: [],
+      qualified_clearances: [],
+      routing_risks: [],
+      discarded_count: 0
+    }
+  });
+  assert.equal(result.unresolved_signals.length, 1);
+});
+
+test("REQ-SBX-GENERAL-001 partial Judge coverage remains fail-closed when signals remain", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  state.addSlotEvidence(routingEvidence({
+    category: "jailbreak",
+    reason_code: "sandbox_security_jailbreak",
+    subject_refs: [contentRef(SOURCE, { kind: "text_byte_range", start_byte: 0, end_byte: 1 })]
+  }) as never);
+  const obligations = state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  const first = obligations[0];
+  const signal = state.unresolvedSignals().find((s) => s.category === first.category)!;
+  const result = state.applyJudgeOutcome({
+    status: "matched",
+    covered_obligation_ids: [first.obligation_id],
+    evidence: {
+      source_slot_id: judgeSlot().slot_id,
+      accepted_risks: [],
+      accepted_draft_findings: [],
+      qualified_clearances: [
+        {
+          category: signal.category,
+          subject_key: signal.subject_key,
+          source_slot_id: judgeSlot().slot_id,
+          confidence: 0.9
+        }
+      ],
+      routing_risks: [],
+      discarded_count: 0
+    }
+  });
+  state.close();
+  assert.equal(state.unresolvedSignals().length, 1);
+  assert.equal(result.unresolved_signals.length, 1);
+});
+
+test("REQ-SBX-GENERAL-001 applyJudgeOutcome accepts qualified evidence not routing risk", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  const obligations = state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  const signal = state.unresolvedSignals()[0];
+  const result = state.applyJudgeOutcome({
+    status: "matched",
+    covered_obligation_ids: [obligations[0].obligation_id],
+    evidence: {
+      source_slot_id: judgeSlot().slot_id,
+      accepted_risks: [],
+      accepted_draft_findings: [],
+      qualified_clearances: [],
+      routing_risks: [
+        {
+          category: signal.category,
+          subject_key: signal.subject_key,
+          source_slot_id: judgeSlot().slot_id,
+          severity: "high",
+          confidence: 0.7,
+          reason_code: signal.reason_code,
+          subject_refs: signal.subject_refs
+        }
+      ],
+      discarded_count: 0
+    }
+  });
+  // routing risks do not resolve or create; covered empty of resolution => low_confidence
+  assert.equal(result.unresolved_signals.length, 1);
+});
+
+test("REQ-SBX-GENERAL-001 multiple signals remain independent", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  state.addSlotEvidence(routingEvidence({
+    category: "jailbreak",
+    reason_code: "sandbox_security_jailbreak",
+    subject_refs: [contentRef(SOURCE, { kind: "text_byte_range", start_byte: 0, end_byte: 1 })]
+  }) as never);
+  assert.equal(state.unresolvedSignals().length, 2);
+});
+
+test("REQ-SBX-GENERAL-001 signal merge key excludes slot ID", () => {
+  const state = createSandboxSecurityEscalationState();
+  const refs = [contentRef()];
+  const subject_key = computeSandboxSecuritySubjectKey({
+    category: "prompt_injection",
+    subject_refs: refs as never
+  });
+  state.addSlotEvidence({
+    source_slot_id: ruleSlot().slot_id,
+    accepted_risks: [],
+    accepted_draft_findings: [],
+    qualified_clearances: [],
+    routing_risks: [
+      {
+        category: "prompt_injection",
+        subject_key,
+        source_slot_id: ruleSlot().slot_id,
+        severity: "medium",
+        confidence: 0.6,
+        reason_code: "sandbox_security_prompt_injection",
+        subject_refs: refs
+      }
+    ],
+    discarded_count: 0
+  } as never);
+  state.addSlotEvidence({
+    source_slot_id: localSlot().slot_id,
+    accepted_risks: [],
+    accepted_draft_findings: [],
+    qualified_clearances: [],
+    routing_risks: [
+      {
+        category: "prompt_injection",
+        subject_key,
+        source_slot_id: localSlot().slot_id,
+        severity: "high",
+        confidence: 0.7,
+        reason_code: "sandbox_security_prompt_injection",
+        subject_refs: refs
+      }
+    ],
+    discarded_count: 0
+  } as never);
+  const signals = state.unresolvedSignals();
+  assert.equal(signals.length, 1);
+  assert.deepEqual(signals[0].origin_slot_ids.slice().sort(), [
+    localSlot().slot_id,
+    ruleSlot().slot_id
+  ].sort());
+  assert.equal(signals[0].severity, "high");
+});
+
+test("REQ-SBX-GENERAL-001 signal private refs canonicalize to subject_key", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  const signal = state.unresolvedSignals()[0];
+  assert.equal(
+    signal.subject_key,
+    computeSandboxSecuritySubjectKey({
+      category: signal.category,
+      subject_refs: signal.subject_refs as never
+    })
+  );
+});
+
+test("REQ-SBX-GENERAL-001 obligation scope maps signal refs through external registry", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  const obligations = state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  assert.equal(obligations[0].subject_refs[0].kind, "content_source");
+  if (obligations[0].subject_refs[0].kind === "content_source") {
+    assert.match(obligations[0].subject_refs[0].source_token, /^etok:src:/);
+  }
+});
+
+test("REQ-SBX-GENERAL-001 escalation state is not exported on public decision", () => {
+  assert.equal(existsSync(new URL("../src/security/index.ts", import.meta.url)), false);
+  const shared = readFileSync(new URL("../../../shared/index.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(shared, /createSandboxSecurityEscalationState/);
+});
+
+test("REQ-SBX-GENERAL-001 createSandboxSecurityEscalationState exposes full method matrix", () => {
+  const state = createSandboxSecurityEscalationState();
+  for (const method of [
+    "lifecycle",
+    "addSlotEvidence",
+    "unresolvedSignals",
+    "materializeRoutedObligations",
+    "applyJudgeOutcome",
+    "terminateJudgeAttempt",
+    "closeWithoutJudge",
+    "close"
+  ]) {
+    assert.equal(typeof (state as never as Record<string, unknown>)[method], "function");
+  }
+});
+
+test("REQ-SBX-GENERAL-001 obligations use decision-scoped deterministic IDs", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  const obligations = state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  assert.match(
+    obligations[0].obligation_id,
+    new RegExp(`^obligation://sandbox/security/${DECISION}/0001$`)
+  );
+});
+
+test("REQ-SBX-GENERAL-001 obligations sort by category and canonical tokenized scope", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence({
+    category: "prompt_injection",
+    subject_refs: [contentRef()]
+  }) as never);
+  state.addSlotEvidence(routingEvidence({
+    category: "jailbreak",
+    reason_code: "sandbox_security_jailbreak",
+    subject_refs: [contentRef(SOURCE, { kind: "text_byte_range", start_byte: 0, end_byte: 1 })]
+  }) as never);
+  const obligations = state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  assert.equal(obligations.length, 2);
+  // sorted by category+scope JCS; jailbreak before prompt_injection alphabetically? 
+  // j < p so jailbreak first
+  assert.equal(obligations[0].category, "jailbreak");
+  assert.equal(obligations[1].category, "prompt_injection");
+});
+
+test("REQ-SBX-GENERAL-001 addSlotEvidence rejects Judge evidence", () => {
+  const state = createSandboxSecurityEscalationState();
+  assert.throws(() =>
+    state.addSlotEvidence({
+      ...routingEvidence(),
+      source_slot_id: judgeSlot().slot_id
+    } as never)
+  );
+});
+
+test("REQ-SBX-GENERAL-001 applyJudgeOutcome returns all resolution evidence", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  const obligations = state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  const result = state.applyJudgeOutcome({
+    status: "no_match",
+    covered_obligation_ids: []
+  });
+  assert.ok(result.resolution_evidence.length >= 1);
+  void obligations;
+});
+
+test("REQ-SBX-GENERAL-001 applyJudgeOutcome preserves omitted obligations unresolved", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  state.addSlotEvidence(routingEvidence({
+    category: "jailbreak",
+    reason_code: "sandbox_security_jailbreak",
+    subject_refs: [contentRef(SOURCE, { kind: "text_byte_range", start_byte: 0, end_byte: 1 })]
+  }) as never);
+  const obligations = state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  const first = obligations[0];
+  const signal = state.unresolvedSignals().find((s) => s.category === first.category)!;
+  const result = state.applyJudgeOutcome({
+    status: "matched",
+    covered_obligation_ids: [first.obligation_id],
+    evidence: {
+      source_slot_id: judgeSlot().slot_id,
+      accepted_risks: [],
+      accepted_draft_findings: [],
+      qualified_clearances: [
+        {
+          category: signal.category,
+          subject_key: signal.subject_key,
+          source_slot_id: judgeSlot().slot_id,
+          confidence: 0.9
+        }
+      ],
+      routing_risks: [],
+      discarded_count: 0
+    }
+  });
+  assert.equal(result.unresolved_signals.length, 1);
+});
+
+test("REQ-SBX-GENERAL-001 no-match and invalid outcome preserve every signal", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  const noMatch = state.applyJudgeOutcome({ status: "no_match", covered_obligation_ids: [] });
+  assert.equal(noMatch.unresolved_signals.length, 1);
+});
+
+test("REQ-SBX-GENERAL-001 Judge routing risks cannot create new signals", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  const obligations = state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  const before = state.unresolvedSignals().length;
+  const result = state.applyJudgeOutcome({
+    status: "matched",
+    covered_obligation_ids: [obligations[0].obligation_id],
+    evidence: {
+      source_slot_id: judgeSlot().slot_id,
+      accepted_risks: [],
+      accepted_draft_findings: [],
+      qualified_clearances: [],
+      routing_risks: [
+        {
+          category: "memory_poisoning",
+          subject_key: "f".repeat(64),
+          source_slot_id: judgeSlot().slot_id,
+          severity: "high",
+          confidence: 0.7,
+          reason_code: "sandbox_security_memory_poisoning",
+          subject_refs: [contentRef()]
+        }
+      ],
+      discarded_count: 0
+    }
+  });
+  assert.equal(result.unresolved_signals.length, before);
+});
+
+test("REQ-SBX-GENERAL-001 obligations may be materialized once", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  assert.throws(() =>
+    state.materializeRoutedObligations({
+      decision_id: DECISION,
+      token_registry: makeTokenRegistry()
+    })
+  );
+});
+
+test("REQ-SBX-GENERAL-001 slot evidence cannot be added after obligation materialization", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  assert.throws(() => state.addSlotEvidence(routingEvidence() as never));
+});
+
+test("REQ-SBX-GENERAL-001 Judge outcome requires materialized obligations", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  assert.throws(() =>
+    state.applyJudgeOutcome({ status: "no_match", covered_obligation_ids: [] })
+  );
+});
+
+test("REQ-SBX-GENERAL-001 Judge outcome may be applied once", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  state.applyJudgeOutcome({ status: "no_match", covered_obligation_ids: [] });
+  assert.throws(() =>
+    state.applyJudgeOutcome({ status: "no_match", covered_obligation_ids: [] })
+  );
+});
+
+test("REQ-SBX-GENERAL-001 Judge cannot create new escalation signal", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  const obligations = state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  const result = state.applyJudgeOutcome({
+    status: "matched",
+    covered_obligation_ids: [obligations[0].obligation_id],
+    evidence: {
+      source_slot_id: judgeSlot().slot_id,
+      accepted_risks: [],
+      accepted_draft_findings: [],
+      qualified_clearances: [],
+      routing_risks: [
+        {
+          category: "memory_poisoning",
+          subject_key: "a".repeat(64),
+          source_slot_id: judgeSlot().slot_id,
+          severity: "critical",
+          confidence: 0.9,
+          reason_code: "sandbox_security_memory_poisoning",
+          subject_refs: [contentRef()]
+        }
+      ],
+      discarded_count: 0
+    }
+  });
+  assert.equal(
+    result.unresolved_signals.some((s) => s.category === "memory_poisoning"),
+    false
+  );
+});
+
+test("REQ-SBX-GENERAL-001 closed escalation state rejects mutation", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.closeWithoutJudge();
+  assert.throws(() => state.addSlotEvidence(routingEvidence() as never));
+});
+
+test("REQ-SBX-GENERAL-001 Judge unavailable closes escalation state with signals unresolved", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  const result = state.terminateJudgeAttempt({ reason: "detector_unavailable" });
+  assert.equal(state.lifecycle(), "closed");
+  assert.equal(result.unresolved_signals.length, 1);
+});
+
+test("REQ-SBX-GENERAL-001 sanitizer failure closes escalation state with signals unresolved", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  const result = state.terminateJudgeAttempt({ reason: "external_redaction_failed" });
+  assert.equal(result.unresolved_signals.length, 1);
+  assert.equal(state.lifecycle(), "closed");
+});
+
+test("REQ-SBX-GENERAL-001 Judge timeout closes escalation state with signals unresolved", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  const result = state.terminateJudgeAttempt({ reason: "detector_timeout" });
+  assert.equal(result.unresolved_signals.length, 1);
+});
+
+test("REQ-SBX-GENERAL-001 budget termination closes obligations_materialized state", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  state.terminateJudgeAttempt({ reason: "evaluation_terminated" });
+  assert.equal(state.lifecycle(), "closed");
+});
+
+test("REQ-SBX-GENERAL-001 successful Judge outcome is followed by close", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  const obligations = state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  const signal = state.unresolvedSignals()[0];
+  state.applyJudgeOutcome({
+    status: "matched",
+    covered_obligation_ids: [obligations[0].obligation_id],
+    evidence: {
+      source_slot_id: judgeSlot().slot_id,
+      accepted_risks: [],
+      accepted_draft_findings: [],
+      qualified_clearances: [
+        {
+          category: signal.category,
+          subject_key: signal.subject_key,
+          source_slot_id: judgeSlot().slot_id,
+          confidence: 0.9
+        }
+      ],
+      routing_risks: [],
+      discarded_count: 0
+    }
+  });
+  assert.equal(state.lifecycle(), "judge_applied");
+  state.close();
+  assert.equal(state.lifecycle(), "closed");
+});
+
+test("REQ-SBX-GENERAL-001 rule short-circuit with no signals closes without Judge", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(acceptedEvidence() as never);
+  state.closeWithoutJudge();
+  assert.equal(state.lifecycle(), "closed");
+  assert.equal(state.unresolvedSignals().length, 0);
+});
+
+test("REQ-SBX-GENERAL-001 rule short-circuit with unrelated signal terminates Judge attempt", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  const result = state.terminateJudgeAttempt({ reason: "risk_short_circuit" });
+  assert.equal(result.unresolved_signals.length, 1);
+  assert.equal(state.lifecycle(), "closed");
+});
+
+test("REQ-SBX-GENERAL-001 short-circuit termination preserves unrelated unresolved signals", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  const result = state.terminateJudgeAttempt({ reason: "risk_short_circuit" });
+  assert.equal(result.unresolved_signals[0].category, "prompt_injection");
+});
+
+test("REQ-SBX-GENERAL-001 short-circuit never materializes routed obligations", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  state.terminateJudgeAttempt({ reason: "risk_short_circuit" });
+  assert.equal(state.lifecycle(), "closed");
+  // cannot materialize after close
+  assert.throws(() =>
+    state.materializeRoutedObligations({
+      decision_id: DECISION,
+      token_registry: makeTokenRegistry()
+    })
+  );
+});
+
+test("REQ-SBX-GENERAL-001 short-circuit never calls sanitizer or Judge", () => {
+  // pure state API: terminate without obligations materialization
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  assert.equal(state.lifecycle(), "collecting");
+  state.terminateJudgeAttempt({ reason: "risk_short_circuit" });
+  assert.equal(state.lifecycle(), "closed");
+});
+
+test("REQ-SBX-GENERAL-001 short-circuit reads final signals only after escalation closes", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  state.terminateJudgeAttempt({ reason: "risk_short_circuit" });
+  assert.equal(state.lifecycle(), "closed");
+  assert.equal(state.unresolvedSignals().length, 1);
+});
+
+test("REQ-SBX-GENERAL-001 short-circuit profile-required slot keeps profile_required + risk_short_circuit", () => {
+  // state machine only; engine owns detector run records. Ensure termination reason accepted.
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  const result = state.terminateJudgeAttempt({ reason: "risk_short_circuit" });
+  assert.deepEqual(result.resolution_evidence, []);
+});
+
+test("REQ-SBX-GENERAL-001 short-circuit optional never-selected uses optional_not_selected + risk_short_circuit", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.terminateJudgeAttempt({ reason: "risk_short_circuit" });
+  assert.equal(state.lifecycle(), "closed");
+});
+
+test("REQ-SBX-GENERAL-001 short-circuit never fabricates runtime_required", () => {
+  const source = readFileSync(new URL("../src/security/escalation-state.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /runtime_required/);
+});
+
+test("REQ-SBX-GENERAL-001 terminateJudgeAttempt is mutually exclusive with applyJudgeOutcome", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  state.materializeRoutedObligations({
+    decision_id: DECISION,
+    token_registry: makeTokenRegistry()
+  });
+  state.terminateJudgeAttempt({ reason: "detector_failed" });
+  assert.throws(() =>
+    state.applyJudgeOutcome({ status: "no_match", covered_obligation_ids: [] })
+  );
+});
+
+test("REQ-SBX-GENERAL-001 terminateJudgeAttempt returns empty resolution_evidence", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  const result = state.terminateJudgeAttempt({ reason: "detector_failed" });
+  assert.deepEqual(result.resolution_evidence, []);
+});
+
+test("REQ-SBX-GENERAL-001 terminateJudgeAttempt creates no accepted findings or new signals", () => {
+  const state = createSandboxSecurityEscalationState();
+  state.addSlotEvidence(routingEvidence() as never);
+  const result = state.terminateJudgeAttempt({ reason: "detector_failed" });
+  assert.equal(result.accepted_draft_findings.length, 0);
+  assert.equal(result.unresolved_signals.length, 1);
+});

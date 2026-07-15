@@ -1,5 +1,25 @@
 # Progress
 
+## 2026-07-15 - REQ-SBX-GENERAL-001 P4-T2 escalation state
+
+- scope: escalation-only Judge routing state machine, obligation materialization,
+  apply/terminate outcomes, signal merge by category+subject_key
+- files:
+  - `engines/sandbox/src/security/escalation-state.ts` (create)
+  - `engines/sandbox/tests/sandbox-security-engine.spec.ts` (extend)
+- verification:
+  - engine suite 104/104
+  - sandbox `tsc --noEmit` pass
+- independent review:
+  - P0/P1: none
+  - lifecycle call-once matrix enforced
+  - accepted same-scope suppresses routing signal
+  - Judge cannot create signals; clearances never delete drafts
+  - obligations decision-scoped and sorted
+  - conclusion: APPROVED
+- re-review: APPROVED
+- status: P4-T2 VERIFIED; next P4-T3
+
 ## 2026-07-15 - REQ-SBX-GENERAL-001 P4-T1 finding qualification
 
 - scope: slot qualification thresholds, draft findings, public token mint +
