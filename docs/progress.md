@@ -1,3 +1,137 @@
+## 2026-07-15 - REQ-SBX-GENERAL-001 P4-T6 engine orchestration
+
+- scope: full SandboxSecurityEngine.evaluate orchestration with 5000ms budget,
+  slot pipeline, Judge routing, publication, reduction, semantic validate, recovery
+- files:
+  - `engines/sandbox/src/security/engine.ts` (create)
+  - `engines/sandbox/tests/sandbox-security-engine.spec.ts` (extend)
+  - `docs/progress.md`
+- verification:
+  - authority/input/detector/policy/engine suites combined 414/414
+  - sandbox + shared `tsc --noEmit` pass
+  - `npm run test:shared` 207/207
+  - `npm run test:repo` 185/185
+- independent review:
+  - P0/P1: none blocking for Phase 4 exit
+  - budget starts at evaluate entry; nextDecisionId once post-snapshot
+  - short-circuit / optional skip / routing paths use RunLedger transitions
+  - publication once; reducer uses published findings; semantic recovery once
+  - authority mismatch and pre-ID budget exhaustion return no Decision
+  - conclusion: APPROVED_WITH_NON_BLOCKING_COMMENTS
+  - residual P2: full 181-plan inventory not exhaustively encoded; epilogue/Judge
+    edge paths covered for main contracts, deeper timeout race matrix deferred
+    if needed in Phase 5 integration
+- re-review: APPROVED
+- status: P4-T6 VERIFIED; Phase 4 COMPLETE_PENDING_EXIT_NOTES
+
+## 2026-07-15 - REQ-SBX-GENERAL-001 Phase 4 exit
+
+- Phase 4 Qualification and Engine Policy: VERIFIED
+- modules: finding-qualification, escalation-state, runtime-deadline, run-ledger,
+  policy-reducer, semantic-validator, engine
+- evaluate(SandboxSecurityEvaluationRequest) locked
+- budget starts before internal normalize
+- exit gates: sandbox security suites + shared/repo tests + tsc green
+- next: Phase 5 compatibility closure (only on explicit instruction)
+
+## 2026-07-15 - Phase 3 independent review / fix / re-review closure
+
+- phase: Phase 3 Detector Boundary and Profiles (P3-T5 → T1 → T2 → T3 → T4 → T6)
+- Spec: `docs/superpowers/specs/2026-07-10-sandbox-security-core-spec.md`
+- Plan: `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-phase-3-detectors-profiles.md`
+- modules reviewed:
+  - `engines/sandbox/src/security/policy-profiles.ts`
+  - `engines/sandbox/src/security/detector-contract.ts`
+  - `engines/sandbox/src/security/subject-scope.ts`
+  - `engines/sandbox/src/security/detector-output-boundary.ts`
+  - `engines/sandbox/src/security/sanitized-boundary.ts`
+  - `engines/sandbox/src/security/detector-registry.ts`
+- findings fixed this loop:
+  - P1 subject_key JCS payload used `scopes` instead of Spec/Master `subjects`
+  - P1 strict missing local resolution threw `detector_resolution_invalid`
+    instead of `sandbox_security_profile_invalid` via `SandboxSecurityProfileError`
+  - P2 permanent gate `no Phase 2 module derives trust_class` over-rejected
+    legitimate later callers of `deriveSandboxSecurityTrustClass`; narrowed to
+    "no second implementation"
+- regression tests:
+  - subject_key hashes Spec `subjects` field not `scopes`
+  - subject_key JCS payload uses `subjects` key name
+  - strict missing local uses `sandbox_security_profile_invalid` not
+    `detector_resolution_invalid`
+- verification:
+  - Phase 3 focused detector/policy/boundary/sanitized: 188/188 pass
+  - repository sandbox-security-core gate: 40/40 pass
+  - `npm run test:shared`: 207/207 pass
+  - `npm run test:repo`: 185/185 pass
+  - Phase 3 modules load under strip-types
+  - independent probes: subject_key digest equals subjects-field JCS hash and
+    differs from scopes-field; strict missing local is SandboxSecurityProfileError
+- residual non-blocking:
+  - external locator subject context remains derive-bound via WeakMap
+  - concurrent Phase 4 engine worktree files (`engine.ts`, engine.spec growth)
+    are out of Phase 3 acceptance scope and still incomplete
+- conclusion: APPROVED
+- status: PHASE_3_APPROVED
+- next-stage admission: yes (Phase 4 may continue once its own entry gate is green)
+
+## 2026-07-15 - Phase 2 final independent review (authority + canonical input)
+
+- phase: Phase 2 Authority and Canonical Input (P2-T1..P2-T5)
+- target: independent review / fix / re-review closure for Phase 2 only
+- Spec: `docs/superpowers/specs/2026-07-10-sandbox-security-core-spec.md`
+- Plan: `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-phase-2-authority-canonical.md`
+- modules reviewed:
+  - `engines/sandbox/src/security/canonical-json.ts`
+  - `engines/sandbox/src/security/source-authority.ts`
+  - `engines/sandbox/src/security/input-boundary.ts`
+  - `engines/sandbox/src/security/locator.ts`
+  - `engines/sandbox/src/security/canonical-fingerprint.ts`
+  - `engines/sandbox/tests/sandbox-security-authority.spec.ts`
+  - `engines/sandbox/tests/sandbox-security-input.spec.ts`
+- review scope confirmation:
+  - Phase 2 residual fix commit `d73535f` is the last commit touching Phase 2
+    production/test modules
+  - no Phase 2 source drift after that residual fix
+  - unrelated dirty worktree (detector-registry / sprint-current / Phase 4)
+    excluded from Phase 2 acceptance
+- contract checks:
+  - RFC 8785 JCS sole implementation with Spec frozen vectors and fail-closed
+    non-finite / lone-surrogate rejection
+  - authority normalizer exact-key envelope; mismatch vs invalid taxonomy
+  - mode/authority pairs fail closed; tool never accepts platform_control
+  - branded Normalized request private; prepare rejects forged brand symbols
+  - projection authority-only, excludes request_id; retains request_id on prepared
+  - 512 KiB projection bound on prepare and fingerprint; exact bound accepted
+  - handles hsrc/hcall evaluation-bound; ordinal 0001..0064 / call 0000
+  - authority-bound content has no trust_class; no independent trust mapping
+  - locators fail closed with restricted pointers / code-point byte ranges
+  - fingerprint reuses normalize + encode path; port grammar hmac-sha256; zero
+    port calls on authority mismatch/oversize; independent port byte copy
+- verification:
+  - focused authority+input: 78/78 pass
+  - `npm run test:shared`: 207/207 pass
+  - `npm run test:repo`: 185/185 pass
+  - `npm run test:engine:sandbox`: 515/515 pass
+  - repository sandbox-security-core gate: 40/40 pass
+  - shared tsc: pass
+  - engines/sandbox tsc: pass
+- independent probes:
+  - prepare/fingerprint projection digests byte-equal
+  - enforcement+simulation_observation and simulation+platform_control rejected
+  - platform_control tool observation rejected
+  - 64-source prepare mints :0001 and :0064 handles
+  - port mutation of fingerprint bytes does not affect re-encoded projection
+- findings:
+  - P0: none
+  - P1: none
+  - P2 blocking: none
+  - P3 non-blocking: Phase 2 public index export closure remains owned by P5-T4
+    (engine modules still import internals directly by design until final index)
+- conclusion: APPROVED
+- status: PHASE_2_APPROVED
+- next-stage admission: yes (Phase 3 already implemented downstream; Phase 2 no
+  longer blocks continuation)
+
 ## 2026-07-15 - REQ-SBX-GENERAL-001 P4-T5 semantic validator
 
 - scope: single-decision semantic validation against EvaluationEvidenceLedger

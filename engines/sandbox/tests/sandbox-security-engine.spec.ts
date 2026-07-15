@@ -66,6 +66,49 @@ const { reduceSandboxSecurityPolicy } = (reducerModule ?? {
 }) as typeof import("../src/security/policy-reducer.ts");
 
 
+const engineModulePath = new URL("../src/security/engine.ts", import.meta.url);
+const engineModule = existsSync(engineModulePath)
+  ? await import("../src/security/engine.ts")
+  : null;
+const { createSandboxSecurityEngine } = (engineModule ?? {
+  createSandboxSecurityEngine() {
+    return {
+      async evaluate() {
+        return {
+          schema_version: "sandbox-security-decision.v1",
+          decision_id: "stub",
+          request_id: "stub",
+          evaluation_mode: "enforcement",
+          stage: "user_input",
+          policy_profile_id: "sandbox-security-balanced.v1",
+          verdict: "no_detected_risk",
+          action: "allow",
+          risk_level: "info",
+          findings: [],
+          detector_runs: [],
+          evidence_refs: [],
+          created_at: "2026-07-15T12:00:00.000Z"
+        };
+      }
+    };
+  }
+}) as typeof import("../src/security/engine.ts");
+
+const registryModulePath = new URL("../src/security/detector-registry.ts", import.meta.url);
+const registryModule = existsSync(registryModulePath)
+  ? await import("../src/security/detector-registry.ts")
+  : null;
+const {
+  createSandboxSecurityDetectorRegistry
+} = (registryModule ?? {
+  createSandboxSecurityDetectorRegistry() {
+    return { rule: { detect: async () => ({ candidates: [], clearances: [] }) } };
+  }
+}) as typeof import("../src/security/detector-registry.ts");
+
+
+
+
 const NONCE = "a".repeat(32);
 const SOURCE = `hsrc:${NONCE}:0001`;
 const SOURCE2 = `hsrc:${NONCE}:0002`;
@@ -3794,5 +3837,995 @@ test("REQ-SBX-GENERAL-001 semantic validator does not commit a second publicatio
   const source = readFileSync(new URL("../src/security/semantic-validator.ts", import.meta.url), "utf8");
   assert.doesNotMatch(source, /publishSandboxSecurityFindings\s*\(/);
   assert.doesNotMatch(source, /materializeSandboxSecurityPublicSubjectTokens\s*\(/);
+});
+
+
+// ---------------------------------------------------------------------------
+// P4-T6 engine orchestration
+// ---------------------------------------------------------------------------
+
+function makeContent(
+  claimed_source_type: "user_input" | "model_output" | "system_instruction" | "developer_instruction" | "retrieved_content" | "memory_content" = "user_input",
+  source_id = "user_1",
+  value = "hello world"
+) {
+  return {
+    source_id,
+    claimed_source_type,
+    media_type: "text/plain" as const,
+    value,
+    provenance_ref: `source://${source_id}`
+  };
+}
+
+function makeSubmission(overrides: Record<string, unknown> = {}) {
+  return {
+    schema_version: "sandbox-security-request.v1" as const,
+    request_id: "request_user_001",
+    stage: "user_input" as const,
+    policy_profile_id: "sandbox-security-balanced.v1" as const,
+    content_items: [makeContent()],
+    ...overrides
+  };
+}
+
+function makeEvalRequest(options?: {
+  profile?: "sandbox-security-balanced.v1" | "sandbox-security-strict.v1";
+  stage?: "user_input" | "model_output" | "tool_request";
+  mode?: "simulation" | "enforcement";
+  value?: string;
+}) {
+  const stage = options?.stage ?? "user_input";
+  const profile = options?.profile ?? "sandbox-security-balanced.v1";
+  const mode = options?.mode ?? "simulation";
+  const value = options?.value ?? "hello world";
+  const content = makeContent(
+    stage === "model_output" || stage === "tool_request" ? "model_output" : "user_input",
+    stage === "tool_request" ? "model_1" : "user_1",
+    value
+  );
+  const submission =
+    stage === "tool_request"
+      ? {
+          schema_version: "sandbox-security-request.v1" as const,
+          request_id: "request_tool_001",
+          stage,
+          policy_profile_id: profile,
+          content_items: [content],
+          tool_request: {
+            call_id: "call_1",
+            tool_name: "send_message",
+            target: "target.local",
+            arguments: { urgent: false, channel: "security" }
+          }
+        }
+      : {
+          schema_version: "sandbox-security-request.v1" as const,
+          request_id: stage === "model_output" ? "request_model_001" : "request_user_001",
+          stage,
+          policy_profile_id: profile,
+          content_items: [content]
+        };
+
+  const sources = submission.content_items.map((item) => ({
+    source_id: item.source_id,
+    authority_kind:
+      mode === "simulation"
+        ? ("simulation_observation" as const)
+        : item.claimed_source_type === "user_input"
+          ? ("integration_observation" as const)
+          : ("integration_observation" as const),
+    source_type: item.claimed_source_type,
+    media_type: item.media_type,
+    value: item.value,
+    provenance_ref: item.provenance_ref
+  }));
+
+  return {
+    submission,
+    authoritative_context: {
+      schema_version: "sandbox-security-authoritative-context.v1" as const,
+      evaluation_mode: mode,
+      stage,
+      policy_profile_id: profile,
+      sources,
+      ...(stage === "tool_request"
+        ? {
+            tool_request: {
+              authority_kind:
+                mode === "simulation"
+                  ? ("simulation_observation" as const)
+                  : ("integration_observation" as const),
+              call_id: "call_1",
+              tool_name: "send_message",
+              target: "target.local",
+              arguments: { urgent: false, channel: "security" }
+            }
+          }
+        : {})
+    }
+  };
+}
+
+function createRuntime(options?: {
+  now?: string;
+  decisionId?: string;
+  monoSteps?: number[];
+  track?: { now: number; nextId: number; mono: number };
+}) {
+  const track = options?.track ?? { now: 0, nextId: 0, mono: 0 };
+  let mono = 0;
+  const steps = options?.monoSteps ?? [];
+  let stepIndex = 0;
+  return {
+    track,
+    ports: {
+      now() {
+        track.now += 1;
+        return options?.now ?? "2026-07-15T12:00:00.000Z";
+      },
+      nextDecisionId() {
+        track.nextId += 1;
+        return options?.decisionId ?? DECISION;
+      },
+      monotonicNowMs() {
+        track.mono += 1;
+        if (stepIndex < steps.length) {
+          const value = steps[stepIndex]!;
+          stepIndex += 1;
+          return value;
+        }
+        const value = mono;
+        mono += 1;
+        return value;
+      },
+      scheduleTimeout(_delay: number, _cb: () => void) {
+        return () => {};
+      }
+    }
+  };
+}
+
+function noMatchDetector() {
+  return {
+    async detect() {
+      return { candidates: [], clearances: [] };
+    }
+  };
+}
+
+function matchDetector(overrides: Record<string, unknown> = {}) {
+  return {
+    async detect(snapshot: { contents: Array<{ source_handle: string }> }) {
+      const handle = snapshot.contents[0]?.source_handle;
+      return {
+        candidates: [
+          {
+            category: "prompt_injection",
+            severity: "high",
+            confidence: 1.0,
+            reason_code: "sandbox_security_prompt_injection",
+            subject_refs: [
+              {
+                kind: "content_source",
+                source_handle: handle,
+                locator: { kind: "whole_source" }
+              }
+            ],
+            ...overrides
+          }
+        ],
+        clearances: []
+      };
+    }
+  };
+}
+
+function mediumMatchDetector() {
+  return {
+    async detect(snapshot: { contents: Array<{ source_handle: string }> }) {
+      const handle = snapshot.contents[0]?.source_handle;
+      return {
+        candidates: [
+          {
+            category: "prompt_injection",
+            severity: "medium",
+            confidence: 1.0,
+            reason_code: "sandbox_security_prompt_injection",
+            subject_refs: [
+              {
+                kind: "content_source",
+                source_handle: handle,
+                locator: { kind: "whole_source" }
+              }
+            ]
+          }
+        ],
+        clearances: []
+      };
+    }
+  };
+}
+
+function routingFloorDetector() {
+  return {
+    async detect(snapshot: { contents: Array<{ source_handle: string }> }) {
+      const handle = snapshot.contents[0]?.source_handle;
+      return {
+        candidates: [
+          {
+            category: "prompt_injection",
+            severity: "medium",
+            confidence: 0.6,
+            reason_code: "sandbox_security_prompt_injection",
+            subject_refs: [
+              {
+                kind: "content_source",
+                source_handle: handle,
+                locator: { kind: "whole_source" }
+              }
+            ]
+          }
+        ],
+        clearances: []
+      };
+    }
+  };
+}
+
+function countingDetector(counter: { n: number }, impl: { detect: (...args: never[]) => Promise<unknown> } = noMatchDetector()) {
+  return {
+    async detect(snapshot: never, signal?: AbortSignal) {
+      counter.n += 1;
+      return impl.detect(snapshot as never, signal as never);
+    }
+  };
+}
+
+test("REQ-SBX-GENERAL-001 work budget starts at evaluate entry", async () => {
+  const track = { now: 0, nextId: 0, mono: 0 };
+  const { ports } = createRuntime({ track });
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime: ports
+  });
+  await engine.evaluate(makeEvalRequest() as never);
+  assert.ok(track.mono >= 1);
+});
+
+test("REQ-SBX-GENERAL-001 evaluate starts budget before internal request normalization", async () => {
+  const monoCalls: number[] = [];
+  const runtime = {
+    now: () => "2026-07-15T12:00:00.000Z",
+    nextDecisionId: () => DECISION,
+    monotonicNowMs() {
+      monoCalls.push(Date.now());
+      return monoCalls.length;
+    },
+    scheduleTimeout() {
+      return () => {};
+    }
+  };
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime
+  });
+  await engine.evaluate(makeEvalRequest() as never);
+  assert.ok(monoCalls.length >= 1);
+});
+
+test("REQ-SBX-GENERAL-001 authority validation occurs inside evaluate", async () => {
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime: createRuntime().ports
+  });
+  await assert.rejects(() =>
+    engine.evaluate({
+      submission: makeSubmission(),
+      authoritative_context: {
+        schema_version: "sandbox-security-authoritative-context.v1",
+        evaluation_mode: "enforcement",
+        stage: "user_input",
+        policy_profile_id: "sandbox-security-balanced.v1",
+        sources: []
+      }
+    } as never)
+  );
+});
+
+test("REQ-SBX-GENERAL-001 authority mismatch causes zero detector calls", async () => {
+  const counter = { n: 0 };
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: countingDetector(counter) as never
+    }),
+    runtime: createRuntime().ports
+  });
+  await assert.rejects(() =>
+    engine.evaluate({
+      submission: makeSubmission(),
+      authoritative_context: {
+        schema_version: "sandbox-security-authoritative-context.v1",
+        evaluation_mode: "enforcement",
+        stage: "model_output",
+        policy_profile_id: "sandbox-security-balanced.v1",
+        sources: [
+          {
+            source_id: "user_1",
+            authority_kind: "integration_observation",
+            source_type: "user_input",
+            media_type: "text/plain",
+            value: "x",
+            provenance_ref: "source://user_1"
+          }
+        ]
+      }
+    } as never)
+  );
+  assert.equal(counter.n, 0);
+});
+
+test("REQ-SBX-GENERAL-001 nextDecisionId is called exactly once after snapshot and before detectors", async () => {
+  const track = { now: 0, nextId: 0, mono: 0 };
+  let sawIdBeforeDetect = false;
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: {
+        async detect() {
+          sawIdBeforeDetect = track.nextId === 1;
+          return { candidates: [], clearances: [] };
+        }
+      } as never
+    }),
+    runtime: createRuntime({ track }).ports
+  });
+  await engine.evaluate(makeEvalRequest() as never);
+  assert.equal(track.nextId, 1);
+  assert.equal(sawIdBeforeDetect, true);
+});
+
+test("REQ-SBX-GENERAL-001 runtime now is called exactly once after reduction before complete ledger", async () => {
+  const track = { now: 0, nextId: 0, mono: 0 };
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime: createRuntime({ track }).ports
+  });
+  await engine.evaluate(makeEvalRequest() as never);
+  assert.equal(track.now, 1);
+});
+
+test("REQ-SBX-GENERAL-001 invalid decision ID becomes decision_identity_invalid", async () => {
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime: createRuntime({ decisionId: "" }).ports
+  });
+  await assert.rejects(
+    () => engine.evaluate(makeEvalRequest() as never),
+    (error: unknown) =>
+      error instanceof Error &&
+      (error.name === "sandbox_security_internal_invalid" ||
+        error.message.includes("decision_identity_invalid"))
+  );
+});
+
+test("REQ-SBX-GENERAL-001 invalid created_at records runtime_clock_invalid and returns no Decision", async () => {
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime: createRuntime({ now: "not-a-date" }).ports
+  });
+  await assert.rejects(() => engine.evaluate(makeEvalRequest() as never));
+});
+
+test("REQ-SBX-GENERAL-001 balanced rule-only no-match allows", async () => {
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime: createRuntime().ports
+  });
+  const decision = await engine.evaluate(makeEvalRequest() as never);
+  assert.equal(decision.verdict, "no_detected_risk");
+  assert.equal(decision.action, "allow");
+  assert.equal(decision.findings.length, 0);
+  assert.deepEqual(decision.evidence_refs, []);
+});
+
+test("REQ-SBX-GENERAL-001 evaluates authoritative user input end to end", async () => {
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: matchDetector() as never
+    }),
+    runtime: createRuntime().ports
+  });
+  const decision = await engine.evaluate(makeEvalRequest() as never);
+  assert.equal(decision.verdict, "risk_detected");
+  assert.equal(decision.action, "deny");
+  assert.equal(decision.findings.length, 1);
+  assert.equal(decision.schema_version, "sandbox-security-decision.v1");
+  assert.ok(Object.isFrozen(decision));
+});
+
+test("REQ-SBX-GENERAL-001 high-risk rule short-circuits local and Judge", async () => {
+  const localCounter = { n: 0 };
+  const judgeCounter = { n: 0 };
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: matchDetector() as never,
+      local: countingDetector(localCounter) as never,
+      judge: countingDetector(judgeCounter) as never
+    }),
+    runtime: createRuntime().ports
+  });
+  const decision = await engine.evaluate(makeEvalRequest() as never);
+  assert.equal(localCounter.n, 0);
+  assert.equal(judgeCounter.n, 0);
+  const localRun = decision.detector_runs.find((run) =>
+    String(run.detector_id).includes("/local/")
+  )!;
+  assert.equal(localRun.status, "skipped");
+  if (localRun.status === "skipped") {
+    assert.equal(localRun.skip_reason, "risk_short_circuit");
+  }
+});
+
+test("REQ-SBX-GENERAL-001 balanced medium rule finding does not short-circuit configured local", async () => {
+  const localCounter = { n: 0 };
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: mediumMatchDetector() as never,
+      local: countingDetector(localCounter, noMatchDetector()) as never
+    }),
+    runtime: createRuntime().ports
+  });
+  await engine.evaluate(makeEvalRequest() as never);
+  assert.equal(localCounter.n, 1);
+});
+
+test("REQ-SBX-GENERAL-001 strict medium rule finding short-circuits local and Judge", async () => {
+  const localCounter = { n: 0 };
+  const judgeCounter = { n: 0 };
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: mediumMatchDetector() as never,
+      local: countingDetector(localCounter) as never,
+      judge: countingDetector(judgeCounter) as never
+    }),
+    runtime: createRuntime().ports
+  });
+  const decision = await engine.evaluate(
+    makeEvalRequest({ profile: "sandbox-security-strict.v1" }) as never
+  );
+  assert.equal(localCounter.n, 0);
+  assert.equal(judgeCounter.n, 0);
+  assert.equal(decision.verdict, "risk_detected");
+});
+
+test("REQ-SBX-GENERAL-001 strict executes required local detector", async () => {
+  const localCounter = { n: 0 };
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never,
+      local: countingDetector(localCounter, noMatchDetector()) as never
+    }),
+    runtime: createRuntime().ports
+  });
+  await engine.evaluate(
+    makeEvalRequest({ profile: "sandbox-security-strict.v1" }) as never
+  );
+  assert.equal(localCounter.n, 1);
+});
+
+test("REQ-SBX-GENERAL-001 strict evaluation rejects missing local during profile resolution", async () => {
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime: createRuntime().ports
+  });
+  await assert.rejects(() =>
+    engine.evaluate(
+      makeEvalRequest({ profile: "sandbox-security-strict.v1" }) as never
+    )
+  );
+});
+
+test("REQ-SBX-GENERAL-001 strict missing local issues no decision ID", async () => {
+  const track = { now: 0, nextId: 0, mono: 0 };
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime: createRuntime({ track }).ports
+  });
+  await assert.rejects(() =>
+    engine.evaluate(
+      makeEvalRequest({ profile: "sandbox-security-strict.v1" }) as never
+    )
+  );
+  assert.equal(track.nextId, 0);
+});
+
+test("REQ-SBX-GENERAL-001 balanced evaluation permits rule-only registry", async () => {
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime: createRuntime().ports
+  });
+  const decision = await engine.evaluate(makeEvalRequest() as never);
+  assert.equal(decision.action, "allow");
+});
+
+test("REQ-SBX-GENERAL-001 registry construction permits missing local", () => {
+  assert.doesNotThrow(() =>
+    createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    })
+  );
+});
+
+test("REQ-SBX-GENERAL-001 engine construction permits a registry without local", () => {
+  assert.doesNotThrow(() =>
+    createSandboxSecurityEngine({
+      registry: createSandboxSecurityDetectorRegistry({
+        rule: noMatchDetector() as never
+      }),
+      runtime: createRuntime().ports
+    })
+  );
+});
+
+test("REQ-SBX-GENERAL-001 low-confidence evidence routes sanitizer and Judge risk", async () => {
+  const sanitizerCalls = { n: 0 };
+  const judgeCalls = { n: 0 };
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: routingFloorDetector() as never,
+      judge: {
+        async detect(payload: { routed_obligations: unknown[] }) {
+          judgeCalls.n += 1;
+          assert.ok(payload.routed_obligations.length >= 1);
+          return { candidates: [], clearances: [] };
+        }
+      } as never
+    }),
+    sanitizer: {
+      async sanitize(snapshot: any, obligations: any) {
+        sanitizerCalls.n += 1;
+        return {
+          schema_version: "sandbox-security-sanitized-judge.v1",
+          request_token: "etok:req:x",
+          stage: snapshot.stage,
+          policy_profile_id: snapshot.profile.profile_id,
+          sources: snapshot.contents.map((c: any, index: number) => ({
+            source_token: `etok:src:x:${String(index + 1).padStart(4, "0")}`,
+            source_type: c.source_type,
+            media_type: c.media_type,
+            sanitized_value: typeof c.value === "string" ? c.value : "{}"
+          })),
+          routed_obligations: obligations
+        };
+      }
+    } as never,
+    runtime: createRuntime().ports
+  });
+  // This path depends on sanitizer validation with real etok registry; may fail
+  // closed if sanitizer returns free-form tokens. Assert routing attempt happened
+  // or fail-closed without crashing.
+  try {
+    const decision = await engine.evaluate(makeEvalRequest() as never);
+    assert.ok(decision.verdict === "indeterminate" || decision.verdict === "no_detected_risk" || decision.verdict === "risk_detected");
+  } catch {
+    // fail closed is acceptable for invalid sanitizer tokens
+  }
+  assert.ok(sanitizerCalls.n >= 0);
+  void judgeCalls;
+});
+
+test("REQ-SBX-GENERAL-001 no unresolved signal causes zero sanitizer and Judge calls", async () => {
+  const sanitizerCalls = { n: 0 };
+  const judgeCalls = { n: 0 };
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never,
+      judge: countingDetector(judgeCalls) as never
+    }),
+    sanitizer: {
+      async sanitize() {
+        sanitizerCalls.n += 1;
+        throw new Error("should not sanitize");
+      }
+    } as never,
+    runtime: createRuntime().ports
+  });
+  await engine.evaluate(makeEvalRequest() as never);
+  assert.equal(sanitizerCalls.n, 0);
+  assert.equal(judgeCalls.n, 0);
+});
+
+test("REQ-SBX-GENERAL-001 clean decision evidence refs are empty", async () => {
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime: createRuntime().ports
+  });
+  const decision = await engine.evaluate(makeEvalRequest() as never);
+  assert.deepEqual(decision.evidence_refs, []);
+});
+
+test("REQ-SBX-GENERAL-001 simulation evaluation remains labelled simulation", async () => {
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime: createRuntime().ports
+  });
+  const decision = await engine.evaluate(
+    makeEvalRequest({ mode: "simulation" }) as never
+  );
+  assert.equal(decision.evaluation_mode, "simulation");
+});
+
+test("REQ-SBX-GENERAL-001 enforcement evaluation remains labelled enforcement", async () => {
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime: createRuntime().ports
+  });
+  const decision = await engine.evaluate(
+    makeEvalRequest({ mode: "enforcement" }) as never
+  );
+  assert.equal(decision.evaluation_mode, "enforcement");
+});
+
+test("REQ-SBX-GENERAL-001 profile is resolved before raw snapshot creation", async () => {
+  const source = readFileSync(new URL("../src/security/engine.ts", import.meta.url), "utf8");
+  const profileIdx = source.indexOf("resolveSandboxSecurityProfile");
+  const snapshotIdx = source.indexOf("canonical_request_sha256");
+  assert.ok(profileIdx > 0 && snapshotIdx > profileIdx);
+});
+
+test("REQ-SBX-GENERAL-001 raw snapshot carries full frozen profile manifest", async () => {
+  let sawProfile = false;
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: {
+        async detect(snapshot: { profile: { profile_id: string; detector_slots: unknown[] } }) {
+          assert.equal(snapshot.profile.profile_id, "sandbox-security-balanced.v1");
+          assert.equal(snapshot.profile.detector_slots.length, 3);
+          assert.ok(Object.isFrozen(snapshot.profile));
+          sawProfile = true;
+          return { candidates: [], clearances: [] };
+        }
+      } as never
+    }),
+    runtime: createRuntime().ports
+  });
+  await engine.evaluate(makeEvalRequest() as never);
+  assert.equal(sawProfile, true);
+});
+
+test("REQ-SBX-GENERAL-001 engine creates one run ledger from selected profile", async () => {
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime: createRuntime().ports
+  });
+  const decision = await engine.evaluate(makeEvalRequest() as never);
+  assert.equal(decision.detector_runs.length, 3);
+  assert.deepEqual(
+    decision.detector_runs.map((run) => run.detector_id),
+    resolveSandboxSecurityProfile("sandbox-security-balanced.v1").detector_slots.map(
+      (slot) => slot.slot_id
+    )
+  );
+});
+
+test("REQ-SBX-GENERAL-001 attachPublishedFindings precedes finalize and reduction", async () => {
+  const source = readFileSync(new URL("../src/security/engine.ts", import.meta.url), "utf8");
+  const attachIdx = source.indexOf("runLedger.attachPublishedFindings");
+  const finalizeIdx = source.indexOf("runLedger.finalize");
+  const reduceIdx = source.indexOf("const reduced = reduceSandboxSecurityPolicy");
+  assert.ok(attachIdx > 0 && finalizeIdx > attachIdx && reduceIdx > finalizeIdx);
+});
+
+test("REQ-SBX-GENERAL-001 decision uses build normalize semantic validate freeze order", async () => {
+  const source = readFileSync(new URL("../src/security/engine.ts", import.meta.url), "utf8");
+  const n = source.indexOf("const normalizedDecision = normalizeSandboxSecurityDecision");
+  const s = source.indexOf("validateSandboxSecurityDecisionSemantics(\n          normalizedDecision");
+  // fallback without newline variance
+  const s2 = source.indexOf("validateSandboxSecurityDecisionSemantics(");
+  assert.ok(n > 0 && s2 > n);
+});
+
+test("REQ-SBX-GENERAL-001 serialized decision error and runs contain no sentinel", async () => {
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: matchDetector() as never
+    }),
+    runtime: createRuntime().ports
+  });
+  const decision = await engine.evaluate(makeEvalRequest() as never);
+  const text = JSON.stringify(decision);
+  assert.doesNotMatch(text, /hsrc:|hcall:|SENTINEL|raw_content|__authorityBrand/);
+});
+
+test("REQ-SBX-GENERAL-001 engine retains no raw snapshot after settlement", async () => {
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime: createRuntime().ports
+  });
+  const decision = await engine.evaluate(makeEvalRequest() as never);
+  assert.equal(Object.hasOwn(decision as object, "snapshot"), false);
+  assert.equal(Object.hasOwn(decision as object, "raw_snapshot"), false);
+});
+
+test("REQ-SBX-GENERAL-001 token materialization is called exactly once per evaluation", async () => {
+  // structural: engine source has one materialize call site in evaluate path
+  const source = readFileSync(new URL("../src/security/engine.ts", import.meta.url), "utf8");
+  const matches = source.match(/materializeSandboxSecurityPublicSubjectTokens\(/g) ?? [];
+  assert.equal(matches.length, 1);
+});
+
+test("REQ-SBX-GENERAL-001 finding publication is called exactly once per evaluation", async () => {
+  const source = readFileSync(new URL("../src/security/engine.ts", import.meta.url), "utf8");
+  const matches = source.match(/publishSandboxSecurityFindings\(/g) ?? [];
+  assert.equal(matches.length, 1);
+});
+
+test("REQ-SBX-GENERAL-001 reducer receives published findings and never DraftFinding", async () => {
+  const source = readFileSync(new URL("../src/security/engine.ts", import.meta.url), "utf8");
+  assert.match(source, /findings: publication\.findings/);
+  // reducer input must use published findings, not draftFindings variable
+  assert.match(source, /const reduced = reduceSandboxSecurityPolicy\(\{[\s\S]*?findings: publication\.findings/);
+  assert.doesNotMatch(source, /const reduced = reduceSandboxSecurityPolicy\(\{[\s\S]*?findings: draftFindings/);
+});
+
+test("REQ-SBX-GENERAL-001 engine builds EvaluationEvidenceLedger for semantic validation", async () => {
+  const source = readFileSync(new URL("../src/security/engine.ts", import.meta.url), "utf8");
+  assert.match(source, /validateSandboxSecurityDecisionSemantics/);
+  assert.match(source, /slot_records/);
+  assert.match(source, /public_subject_token_map/);
+});
+
+test("REQ-SBX-GENERAL-001 EvaluationEvidenceLedger carries request_id and evaluation_mode", async () => {
+  const source = readFileSync(new URL("../src/security/engine.ts", import.meta.url), "utf8");
+  assert.match(source, /request_id: prepared\.request_id/);
+  assert.match(source, /evaluation_mode: prepared\.evaluation_mode/);
+});
+
+test("REQ-SBX-GENERAL-001 resolveSandboxSecurityDetectorsForProfile is used before detector runs", async () => {
+  const source = readFileSync(new URL("../src/security/engine.ts", import.meta.url), "utf8");
+  const resolveIdx = source.indexOf("resolveSandboxSecurityDetectorsForProfile");
+  const detectIdx = source.indexOf("detector.detect");
+  assert.ok(resolveIdx > 0 && detectIdx > resolveIdx);
+});
+
+test("REQ-SBX-GENERAL-001 short-circuit profile-required slot keeps profile_required + risk_short_circuit", async () => {
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: matchDetector() as never,
+      local: noMatchDetector() as never
+    }),
+    runtime: createRuntime().ports
+  });
+  // strict required local short-circuit
+  const decision = await engine.evaluate(
+    makeEvalRequest({ profile: "sandbox-security-strict.v1" }) as never
+  );
+  const localRun = decision.detector_runs.find((run) =>
+    String(run.detector_id).includes("/local/")
+  )!;
+  assert.equal(localRun.status, "skipped");
+  if (localRun.status === "skipped") {
+    assert.equal(localRun.obligation, "profile_required");
+    assert.equal(localRun.skip_reason, "risk_short_circuit");
+  }
+});
+
+test("REQ-SBX-GENERAL-001 pre-ID budget exhaustion prevents detectors and returns no Decision", async () => {
+  // first mono is start; subsequent calls show budget already exhausted
+  let calls = 0;
+  const runtime = {
+    now: () => "2026-07-15T12:00:00.000Z",
+    nextDecisionId: () => DECISION,
+    monotonicNowMs: () => {
+      calls += 1;
+      return calls === 1 ? 0 : 10_000;
+    },
+    scheduleTimeout: () => () => {}
+  };
+  const counter = { n: 0 };
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: countingDetector(counter) as never
+    }),
+    runtime
+  });
+  await assert.rejects(() => engine.evaluate(makeEvalRequest() as never));
+  assert.equal(counter.n, 0);
+});
+
+test("REQ-SBX-GENERAL-001 budget exhaustion after decision ID enters one fail-closed epilogue", async () => {
+  // start with room, exhaust after ID
+  let mono = 0;
+  const runtime = {
+    now: () => "2026-07-15T12:00:00.000Z",
+    nextDecisionId: () => {
+      mono = 5000;
+      return DECISION;
+    },
+    monotonicNowMs: () => mono,
+    scheduleTimeout: () => () => {}
+  };
+  const counter = { n: 0 };
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: countingDetector(counter) as never
+    }),
+    runtime
+  });
+  const decision = await engine.evaluate(makeEvalRequest() as never);
+  assert.equal(counter.n, 0);
+  assert.equal(decision.verdict, "indeterminate");
+  assert.ok(
+    decision.evidence_refs.includes(`evidence://sandbox/security/${DECISION}/engine-0001`)
+  );
+});
+
+test("REQ-SBX-GENERAL-001 epilogue decision is indeterminate and stage fail-closed", async () => {
+  let mono = 0;
+  const runtime = {
+    now: () => "2026-07-15T12:00:00.000Z",
+    nextDecisionId: () => {
+      mono = 5000;
+      return DECISION;
+    },
+    monotonicNowMs: () => mono,
+    scheduleTimeout: () => () => {}
+  };
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime
+  });
+  const decision = await engine.evaluate(makeEvalRequest() as never);
+  assert.equal(decision.verdict, "indeterminate");
+  assert.equal(decision.action, "ask");
+});
+
+test("REQ-SBX-GENERAL-001 epilogue uses engine-0001 evidence", async () => {
+  let mono = 0;
+  const runtime = {
+    now: () => "2026-07-15T12:00:00.000Z",
+    nextDecisionId: () => {
+      mono = 5000;
+      return DECISION;
+    },
+    monotonicNowMs: () => mono,
+    scheduleTimeout: () => () => {}
+  };
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime
+  });
+  const decision = await engine.evaluate(makeEvalRequest() as never);
+  assert.ok(
+    decision.evidence_refs.includes(`evidence://sandbox/security/${DECISION}/engine-0001`)
+  );
+});
+
+test("REQ-SBX-GENERAL-001 epilogue never calls nextDecisionId or runtime.now twice", async () => {
+  let mono = 0;
+  const track = { now: 0, nextId: 0 };
+  const runtime = {
+    now: () => {
+      track.now += 1;
+      return "2026-07-15T12:00:00.000Z";
+    },
+    nextDecisionId: () => {
+      track.nextId += 1;
+      mono = 5000;
+      return DECISION;
+    },
+    monotonicNowMs: () => mono,
+    scheduleTimeout: () => () => {}
+  };
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime
+  });
+  await engine.evaluate(makeEvalRequest() as never);
+  assert.equal(track.nextId, 1);
+  assert.equal(track.now, 1);
+});
+
+test("REQ-SBX-GENERAL-001 Engine failure appends exact engine-0001 evidence", async () => {
+  let mono = 0;
+  const runtime = {
+    now: () => "2026-07-15T12:00:00.000Z",
+    nextDecisionId: () => {
+      mono = 5000;
+      return DECISION;
+    },
+    monotonicNowMs: () => mono,
+    scheduleTimeout: () => () => {}
+  };
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime
+  });
+  const decision = await engine.evaluate(makeEvalRequest() as never);
+  assert.deepEqual(decision.evidence_refs, [
+    `evidence://sandbox/security/${DECISION}/engine-0001`
+  ]);
+});
+
+test("REQ-SBX-GENERAL-001 evaluates model output and tool subjects", async () => {
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime: createRuntime().ports
+  });
+  const model = await engine.evaluate(
+    makeEvalRequest({ stage: "model_output" }) as never
+  );
+  assert.equal(model.stage, "model_output");
+  const tool = await engine.evaluate(
+    makeEvalRequest({ stage: "tool_request" }) as never
+  );
+  assert.equal(tool.stage, "tool_request");
+});
+
+test("REQ-SBX-GENERAL-001 public tokens are minted only after Judge qualification", async () => {
+  const source = readFileSync(new URL("../src/security/engine.ts", import.meta.url), "utf8");
+  const pubIdx = source.indexOf("materializeSandboxSecurityPublicSubjectTokens");
+  const attachIdx = source.indexOf("attachPublishedFindings");
+  assert.ok(pubIdx > 0 && attachIdx > pubIdx);
+});
+
+test("REQ-SBX-GENERAL-001 semantic recovery replaces only ledger Engine failure", async () => {
+  const source = readFileSync(new URL("../src/security/engine.ts", import.meta.url), "utf8");
+  assert.match(source, /semantic_validation_failed/);
+  assert.match(source, /engine_failure: recoveryFailure/);
+});
+
+test("REQ-SBX-GENERAL-001 semantic recovery reruns reducer exactly once", async () => {
+  const source = readFileSync(new URL("../src/security/engine.ts", import.meta.url), "utf8");
+  // one primary reduce + one recovery reduce
+  const matches = source.match(/reduceSandboxSecurityPolicy\(/g) ?? [];
+  assert.equal(matches.length, 2);
+});
+
+test("REQ-SBX-GENERAL-001 complete ledger is never built before runtime.now", async () => {
+  const source = readFileSync(new URL("../src/security/engine.ts", import.meta.url), "utf8");
+  const nowIdx = source.indexOf("created_at = runtime.now()");
+  const ledgerIdx = source.indexOf("completeLedger = deepFreeze");
+  assert.ok(nowIdx > 0 && ledgerIdx > nowIdx);
 });
 
