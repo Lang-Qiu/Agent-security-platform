@@ -1664,7 +1664,7 @@ test("REQ-SBX-GENERAL-001 obligations sort by category and canonical tokenized s
     token_registry: makeTokenRegistry()
   });
   assert.equal(obligations.length, 2);
-  // sorted by category+scope JCS; jailbreak before prompt_injection alphabetically? 
+  // sorted by category+scope JCS; jailbreak before prompt_injection alphabetically?
   // j < p so jailbreak first
   assert.equal(obligations[0].category, "jailbreak");
   assert.equal(obligations[1].category, "prompt_injection");

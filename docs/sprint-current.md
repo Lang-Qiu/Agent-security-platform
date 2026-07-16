@@ -1,4 +1,4 @@
-<!-- Phase 4 VERIFIED 2026-07-15: P4-T1..T6 closed -->
+<!-- Phase 5 VERIFIED 2026-07-15: P5-T1..T5 closed; final global review APPROVED -->
 # Sprint Current
 
 ## Requirement ID

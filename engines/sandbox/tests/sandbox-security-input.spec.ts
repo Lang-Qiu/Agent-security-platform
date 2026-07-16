@@ -1599,4 +1599,3 @@ test("REQ-SBX-GENERAL-001 accepts projection at exactly 512 KiB boundary", async
   assert.equal(calls, 1);
   assert.match(out, /^hmac-sha256:[a-f0-9]{64}$/);
 });
-

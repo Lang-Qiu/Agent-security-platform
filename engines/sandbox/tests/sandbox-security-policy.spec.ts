@@ -1088,4 +1088,3 @@ test("REQ-SBX-GENERAL-001 risk_short_circuit with validated high finding remains
   assert.equal(out.action, "deny");
   assert.equal(out.risk_level, "high");
 });
-
