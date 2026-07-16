@@ -768,6 +768,145 @@ function readText(relativePath: string): string {
   return readFileSync(join(REPO_ROOT, relativePath), "utf8");
 }
 
+const DOCUMENTED_SECURITY_OWNERSHIP = {
+  P2: [
+    "engines/sandbox/src/security/canonical-json.ts",
+    "engines/sandbox/src/security/source-authority.ts",
+    "engines/sandbox/src/security/input-boundary.ts",
+    "engines/sandbox/src/security/locator.ts",
+    "engines/sandbox/src/security/canonical-fingerprint.ts"
+  ],
+  P3: [
+    "engines/sandbox/src/security/detector-contract.ts",
+    "engines/sandbox/src/security/subject-scope.ts",
+    "engines/sandbox/src/security/detector-output-boundary.ts",
+    "engines/sandbox/src/security/sanitized-boundary.ts",
+    "engines/sandbox/src/security/policy-profiles.ts",
+    "engines/sandbox/src/security/detector-registry.ts"
+  ],
+  P4: [
+    "engines/sandbox/src/security/finding-qualification.ts",
+    "engines/sandbox/src/security/escalation-state.ts",
+    "engines/sandbox/src/security/runtime-deadline.ts",
+    "engines/sandbox/src/security/run-ledger.ts",
+    "engines/sandbox/src/security/policy-reducer.ts",
+    "engines/sandbox/src/security/semantic-validator.ts",
+    "engines/sandbox/src/security/engine.ts"
+  ],
+  P5: [
+    "engines/sandbox/src/security/adapters/monitor-decision-provider.ts",
+    "engines/sandbox/src/security/adapters/track1-rule-matches.ts",
+    "engines/sandbox/src/security/index.ts"
+  ]
+} as const;
+
+const EXPECTED_SANDBOX_SECURITY_ENGINE_CONTRACT = `interface SandboxSecurityEngine {
+  evaluate(
+    request: Readonly<SandboxSecurityEvaluationRequest>,
+    callerSignal?: AbortSignal
+  ): Promise<Readonly<SandboxSecurityDecision>>;
+}`;
+
+const FORBIDDEN_PUBLIC_EVALUATION_INPUT_PATTERN =
+  /\bSandboxSecurity[A-Za-z0-9]*Evaluation[A-Za-z0-9]*Input\b/;
+
+function extractMarkdownSection(text: string, heading: string): string {
+  const lines = text.replaceAll("\r\n", "\n").split("\n");
+  const startIndex = lines.findIndex((line) => line.trimEnd() === heading);
+  assert.notEqual(startIndex, -1, `missing Markdown heading ${heading}`);
+  const headingMatch = /^(#+) /.exec(heading);
+  assert.ok(headingMatch, `invalid Markdown heading ${heading}`);
+  const headingLevel = headingMatch[1]!.length;
+  let endIndex = lines.length;
+  for (let index = startIndex + 1; index < lines.length; index += 1) {
+    const candidate = /^(#+) /.exec(lines[index]!);
+    if (candidate && candidate[1]!.length <= headingLevel) {
+      endIndex = index;
+      break;
+    }
+  }
+  return lines.slice(startIndex + 1, endIndex).join("\n").trim();
+}
+
+function extractFencedBlocks(section: string, language: string): string[] {
+  const lines = section.split("\n");
+  const blocks: string[] = [];
+  let cursor = 0;
+  while (cursor < lines.length) {
+    const startIndex = lines.indexOf(`\`\`\`${language}`, cursor);
+    if (startIndex === -1) {
+      break;
+    }
+    const endIndex = lines.indexOf("```", startIndex + 1);
+    assert.notEqual(endIndex, -1, `unterminated ${language} code fence`);
+    blocks.push(
+      lines.slice(startIndex + 1, endIndex).join("\n").trimEnd()
+    );
+    cursor = endIndex + 1;
+  }
+  return blocks;
+}
+
+function assertSandboxSecuritySprintFinalReviewState(text: string): void {
+  assert.equal(
+    extractMarkdownSection(text, "## Requirement ID"),
+    "REQ-SBX-GENERAL-001"
+  );
+  assert.equal(
+    extractMarkdownSection(text, "## Status"),
+    "COMPLETE_PENDING_REVIEW"
+  );
+}
+
+function assertSandboxSecurityApiContractDocumented(text: string): void {
+  const section = extractMarkdownSection(
+    text,
+    "## REQ-SBX-GENERAL-001 Sandbox Security Core Contract"
+  );
+  assert.match(section, /createSandboxSecurityEngine/);
+  const engineContracts = extractFencedBlocks(section, "ts").filter((block) =>
+    /\b(?:export[ \n]+)?(?:declare[ \n]+)?(?:interface|type)[ \n]+SandboxSecurityEngine\b/.test(
+      block
+    )
+  );
+  assert.equal(engineContracts.length, 1);
+  assert.equal(
+    engineContracts[0],
+    EXPECTED_SANDBOX_SECURITY_ENGINE_CONTRACT
+  );
+  assert.doesNotMatch(text, FORBIDDEN_PUBLIC_EVALUATION_INPUT_PATTERN);
+}
+
+function assertSandboxSecurityOwnershipDocumented(text: string): void {
+  const section = extractMarkdownSection(
+    text,
+    "### Master unique ownership structure"
+  );
+  const actual: Record<string, string[]> = {};
+  const phaseRows =
+    /^- (P[2-5]):([\s\S]*?)(?=^- P[2-5]:|\n\n|(?![\s\S]))/gm;
+  for (const match of section.matchAll(phaseRows)) {
+    const phase = match[1]!;
+    const rowBody = match[2]!;
+    assert.equal(Object.hasOwn(actual, phase), false, `duplicate ${phase} row`);
+    actual[phase] = [...rowBody.matchAll(/`([^`]+)`/g)].map(
+      (pathMatch) => pathMatch[1]!
+    );
+    const residue = rowBody
+      .replace(/`[^`]+`/g, "")
+      .replace(/\band\b/g, "")
+      .replace(/[,\s]/g, "");
+    assert.equal(residue, "", `unexpected ownership syntax in ${phase}`);
+  }
+  assert.deepEqual(actual, DOCUMENTED_SECURITY_OWNERSHIP);
+  assert.deepEqual(
+    [...section.matchAll(
+      /\bengines\/sandbox\/src\/security\/[A-Za-z0-9._/-]+\.ts\b/g
+    )].map((match) => match[0]),
+    Object.values(DOCUMENTED_SECURITY_OWNERSHIP).flat()
+  );
+}
+
 function readSecurityIndexSource(): string {
   return existsSync(SECURITY_INDEX_PATH)
     ? readText(SECURITY_INDEX_RELATIVE_PATH)
@@ -2615,4 +2754,184 @@ test("REQ-SBX-GENERAL-001 resolveSandboxSecurityDetectorsForProfile remains non-
       /resolveSandboxSecurityDetectorsForProfile/
     );
   }
+});
+
+test("REQ-SBX-GENERAL-001 sprint is at final review state", () => {
+  assertSandboxSecuritySprintFinalReviewState(
+    readText("docs/sprint-current.md")
+  );
+});
+
+test("REQ-SBX-GENERAL-001 durable docs expose final core boundary", () => {
+  assert.match(readText("README.md"), /sandbox-security-decision\.v1/);
+  assert.match(
+    readText("docs/architecture.md"),
+    /sandbox-security-balanced\.v1/
+  );
+  assertSandboxSecurityApiContractDocumented(
+    readText("docs/api-contract.md")
+  );
+});
+
+test("REQ-SBX-GENERAL-001 docs mention evaluate entry budget and authority model", () => {
+  const architecture = readText("docs/architecture.md");
+  assert.match(
+    architecture,
+    /Evaluation entry starts a fixed `5000 ms` work budget/
+  );
+  assert.match(
+    architecture,
+    /Normalization and[ \n]+authority validation execute inside that budget/
+  );
+  assert.match(architecture, /Trusted adapters construct authoritative requests/);
+});
+
+test("REQ-SBX-GENERAL-001 Core project structure matches Master unique ownership", () => {
+  assertSandboxSecurityOwnershipDocumented(readText("docs/architecture.md"));
+});
+
+test("REQ-SBX-GENERAL-001 progress records P5-T5 verified pending global review", () => {
+  const progress = readText("docs/progress.md");
+  assert.match(
+    progress,
+    /^## 2026-07-15 - REQ-SBX-GENERAL-001 Phase 5 closure$/m
+  );
+  assert.match(progress, /P5-T1\.\.T5: VERIFIED/);
+  assert.match(
+    progress,
+    /unresolved findings through P5-T5: no unresolved P0\/P1\/blocking P2/
+  );
+});
+
+test("REQ-SBX-GENERAL-001 api-contract documents MonitorDecisionProvider adapter factory", () => {
+  const apiContract = readText("docs/api-contract.md");
+  assert.match(
+    apiContract,
+    /createSandboxSecurityMonitorDecisionAdapter/
+  );
+  assert.match(apiContract, /MonitorDecisionProvider/);
+  assert.match(apiContract, /calls\s+`engine\.evaluate\(request\)` exactly once/);
+  assert.match(apiContract, /without a second signal argument or a\s+second policy reduction/);
+});
+
+test("REQ-SBX-GENERAL-001 api-contract documents Track1 confidence 0.80", () => {
+  const apiContract = readText("docs/api-contract.md");
+  assert.match(apiContract, /Track1 adapter uses fixed confidence `0\.80`/);
+  assert.match(apiContract, /balanced harness is test-only/);
+});
+
+test("REQ-SBX-GENERAL-001 docs do not advertise public *Input evaluation request types", () => {
+  for (const relativePath of [
+    "README.md",
+    "docs/architecture.md",
+    "docs/api-contract.md",
+    "docs/sprint-current.md"
+  ]) {
+    const text = readText(relativePath);
+    assert.doesNotMatch(text, FORBIDDEN_PUBLIC_EVALUATION_INPUT_PATTERN);
+  }
+});
+
+test("REQ-SBX-GENERAL-001 documentation gate rejects a suffixed final status", () => {
+  const sprint = readText("docs/sprint-current.md").replace(
+    "COMPLETE_PENDING_REVIEW",
+    "COMPLETE_PENDING_REVIEW-extra"
+  );
+  assert.throws(() => assertSandboxSecuritySprintFinalReviewState(sprint));
+});
+
+test("REQ-SBX-GENERAL-001 documentation gate rejects renamed or widened evaluate", () => {
+  const apiContract = readText("docs/api-contract.md");
+  const renamed = apiContract.replace("  evaluate(", "  run(");
+  const widened = apiContract.replace(
+    "    callerSignal?: AbortSignal",
+    "    callerSignal?: AbortSignal,\n    diagnostics?: boolean"
+  );
+  assert.throws(() => assertSandboxSecurityApiContractDocumented(renamed));
+  assert.throws(() => assertSandboxSecurityApiContractDocumented(widened));
+});
+
+test("REQ-SBX-GENERAL-001 documentation gate rejects invented evaluation Input types", () => {
+  const apiContract = `${readText("docs/api-contract.md")}\nSandboxSecurityGenericEvaluationInput\n`;
+  assert.throws(() =>
+    assertSandboxSecurityApiContractDocumented(apiContract)
+  );
+});
+
+test("REQ-SBX-GENERAL-001 documentation gate rejects reassigned ownership rows", () => {
+  const architecture = readText("docs/architecture.md").replace(
+    "- P2:",
+    "- P5:"
+  );
+  assert.throws(() =>
+    assertSandboxSecurityOwnershipDocumented(architecture)
+  );
+});
+
+test("REQ-SBX-GENERAL-001 documentation gate rejects unformatted ownership paths", () => {
+  const architecture = readText("docs/architecture.md").replace(
+    "  `engines/sandbox/src/security/index.ts`",
+    "  `engines/sandbox/src/security/index.ts`, and\n  engines/sandbox/src/security/extra.ts"
+  );
+  assert.throws(() =>
+    assertSandboxSecurityOwnershipDocumented(architecture)
+  );
+});
+
+test("REQ-SBX-GENERAL-001 documentation gate rejects conflicting Engine contract fences", () => {
+  const apiContract = readText("docs/api-contract.md").replace(
+    "\n### Compatibility adapters",
+    "\n```ts\ninterface SandboxSecurityEngine {\n  run(): void;\n}\n```\n\n### Compatibility adapters"
+  );
+  assert.throws(() =>
+    assertSandboxSecurityApiContractDocumented(apiContract)
+  );
+});
+
+test("REQ-SBX-GENERAL-001 architecture documents complete sanitized Judge payload boundary", () => {
+  const architecture = readText("docs/architecture.md");
+  assert.match(architecture, /validated `SandboxSecuritySanitizedJudgePayload`/);
+  assert.match(architecture, /sanitized sources/);
+  assert.match(architecture, /optional[ \n]+sanitized tool request/);
+  assert.match(architecture, /nonempty routed obligations/);
+  assert.doesNotMatch(
+    architecture,
+    /Judge receives only validated sanitized obligations/
+  );
+});
+
+test("REQ-SBX-GENERAL-001 api contract scopes evaluation requests to trusted engine adapters", () => {
+  const apiContract = readText("docs/api-contract.md");
+  assert.match(
+    apiContract,
+    /engine-package adapter-facing[ \n]+exported[ \n]+type/
+  );
+  assert.match(apiContract, /not a backend route or frontend DTO/);
+  assert.match(
+    apiContract,
+    /Public API submissions cannot call `evaluate` or construct authoritative[ \n]+context/
+  );
+});
+
+test("REQ-SBX-GENERAL-001 records approved P5-T5 before final global review", () => {
+  const progress = readText("docs/progress.md");
+  const sprint = readText("docs/sprint-current.md");
+  assert.match(progress, /P5-T1\.\.T5: VERIFIED/);
+  assert.match(
+    progress,
+    /second quality re-review: all five original issues RESOLVED, no new[ \n]+issues, final conclusion APPROVED/
+  );
+  assert.match(
+    sprint,
+    /Phase 5 compatibility closure \(P5-T1\.\.T5\): VERIFIED/
+  );
+  assertSandboxSecuritySprintFinalReviewState(sprint);
+});
+
+test("REQ-SBX-GENERAL-001 README distinguishes delivered core from remaining capabilities", () => {
+  const readme = readText("README.md");
+  assert.match(readme, /当前仓库已包含/);
+  assert.match(readme, /Sandbox Security Core 当前仍未包含/);
+  assert.doesNotMatch(readme, /- 具体业务代码实现/);
+  assert.match(readme, /生产级通用 detector、sanitizer 和 external Judge/);
 });

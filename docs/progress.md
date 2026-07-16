@@ -1,3 +1,49 @@
+## 2026-07-15 - REQ-SBX-GENERAL-001 Phase 5 closure
+
+- scope: P5-T1..T4 compatibility and export closure, followed by P5-T5
+  documentation and requirement exit
+- P5-T1..T4 commits: `f382190`, `105603d`, `f3322f3`, `339807a`, `8977f0b`,
+  `3deb930`, `e2fd3e3`
+- status: P5-T1..T5: VERIFIED
+- verified evidence at P5-T4 exit: focused `108/108`, shared `207/207`,
+  sandbox engine `1026/1026`, repository `251/251`, and both shared/sandbox
+  TypeScript checks passed
+- P5-T5 deterministic docs RED: `7` expected assertion failures in the
+  newly-added documentation inventory; no import, syntax, or environment
+  error was used as RED
+- P5-T5 docs GREEN: repository security-core inventory `114/114` passed
+- P5-T5 quality-review RED: `8/8` focused review-fix assertions failed for the
+  intended missing boundaries; no import, syntax, or environment error was used
+  as RED
+- P5-T5 first review-fix GREEN: repository security-core inventory `122/122`
+  passed
+- P5-T5 first quality re-review resolved the Judge boundary, adapter-facing
+  request scope, review-state truth, and README scope issues. It found two
+  residual documentation-gate false-allows: an unformatted ownership path and a
+  second conflicting Engine contract fence.
+- P5-T5 residual-gate RED: both focused mutations failed with `Missing expected
+  exception`; after parser hardening, the complete security-core inventory
+  passed `124/124`
+- P5-T5 second quality re-review: all five original issues RESOLVED, no new
+  issues, final conclusion APPROVED
+- P5-T3 review found missing repository anti-oracle gates, a weak severity-map
+  assertion, expected-action contamination of generic input, and swallowed
+  engine errors. The fixes and scanner hardening were re-reviewed APPROVED.
+- P5-T4 review found unbound C/D owner provenance and capability-scan bypasses.
+  The final gate binds every export to its owner and fail-closes every external
+  dependency except `node:crypto`; both review issues were re-reviewed
+  APPROVED.
+- P5-T5 specification review found an incomplete public Engine signature; the
+  signature fix was re-reviewed APPROVED. Quality review then found inaccurate
+  Judge/request boundaries, weak documentation mutation gates, a premature
+  no-findings claim, and stale README scope. Its first re-review resolved four
+  issues and exposed two residual parser gaps. After both fixes, the second
+  quality re-review confirmed all issues resolved and APPROVED P5-T5.
+- unresolved findings through P5-T5: no unresolved P0/P1/blocking P2
+- review closure: specification re-review APPROVED; quality re-review APPROVED
+- next: run the final global review of GENERAL-001; do not begin or advertise
+  GENERAL-002
+
 ## 2026-07-15 - Phase 4 independent review / fix / re-review FINAL (short-circuit + budget)
 
 - phase: Phase 4 Qualification and Engine Policy (P4-T1..P4-T6)

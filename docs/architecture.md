@@ -877,6 +877,62 @@ The following remain outside Phase 5 scope and belong to Phase 6:
 - real 390/1024/1440 browser screenshots and visual acceptance
 - end-to-end campaign orchestration across Docker/OpenClaw runtime
 - report generation or evidence export UI
+
+## REQ-SBX-GENERAL-001 Sandbox Security Core
+
+The sandbox security core is engine-owned and exposes one construction entry
+through `engines/sandbox/src/security/index.ts`:
+`createSandboxSecurityEngine`. The platform-facing decision boundary is
+`sandbox-security-decision.v1`; detector snapshots and Judge payloads remain
+confined to sandbox-engine ports, while authority handles remain engine-private.
+
+### Evaluation budget and authority
+
+Evaluation entry starts a fixed `5000 ms` work budget. Normalization and
+authority validation execute inside that budget. Scheme B uses a bounded
+epilogue for final publication and semantic validation, and cannot extend the
+normal evaluation budget. Trusted adapters construct authoritative requests;
+caller-provided claims cannot select the source authority, stage, profile, or
+tool observations.
+
+The balanced profile is versioned as `sandbox-security-balanced.v1`. Local
+detectors produce evidence, and the policy reducer owns the final action. The
+external Judge runs only for nonempty routed obligations and receives only the
+validated `SandboxSecuritySanitizedJudgePayload`: sanitized sources, an optional
+sanitized tool request, and those routed obligations. It never receives the raw
+detector snapshot. Monitor and Track1 adapters preserve their existing
+compatibility ports without creating a second decision reducer.
+
+### Master unique ownership structure
+
+The canonical row-by-row ownership table remains in the
+[`GENERAL-001` Master Plan](./superpowers/plans/2026-07-11-sandbox-security-core-001-master.md#production-file-unique-ownership-locked).
+The implemented security tree follows the same phase ownership groups:
+
+- P2: `engines/sandbox/src/security/canonical-json.ts`,
+  `engines/sandbox/src/security/source-authority.ts`,
+  `engines/sandbox/src/security/input-boundary.ts`,
+  `engines/sandbox/src/security/locator.ts`, and
+  `engines/sandbox/src/security/canonical-fingerprint.ts`
+- P3: `engines/sandbox/src/security/detector-contract.ts`,
+  `engines/sandbox/src/security/subject-scope.ts`,
+  `engines/sandbox/src/security/detector-output-boundary.ts`,
+  `engines/sandbox/src/security/sanitized-boundary.ts`,
+  `engines/sandbox/src/security/policy-profiles.ts`, and
+  `engines/sandbox/src/security/detector-registry.ts`
+- P4: `engines/sandbox/src/security/finding-qualification.ts`,
+  `engines/sandbox/src/security/escalation-state.ts`,
+  `engines/sandbox/src/security/runtime-deadline.ts`,
+  `engines/sandbox/src/security/run-ledger.ts`,
+  `engines/sandbox/src/security/policy-reducer.ts`,
+  `engines/sandbox/src/security/semantic-validator.ts`, and
+  `engines/sandbox/src/security/engine.ts`
+- P5: `engines/sandbox/src/security/adapters/monitor-decision-provider.ts`,
+  `engines/sandbox/src/security/adapters/track1-rule-matches.ts`, and
+  `engines/sandbox/src/security/index.ts`
+
+These ownership rows document the existing implementation. They do not add a
+public backend route or couple the platform to an engine-private detector.
 ## REQ-T1-DEMO-010 Report and Credentialed Acceptance
 
 The Track 1 runtime has six Compose services:

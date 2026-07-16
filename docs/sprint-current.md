@@ -11,7 +11,7 @@ Sandbox Security Core
 
 ## Status
 
-IN_PROGRESS
+COMPLETE_PENDING_REVIEW
 
 ## Approval
 
@@ -124,8 +124,8 @@ and policy reduction has one engine-owned implementation.
   implemented and independently APPROVED (subject_key `subjects` field, strict
   missing-local `sandbox_security_profile_invalid`, boundary fail-closed
   uniqueness/confidence/reason_code/source_type/locator gates closed).
-- Note: current execution environment may not allow git commits; worktree is
-  source of truth for the restarted sequence.
 - Phase 4 engine/policy (P4-T1..T6): independently APPROVED after review/fix loop.
-- Next: Phase 5 compatibility closure (only on explicit instruction).
-
+- Phase 5 compatibility closure (P5-T1..T5): VERIFIED after independent
+  specification and quality review/fix/re-review loops.
+- Next: run the final global review of GENERAL-001. Do not begin or advertise
+  GENERAL-002.

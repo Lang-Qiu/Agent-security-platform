@@ -303,7 +303,7 @@ npm.cmd run dev -- --host 127.0.0.1 --port 5173
 
 ## 当前交付范围
 
-本次初始化已包含：
+当前仓库已包含：
 
 - 第一版 monorepo 目录结构
 - 仓库根说明文档
@@ -312,15 +312,28 @@ npm.cmd run dev -- --host 127.0.0.1 --port 5173
 - `shared` 第一版共享契约与运行时规范化能力
 - `backend` 最小任务中枢与内存级 API
 - `frontend` 最小后台壳子、路由骨架和 `Overview` 页面
+- `sandbox` 的 GENERAL-001 通用安全核心、策略归约和兼容适配器
 
-本次初始化暂未包含：
+Sandbox Security Core 当前仍未包含：
 
-- 具体业务代码实现
-- workspace 配置文件
-- CI/CD 脚本
-- 数据库 Schema
-- 登录与权限系统
-- 真实引擎联调与实时日志流
+- 生产级通用 detector、sanitizer 和 external Judge
+- 面向该核心的新 backend REST 路由或 frontend DTO
+- GENERAL-002 及后续 benchmark、持久化审计和部署能力
+
+## Sandbox Security Core
+
+Sandbox Security Core 的实际引擎入口是
+`engines/sandbox/src/security/index.ts`，由
+`createSandboxSecurityEngine` 构造评估引擎。引擎接受受信任适配器构造的
+`SandboxSecurityEvaluationRequest`，返回版本化的
+`sandbox-security-decision.v1` 决策 schema；平台层只消费归一化后的决策，
+不直接依赖 detector 或 Judge 的内部结构。
+
+当前核心边界包含 authoritative source、balanced/strict policy profile、
+Monitor 与 Track1 兼容适配器，以及 fail-closed 的 finding qualification
+与 policy reduction。
+该入口用于 REQ-SBX-GENERAL-001 的核心联调与测试，不代表已开放新的后端
+REST 路由，也不开始 GENERAL-002。
 # Track 1 OpenClaw Evidence Workflow
 
 The Track 1 path uses Node.js `>=22.19.0`, `pnpm@10.0.0`, OpenClaw

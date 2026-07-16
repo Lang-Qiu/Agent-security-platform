@@ -2023,3 +2023,40 @@ screenshot PNGs, or `manifest.json` directly, so the review demo UI does not
 link or fetch those paths. No campaign start/retry/approve/reject/cancel/
 edit-policy command surface exists — the page is read-only, same rule as the
 Phase 5 campaign mode.
+
+## REQ-SBX-GENERAL-001 Sandbox Security Core Contract
+
+The supported sandbox construction factory is
+`createSandboxSecurityEngine`. Its public evaluation contract is:
+
+```ts
+interface SandboxSecurityEngine {
+  evaluate(
+    request: Readonly<SandboxSecurityEvaluationRequest>,
+    callerSignal?: AbortSignal
+  ): Promise<Readonly<SandboxSecurityDecision>>;
+}
+```
+
+`SandboxSecurityEvaluationRequest` is an engine-package adapter-facing exported
+type, not a backend route or frontend DTO. It wraps the untrusted
+`SandboxSecurityRequest` submission with engine-owned authoritative context.
+Public API submissions cannot call `evaluate` or construct authoritative
+context; a trusted in-process adapter constructs the envelope from authenticated
+observations. Normalized request brands, private handles, raw detector snapshots,
+and sanitized Judge payloads are not public platform contracts.
+`evaluate(request)` starts the fixed 5000 ms work budget at entry, normalizes and
+validates authority within that budget, and returns the versioned
+`sandbox-security-decision.v1` decision boundary.
+
+### Compatibility adapters
+
+`createSandboxSecurityMonitorDecisionAdapter` creates the
+`MonitorDecisionProvider` adapter. For every Monitor decision, the adapter calls
+`engine.evaluate(request)` exactly once, without a second signal argument or a
+second policy reduction. The engine-owned reducer remains the sole authority
+for the final action.
+
+The Track1 adapter uses fixed confidence `0.80` and maps existing rule evidence
+into the same decision boundary. The balanced harness is test-only and is not a
+production detector or a public runtime profile.
