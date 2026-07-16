@@ -970,6 +970,68 @@ test("REQ-SBX-GENERAL-001 Track1 adapter non-Track1 tool shape is adapter_unsupp
   );
 });
 
+test("REQ-SBX-GENERAL-001 Track1 adapter rejects malformed shapes for allowed tools", async () => {
+  const adapter = createTrack1RuleMatchDetectorAdapter();
+  const malformedTools = [
+    {
+      tool_name: "send_email",
+      target: "a@b.c",
+      arguments: { recipient: "a@b.c", subject: "s" }
+    },
+    {
+      tool_name: "send_email",
+      target: "other@b.c",
+      arguments: { recipient: "a@b.c", subject: "s", body: "b" }
+    },
+    {
+      tool_name: "read_file",
+      target: "sandbox://fixtures/a.txt",
+      arguments: { path: 42 }
+    },
+    {
+      tool_name: "read_file",
+      target: "sandbox://fixtures/a.txt",
+      arguments: { path: "sandbox://fixtures/a.txt", extra: true }
+    },
+    {
+      tool_name: "write_file",
+      target: "sandbox://fixtures/a.txt",
+      arguments: { path: "sandbox://fixtures/a.txt", content: 42 }
+    },
+    {
+      tool_name: "call_api",
+      target: "mock://api.local/items",
+      arguments: { endpoint: "mock://api.local/items", method: "DELETE" }
+    },
+    {
+      tool_name: "call_api",
+      target: "mock://api.local/items",
+      arguments: {
+        endpoint: "mock://api.local/items",
+        method: "POST",
+        body: { count: 1 }
+      }
+    },
+    {
+      tool_name: "call_api",
+      target: "mock://api.local/other",
+      arguments: { endpoint: "mock://api.local/items", method: "GET" }
+    }
+  ];
+
+  for (const tool of malformedTools) {
+    await assert.rejects(
+      () =>
+        adapter.detect(
+          snapshotForTrack1({ stage: "tool_request", tool }) as never,
+          new AbortController().signal
+        ),
+      (error: unknown) => error instanceof SandboxSecurityAdapterUnsupportedError,
+      `${tool.tool_name} malformed shape must be adapter_unsupported`
+    );
+  }
+});
+
 test("REQ-SBX-GENERAL-001 Track1 unsupported path never synthesizes no_match", async () => {
   const adapter = createTrack1RuleMatchDetectorAdapter();
   try {
@@ -1033,6 +1095,78 @@ test("REQ-SBX-GENERAL-001 Engine records Track1 unsupported path as failed adapt
   if (ruleRun.status === "failed" || ruleRun.status === "invalid_result" || ruleRun.status === "timeout") {
     assert.equal((ruleRun as { error_code?: string }).error_code, "adapter_unsupported");
   }
+});
+
+test("REQ-SBX-GENERAL-001 Engine records malformed Track1 tool shape as adapter_unsupported", async () => {
+  if (!engineModule || !registryModule) return;
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: createTrack1RuleMatchDetectorAdapter() as never
+    }),
+    runtime: runtime()
+  });
+  const request = {
+    submission: {
+      schema_version: "sandbox-security-request.v1",
+      request_id: "request_tool_malformed_001",
+      stage: "tool_request",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      content_items: [
+        {
+          source_id: "model_1",
+          claimed_source_type: "model_output",
+          media_type: "text/plain",
+          value: "call the endpoint",
+          provenance_ref: "source://model_1"
+        }
+      ],
+      tool_request: {
+        call_id: "call_1",
+        tool_name: "call_api",
+        target: "mock://api.local/items",
+        arguments: {
+          endpoint: "mock://api.local/items",
+          method: "DELETE"
+        }
+      }
+    },
+    authoritative_context: {
+      schema_version: "sandbox-security-authoritative-context.v1",
+      evaluation_mode: "simulation",
+      stage: "tool_request",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      sources: [
+        {
+          source_id: "model_1",
+          authority_kind: "simulation_observation",
+          source_type: "model_output",
+          media_type: "text/plain",
+          value: "call the endpoint",
+          provenance_ref: "source://model_1"
+        }
+      ],
+      tool_request: {
+        authority_kind: "simulation_observation",
+        call_id: "call_1",
+        tool_name: "call_api",
+        target: "mock://api.local/items",
+        arguments: {
+          endpoint: "mock://api.local/items",
+          method: "DELETE"
+        }
+      }
+    }
+  };
+
+  const decision = await engine.evaluate(request as never);
+  const ruleRun = decision.detector_runs.find((run) =>
+    String(run.detector_id).includes("/rule/")
+  )!;
+  assert.equal(ruleRun.status, "failed");
+  if (ruleRun.status === "failed") {
+    assert.equal(ruleRun.error_code, "adapter_unsupported");
+  }
+  assert.equal(decision.action, "deny");
 });
 // ---------------------------------------------------------------------------
 // P5-T3 compatibility harness

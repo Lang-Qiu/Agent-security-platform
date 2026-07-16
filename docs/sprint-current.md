@@ -125,7 +125,7 @@ and policy reduction has one engine-owned implementation.
   missing-local `sandbox_security_profile_invalid`, boundary fail-closed
   uniqueness/confidence/reason_code/source_type/locator gates closed).
 - Phase 4 engine/policy (P4-T1..T6): independently APPROVED after review/fix loop.
-- Phase 5 compatibility closure (P5-T1..T5): VERIFIED after independent
-  specification and quality review/fix/re-review loops.
-- Next: run the final global review of GENERAL-001. Do not begin or advertise
-  GENERAL-002.
+- Phase 5 compatibility closure (P5-T1..T5): VERIFIED after task-level and final
+  global review/fix/re-review loops; final global conclusion APPROVED.
+- Next: stop for requirement review at `COMPLETE_PENDING_REVIEW`. Do not begin
+  or advertise GENERAL-002.

@@ -4,7 +4,7 @@
   documentation and requirement exit
 - P5-T1..T4 commits: `f382190`, `105603d`, `f3322f3`, `339807a`, `8977f0b`,
   `3deb930`, `e2fd3e3`
-- status: P5-T1..T5: VERIFIED
+- status: P5-T1..T5 VERIFIED; Phase 5 final global review APPROVED
 - verified evidence at P5-T4 exit: focused `108/108`, shared `207/207`,
   sandbox engine `1026/1026`, repository `251/251`, and both shared/sandbox
   TypeScript checks passed
@@ -26,6 +26,35 @@
   passed `124/124`
 - P5-T5 second quality re-review: all five original issues RESOLVED, no new
   issues, final conclusion APPROVED
+- Phase 5 final global review first conclusion: CHANGES_REQUIRED. Accepted
+  findings were malformed allowed-name Track1 tool shapes (P1) and static
+  capability-gate bypasses through `process.getBuiltinModule`, global `fetch`,
+  `eval`, and `Function` (P2).
+- Phase 5 global-review RED: malformed Track1 adapter/Engine paths failed `0/2`;
+  capability bypass mutations failed `0/4`. Focused GREEN passed `2/2` and
+  `4/4`; complete Track1 passed `59/59`, security-core passed `128/128`, and
+  sandbox TypeScript passed.
+- The global review's ownership P1 is not accepted: `8977f0b` changed five
+  pre-existing legacy Track1 files that are absent from the GENERAL-001 locked
+  production ownership table. Those minimal type corrections were required
+  because the planned adapters and harness pull the legacy modules into the
+  mandatory sandbox `tsc` graph; no published monitor/base-filter/shared field
+  changed, and the typecheck fix had already passed independent review and the
+  full Track1 behavior gates.
+- Phase 5 first global re-review marked the Track1 P1 RESOLVED and the ownership
+  P1 `NOT_A_DEFECT (RESOLVED_BY_MINIMAL_PLAN_CORRECTION)`. The capability P2 was
+  PARTIALLY_RESOLVED because `globalThis.process.getBuiltinModule`,
+  `global.fetch`, and indirect `(0, eval)` still bypassed the visitor.
+- Phase 5 residual capability RED: those three mutations failed `0/3` with empty
+  violations. After global/property/element-chain and transparent-expression
+  hardening, residual GREEN passed `3/3`, the complete capability inventory
+  passed `20/20`, and security-core passed `131/131`.
+- Phase 5 final global re-review: Track1 finding RESOLVED, legacy-file ownership
+  finding NOT_A_DEFECT, capability finding RESOLVED, no new findings, final
+  conclusion APPROVED, requirement exit allowed.
+- final global-review verification: Track1 `59/59`, security-core `131/131`,
+  shared `207/207`, sandbox engine `1028/1028`, repository `276/276`, both
+  shared/sandbox TypeScript checks and `git diff --check` passed.
 - P5-T3 review found missing repository anti-oracle gates, a weak severity-map
   assertion, expected-action contamination of generic input, and swallowed
   engine errors. The fixes and scanner hardening were re-reviewed APPROVED.
@@ -39,10 +68,13 @@
   no-findings claim, and stale README scope. Its first re-review resolved four
   issues and exposed two residual parser gaps. After both fixes, the second
   quality re-review confirmed all issues resolved and APPROVED P5-T5.
-- unresolved findings through P5-T5: no unresolved P0/P1/blocking P2
-- review closure: specification re-review APPROVED; quality re-review APPROVED
-- next: run the final global review of GENERAL-001; do not begin or advertise
-  GENERAL-002
+- task-level unresolved findings through P5-T5 before global review: no
+  unresolved P0/P1/blocking P2
+- task-level review closure: specification re-review APPROVED; quality re-review
+  APPROVED
+- final global review closure: APPROVED; no unresolved P0/P1/blocking P2
+- exit behavior: stop and report at requirement status `COMPLETE_PENDING_REVIEW`
+  after the exact exit gate; do not begin or advertise GENERAL-002
 
 ## 2026-07-15 - Phase 4 independent review / fix / re-review FINAL (short-circuit + budget)
 

@@ -41,15 +41,52 @@ const SEVERITY_FROM_ACTION: Record<"alert" | "ask" | "deny", SandboxSecuritySeve
   deny: "high"
 };
 
-const TRACK1_TOOLS = new Set([
-  "send_email",
-  "read_file",
-  "write_file",
-  "call_api"
-]);
-
 function unsupported(): never {
   throw new SandboxSecurityAdapterUnsupportedError();
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) === Object.prototype
+  );
+}
+
+function hasExactKeys(
+  value: Record<string, unknown>,
+  expectedKeys: readonly string[]
+): boolean {
+  const actualKeys = Object.keys(value).sort();
+  const sortedExpectedKeys = [...expectedKeys].sort();
+  return (
+    actualKeys.length === sortedExpectedKeys.length &&
+    actualKeys.every((key, index) => key === sortedExpectedKeys[index])
+  );
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return (
+    isPlainRecord(value) &&
+    Object.values(value).every((entry) => typeof entry === "string")
+  );
+}
+
+function requireMatchingTarget(
+  snapshot: Readonly<SandboxSecurityRawDetectorSnapshot>,
+  expectedTarget: string
+): void {
+  if (
+    snapshot.tool_request?.has_target !== true ||
+    snapshot.tool_request.target !== expectedTarget
+  ) {
+    unsupported();
+  }
 }
 
 function mapCategory(category: Track1FilterCategory): SandboxSecurityRiskCategory {
@@ -104,44 +141,77 @@ function toolFromSnapshot(
 ): SimulatedToolRequest | undefined {
   if (!snapshot.tool_request) return undefined;
   const tool_name = snapshot.tool_request.tool_name;
-  if (!TRACK1_TOOLS.has(tool_name)) {
+  if (!isPlainRecord(snapshot.tool_request.arguments)) {
     unsupported();
   }
-  const args = snapshot.tool_request.arguments as Record<string, unknown>;
-  // Reconstruct SimulatedToolRequest shape loosely for evaluator.
+  const args = snapshot.tool_request.arguments;
   if (tool_name === "send_email") {
+    if (
+      !hasExactKeys(args, ["recipient", "subject", "body"]) ||
+      !isNonEmptyString(args.recipient) ||
+      !isNonEmptyString(args.subject) ||
+      !isNonEmptyString(args.body)
+    ) {
+      unsupported();
+    }
+    requireMatchingTarget(snapshot, args.recipient);
     return {
       tool_name: "send_email",
       arguments: {
-        recipient: String(snapshot.tool_request.target ?? args.recipient ?? ""),
-        subject: String(args.subject ?? ""),
-        body: String(args.body ?? "")
+        recipient: args.recipient,
+        subject: args.subject,
+        body: args.body
       }
     } as SimulatedToolRequest;
   }
   if (tool_name === "read_file") {
+    if (!hasExactKeys(args, ["path"]) || !isNonEmptyString(args.path)) {
+      unsupported();
+    }
+    requireMatchingTarget(snapshot, args.path);
     return {
       tool_name: "read_file",
       arguments: {
-        path: String(snapshot.tool_request.target ?? args.path ?? "")
+        path: args.path
       }
     } as SimulatedToolRequest;
   }
   if (tool_name === "write_file") {
+    if (
+      !hasExactKeys(args, ["path", "content"]) ||
+      !isNonEmptyString(args.path) ||
+      typeof args.content !== "string"
+    ) {
+      unsupported();
+    }
+    requireMatchingTarget(snapshot, args.path);
     return {
       tool_name: "write_file",
       arguments: {
-        path: String(snapshot.tool_request.target ?? args.path ?? ""),
-        content: String(args.content ?? "")
+        path: args.path,
+        content: args.content
       }
     } as SimulatedToolRequest;
   }
+  if (tool_name !== "call_api") {
+    unsupported();
+  }
+  const hasBody = Object.hasOwn(args, "body");
+  if (
+    !hasExactKeys(args, hasBody ? ["endpoint", "method", "body"] : ["endpoint", "method"]) ||
+    !isNonEmptyString(args.endpoint) ||
+    (args.method !== "GET" && args.method !== "POST") ||
+    (hasBody && !isStringRecord(args.body))
+  ) {
+    unsupported();
+  }
+  requireMatchingTarget(snapshot, args.endpoint);
   return {
     tool_name: "call_api",
     arguments: {
-      endpoint: String(snapshot.tool_request.target ?? args.endpoint ?? ""),
-      method: (args.method === "GET" || args.method === "POST" ? args.method : "POST") as "GET" | "POST",
-      ...(args.body !== undefined ? { body: args.body as Record<string, unknown> } : {})
+      endpoint: args.endpoint,
+      method: args.method,
+      ...(hasBody ? { body: { ...(args.body as Record<string, string>) } } : {})
     }
   } as SimulatedToolRequest;
 }

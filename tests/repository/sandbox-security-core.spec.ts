@@ -305,7 +305,8 @@ type CapabilityModuleReferenceKind =
   | "export-namespace"
   | "import-equals"
   | "require"
-  | "dynamic-import";
+  | "dynamic-import"
+  | "process-get-builtin-module";
 
 type CapabilityModuleReference = {
   sourcePath: string;
@@ -1155,15 +1156,84 @@ function extractSecurityCapabilityModuleReferences(
 
   const unwrapExpression = (expression: ts.Expression): ts.Expression => {
     let current = expression;
-    while (ts.isParenthesizedExpression(current)) {
-      current = current.expression;
+    while (true) {
+      if (
+        ts.isParenthesizedExpression(current) ||
+        ts.isAsExpression(current) ||
+        ts.isTypeAssertionExpression(current) ||
+        ts.isNonNullExpression(current) ||
+        ts.isSatisfiesExpression(current)
+      ) {
+        current = current.expression;
+        continue;
+      }
+      if (
+        ts.isBinaryExpression(current) &&
+        current.operatorToken.kind === ts.SyntaxKind.CommaToken
+      ) {
+        current = current.right;
+        continue;
+      }
+      break;
     }
     return current;
   };
 
+  const expressionPath = (expression: ts.Expression): string[] | null => {
+    const current = unwrapExpression(expression);
+    if (ts.isIdentifier(current)) {
+      return [current.text];
+    }
+    if (ts.isPropertyAccessExpression(current)) {
+      const base = expressionPath(current.expression);
+      return base ? [...base, current.name.text] : null;
+    }
+    if (
+      ts.isElementAccessExpression(current) &&
+      current.argumentExpression !== undefined &&
+      ts.isStringLiteralLike(current.argumentExpression)
+    ) {
+      const base = expressionPath(current.expression);
+      return base ? [...base, current.argumentExpression.text] : null;
+    }
+    return null;
+  };
+
+  const matchesGlobalCapability = (
+    path: readonly string[] | null,
+    capability: string
+  ): boolean =>
+    path !== null &&
+    ((path.length === 1 && path[0] === capability) ||
+      (path.length === 2 &&
+        (path[0] === "globalThis" || path[0] === "global") &&
+        path[1] === capability));
+
+  const isProcessBuiltinModulePath = (
+    path: readonly string[] | null
+  ): boolean =>
+    path !== null &&
+    ((path.length === 2 &&
+      path[0] === "process" &&
+      path[1] === "getBuiltinModule") ||
+      (path.length === 3 &&
+        (path[0] === "globalThis" || path[0] === "global") &&
+        path[1] === "process" &&
+        path[2] === "getBuiltinModule"));
+
+  const isProcessCapabilityPath = (
+    path: readonly string[] | null
+  ): boolean =>
+    path !== null &&
+    ((path.length >= 2 && path[0] === "process") ||
+      (path.length >= 2 &&
+        (path[0] === "globalThis" || path[0] === "global") &&
+        path[1] === "process"));
+
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
       const expression = unwrapExpression(node.expression);
+      const path = expressionPath(expression);
       const isRequire =
         (ts.isIdentifier(expression) && expression.text === "require") ||
         (ts.isPropertyAccessExpression(expression) &&
@@ -1178,6 +1248,30 @@ function extractSecurityCapabilityModuleReferences(
           "dynamic-import",
           node.arguments.length === 1 ? node.arguments[0] : undefined
         );
+      } else if (isProcessBuiltinModulePath(path)) {
+        addReference(
+          "process-get-builtin-module",
+          node.arguments.length === 1 ? node.arguments[0] : undefined
+        );
+      } else if (matchesGlobalCapability(path, "fetch")) {
+        violations.push(`${fileName}: global fetch is forbidden`);
+      } else if (
+        matchesGlobalCapability(path, "eval") ||
+        matchesGlobalCapability(path, "Function")
+      ) {
+        violations.push(`${fileName}: dynamic code execution is forbidden`);
+      }
+    }
+    if (ts.isNewExpression(node) && matchesGlobalCapability(expressionPath(node.expression), "Function")) {
+      violations.push(`${fileName}: dynamic code execution is forbidden`);
+    }
+    if (ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)) {
+      const path = expressionPath(node);
+      if (
+        isProcessCapabilityPath(path) &&
+        path?.at(-1) !== "getBuiltinModule"
+      ) {
+        violations.push(`${fileName}: process capability is forbidden`);
       }
     }
     ts.forEachChild(node, visit);
@@ -2160,6 +2254,32 @@ for (const [mutationName, source, expectedKind] of [
   });
 }
 
+for (const [mutationName, source] of [
+  [
+    "process.getBuiltinModule node:fs",
+    'process.getBuiltinModule("node:fs");'
+  ],
+  [
+    "globalThis.process.getBuiltinModule node:fs",
+    'globalThis.process.getBuiltinModule("node:fs");'
+  ],
+  ["global fetch", 'fetch("https://example.invalid");'],
+  ["global object fetch", 'global.fetch("https://example.invalid");'],
+  ["direct eval", 'eval("globalThis.compromised = true");'],
+  ["indirect eval", '(0, eval)("globalThis.compromised = true");'],
+  ["Function constructor", 'Function("return globalThis")();']
+]) {
+  test(`REQ-SBX-GENERAL-001 dependency capability gate rejects ${mutationName}`, () => {
+    assert.notDeepEqual(
+      evaluateSecurityCapabilitySource(
+        "engines/sandbox/src/security/capability-mutation.ts",
+        source
+      ),
+      []
+    );
+  });
+}
+
 test("REQ-SBX-GENERAL-001 dependency capability gate permits approved node crypto", () => {
   assert.deepEqual(
     evaluateSecurityCapabilitySource(
@@ -2790,16 +2910,20 @@ test("REQ-SBX-GENERAL-001 Core project structure matches Master unique ownership
   assertSandboxSecurityOwnershipDocumented(readText("docs/architecture.md"));
 });
 
-test("REQ-SBX-GENERAL-001 progress records P5-T5 verified pending global review", () => {
+test("REQ-SBX-GENERAL-001 progress records Phase 5 final global approval", () => {
   const progress = readText("docs/progress.md");
   assert.match(
     progress,
     /^## 2026-07-15 - REQ-SBX-GENERAL-001 Phase 5 closure$/m
   );
-  assert.match(progress, /P5-T1\.\.T5: VERIFIED/);
+  assert.match(progress, /P5-T1\.\.T5 VERIFIED/);
   assert.match(
     progress,
-    /unresolved findings through P5-T5: no unresolved P0\/P1\/blocking P2/
+    /task-level unresolved findings through P5-T5 before global review: no[ \n]+unresolved P0\/P1\/blocking P2/
+  );
+  assert.match(
+    progress,
+    /final global review closure: APPROVED; no unresolved P0\/P1\/blocking P2/
   );
 });
 
@@ -2913,10 +3037,10 @@ test("REQ-SBX-GENERAL-001 api contract scopes evaluation requests to trusted eng
   );
 });
 
-test("REQ-SBX-GENERAL-001 records approved P5-T5 before final global review", () => {
+test("REQ-SBX-GENERAL-001 records approved Phase 5 under requirement review", () => {
   const progress = readText("docs/progress.md");
   const sprint = readText("docs/sprint-current.md");
-  assert.match(progress, /P5-T1\.\.T5: VERIFIED/);
+  assert.match(progress, /P5-T1\.\.T5 VERIFIED/);
   assert.match(
     progress,
     /second quality re-review: all five original issues RESOLVED, no new[ \n]+issues, final conclusion APPROVED/
@@ -2924,6 +3048,11 @@ test("REQ-SBX-GENERAL-001 records approved P5-T5 before final global review", ()
   assert.match(
     sprint,
     /Phase 5 compatibility closure \(P5-T1\.\.T5\): VERIFIED/
+  );
+  assert.match(sprint, /final global conclusion APPROVED/);
+  assert.match(
+    progress,
+    /Phase 5 final global re-review:[\s\S]*final[ \n]+conclusion APPROVED, requirement exit allowed/
   );
   assertSandboxSecuritySprintFinalReviewState(sprint);
 });
