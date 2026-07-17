@@ -9,6 +9,7 @@
   },
   "include": [
     "src/security/**/*.ts",
+    "src/security-production/**/*.ts",
     "tests/sandbox-security-*.spec.ts",
     "tests/fixtures/security-*.ts",
     "tests/helpers/track1-security-regression-harness.ts",

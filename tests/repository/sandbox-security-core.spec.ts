@@ -2640,7 +2640,7 @@ test("REQ-SBX-GENERAL-001 export provenance permits unrelated historical exports
   assert.deepEqual(analysis.violations, []);
 });
 
-test("REQ-SBX-GENERAL-001 sandbox tsconfig exists for typecheck", () => {
+test("REQ-SBX-GENERAL-002 sandbox tsconfig includes the sibling production sources", () => {
   assert.equal(existsSync(join(REPO_ROOT, "engines/sandbox/tsconfig.json")), true);
   const config = readJson("engines/sandbox/tsconfig.json") as {
     extends?: string;
@@ -2652,6 +2652,7 @@ test("REQ-SBX-GENERAL-001 sandbox tsconfig exists for typecheck", () => {
   assert.equal(config.compilerOptions?.allowImportingTsExtensions, true);
   assert.deepEqual(config.include, [
     "src/security/**/*.ts",
+    "src/security-production/**/*.ts",
     "tests/sandbox-security-*.spec.ts",
     "tests/fixtures/security-*.ts",
     "tests/helpers/track1-security-regression-harness.ts",

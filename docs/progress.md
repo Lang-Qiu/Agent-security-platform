@@ -5030,6 +5030,37 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   credentials via a git-ignored `.env` file.
 - status: IMAGES_REBUILT_AND_DIGESTS_SYNCED_AWAITING_CREDENTIALS
 - requirement status: REQ-T1-DEMO-010_IN_PROGRESS
+## 2026-07-17 - REQ-SBX-GENERAL-002 P1-T4 production TypeScript integration
+
+- phase/task: Phase 1 / P1-T4
+- status: VERIFIED
+- compiler boundary:
+  - added only `src/security-production/**/*.ts` to the exact sandbox compiler
+    input list
+  - added a compile-only anchor assigning the production rule detector factory
+    result to the final public `RawLocalDetector` type
+  - updated only the existing repository gate's exact include expectation; no
+    frozen core runtime, export, capability, root, alias, or compiler option
+    changed
+- TDD evidence:
+  - RED: core repository gate `129/130`; the only failure was the intended
+    `AssertionError` for the absent production-source glob
+  - focused GREEN: core repository gate `130/130`
+  - boundary plus catalog gate: `156/156`
+  - sandbox engine: `1028/1028`; repository: `294/294`
+  - sandbox TypeScript and frontend production build passed; the frontend
+    retained its existing non-failing chunk-size advisory
+  - `git diff --check` passed
+  - per the operator's continuation instruction, no P1-T3 detector validation
+    command was repeated
+- independent review:
+  - Specification Compliance Review: `APPROVED`; P0-P3 none
+  - Code Quality/Security Review: `APPROVED`; P0-P3 none
+  - combined re-review: original issue sets none, new issues none, final
+    conclusion `APPROVED`
+- commit: the exact P1-T4 task commit containing this evidence
+- next: Phase 1 exit gate and independent Phase review
+
 ## 2026-07-17 - REQ-SBX-GENERAL-002 P1-T3 continuation handoff
 
 - phase/task: Phase 1 / P1-T3
