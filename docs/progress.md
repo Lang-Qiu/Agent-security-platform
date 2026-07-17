@@ -1,3 +1,55 @@
+## 2026-07-17 - REQ-SBX-GENERAL-002 P1-T2 closed frozen rule catalog
+
+- phase/task: Phase 1 / P1-T2
+- status: VERIFIED
+- implementation:
+  - added `sandbox-security-rule-catalog.v1` as recursively frozen, validated
+    TypeScript data with all nine risk categories, all three stages, and all
+    nine closed condition operators
+  - validator enforces plain exact-key records, dense bounded arrays, unique
+    rule IDs, category/reason consistency, fixed severity/confidence values,
+    frozen core stage/source compatibility, operator/subject ownership, and
+    exact tool-field applicability
+  - rejected inherited/accessor/symbol/unknown fields, aliases, cycles,
+    callbacks, regex values, unsafe strings, non-NFKC text, Cc/Cs/Cf code
+    points, sparse arrays, and benchmark/oracle inventory
+  - accepted rule findings require attack-specific multi-signal data; broad
+    structural and tool indicators remain `0.60` routing-only heuristics
+- TDD evidence:
+  - initial RED: 15 intended `AssertionError` failures from the inert guarded
+    catalog, with no import, syntax, type, or environment error
+  - review RED: frozen stage/source and `model_output` coverage failed with two
+    intended assertions; alias, severity, and whole-graph freeze tests each
+    caught targeted temporary mutations before restoration
+  - quality RED: specificity, tool applicability, and unsafe-Unicode tests each
+    failed for the reviewed defect before the minimal correction
+- final validation:
+  - focused catalog: `35/35`
+  - combined P1-T1 and P1-T2: `156/156`
+  - repository: `294/294`
+  - sandbox TypeScript: passed
+  - frontend production build: passed with the existing chunk-size warning
+  - `git diff --check` and untracked-file no-index whitespace check: passed
+- independent review:
+  - Specification Compliance Review: first `CHANGES_REQUIRED` for the frozen
+    stage/source matrix, missing `model_output` coverage, and alias/freeze/
+    severity test gaps; all accepted findings fixed with RED evidence;
+    specification re-review `APPROVED`
+  - Code Quality/Security Review: `CHANGES_REQUIRED` for broad accepted rules,
+    ambiguous tool-field source applicability, and unsafe Unicode; all
+    blocking findings fixed with RED evidence
+  - Code Quality/Security re-review:
+    `APPROVED_WITH_NON_BLOCKING_COMMENTS`; combined independent re-review:
+    `APPROVED`, with no new issue
+- disposition and remaining risk:
+  - the sibling-only validator remains intentionally limited to trusted module
+    literals; Proxy inputs can trigger reflection traps, but the validator is
+    not exported by the public production index and P1-T1 forbids adding a
+    Node builtin capability solely for this non-blocking P3 case
+  - no P0, P1, or blocking P2 remains
+- commit: the exact P1-T2 task commit containing this evidence
+- next: P1-T3 deterministic rule detector
+
 ## 2026-07-17 - REQ-SBX-GENERAL-002 P1-T1 approved vocabulary regression
 
 - owning task: Phase 1 / P1-T1 rework before P1-T2 review
