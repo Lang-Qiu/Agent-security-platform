@@ -57,7 +57,7 @@ const FORBIDDEN_ORACLE_FIELD =
 const FORBIDDEN_ORACLE_IMPORT =
   /(?:^|[\\/])(?:samples|scripts|tests)(?:[\\/]|$)|(?:^|[\\/._-])(?:track\s*1|track1|campaign)(?:[\\/._-]|$)|sandbox-security-benchmark/iu;
 const FORBIDDEN_ORACLE_LITERAL =
-  /sandbox-security-benchmark|(?:^|[\\/.:#_-])(?:fixture(?:_id)?|source(?:_id)?|dataset_source|record(?:_ref)?|seed_record)(?:$|[\\/.:#-])|(?:^|[\\/._-])(?:track\s*1|track1|campaign)(?:[\\/._-]|$)/iu;
+  /sandbox-security-benchmark|(?:^|[\\/.:#_-])(?:fixture(?:_id)?|source_id|dataset_source|record(?:_ref)?|seed_record)(?:$|[\\/.:#-])|(?:^|[\\/.:#-])source(?:$|[\\/.:#-])|(?:^|[\\/._-])(?:track\s*1|track1|campaign)(?:[\\/._-]|$)/iu;
 const FORBIDDEN_BENCHMARK_ORACLE_LITERAL =
   /AgentDojo|ryoungj\/ToolEmu|ToolEmu|deepset\/prompt-injections|OpenAssistant\/oasst1|089ed468cf3ed0322acc66b0211f26d9d90dbf60|ac4a7ab7ed8c7985d96231e214bd6b54304b7ddb|4f61ecb038e9c3fb77e21034b22511b523772cdd|fdf72ae0827c1cda404aff25b6603abec9e3399b/iu;
 const NETWORK_MODULES = new Set([
@@ -1393,8 +1393,28 @@ for (const mutation of [
     expected: "oracle fixture/source/record literal"
   },
   {
+    name: "source ID literal",
+    source: 'export const locator = "source_id";',
+    expected: "oracle fixture/source/record literal"
+  },
+  {
+    name: "dataset source literal",
+    source: 'export const locator = "dataset_source";',
+    expected: "oracle fixture/source/record literal"
+  },
+  {
+    name: "source path locator literal",
+    source: 'export const locator = "/source/public-corpus";',
+    expected: "oracle fixture/source/record literal"
+  },
+  {
     name: "record literal",
     source: 'export const locator = "record/ref-9";',
+    expected: "oracle fixture/source/record literal"
+  },
+  {
+    name: "seed record literal",
+    source: 'export const locator = "seed_record/ref-9";',
     expected: "oracle fixture/source/record literal"
   }
 ] as const) {
@@ -2244,6 +2264,15 @@ export const SANDBOX_SECURITY_DETERMINISTIC_SANITIZER_VERSION = "sandbox-securit
 export function createSandboxSecurityDeterministicSanitizer(): unknown {
   return ${SANITIZER_HELPER}([]);
 }`
+  );
+  assert.deepEqual(analysis.violations, [], analysis.violations.join("\n"));
+});
+
+test("REQ-SBX-GENERAL-002 repository gate permits approved production source vocabulary", () => {
+  const analysis = analyzeProductionMutation(
+    "rule-catalog.ts",
+    `export const subjectStrategies = ["whole_source", "content_source"] as const;
+export const operator = "cross_source_ordered_sequence" as const;`
   );
   assert.deepEqual(analysis.violations, [], analysis.violations.join("\n"));
 });

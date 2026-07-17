@@ -1,3 +1,30 @@
+## 2026-07-17 - REQ-SBX-GENERAL-002 P1-T1 approved vocabulary regression
+
+- owning task: Phase 1 / P1-T1 rework before P1-T2 review
+- status: VERIFIED
+- trigger: the permanent oracle-literal gate rejected the approved catalog
+  subject strategies `whole_source` and `content_source`
+- root cause: the generic `source` branch treated any `_source` suffix as a
+  dataset/source locator instead of distinguishing runtime vocabulary from
+  `source_id`, dataset identity, and explicit source locator forms
+- TDD:
+  - RED: the isolated approved-vocabulary test failed with two intended
+    `AssertionError` violations for `whole_source` and `content_source`
+  - GREEN: narrowed the source-literal branch while preserving `source_id`,
+    `dataset_source`, `/source/`, `source:`, fixture, record, seed-record,
+    known-source, revision, and oracle-field denial
+- regression coverage: added independent AST negatives for `source_id`,
+  `dataset_source`, `/source/public-corpus`, and `seed_record/ref-9`; the
+  `/source/` test contains no other forbidden token that could mask failure
+- validation: focused negative/positive cases passed; combined P1-T1 and P1-T2
+  gates `145/145`; repository, sandbox TypeScript, frontend build, and
+  whitespace gates passed before commit
+- independent review: first `CHANGES_REQUIRED` for missing branch coverage,
+  second `CHANGES_REQUIRED` for a masked `/source/` test, final re-review
+  `APPROVED`; no new findings
+- commit: the exact P1-T1 rework commit containing this evidence
+- next: P1-T2 independent review
+
 ## 2026-07-17 - REQ-SBX-GENERAL-002 P1-T1 production boundary gate
 
 - phase/task: Phase 1 / P1-T1
