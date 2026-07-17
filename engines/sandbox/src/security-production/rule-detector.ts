@@ -55,6 +55,12 @@ const STAGES: readonly DetectorProjection["stage"][] = [
 ];
 
 const TOKEN_CHARACTER = /[\p{L}\p{N}_]/u;
+const DETECTOR_JSON_NODE_BUDGET = 4096;
+
+interface JsonProjectionState {
+  nodes: number;
+  readonly seen: WeakSet<object>;
+}
 
 function invariant(): never {
   throw new TypeError("sandbox security production rule detector invariant");
@@ -109,8 +115,12 @@ function collectJsonProjection(
   value: unknown,
   textValues: string[],
   keys: string[],
-  seen: WeakSet<object>
+  state: JsonProjectionState
 ): void {
+  state.nodes += 1;
+  if (state.nodes > DETECTOR_JSON_NODE_BUDGET) {
+    invariant();
+  }
   if (value === null || typeof value === "boolean" || typeof value === "string") {
     if (typeof value === "string") {
       textValues.push(value);
@@ -123,15 +133,18 @@ function collectJsonProjection(
     }
     return;
   }
-  if (typeof value !== "object" || value === null || seen.has(value)) {
+  if (typeof value !== "object" || value === null || state.seen.has(value)) {
     invariant();
   }
-  seen.add(value);
+  state.seen.add(value);
 
   if (Array.isArray(value)) {
-    const array = assertDenseStandardArray(value, 2048);
+    const array = assertDenseStandardArray(
+      value,
+      DETECTOR_JSON_NODE_BUDGET - state.nodes
+    );
     for (const item of array) {
-      collectJsonProjection(item, textValues, keys, seen);
+      collectJsonProjection(item, textValues, keys, state);
     }
     return;
   }
@@ -147,7 +160,7 @@ function collectJsonProjection(
       invariant();
     }
     keys.push(key);
-    collectJsonProjection(descriptor.value, textValues, keys, seen);
+    collectJsonProjection(descriptor.value, textValues, keys, state);
   }
 }
 
@@ -170,7 +183,10 @@ function sourceProjection(value: unknown): SourceProjection {
     }
     textValues.push(sourceValue);
   } else if (mediaType === "application/json") {
-    collectJsonProjection(sourceValue, textValues, jsonKeys, new WeakSet());
+    collectJsonProjection(sourceValue, textValues, jsonKeys, {
+      nodes: 0,
+      seen: new WeakSet()
+    });
   } else {
     invariant();
   }
@@ -201,7 +217,10 @@ function toolProjection(value: unknown): ToolProjection {
   }
 
   const argumentKeys: string[] = [];
-  collectJsonProjection(argumentsValue, [], argumentKeys, new WeakSet());
+  collectJsonProjection(argumentsValue, [], argumentKeys, {
+    nodes: 0,
+    seen: new WeakSet()
+  });
   return Object.freeze({
     subject_record: value,
     tool_name: toolName,
@@ -244,34 +263,64 @@ function comparisonText(value: string, comparison: Comparison): string {
   }
   if (comparison === "nfkc_casefold") {
     return normalized
-      .replaceAll("\u00df", "ss")
-      .replaceAll("\u1e9e", "ss")
-      .replaceAll("\u03c2", "\u03c3")
       .toLowerCase()
-      .toUpperCase()
-      .toLowerCase();
+      .replaceAll("\u00df", "ss")
+      .replaceAll("\u03c2", "\u03c3");
   }
   return invariant();
 }
 
-function containsToken(text: string, token: string): boolean {
-  let start = text.indexOf(token);
-  while (start !== -1) {
-    const before = start === 0 ? "" : text[start - 1] ?? "";
-    const end = start + token.length;
-    const after = end === text.length ? "" : text[end] ?? "";
-    if (!TOKEN_CHARACTER.test(before) && !TOKEN_CHARACTER.test(after)) {
-      return true;
-    }
-    start = text.indexOf(token, start + 1);
+function isHighSurrogate(codeUnit: number): boolean {
+  return codeUnit >= 0xd800 && codeUnit <= 0xdbff;
+}
+
+function isLowSurrogate(codeUnit: number): boolean {
+  return codeUnit >= 0xdc00 && codeUnit <= 0xdfff;
+}
+
+function codePointBefore(text: string, index: number): string {
+  if (index === 0) {
+    return "";
   }
-  return false;
+  const precedingCodeUnit = text.charCodeAt(index - 1);
+  const precedingIndex =
+    isLowSurrogate(precedingCodeUnit) &&
+    index > 1 &&
+    isHighSurrogate(text.charCodeAt(index - 2))
+      ? index - 2
+      : index - 1;
+  const codePoint = text.codePointAt(precedingIndex);
+  return codePoint === undefined ? "" : String.fromCodePoint(codePoint);
+}
+
+function codePointAfter(text: string, index: number): string {
+  const codePoint = text.codePointAt(index);
+  return codePoint === undefined ? "" : String.fromCodePoint(codePoint);
+}
+
+function lexicalTokenIndex(text: string, token: string, offset = 0): number {
+  let index = text.indexOf(token, offset);
+  while (index !== -1) {
+    const end = index + token.length;
+    if (
+      !TOKEN_CHARACTER.test(codePointBefore(text, index)) &&
+      !TOKEN_CHARACTER.test(codePointAfter(text, end))
+    ) {
+      return index;
+    }
+    index = text.indexOf(token, index + 1);
+  }
+  return -1;
+}
+
+function containsToken(text: string, token: string): boolean {
+  return lexicalTokenIndex(text, token) !== -1;
 }
 
 function containsOrderedSequence(text: string, sequence: readonly string[]): boolean {
   let offset = 0;
   for (const item of sequence) {
-    const index = text.indexOf(item, offset);
+    const index = lexicalTokenIndex(text, item, offset);
     if (index === -1) {
       return false;
     }
@@ -433,7 +482,7 @@ function crossSourceCondition(
   for (const item of sequence) {
     let found = false;
     while (sourceIndex < sources.length) {
-      const index = sourceTexts[sourceIndex]!.indexOf(item, offset);
+      const index = lexicalTokenIndex(sourceTexts[sourceIndex]!, item, offset);
       if (index !== -1) {
         const source = sources[sourceIndex]!;
         if (matchedSources.at(-1) !== source) {

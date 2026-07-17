@@ -5061,19 +5061,53 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - commit: the exact P1-T4 task commit containing this evidence
 - next: Phase 1 exit gate and independent Phase review
 
-## 2026-07-17 - REQ-SBX-GENERAL-002 P1-T3 continuation handoff
+## 2026-07-17 - REQ-SBX-GENERAL-002 P1-T3 deterministic rule detector closure
 
 - phase/task: Phase 1 / P1-T3
-- status: VERIFIED by the prior execution handoff
+- status: VERIFIED
 - implementation:
-  - added the deterministic production rule detector and its focused behavior
-    suite in the two P1-T3-owned paths
-  - the continuation preserves those files byte-for-byte and performs no T3
-    implementation or test change
-- validation handoff:
-  - the operator explicitly confirmed P1-T3 validation was complete before
-    this continuation
-  - T3 verification commands were intentionally not repeated; execution
-    resumes at P1-T4 as directed
-- commit: the exact P1-T3 handoff commit containing this evidence
-- next: P1-T4 sandbox TypeScript inclusion and production type probe
+  - evaluates only the frozen v1 sibling catalog across all nine operators and
+    returns deterministic raw candidates with no clearances or raw-data leak
+  - preserves stage/source/tool applicability, catalog confidence, subject
+    mapping, eight-subject cap, abort-first behavior, invariant propagation,
+    graph freezing, and private handles only for returned subject references
+  - closes review findings with catalog-safe NFKC case folding, code-point-aware
+    lexical boundaries, faithful simulation trust fixtures, exact raw-result
+    normalization checks, and the frozen 4096-node JSON traversal budget
+- recovered TDD and validation evidence:
+  - initial behavioral RED was recovered from the local structured session log:
+    a temporary inert exact-match mutation failed `0/1` with the intended
+    candidate `AssertionError`; the mutation was restored before GREEN
+  - initial GREEN: focused `16/16`, combined boundary/catalog/detector
+    `213/213`, repository `294/294`, sandbox TypeScript, frontend build, and
+    whitespace gates passed
+  - first review RED/GREEN: sharp-s casefold failed before its explicit mapping
+    and passed at focused `17/17`; tool-name, target, and whole-arguments
+    subjects were checked through the real raw-result normalizer
+  - second review RED/GREEN: temporary UTF-16 lexical and incorrect trust-class
+    mutations produced the intended false candidates/assertions; restored
+    corrections passed focused `20/20`, combined `217/217`, repository
+    `294/294`, TypeScript, build, and whitespace gates
+  - quality RED/GREEN: core-normalized 2049-null and exact-maximum 4095-null
+    JSON arrays both failed under the old 2048 cap, then passed `2/2` with a
+    per-value 4096-node traversal budget
+  - final casefold RED/GREEN: the final-sigma order gate failed before lowercase
+    was moved ahead of catalog-safe replacements; final-sigma plus actual
+    dotless-i behavior then passed `2/2`
+  - latest non-repeated compatibility gates: boundary/catalog `156/156`,
+    repository `294/294`, sandbox engine `1028/1028`, TypeScript, frontend
+    build, and `git diff --check` passed
+- independent review:
+  - Specification Compliance Review first required sharp-s/tool-normalizer
+    coverage, then Unicode lexical boundaries and trust-fixture fidelity; each
+    accepted finding received RED evidence and the focused re-review was
+    `APPROVED` at `217/217`
+  - Code Quality/Security Review required the 4096-node budget, dotless-i
+    non-equivalence, leading astral coverage, and final-sigma ordering; all
+    findings are `RESOLVED`, new issues are none
+  - final specification and quality/security re-reviews: `APPROVED`
+- operator constraint: the already completed full P1-T3 validation was not
+  repeated; only new review regressions and non-T3 compatibility gates ran
+- commits: initial P1-T3 `5fe1ebe`; exact review-correction commit containing
+  this evidence
+- next: Phase 1 exit re-review
