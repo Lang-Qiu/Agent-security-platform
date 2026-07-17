@@ -5111,3 +5111,30 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - commits: initial P1-T3 `5fe1ebe`; exact review-correction commit containing
   this evidence
 - next: Phase 1 exit re-review
+
+## 2026-07-17 - REQ-SBX-GENERAL-002 Phase 1 verified
+
+- phase: Phase 1 / production boundaries and deterministic rules
+- status: VERIFIED
+- tasks and commits:
+  - P1-T1 VERIFIED: `600a747`, approved-vocabulary correction `a1f0721`
+  - P1-T2 VERIFIED: `627e2d3`
+  - P1-T3 VERIFIED: `5fe1ebe`, review correction `6d7a693`
+  - P1-T4 VERIFIED: `a63c50d`
+- exit evidence:
+  - targeted post-review JSON and casefold regressions: `2/2` and `2/2`
+  - production boundary/catalog: `156/156`
+  - repository: `294/294`; sandbox engine: `1028/1028`
+  - sandbox TypeScript, frontend production build, and whitespace gates passed;
+    the frontend retained its existing non-failing chunk-size advisory
+  - frozen GENERAL-001 production files are unchanged and the worktree was
+    clean at re-review
+- phase review:
+  - first conclusion `CHANGES_REQUIRED` for Unicode lexical boundaries and
+    incomplete T3 handoff evidence
+  - both findings `RESOLVED` through recovered truthful evidence and reviewed
+    regression fixes; new issues none; final conclusion `APPROVED`
+- process note: this evidence-only update is a documentation exception to full
+  business-logic TDD
+- commit: the exact Phase 1 evidence commit containing this record
+- next: Phase 2 / P2-T1 content-free provider outcome contracts
