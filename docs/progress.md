@@ -5030,3 +5030,19 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   credentials via a git-ignored `.env` file.
 - status: IMAGES_REBUILT_AND_DIGESTS_SYNCED_AWAITING_CREDENTIALS
 - requirement status: REQ-T1-DEMO-010_IN_PROGRESS
+## 2026-07-17 - REQ-SBX-GENERAL-002 P1-T3 continuation handoff
+
+- phase/task: Phase 1 / P1-T3
+- status: VERIFIED by the prior execution handoff
+- implementation:
+  - added the deterministic production rule detector and its focused behavior
+    suite in the two P1-T3-owned paths
+  - the continuation preserves those files byte-for-byte and performs no T3
+    implementation or test change
+- validation handoff:
+  - the operator explicitly confirmed P1-T3 validation was complete before
+    this continuation
+  - T3 verification commands were intentionally not repeated; execution
+    resumes at P1-T4 as directed
+- commit: the exact P1-T3 handoff commit containing this evidence
+- next: P1-T4 sandbox TypeScript inclusion and production type probe
