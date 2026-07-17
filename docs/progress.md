@@ -1,3 +1,48 @@
+## 2026-07-17 - REQ-SBX-GENERAL-002 P1-T1 production boundary gate
+
+- phase/task: Phase 1 / P1-T1
+- status: VERIFIED
+- implementation:
+  - created `engines/sandbox/src/security-production/.gitkeep`
+  - added the permanent production boundary/capability repository gate in
+    `tests/repository/sandbox-security-production.spec.ts`
+  - gate recursively scans the actual frozen core and sibling production trees,
+    resolves static/export/require/import-equals edges, rejects path and symlink
+    escapes, and enforces the sole sanitizer deep-import exception
+  - gate rejects benchmark/Track 1 oracle imports and literals, forbidden
+    dynamic capabilities, provider network capability outside the transport,
+    environment access outside config, and sanitizer helper re-export
+- TDD evidence:
+  - initial RED: `30/31`; the only failure was the intended `AssertionError`
+    `missing exact production root: engines/sandbox/src/security-production`
+  - initial GREEN: `44/44`
+  - accepted review findings received dedicated RED mutations before fixes;
+    focused progression was `58/58`, `62/62`, `84/84`, `109/109`, `115/115`,
+    then final `116/116`
+- final validation:
+  - focused production boundary gate: `116/116`
+  - repository: `294/294`
+  - sandbox TypeScript: passed
+  - frontend production build: passed with the existing chunk-size warning
+  - `git diff --check` and untracked-file no-index whitespace check: passed
+- independent review:
+  - Specification Compliance Review: first `CHANGES_REQUIRED` for root-symlink,
+    computed capability, and benchmark identity bypasses; all fixed with RED
+    mutations; final specification re-review `APPROVED`
+  - Code Quality/Security Review: `CHANGES_REQUIRED` for global/require/eval/
+    constructor indirection, ambient and shadow handling, bounded static string
+    folding, sanitizer helper export leakage, and planned sanitizer declaration
+    compatibility; accepted findings fixed through repeated RED/GREEN cycles
+  - final Code Quality/Security re-review: `APPROVED`; no new blocking issue
+- disposition and remaining risk:
+  - `package.json` registration remains intentionally deferred to its approved
+    unique owner P4-T4; every intervening task runs this focused gate explicitly
+  - non-blocking hand-written NodeNext candidate completeness, TSX ScriptKind,
+    Windows symlink setup cleanup, and single-file size remain recorded for the
+    later package/global gate review; no P0/P1 or blocking P2 remains
+- commit: the exact P1-T1 task commit containing this evidence
+- next: P1-T2 closed frozen rule catalog
+
 ## 2026-07-17 - REQ-SBX-GENERAL-002 implementation authorization and execution start
 
 - transition: user explicitly approved the independently reviewed GENERAL-002
