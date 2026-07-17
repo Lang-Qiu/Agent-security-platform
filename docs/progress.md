@@ -5138,3 +5138,41 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   business-logic TDD
 - commit: the exact Phase 1 evidence commit containing this record
 - next: Phase 2 / P2-T1 content-free provider outcome contracts
+
+## 2026-07-17 - REQ-SBX-GENERAL-002 P2-T1 content-free provider outcomes
+
+- phase/task: Phase 2 / P2-T1
+- status: VERIFIED
+- implementation:
+  - added the five exact replay outcome branches and the stable inventory,
+    Ollama chat, and OpenAI response shapes for sibling production/benchmark use
+  - normalizers enforce exact own data keys, dense bounded arrays, closed
+    enums, normalized digests, semantic candidate/obligation uniqueness,
+    defensive copies, recursive freezing, and fixed safe errors
+  - the generic outcome combinator accepts only the three concrete response
+    normalizer identities, preventing arbitrary content-bearing capture values
+  - response count remains capped at 32 while routed obligation ordinals use
+    the independent one-based `1..999` contract
+- TDD evidence:
+  - initial RED: after repairing a test-only syntax error, all `13/13` cases
+    failed with intended behavioral `AssertionError`s from the inert fallback;
+    no import, syntax, or environment error remained
+  - initial GREEN: focused `13/13`; boundary plus focused `134/134`
+  - specification-fix RED: `13` passed and three intended cases failed for an
+    identity callback leak, semantic duplicate candidates, and ordinal 33;
+    corrected GREEN was focused `16/16`, boundary plus focused `137/137`
+  - quality-fix RED: `16` passed and four hostile/revoked Proxy cases leaked
+    foreign errors as expected; fixed safe-error containment passed focused
+    `20/20`, boundary plus focused `141/141`
+  - sandbox TypeScript, frontend production build, and `git diff --check`
+    passed; the frontend retained its existing non-failing chunk-size advisory
+- independent review:
+  - Specification Compliance Review first `CHANGES_REQUIRED` for generic
+    leakage, candidate uniqueness, and obligation ordinal bounds; all three
+    findings are `RESOLVED`
+  - Code Quality/Security Review first `CHANGES_REQUIRED` for Proxy reflection
+    error leakage; the finding is `RESOLVED`
+  - combined re-review: all four original findings `RESOLVED`, new issues none,
+    final conclusion `APPROVED`
+- commit: the exact P2-T1 task commit containing this evidence
+- next: P2-T2 closed default HTTP transport
