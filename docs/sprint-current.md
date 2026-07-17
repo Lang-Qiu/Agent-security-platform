@@ -1,131 +1,97 @@
-<!-- Phase 5 VERIFIED 2026-07-15: P5-T1..T5 closed; final global review APPROVED -->
 # Sprint Current
 
 ## Requirement ID
 
-REQ-SBX-GENERAL-001
+REQ-SBX-GENERAL-002
 
 ## Requirement Name
 
-Sandbox Security Core
+Sandbox Security Production Detectors and Sealed Benchmark
 
 ## Status
 
-COMPLETE_PENDING_REVIEW
+IMPLEMENTATION_IN_PROGRESS
 
-## Approval
+## Transition Authority
 
-The user explicitly reapproved both Canonical Specs, the Master Plan, and all
-five Phase Plans on `2026-07-13`. Implementation is authorized only in the
-exact Master DAG order.
+The user instructed the project to enter GENERAL-002 on `2026-07-16` after
+GENERAL-001 Phase 1..5 and its final global review completed. The user then
+approved the GENERAL-002 design choices and authorized the specification to be
+written.
 
-## Background
+The written Spec and complete RED-first implementation plan set were
+independently reviewed and explicitly approved. Production implementation is
+authorized in the exact Master/Phase DAG order.
 
-The existing Track 1 sandbox path provides deterministic monitoring, a
-rule-based filter, controlled tool execution, and supervision contracts. This
-requirement adds a reusable core that evaluates bounded authoritative Agent
-activity without depending on Track 1 case IDs, benchmark labels, simulated
-tool names, or an expected-action oracle.
-
-Canonical specifications:
+## Canonical Inputs
 
 - `docs/superpowers/specs/2026-07-10-sandbox-general-security-design.md`
 - `docs/superpowers/specs/2026-07-10-sandbox-security-core-spec.md`
-
-Canonical implementation authority:
-
 - `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-master.md`
-- the five `2026-07-11-sandbox-security-core-001-phase-*.md` plans
+- `docs/superpowers/specs/2026-07-16-sandbox-security-production-detectors-spec.md`
 
 ## Goal
 
-- Add strict public request, finding, detector-run, and decision contracts.
-- Reconstruct and validate engine-private authoritative evaluation context.
-- Canonicalize and bound authoritative inputs using in-repository RFC 8785 JCS.
-- Isolate raw-local detectors from sanitized external Judge ports.
-- Qualify detector evidence through immutable balanced and strict profiles.
-- Route Judge only for unresolved escalation obligations.
-- Reduce findings and failures to deterministic, stage-aware fail-closed policy.
-- Preserve existing Monitor and Track 1 behavior through compatibility adapters.
+- Add a deterministic production rule detector.
+- Add a digest-pinned Ollama `qwen3:8b` local-model adapter.
+- Add a deterministic structured sanitizer.
+- Add an OpenAI Responses API Judge adapter using `gpt-5.6-terra`.
+- Add production composition without changing GENERAL-001 semantics.
+- Curate and seal the fixed 300-sample `sandbox-security-benchmark.v1`.
+- Require both controlled live qualification and hermetic replay.
+
+## Approved Design Decisions
+
+- Production code lives under a sibling `security-production/` tree; the
+  frozen GENERAL-001 core never imports it.
+- GENERAL-002 uses only the final security index except for the sanitizer's one
+  approved derive-helper deep import.
+- Rule catalog is versioned TypeScript data with fixed deterministic operators.
+- Ollama is loopback-only, does not auto-pull models, and requires an expected
+  immutable model digest.
+- Sanitization is deterministic, NFKC-based, structured, bounded, and
+  fail-closed.
+- Judge uses `https://api.openai.com/v1/responses`, `gpt-5.6-terra`, low
+  reasoning, strict JSON Schema, and `store: false`.
+- Benchmark inputs use multiple public sources with immutable provenance and
+  only Apache-2.0, MIT, BSD, CC BY 4.0, or CC0 licensing.
+- Human-reviewed Chinese derivatives and independently reviewed transformed
+  attacks are permitted.
+- The capture process cannot read benchmark truth; production code cannot read
+  any benchmark input, truth, source lock, manifest, or replay data.
 
 ## In Scope
 
-- Shared structural types and exact-key normalizers.
-- Source authority, canonical projection, private handles, locators, and keyed
-  fingerprint boundary.
-- Detector ports, subject/result boundaries, immutable profiles, and registry.
-- Finding qualification, escalation lifecycle, runtime deadlines, run ledger,
-  policy reducer, semantic validator, and evaluation orchestration.
-- Monitor and Track 1 compatibility adapters, exact export closure, tests, and
-  durable documentation.
-- Exactly 26 tasks in the Master DAG: `4 + 5 + 6 + 6 + 5`.
+- Production rule, local, sanitizer, Judge, transport, configuration, and
+  composition modules.
+- Public-source admission, fixture normalization, truth isolation, live
+  capture, metric evaluation, sealed replay, attribution, and anti-oracle gates.
+- Tests, static checks, TypeScript checks, Track 1 compatibility, docs, review,
+  fixes, re-review, and final global review.
 
-## Out Of Scope
+## Out of Scope
 
-- Production generic detector rules, local model runtime, sanitizer, or Judge.
-- Backend routes, authentication, authorization, idempotency, or durable audit.
-- OpenClaw hook enforcement or frontend workbench behavior.
-- The 300-sample benchmark fixtures and execution.
-- New dependencies, network/filesystem/process integrations, dynamic profiles,
-  database, queue, worker, sidecar, or physical memory zeroization.
-- Any implementation from REQ-SBX-GENERAL-002 through GENERAL-005.
+- Backend API/auth/idempotency/audit (GENERAL-003).
+- OpenClaw enforcement (GENERAL-004).
+- Frontend workbench and audit UI (GENERAL-005).
+- GENERAL-001 contract/profile/reducer/state-machine changes.
+- Automatic model or dataset downloads, training, dynamic rules, retries,
+  fallback providers, workers, queues, or sidecars.
 
-## Acceptance Criteria
+## Current Work
 
-- Caller claims cannot create source trust or override authoritative stage,
-  profile, content, source order, or tool observations.
-- All fixed limits, JCS vectors, private/public token boundaries, and locator
-  rules have exact boundary tests.
-- External Judge code cannot receive a raw detector snapshot and cannot run
-  without validated nonempty routed obligations.
-- Required and runtime-required failure cannot produce `allow`.
-- Decision materialization, Scheme B closure, run ownership, and semantic
-  validation follow the Canonical Specs.
-- Decisions contain no raw or sanitized content, ordinary content hashes, or
-  free-form detector/provider text.
-- Existing Track 1 actions, contracts, and byte-stability gates remain green.
-- Focused, Phase, Master, shared, sandbox-engine, repository, and TypeScript
-  gates pass without waiver.
-- Required documentation is updated and final status becomes
-  `COMPLETE_PENDING_REVIEW`.
-
-## Design Decision
-
-Keep structural contracts in `shared/` and all authority, trust, detector,
-qualification, policy, and orchestration semantics inside
-`engines/sandbox/src/security/`. Trusted adapters construct authoritative
-evaluation requests. Profiles are immutable, detectors return evidence rather
-than actions, the external Judge receives only validated sanitized payloads,
-and policy reduction has one engine-owned implementation.
-
-## Execution Constraints
-
-- Work only in WSL/Linux with Node.js `>=22.19.0`, `pnpm@10.0.0`, and the
-  repository-local TypeScript compiler.
-- Follow `Design -> Test (RED) -> Implement (GREEN) -> Document -> Review` for
-  every implementation task.
-- A raw import, syntax, export-link, or environment error is not valid RED.
-- Execute one implementation task at a time in exact Master DAG order.
-- Preserve production-file ownership and exact per-task staging/commit scope.
-- Do not install dependencies, modify lockfiles, change frozen API names, or
-  widen requirement scope during implementation.
-- Complete both spec-compliance and code-quality review before each task commit.
-- Phase reviews may proceed automatically after their gates pass; do not enter
-  GENERAL-002 after this requirement closes.
-
-## Current Implementation Status
-
-- Documentation-only approval and sprint-switch gate: complete.
-- Phase 1 public shared contracts: complete (prior commits).
-- Phase 2 authority and canonical input (P2-T1..P2-T5): implemented; review
-  P1/P2 fixes verified (typed authority JSON errors, 512 KiB fingerprint bound,
-  independent fingerprint port bytes).
-- Phase 3 detectors/profiles/boundaries/registry (P3-T5 → T1 → T2 → T3 → T4 → T6):
-  implemented and independently APPROVED (subject_key `subjects` field, strict
-  missing-local `sandbox_security_profile_invalid`, boundary fail-closed
-  uniqueness/confidence/reason_code/source_type/locator gates closed).
-- Phase 4 engine/policy (P4-T1..T6): independently APPROVED after review/fix loop.
-- Phase 5 compatibility closure (P5-T1..T5): VERIFIED after task-level and final
-  global review/fix/re-review loops; final global conclusion APPROVED.
-- Next: stop for requirement review at `COMPLETE_PENDING_REVIEW`. Do not begin
-  or advertise GENERAL-002.
+- The user explicitly approved the reviewed GENERAL-002 Spec and Plan.
+- Status is `IMPLEMENTATION_IN_PROGRESS`; implementation follows the exact
+  Master/Phase DAG with one task closed at a time.
+- The plan set is one Master plus seven ordered Phase plans covering production
+  boundaries/rules, transport/local model, sanitizer/Judge, composition,
+  benchmark corpus, live capture, and hermetic closure.
+- A permanent repository plan gate is GREEN: all eight plan documents are
+  complete, semantically self-consistent, and independently re-reviewed.
+- Plan review record: first review `CHANGES_REQUIRED` with seven blocking
+  findings; all fixed; re-review `APPROVED`; no new findings.
+- Current execution node: Phase 1, P1-T1 boundary gate.
+- Each task requires RED, GREEN, static/integration/build gates, independent
+  Specification Compliance Review, fix/re-review, independent Code
+  Quality/Security Review, fix/re-review, status synchronization, and an exact
+  commit before the next task.

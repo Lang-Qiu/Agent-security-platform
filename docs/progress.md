@@ -1,3 +1,173 @@
+## 2026-07-17 - REQ-SBX-GENERAL-002 implementation authorization and execution start
+
+- transition: user explicitly approved the independently reviewed GENERAL-002
+  Master and seven Phase Plans
+- status: IMPLEMENTATION_IN_PROGRESS
+- current node: Phase 1 / P1-T1 production boundary and capability gate
+- execution rule: one task at a time; each task closes RED, GREEN, static,
+  integration, build, Specification Compliance Review, fix/re-review, Code
+  Quality/Security Review, fix/re-review, status synchronization, and exact
+  commit before the next task
+- no production or benchmark implementation had been started at transition
+- next: execute P1-T1 from its Phase plan
+
+## 2026-07-16 - REQ-SBX-GENERAL-002 RED-first Master and Phase Plan closure
+
+- stage: documentation/design exception to full business-logic TDD; no
+  production source, benchmark fixture, provider capture, or seal artifact was
+  created
+- status: PLAN_REVIEWED_PENDING_USER_APPROVAL (historical before explicit user approval)
+- plan set: one Master plus seven ordered Phase plans, 29 tasks total
+- permanent plan gate: semantic structure/ownership/isolation gate is GREEN
+  (`4/4` tests); mutation cases reject merged-review, fixture-bearing replay,
+  and direct unpermissioned live-child plan variants
+- focused plan/spec gate: `18/18` passed
+- independent Plan Review: first conclusion `CHANGES_REQUIRED` with seven
+  blocking findings; fixes included path/field-based anti-oracle checks,
+  two-stage review protocol, real sanitizer failure coverage, internal
+  composition ports, benchmark TypeScript project, P7 status/path ordering,
+  and semantic plan mutation gates
+- review fixes also separated the P5 parent child-process launcher from the
+  P6 permission child, separated truth-aware evaluator from truth-blind
+  seal.ts, stripped fixture IDs before replay transport construction, and split
+  Engine replay from the truth evaluator process
+- Plan re-review: all seven original issues `RESOLVED`; new issues none;
+  final conclusion `APPROVED`
+- verification evidence:
+  - repository `294/294`
+  - shared `207/207`
+  - sandbox engine `1028/1028`
+  - shared TypeScript check passed
+  - sandbox TypeScript check passed
+  - frontend production build passed
+  - `git diff --check` passed
+- environment note: no Ollama listener/model digest or OpenAI live credentials
+  were used; live qualification remains a future Phase 6 prerequisite
+- git note: no commit was created for this documentation handoff; existing
+  unrelated/uncommitted work is preserved verbatim
+- next: obtain explicit user approval of the reviewed Plan (completed on
+  2026-07-17; execution began in the entry above)
+
+## 2026-07-16 - REQ-SBX-GENERAL-002 plan design start
+
+- transition: user explicitly approved the independently reviewed GENERAL-002
+  Spec
+- stage: documentation/design exception to full business-logic TDD; no
+  production behavior or benchmark fixture is being added
+- status: SPEC_APPROVED_PLAN_IN_PROGRESS
+- planned documents: one RED-first Master plus seven ordered Phase plans
+- permanent plan gate: added and registered in `test:repo`; expected RED until
+  the complete plan set exists and satisfies structure, coverage, review, build,
+  and placeholder checks
+- next: create the plan set, validate it, independently review it, fix accepted
+  findings, re-review, and stop for explicit plan approval
+
+## 2026-07-16 - REQ-SBX-GENERAL-002 specification review fixes
+
+- stage: documentation/design exception to full business-logic TDD; no
+  production behavior or benchmark fixture was added
+- status: SPEC_REVIEWED_PENDING_USER_APPROVAL
+- first independent review: CHANGES_REQUIRED
+- accepted blocking findings fixed:
+  - Ollama inventory is fixed to `GET /api/tags`; local-only records, digest
+    normalization, unforgeable transport-bound qualification, prewarm, and
+    lifecycle behavior are explicit
+  - the public composition no longer accepts caller transports, credentials, or
+    environment objects; the default transport owns the OpenAI credential
+  - OpenAI request/schema/response/refusal/incomplete/model-mismatch behavior and
+    output-token cap are frozen
+  - sanitizer keys now respect the frozen core, unknown-key behavior is
+    unambiguous, short header credentials are redacted, and the core validator
+    remains the sole exact bounds authority
+  - provider terminal cleanup is single-settle and resource-complete
+  - benchmark candidate families/revisions, record-license evidence, and the
+    `memory_poisoning` derivation strategy are bounded
+  - replay outcomes and capture/seal manifests are exact and content-free
+  - truth blindness uses Node.js runtime file permissions and separate capture
+    and evaluator processes
+  - frozen metric numerators/denominators are explicit without changing the
+    umbrella contract
+  - GENERAL-001 closure tests no longer freeze the active GENERAL-002 sprint;
+    GENERAL-002 has its own permanent mutation gate
+- review disposition note: the suggested primary-category/severity match was
+  not added to benchmark recall because it would change the frozen umbrella
+  formulas; category/reason/severity correctness remains a separate contract
+  gate, while benchmark detection success remains verdict-based
+- focused RED: `1/7` failed for the intended missing `/api/tags` qualification
+  clause; no import, syntax, or environment error was used as RED
+- first focused GREEN: `7/7` passed
+- subsequent re-review/fix cycles:
+  - a transport-bound digest/capture ownership P1 was fixed with the
+    `verified_ollama_digest` side channel, phase-tagged capture records, fixed
+    prewarm payload, qualification prefix, and manifest-order replay
+  - the next re-review found that a flat per-provider replay FIFO could not
+    close `not_called` slots per input; the Spec now has anonymous two-slot
+    `beginInput()`/`endInput()`/`assertDrained()` boundaries and the focused gate
+    added a RED mutation for that failure mode
+  - the latest independent re-review found a qualification-state contradiction:
+    replay needed boundary-free inventory/prewarm requests while the initial
+    boundary wording forbade every such request; it also found lifecycle gate
+    false-allows and stale status evidence
+- latest accepted fixes:
+  - capture and replay now both use the explicit
+    `qualification_inventory` -> `qualification_prewarm` -> `ready` state
+    sequence; only the fixed qualification prefix can issue boundary-free
+    replay requests, and `ready` permanently forbids them
+  - `assertDrained()` now requires successful qualification, 300 closed input
+    units, no open input, and no unconsumed provider expectation
+  - permanent mutation gates reject premature input, post-ready boundary-free
+    requests, omitted `not_called`, incomplete qualification drain, and silent
+    mutation no-ops
+- latest focused RED: `1/15` failed for the intended missing qualification
+  lifecycle clause; no import, syntax, or environment error was used as RED
+- latest focused GREEN: `15/15` passed
+- latest post-fix validation evidence: focused `15/15`, repository `290/290`,
+  shared `207/207`, sandbox engine `1028/1028`, shared/sandbox TypeScript
+  checks, frontend production build, and `git diff --check` passed
+- final re-review:
+  - Issue 1 qualification/input lifecycle contradiction: RESOLVED
+  - Issue 2 lifecycle mutation-gate false-allows: RESOLVED
+  - Issue 3 stale status and validation evidence: RESOLVED
+  - new issues: none
+  - conclusion: APPROVED
+- next: obtain explicit user approval of the written Spec, then invoke
+  `$superpowers:writing-plans`; implementation remains prohibited pending user
+  approval of both Spec and Plan
+
+## 2026-07-16 - REQ-SBX-GENERAL-002 specification design start
+
+- transition: user explicitly instructed the project to enter GENERAL-002
+  after GENERAL-001 Phase 1..5 and final global review completed
+- stage: documentation/design only; full TDD is not applicable because no
+  production behavior or benchmark fixture is being implemented
+- status: SPEC_PENDING_REVIEW
+- approved choices:
+  - sibling `security-production/` architecture preserving the frozen core
+  - TypeScript deterministic production rule catalog
+  - digest-pinned Ollama `qwen3:8b` local detector
+  - deterministic NFKC structured sanitizer
+  - OpenAI Responses API Judge using `gpt-5.6-terra`, low reasoning,
+    `store: false`, and strict JSON Schema
+  - multi-source public benchmark data with immutable provenance and only
+    Apache-2.0/MIT/BSD/CC BY 4.0/CC0 licenses
+  - human-reviewed Chinese derivatives and independently reviewed transformed
+    attacks
+  - controlled live qualification plus mandatory hermetic sealed replay
+- investigation:
+  - no prior GENERAL-002 Spec or Plan exists in any repository ref
+  - GENERAL-001 exposes all required detector/registry/Engine contracts
+  - the production sanitizer retains the sole approved derive-helper deep
+    import; all other production modules use the final security index
+  - BIPIA benchmark data is excluded from v1 source admission because bundled
+    source components include licenses outside the approved allowlist
+- files planned in this documentation step:
+  - `docs/superpowers/specs/2026-07-16-sandbox-security-production-detectors-spec.md`
+  - `docs/sprint-current.md`
+  - `docs/progress.md`
+- next: Spec self-review, deterministic documentation validation, commit, and
+  user review; implementation remains prohibited until a RED-first Plan is
+  separately approved
+
 ## 2026-07-15 - REQ-SBX-GENERAL-001 Phase 5 closure
 
 - scope: P5-T1..T4 compatibility and export closure, followed by P5-T5

@@ -848,14 +848,15 @@ function extractFencedBlocks(section: string, language: string): string[] {
   return blocks;
 }
 
-function assertSandboxSecuritySprintFinalReviewState(text: string): void {
-  assert.equal(
-    extractMarkdownSection(text, "## Requirement ID"),
-    "REQ-SBX-GENERAL-001"
+function assertSandboxSecurityGeneral001ReviewClosure(text: string): void {
+  assert.match(
+    text,
+    /^## 2026-07-15 - REQ-SBX-GENERAL-001 Phase 5 closure$/m
   );
-  assert.equal(
-    extractMarkdownSection(text, "## Status"),
-    "COMPLETE_PENDING_REVIEW"
+  assert.match(text, /P5-T1\.\.T5 VERIFIED/);
+  assert.match(
+    text,
+    /final global review closure: APPROVED; no unresolved P0\/P1\/blocking P2/
   );
 }
 
@@ -2876,10 +2877,8 @@ test("REQ-SBX-GENERAL-001 resolveSandboxSecurityDetectorsForProfile remains non-
   }
 });
 
-test("REQ-SBX-GENERAL-001 sprint is at final review state", () => {
-  assertSandboxSecuritySprintFinalReviewState(
-    readText("docs/sprint-current.md")
-  );
+test("REQ-SBX-GENERAL-001 closure remains durable after sprint transition", () => {
+  assertSandboxSecurityGeneral001ReviewClosure(readText("docs/progress.md"));
 });
 
 test("REQ-SBX-GENERAL-001 durable docs expose final core boundary", () => {
@@ -2954,14 +2953,6 @@ test("REQ-SBX-GENERAL-001 docs do not advertise public *Input evaluation request
     const text = readText(relativePath);
     assert.doesNotMatch(text, FORBIDDEN_PUBLIC_EVALUATION_INPUT_PATTERN);
   }
-});
-
-test("REQ-SBX-GENERAL-001 documentation gate rejects a suffixed final status", () => {
-  const sprint = readText("docs/sprint-current.md").replace(
-    "COMPLETE_PENDING_REVIEW",
-    "COMPLETE_PENDING_REVIEW-extra"
-  );
-  assert.throws(() => assertSandboxSecuritySprintFinalReviewState(sprint));
 });
 
 test("REQ-SBX-GENERAL-001 documentation gate rejects renamed or widened evaluate", () => {
@@ -3039,22 +3030,15 @@ test("REQ-SBX-GENERAL-001 api contract scopes evaluation requests to trusted eng
 
 test("REQ-SBX-GENERAL-001 records approved Phase 5 under requirement review", () => {
   const progress = readText("docs/progress.md");
-  const sprint = readText("docs/sprint-current.md");
-  assert.match(progress, /P5-T1\.\.T5 VERIFIED/);
+  assertSandboxSecurityGeneral001ReviewClosure(progress);
   assert.match(
     progress,
     /second quality re-review: all five original issues RESOLVED, no new[ \n]+issues, final conclusion APPROVED/
   );
   assert.match(
-    sprint,
-    /Phase 5 compatibility closure \(P5-T1\.\.T5\): VERIFIED/
-  );
-  assert.match(sprint, /final global conclusion APPROVED/);
-  assert.match(
     progress,
     /Phase 5 final global re-review:[\s\S]*final[ \n]+conclusion APPROVED, requirement exit allowed/
   );
-  assertSandboxSecuritySprintFinalReviewState(sprint);
 });
 
 test("REQ-SBX-GENERAL-001 README distinguishes delivered core from remaining capabilities", () => {
