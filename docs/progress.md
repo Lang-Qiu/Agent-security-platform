@@ -5204,3 +5204,59 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - status: VERIFIED_OWNER_CORRECTION
 - commit: the exact P1-T1 owner-correction commit containing this evidence
 - next: resume P2-T2 quality-review closure
+
+## 2026-07-18 - REQ-SBX-GENERAL-002 P2-T2 closed default HTTP transport
+
+- phase/task: Phase 2 / P2-T2
+- branch/base: `sandbox` from P2-T1 `f577607`; capability owner correction
+  `39fa01c`
+- status: VERIFIED
+- exact implementation files:
+  - `engines/sandbox/src/security-production/http-transport.ts`
+  - `engines/sandbox/tests/sandbox-security-production-http-transport.spec.ts`
+- design boundary:
+  - the default transport is the sole production network capability and maps
+    only fixed Ollama inventory/chat and OpenAI Responses operations
+  - it owns exact URL/header/signal behavior, bounded JSON responses, private
+    credentials, digest revalidation, and transport-owned terminal cleanup
+  - no endpoint, model, credential, or request-factory seam crosses the future
+    public production composition boundary
+- TDD evidence:
+  - initial guarded wire RED failed because the inert fallback created no
+    required Ollama inventory request; the first fixed GET then passed `1/1`
+  - successive behavioral REDs covered digest drift, OpenAI wire and key
+    safety, runtime exact request records, content type, redirects/status,
+    64 KiB incremental limits, request/stream failures, premature close,
+    abort/error/close races, duplicate/late responses, invalid inventory,
+    hostile chunks, cleanup accessors, and defensive request copies
+  - specification-review REDs reproduced a 65,537-byte TypedArray cap bypass,
+    getter/listener-registration reentrancy, cascading shared-socket teardown,
+    and forged AbortSignal brand failure before their minimal corrections
+  - quality-review REDs reproduced hostile request-body iteration, absence of
+    a guaranteed constant-time primitive, and permissive/accessor-bearing
+    factory configuration before internal-byte copying, `timingSafeEqual`, and
+    exact plain-data normalization were added
+  - the literal Node-internal destroy-call finding was independently withdrawn
+    as a transport-owned teardown misinterpretation; exact signal forwarding,
+    final destroyed state, listener removal, and settle-once behavior remain
+- final verification:
+  - focused transport `20/20`; production boundary/provider/transport combined
+    `162/162`; repository `294/294`
+  - sandbox TypeScript, frontend production build, and `git diff --check`
+    passed; the frontend retained its existing non-failing chunk-size advisory
+  - only the two owned task files and this evidence were dirty before staging
+- independent review:
+  - Specification Compliance Review first `CHANGES_REQUIRED` for four resource
+    and hostile-input boundary findings; all are `RESOLVED`
+  - Code Quality/Security Review first `CHANGES_REQUIRED` for request copying,
+    Node lifecycle interpretation, constant-time comparison, and factory
+    normalization; three were fixed and the lifecycle issue was withdrawn
+    after a Node `v22.19.0` loopback proof showed it counted runtime-internal
+    idempotent calls rather than transport ownership
+  - final combined re-review: every specification and quality issue
+    `RESOLVED`, new issues none, final conclusion `APPROVED`
+- capability correction: the P1-T1 owner correction `39fa01c` precisely permits
+  `node:crypto/http/https/util` in the transport while retaining `node:fs` and
+  `node:net` rejection
+- commit: the exact P2-T2 task commit containing this evidence
+- next: P2-T3 private production configuration
