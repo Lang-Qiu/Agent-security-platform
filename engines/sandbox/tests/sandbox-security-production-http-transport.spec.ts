@@ -831,6 +831,61 @@ test("REQ-SBX-GENERAL-002 transport blocks Ollama chat before raw bytes on diges
   assert.equal(failure.stack?.includes("never-send-this-provider-body"), false);
 });
 
+for (const inventoryStatus of [201, 204, 299] as const) {
+  test(`REQ-SBX-GENERAL-002 transport rejects Ollama inventory status ${inventoryStatus} before raw chat bytes`, async () => {
+    const digestHex = "e".repeat(64);
+    const rawChatSentinel = `RAW_INVENTORY_STATUS_${inventoryStatus}_CHAT_SENTINEL`;
+    const rawChatBody = jsonBytes({ raw_snapshot: rawChatSentinel });
+    const harness = createScriptedRequestFactory([
+      {
+        status: inventoryStatus,
+        chunks: [jsonBytes({
+          models: [{
+            name: "qwen3:8b",
+            model: "qwen3:8b",
+            digest: digestHex
+          }]
+        })]
+      },
+      { chunks: [jsonBytes({ message: { content: "must-not-be-reached" } })] }
+    ]);
+    const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
+      expected_ollama_digest: `sha256:${digestHex}`,
+      openai_api_key: null,
+      request_factory: harness.factory
+    });
+    let failure: unknown;
+    try {
+      await transport.request(
+        ollamaChatRequest(new AbortController().signal, rawChatBody)
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    const sentBodies = harness.recorded
+      .flatMap((record) => record.body === undefined ? [] : [record.body])
+      .map((body) => new TextDecoder().decode(body));
+    assert.deepEqual(
+      {
+        failure_name: failure instanceof Error ? failure.name : null,
+        failure_message: failure instanceof Error ? failure.message : null,
+        wire: harness.recorded.map((record) => ({
+          method: record.method,
+          path: record.path
+        })),
+        raw_sentinel_sent: sentBodies.some((body) => body.includes(rawChatSentinel))
+      },
+      {
+        failure_name: "sandbox_security_transport_invalid",
+        failure_message: "sandbox_security_transport_invalid",
+        wire: [{ method: "GET", path: "/api/tags" }],
+        raw_sentinel_sent: false
+      }
+    );
+  });
+}
+
 test("REQ-SBX-GENERAL-002 transport maps OpenAI Responses to its fixed authenticated POST wire endpoint", async () => {
   const controller = new AbortController();
   const apiKey = "private-openai-key";

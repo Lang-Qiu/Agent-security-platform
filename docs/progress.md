@@ -5443,3 +5443,37 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - operator constraint: no P1-T3 detector validation command was repeated
 - commit: the exact P2-T5 task commit containing this evidence
 - next: Phase 2 exit gate and independent Phase review
+
+## 2026-07-18 - REQ-SBX-GENERAL-002 P2-T2 exact inventory-status owner correction
+
+- scope: returned a Phase 2 final-review defect to the P2-T2 transport owner;
+  no endpoint, credential, generic wire-status, standalone inventory, or frozen
+  GENERAL-001 behavior changed
+- correction:
+  - compound Ollama chat digest revalidation now accepts only an exact HTTP
+    `200` inventory response before any raw chat body can be sent
+  - standalone `model_inventory` retains its bounded status/body visibility for
+    adapter-owned response handling
+- TDD evidence:
+  - RED: focused transport ran `25` cases with `22` passing and three intended
+    behavioral failures; `201`, `204`, and `299` inventories each produced a
+    `GET /api/tags` followed by `POST /api/chat` and sent its unique raw
+    sentinel
+  - GREEN: focused transport passed `25/25`; the combined Phase 2 correction
+    gate, explicitly excluding the P1-T3 detector spec, passed `262/262`
+  - sandbox TypeScript, frontend production build, and `git diff --check`
+    passed; the frontend retained its existing non-failing chunk-size advisory
+- independent review:
+  - Phase 2 review first concluded `CHANGES_REQUIRED` with one blocking P1 for
+    abnormal successful-status inventory responses crossing the raw-content
+    gate
+  - Specification Compliance Review: `APPROVED`; P0-P3 none
+  - Code Quality/Security Review: `APPROVED`; Critical/Important/Minor none
+  - combined re-review: the original P1 is `RESOLVED`, new issues none, final
+    conclusion `APPROVED`
+- process note: this status evidence is a documentation exception to full
+  business-logic TDD
+- operator constraint: no P1-T3 production rule-detector spec was repeated
+- status: VERIFIED_OWNER_CORRECTION
+- commit: the exact P2-T2 owner-correction commit containing this evidence
+- next: rerun the Phase 2 exit gate and record Phase 2 VERIFIED evidence

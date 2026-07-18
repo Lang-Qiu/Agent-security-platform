@@ -520,8 +520,7 @@ function revalidatedOllamaDigest(
   if (
     expectedDigest === null ||
     !SHA256_DIGEST.test(expectedDigest) ||
-    response.status < 200 ||
-    response.status >= 300 ||
+    response.status !== 200 ||
     response.content_type !== "application/json"
   ) {
     return invalid();
