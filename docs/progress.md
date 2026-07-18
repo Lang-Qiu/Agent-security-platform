@@ -5302,3 +5302,55 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - operator constraint: no P1-T3 detector validation command was repeated
 - commit: the exact P2-T3 task commit containing this evidence
 - next: P2-T4 exact Ollama request and response contract
+
+## 2026-07-18 - REQ-SBX-GENERAL-002 P2-T4 exact Ollama contract
+
+- phase/task: Phase 2 / P2-T4
+- branch/base: `sandbox` from P2-T3 `fcf52e4`
+- status: VERIFIED
+- exact implementation files:
+  - `engines/sandbox/src/security-production/ollama-contract.ts`
+  - `engines/sandbox/tests/sandbox-security-production-ollama-contract.spec.ts`
+- design boundary:
+  - constructs only the fixed `qwen3:8b` prompt, projection, JSON Schema,
+    deterministic chat body, and fixed prewarm body; it has no network,
+    environment, config, transport, benchmark, or core-deep-import capability
+  - parses only the strict completed Ollama assistant envelope and local-model
+    schema, discards validated timing/prose, and delegates final content-free
+    replay normalization and recursive freezing to the P2-T1 contract
+  - snapshot-specific source/tool existence, private-handle mapping, numeric
+    confidence, reason codes, and raw detector results remain owned by P2-T5
+- canonical evidence:
+  - local prompt version:
+    `sandbox-security-ollama-local-prompt.v1`
+  - exact prompt SHA-256:
+    `66203fcf01a54e0a3b0666ad952075b927a062411d0baad4230f51d71acf0553`
+  - exact prewarm body: `2411` UTF-8 bytes, SHA-256
+    `8467159d8ed46259145bf3684514c8b9e5b222922381bde7eecb09e5858cca98`
+  - request construction accepts exactly `32768` final UTF-8 bytes and rejects
+    `32769`; direct response parsing accepts `65536` raw bytes and rejects
+    `65537` before decode/parse
+- TDD and verification evidence:
+  - initial guarded RED failed `0/1` with the intended canonical-body
+    `AssertionError` (`Uint8Array(0)` versus `Uint8Array(2480)`), not an import,
+    syntax, or environment error
+  - the expanded inert contract RED failed `0/10` before production code
+  - focused contract tests passed `10/10`; repository + provider outcomes +
+    contract combined gate passed `152/152`
+  - sandbox TypeScript, frontend production build, and `git diff --check`
+    passed; the frontend retained its existing non-failing chunk-size advisory
+- independent review:
+  - Specification Compliance Review: `APPROVED`; P0-P3 none
+  - Code Quality/Security Review: `APPROVED`; Critical/Important/Minor none;
+    the mutable `Uint8Array` candidate was withdrawn because the locked
+    sibling-only value is fresh and the closed transport synchronously copies
+    intrinsic bytes before its first asynchronous suspension
+  - combined re-review: both original issue sets empty, new P0-P3 issues none,
+    final conclusion `APPROVED`
+- documentation scope: `README.md`, `docs/architecture.md`, and
+  `docs/api-contract.md` require no change because P2-T4 adds no public API or
+  cross-boundary DTO
+- operator constraint: no P1-T3 detector validation command was repeated
+- commit: the exact P2-T4 task commit containing this evidence
+- next: return the constant-time digest helper gap to P2-T2 ownership before
+  P2-T5 qualification implementation
