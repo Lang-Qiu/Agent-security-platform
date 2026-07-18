@@ -5477,3 +5477,48 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - status: VERIFIED_OWNER_CORRECTION
 - commit: the exact P2-T2 owner-correction commit containing this evidence
 - next: rerun the Phase 2 exit gate and record Phase 2 VERIFIED evidence
+
+## 2026-07-18 - REQ-SBX-GENERAL-002 Phase 2 transport and local model VERIFIED
+
+- phase: Phase 2 / transport, private configuration, and digest-qualified local
+  model
+- status: VERIFIED
+- task commits:
+  - P2-T1 provider outcomes: `f577607`
+  - P1-T1 transport capability owner correction: `39fa01c`
+  - P2-T2 default HTTP transport: `919a557`
+  - P2-T3 private production configuration: `fcf52e4`
+  - P2-T4 exact Ollama contract: `c6e8dfc`
+  - P2-T2 constant-time comparator owner correction: `2513d7a`
+  - P2-T5 digest-qualified Ollama detector: `ff91b14`
+  - P2-T2 exact inventory-status owner correction: `dbbff55`
+- frozen boundaries:
+  - only `http-transport.ts` holds the closed network and `node:crypto`
+    capability; only `production-config.ts` reads the three allowlisted
+    environment variables
+  - provider outcomes remain exact, content-free, recursively frozen replay
+    values; credentials, raw/provider prose, endpoints, and request bodies do
+    not cross their boundary
+  - Ollama qualification remains exact-model/digest, one-use,
+    transport-identity-bound, and fully prewarmed before proof publication
+  - every compound chat now requires exact HTTP `200` inventory validation and
+    digest equality before sending raw content
+- exit verification from clean `dbbff55`:
+  - repository tests passed `294/294`
+  - sandbox engine tests passed `1028/1028`
+  - sandbox TypeScript and frontend production build passed; the frontend
+    retained its existing non-failing chunk-size advisory
+  - `git diff --check`, `git diff --summary`, and `git status --short` were
+    clean
+- phase review:
+  - initial conclusion `CHANGES_REQUIRED` for one P1 abnormal-2xx inventory
+    path that could cross the raw-content gate
+  - the finding returned to P2-T2 ownership, received behavioral RED evidence,
+    specification and quality approval, and a combined re-review result of
+    `RESOLVED`
+  - new issues none; final Phase conclusion `APPROVED`
+- process note: this evidence-only update is a documentation exception to full
+  business-logic TDD
+- operator constraint: no P1-T3 production rule-detector spec was repeated
+- commit: the exact Phase 2 evidence commit containing this record
+- next: Phase 3 entry gate, then P3-T1 deterministic structured sanitizer
