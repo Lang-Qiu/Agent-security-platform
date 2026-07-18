@@ -5388,3 +5388,58 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - status: VERIFIED_OWNER_CORRECTION
 - commit: the exact P2-T2 owner-correction commit containing this evidence
 - next: P2-T5 digest-qualified Ollama local detector
+
+## 2026-07-18 - REQ-SBX-GENERAL-002 P2-T5 digest-qualified Ollama detector
+
+- phase/task: Phase 2 / P2-T5
+- branch/base: `sandbox` from P2-T2 owner correction `2513d7a`
+- status: VERIFIED
+- exact implementation files:
+  - `engines/sandbox/src/security-production/ollama-local-detector.ts`
+  - `engines/sandbox/tests/sandbox-security-production-ollama-detector.spec.ts`
+- design boundary:
+  - qualification performs exactly one logical inventory request followed by
+    the fixed P2-T4 prewarm chat under the same caller-owned signal; it accepts
+    exactly one local `qwen3:8b` artifact and compares the normalized configured
+    digest through the P2-T2 `timingSafeEqual` helper
+  - the fresh frozen qualification view exposes only digest and warmed-probe
+    latency; a private WeakMap binds its exact identity to the same transport,
+    digest, captured request method, and one construction generation
+  - detector construction consumes the binding once; copies, clones, proxies,
+    forged/cross-realm views, reuse, and another transport are rejected
+  - each detector call uses the Engine lease signal, requires HTTP 200 JSON and
+    the transport's per-chat verified digest, then maps source ordinals and
+    fixed tool components back to the current snapshot's private handles
+  - no model pull, endpoint, environment, timer, network builtin, benchmark
+    input, provider prose, raw value, or clearance capability is added
+- TDD evidence:
+  - initial guarded RED failed `0/1` with the intended empty logical-call log
+    instead of `model_inventory -> chat`
+  - qualification expansion RED was `11` failed / `1` incidental pass, then
+    GREEN `12/12`
+  - detector mapping RED was `6` failed / `13` passed, then GREEN `19/19`; the
+    initial complete focused suite reached `21/21`
+  - quality-fix RED passed `21` and failed `2`: the old code accepted a
+    `1001ms` proof and recorded latency `10` before parse instead of `20` after
+    parse; corrected GREEN passed focused `23/23`
+- final verification:
+  - repository + provider outcomes + HTTP transport + config + Ollama contract
+    and detector + core detector boundary combined gate passed `259/259`
+  - sandbox TypeScript, frontend production build, and `git diff --check`
+    passed; the frontend retained its existing non-failing chunk-size advisory
+- independent review:
+  - Specification Compliance Review: `APPROVED`; P0-P2 none; one non-blocking
+    P3 notes that a pre-aborted detector signal still reaches one logical chat,
+    while default transport performs zero wire I/O and core/replay termination
+    semantics remain intact
+  - Code Quality/Security Review first required full prewarm-settle timing and
+    an explicit `>1000ms` rejection before proof publication; both received
+    deterministic RED evidence and are `RESOLVED`
+  - combined re-review: original quality issue `RESOLVED`, specification P3
+    remains non-blocking, new P0-P3 issues none, final conclusion `APPROVED`
+- documentation scope: `README.md`, `docs/architecture.md`, and
+  `docs/api-contract.md` require no change because the detector remains a
+  sibling-private production adapter pending Phase 4 composition
+- operator constraint: no P1-T3 detector validation command was repeated
+- commit: the exact P2-T5 task commit containing this evidence
+- next: Phase 2 exit gate and independent Phase review
