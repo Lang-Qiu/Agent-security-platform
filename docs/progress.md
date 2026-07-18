@@ -5354,3 +5354,37 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - commit: the exact P2-T4 task commit containing this evidence
 - next: return the constant-time digest helper gap to P2-T2 ownership before
   P2-T5 qualification implementation
+
+## 2026-07-18 - REQ-SBX-GENERAL-002 P2-T2 digest comparator owner correction
+
+- scope: returned the P2-T5 constant-time digest dependency to the P2-T2 sole
+  owner; no endpoint, credential, request, response, or network behavior changed
+- correction:
+  - exported the existing sibling-only
+    `equalSandboxSecurityNormalizedDigest` helper from `http-transport.ts`
+  - the helper requires two normalized `sha256:<64 lowercase hex>` values and
+    delegates equality to Node `timingSafeEqual`
+  - existing per-chat digest revalidation now reuses that helper; it is not
+    exported from the public production index and `node:crypto` remains confined
+    to the approved transport capability module
+- TDD and verification evidence:
+  - RED: focused transport passed `21/22`; the only failure was the intended
+    comparator equality `AssertionError` (`false !== true`), not an import,
+    syntax, or environment error
+  - GREEN: focused transport passed `22/22`; repository + provider outcomes +
+    transport + config + Ollama contract combined gate passed `195/195`
+  - sandbox TypeScript, frontend production build, and `git diff --check`
+    passed; the frontend retained its existing non-failing chunk-size advisory
+- independent review:
+  - Specification Compliance Review: `APPROVED`; P0-P3 none
+  - Code Quality/Security Review: `APPROVED`; no Critical or Important issues;
+    one non-blocking test-maintenance comment notes that the static primitive
+    assertion is module-wide and malformed self-comparison is not a named case
+  - combined re-review: the owner gap is `RESOLVED`; the maintenance comment
+    remains non-blocking, new P0-P3 issues none, final conclusion `APPROVED`
+- documentation scope: no README, architecture, or API contract change is
+  required for a sibling-only helper with no public surface
+- operator constraint: no P1-T3 detector validation command was repeated
+- status: VERIFIED_OWNER_CORRECTION
+- commit: the exact P2-T2 owner-correction commit containing this evidence
+- next: P2-T5 digest-qualified Ollama local detector

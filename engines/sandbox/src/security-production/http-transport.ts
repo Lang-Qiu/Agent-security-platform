@@ -500,7 +500,10 @@ function requestWire(
   });
 }
 
-function equalDigest(left: string, right: string): boolean {
+export function equalSandboxSecurityNormalizedDigest(
+  left: string,
+  right: string
+): boolean {
   if (!SHA256_DIGEST.test(left) || !SHA256_DIGEST.test(right)) {
     return false;
   }
@@ -561,7 +564,7 @@ function revalidatedOllamaDigest(
     return invalid();
   }
   const normalizedDigest = `sha256:${wireDigest}`;
-  if (!equalDigest(normalizedDigest, expectedDigest)) {
+  if (!equalSandboxSecurityNormalizedDigest(normalizedDigest, expectedDigest)) {
     throw namedTransportError("sandbox_security_transport_digest_mismatch");
   }
   return normalizedDigest;

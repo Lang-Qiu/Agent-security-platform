@@ -25,6 +25,7 @@ type HttpRequestInput =
     }>;
 
 type TransportModule = {
+  equalSandboxSecurityNormalizedDigest?: (left: string, right: string) => boolean;
   createSandboxSecurityDefaultHttpTransport(input: Readonly<{
     expected_ollama_digest: string | null;
     openai_api_key: string | null;
@@ -51,6 +52,42 @@ const inertTransportModule: TransportModule = {
 const transportModule: TransportModule = existsSync(transportPath)
   ? ((await import("../src/security-production/http-transport.ts")) as TransportModule)
   : inertTransportModule;
+
+const equalSandboxSecurityNormalizedDigest =
+  transportModule.equalSandboxSecurityNormalizedDigest ?? (() => false);
+
+test("REQ-SBX-GENERAL-002 normalized digest comparator accepts identical digests", () => {
+  const digest = `sha256:${"a".repeat(64)}`;
+
+  assert.equal(equalSandboxSecurityNormalizedDigest(digest, digest), true);
+});
+
+test("REQ-SBX-GENERAL-002 normalized digest comparator rejects mismatches and malformed digests", () => {
+  const digest = `sha256:${"a".repeat(64)}`;
+  const invalidComparisons = [
+    ["first mismatch", `sha256:b${"a".repeat(63)}`],
+    ["middle mismatch", `sha256:${"a".repeat(32)}b${"a".repeat(31)}`],
+    ["last mismatch", `sha256:${"a".repeat(63)}b`],
+    ["prefix", digest.slice(0, -1)],
+    ["case", `sha256:${"A".repeat(64)}`],
+    ["length", `${digest}0`],
+    ["nonhex", `sha256:g${"a".repeat(63)}`],
+    ["whitespace", ` ${digest} `]
+  ] as const;
+
+  for (const [scenario, candidate] of invalidComparisons) {
+    assert.equal(
+      equalSandboxSecurityNormalizedDigest(candidate, digest),
+      false,
+      scenario
+    );
+    assert.equal(
+      equalSandboxSecurityNormalizedDigest(digest, candidate),
+      false,
+      `${scenario} reversed`
+    );
+  }
+});
 
 test("REQ-SBX-GENERAL-002 transport delegates digest equality to node crypto timingSafeEqual", () => {
   const source = readFileSync(transportPath, "utf8");
