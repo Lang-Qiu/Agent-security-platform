@@ -5260,3 +5260,45 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   `node:net` rejection
 - commit: the exact P2-T2 task commit containing this evidence
 - next: P2-T3 private production configuration
+
+## 2026-07-18 - REQ-SBX-GENERAL-002 P2-T3 private production configuration
+
+- phase/task: Phase 2 / P2-T3
+- branch/base: `sandbox` from P2-T2 `919a557`
+- status: VERIFIED
+- exact implementation files:
+  - `engines/sandbox/src/security-production/production-config.ts`
+  - `engines/sandbox/tests/sandbox-security-production-config.spec.ts`
+- design boundary:
+  - supports only `rule_only`, `local`, and `local_and_judge`; each mode reads
+    only its required subset of the three allowlisted environment variables
+  - returns a fresh, deeply frozen, serializable, credential-free `{ mode,
+    summary }` view and keeps digest/key state in a module-private identity
+    binding
+  - transport construction consumes the exact view binding once, rejects
+    copied, cloned, proxied, forged, and cross-realm views, transfers the key
+    only into the closed P2-T2 transport, and clears config-owned references
+  - this remains the sole `process.env` reader in the production detector tree;
+    there is no endpoint, model, environment, credential, or transport override
+- TDD and verification evidence:
+  - initial guarded RED failed the intended required-mode and private-binding
+    behavior assertions rather than an import, syntax, or environment error
+  - focused config tests passed `21/21`
+  - repository + P2-T2 transport + P2-T3 config gate passed `163/163`
+  - sandbox TypeScript, frontend production build, and `git diff --check`
+    passed; the frontend retained its existing non-failing chunk-size advisory
+- independent review:
+  - Specification Compliance Review: `APPROVED`; P0-P3 none; the reviewed
+    rule-only input-domain and delete-before-factory candidates were not
+    specification defects
+  - Code Quality/Security Review: `APPROVED`; no Critical or Important issues;
+    one non-blocking comment recommends eventually replacing maintenance-
+    fragile raw-source assertions with AST/token checks
+  - combined re-review: original issue sets closed, new P0-P3 issues none,
+    final conclusion `APPROVED`
+- documentation scope: `README.md`, `docs/architecture.md`, and
+  `docs/api-contract.md` require no change because this task adds no public API
+  or cross-boundary DTO
+- operator constraint: no P1-T3 detector validation command was repeated
+- commit: the exact P2-T3 task commit containing this evidence
+- next: P2-T4 exact Ollama request and response contract
