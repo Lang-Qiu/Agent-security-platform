@@ -69,7 +69,12 @@ const NETWORK_MODULES = new Set([
   "node:dgram",
   "node:dns"
 ]);
-const ALLOWED_TRANSPORT_MODULES = new Set(["node:http", "node:https"]);
+const ALLOWED_TRANSPORT_MODULES = new Set([
+  "node:crypto",
+  "node:http",
+  "node:https",
+  "node:util"
+]);
 const NETWORK_GLOBALS = new Set(["fetch", "WebSocket", "EventSource"]);
 const DIRECT_GLOBAL_CAPABILITIES = new Set([
   ...NETWORK_GLOBALS,
@@ -1343,6 +1348,12 @@ for (const mutation of [
     expected: "network module"
   },
   {
+    name: "unapproved filesystem builtin inside transport",
+    relativePath: "http-transport.ts",
+    source: 'import { readFileSync } from "node:fs"; void readFileSync;',
+    expected: "module alias"
+  },
+  {
     name: "global fetch outside transport",
     source: 'const send = fetch; void send;',
     expected: "network capability fetch"
@@ -2289,7 +2300,11 @@ test("REQ-SBX-GENERAL-002 repository gate permits only approved module capabilit
     ),
     analyzeProductionMutation(
       "http-transport.ts",
-      'import { request as httpRequest } from "node:http"; import { request as httpsRequest } from "node:https"; void httpRequest; void httpsRequest;'
+      `import { timingSafeEqual } from "node:crypto";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { types } from "node:util";
+void timingSafeEqual; void httpRequest; void httpsRequest; void types;`
     ),
     analyzeProductionMutation(
       "production-config.ts",

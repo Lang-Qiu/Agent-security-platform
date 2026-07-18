@@ -5176,3 +5176,31 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
     final conclusion `APPROVED`
 - commit: the exact P2-T1 task commit containing this evidence
 - next: P2-T2 closed default HTTP transport
+
+## 2026-07-18 - REQ-SBX-GENERAL-002 P1-T1 transport builtin gate correction
+
+- scope: returned a downstream capability-gate defect to the P1-T1 sole owner;
+  no production behavior or frozen GENERAL-001 source changed
+- correction:
+  - the closed `http-transport.ts` module allowlist now permits exactly
+    `node:crypto`, `node:http`, `node:https`, and `node:util`
+  - explicit `node:fs` and `node:net` transport mutations remain rejected;
+    all other network, environment, dynamic-code, and oracle gates are unchanged
+- TDD evidence:
+  - RED: the approved-capability mutation failed `0/1` with only the intended
+    `node:crypto` and `node:util` allowlist `AssertionError`s
+  - GREEN: approved mutation `1/1`; focused `node:fs`/`node:net` negatives
+    `2/2`; complete production boundary gate `122/122`
+  - P2 transport compatibility `162/162`; repository `294/294`; sandbox
+    TypeScript, frontend production build, and `git diff --check` passed
+  - the frontend retained its existing non-failing chunk-size advisory
+- independent review:
+  - Specification Compliance Review: `APPROVED`; P0-P3 none
+  - Code Quality/Security Review: `APPROVED`; one non-blocking P3 diagnostic
+    wording comment, with enforcement confirmed correct
+  - combined re-review: original allowlist gap `RESOLVED`, new issues none,
+    final conclusion `APPROVED`
+- operator constraint: no P1-T3 validation command was repeated
+- status: VERIFIED_OWNER_CORRECTION
+- commit: the exact P1-T1 owner-correction commit containing this evidence
+- next: resume P2-T2 quality-review closure
