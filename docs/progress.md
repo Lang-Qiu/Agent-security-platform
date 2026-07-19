@@ -5604,3 +5604,55 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - operator constraint: no P1-T3 detector validation command was repeated
 - commit: the exact P3-T1 task commit containing this evidence
 - next: P3-T2 exact OpenAI Responses contract
+
+## 2026-07-20 - REQ-SBX-GENERAL-002 P3-T2 exact OpenAI Responses contract
+
+- phase/task: Phase 3 / P3-T2
+- status: VERIFIED
+- exact implementation files:
+  - `engines/sandbox/src/security-production/openai-judge-contract.ts`
+  - `engines/sandbox/tests/sandbox-security-production-openai-contract.spec.ts`
+- design boundary:
+  - pure request/parser contract only; no transport, endpoint, credential,
+    environment, benchmark, or GENERAL-001 mutation
+  - fixed prompt version
+    `sandbox-security-openai-judge-prompt.v1`; UTF-8 prompt length `590` bytes;
+    SHA-256
+    `703f674a6090ce919cf06f1c3346e3f4ebce3e6832135a2ff51bde8566f9e116`
+  - request is fixed to `gpt-5.6-terra`, `store: false`, low reasoning,
+    `max_output_tokens: 4096`, ordered developer/user input, strict
+    `sandbox-security-judge.v1` JSON Schema, no trailing newline, and a
+    64 KiB UTF-8 body cap
+  - parser accepts one completed Responses envelope with one assistant
+    `output_text` message, validates known provider metadata without retaining
+    it, rejects refusal/incomplete/error/multiple-message/prose/unknown forms,
+    binds results to current routed obligation IDs, and enforces duplicate,
+    stale, unknown, risk/clearance severity, and confidence rules
+  - return value is a fresh recursively frozen, ordered, content-free
+    projection containing only model, completed status, and obligation results
+- TDD evidence:
+  - initial guarded RED: `0/12` focused assertions passed; the first failure
+    was the intended exact-byte request mismatch from the inert formatter
+  - provider-metadata RED: `12/13` passed; the single failure exposed the
+    missing standard Responses metadata allowlist and was corrected with
+    regression coverage
+  - final focused GREEN: `14/14`
+  - combined contract/provider-outcomes/repository boundary gate (explicitly
+    excluding the P1-T3 rule-detector spec): `217/217`
+- final verification:
+  - sandbox TypeScript check passed
+  - `npm run build --prefix frontend` passed with the existing non-failing
+    chunk-size advisory
+  - `git diff --check` passed
+- independent review:
+  - Specification Compliance Review: `APPROVED`; no P0-P3 findings
+  - Code Quality/Security Review: `APPROVED`; no Critical, Important, or Minor
+    findings
+  - combined re-review: metadata allowlist finding resolved, new issues none,
+    final conclusion `APPROVED`
+- documentation scope: no README, architecture, or API contract change is
+  required because this task adds only a private provider contract module
+- operator constraint: no P1-T3 production rule-detector validation command
+  was run
+- commit: the exact P3-T2 task commit containing this evidence
+- next: P3-T3 obligation-bound OpenAI Judge detector
