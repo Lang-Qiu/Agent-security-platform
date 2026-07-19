@@ -5562,3 +5562,45 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - operator constraint: no P1-T3 detector validation command was repeated
 - commit: the exact owner-correction commit containing this evidence
 - next: commit the owned P3-T1 sanitizer and sanitizer test files
+
+## 2026-07-20 - REQ-SBX-GENERAL-002 P3-T1 deterministic structured sanitizer
+
+- phase/task: Phase 3 / P3-T1
+- status: VERIFIED
+- exact implementation files:
+  - `engines/sandbox/src/security-production/deterministic-sanitizer.ts`
+  - `engines/sandbox/tests/sandbox-security-production-sanitizer.spec.ts`
+- design boundary:
+  - exports only
+    `sandbox-security-deterministic-sanitizer.v1` and
+    `createSandboxSecurityDeterministicSanitizer`
+  - uses the final security index plus the sole permitted named deep import
+    `deriveSandboxSecurityExternalTokenRegistry` from
+    `security/sanitized-boundary.ts`; it has no network, filesystem,
+    environment, benchmark, core-JCS, or provider capability
+  - builds fresh recursively frozen sanitized payloads with bounded NFKC
+    copying, deterministic redaction, safe-key ordinalization, token/source
+    mapping, abort handling, and uniform `external_redaction_failed` errors
+  - raw source identifiers are validated and discarded; only the permitted
+    sanitized source fields and routed obligations reach the Judge payload
+- TDD and verification evidence:
+  - the initial guarded sanitizer RED failed the intended redaction and
+    canonical-payload assertions before implementation, not an import or
+    syntax error
+  - focused sanitizer tests passed `48/48`
+  - repository owner + sanitizer + frozen-boundary combined gate passed
+    `287/287`
+  - sandbox TypeScript, frontend production build, and `git diff --check`
+    passed; the frontend retained its existing non-failing chunk-size warning
+- independent review:
+  - Specification Compliance Review: `APPROVED`; no P0-P3 findings
+  - Code Quality/Security Review: `APPROVED`; no Critical, Important, or
+    Minor findings
+  - combined re-review: owner correction and sanitizer findings closed with
+    no new blocking issue
+- documentation scope: `README.md`, `docs/architecture.md`, and
+  `docs/api-contract.md` require no change because P3-T1 adds no public
+  platform API or cross-boundary DTO
+- operator constraint: no P1-T3 detector validation command was repeated
+- commit: the exact P3-T1 task commit containing this evidence
+- next: P3-T2 exact OpenAI Responses contract
