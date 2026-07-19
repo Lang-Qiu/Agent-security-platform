@@ -110,6 +110,7 @@ interface SourceRecord {
   readonly path: string;
   readonly text: string;
   readonly tree: SourceTree;
+  readonly enforceSanitizerSourceOwner?: boolean;
 }
 
 interface ImportEdge {
@@ -188,7 +189,10 @@ function listTypeScriptSources(
         sources.push({
           path: entryPath,
           text: readFileSync(entryPath, "utf8"),
-          tree
+          tree,
+          ...(entryPath === roots.deterministicSanitizer
+            ? { enforceSanitizerSourceOwner: true }
+            : {})
         });
       }
     }
@@ -576,6 +580,805 @@ function importedNamesFor(statement: ts.ImportDeclaration): Readonly<{
   return { names, hasAlias };
 }
 
+function inspectSanitizerSourceOwner(
+  sourceFile: ts.SourceFile,
+  bindingsByScope: ReadonlyMap<ts.Node, ReadonlySet<string>>
+): ReadonlySet<ts.StringLiteralLike> | null {
+  const helperNames = new Set(["exactRecord", "denseArray", "protocolString"]);
+  const helperDeclarations = new Map<string, ts.FunctionDeclaration>();
+  for (const helperName of helperNames) {
+    const declarations = sourceFile.statements.filter(
+      (statement): statement is ts.FunctionDeclaration =>
+        ts.isFunctionDeclaration(statement) &&
+        statement.name?.text === helperName
+    );
+    if (declarations.length !== 1 || declarations[0]?.body === undefined) {
+      return null;
+    }
+    helperDeclarations.set(helperName, declarations[0]);
+  }
+
+  const bindingNameContains = (name: ts.BindingName, expected: string): boolean => {
+    if (ts.isIdentifier(name)) return name.text === expected;
+    return name.elements.some(
+      (element) =>
+        !ts.isOmittedExpression(element) &&
+        bindingNameContains(element.name, expected)
+    );
+  };
+  const hasCompetingTopLevelBinding = (helperName: string): boolean =>
+    sourceFile.statements.some((statement) => {
+      if (statement === helperDeclarations.get(helperName)) return false;
+      if (
+        (ts.isFunctionDeclaration(statement) ||
+          ts.isClassDeclaration(statement) ||
+          ts.isEnumDeclaration(statement)) &&
+        statement.name?.text === helperName
+      ) {
+        return true;
+      }
+      if (ts.isVariableStatement(statement)) {
+        return statement.declarationList.declarations.some((declaration) =>
+          bindingNameContains(declaration.name, helperName)
+        );
+      }
+      if (ts.isImportEqualsDeclaration(statement)) {
+        return !statement.isTypeOnly && statement.name.text === helperName;
+      }
+      if (ts.isImportDeclaration(statement) && statement.importClause !== undefined) {
+        const clause = statement.importClause;
+        if (!clause.isTypeOnly && clause.name?.text === helperName) return true;
+        const bindings = clause.namedBindings;
+        if (bindings === undefined || ts.isNamespaceImport(bindings)) {
+          return bindings?.name.text === helperName;
+        }
+        return bindings.elements.some(
+          (element) => !element.isTypeOnly && element.name.text === helperName
+        );
+      }
+      return false;
+    });
+  if ([...helperNames].some(hasCompetingTopLevelBinding)) return null;
+
+  let helperReassigned = false;
+  const containsHelperReference = (node: ts.Node): boolean => {
+    if (ts.isIdentifier(node) && helperNames.has(node.text)) return true;
+    let found = false;
+    ts.forEachChild(node, (child) => {
+      found ||= containsHelperReference(child);
+    });
+    return found;
+  };
+  const findHelperWrites = (node: ts.Node): void => {
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      containsHelperReference(node.left)
+    ) {
+      helperReassigned = true;
+      return;
+    }
+    if (
+      (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
+      !ts.isVariableDeclarationList(node.initializer) &&
+      containsHelperReference(node.initializer)
+    ) {
+      helperReassigned = true;
+      return;
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      containsHelperReference(node.operand)
+    ) {
+      helperReassigned = true;
+      return;
+    }
+    ts.forEachChild(node, findHelperWrites);
+  };
+  findHelperWrites(sourceFile);
+  if (helperReassigned) return null;
+
+  const validators = sourceFile.statements.filter(
+    (statement): statement is ts.FunctionDeclaration =>
+      ts.isFunctionDeclaration(statement) &&
+      statement.name?.text === "validateSnapshot"
+  );
+  const validator = validators[0];
+  if (
+    validators.length !== 1 ||
+    validator?.body === undefined ||
+    validator.parameters.length !== 2 ||
+    !ts.isIdentifier(validator.parameters[0].name) ||
+    validator.parameters[0].name.text !== "snapshot" ||
+    validator.parameters[0].initializer !== undefined ||
+    validator.parameters[0].dotDotDotToken !== undefined ||
+    validator.parameters[0].questionToken !== undefined ||
+    !ts.isIdentifier(validator.parameters[1].name) ||
+    validator.parameters[1].name.text !== "context" ||
+    validator.parameters[1].initializer !== undefined ||
+    validator.parameters[1].dotDotDotToken !== undefined ||
+    validator.parameters[1].questionToken !== undefined
+  ) {
+    return null;
+  }
+
+  const directConstDeclaration = (
+    block: ts.Block,
+    name: string
+  ): ts.VariableDeclaration | null => {
+    const matches = block.statements.flatMap((statement) =>
+      ts.isVariableStatement(statement) &&
+      (statement.declarationList.flags & ts.NodeFlags.Const) !== 0
+        ? statement.declarationList.declarations.filter(
+            (declaration) =>
+              ts.isIdentifier(declaration.name) && declaration.name.text === name
+          )
+        : []
+    );
+    return matches.length === 1 ? matches[0] ?? null : null;
+  };
+  const outerDeclaration = directConstDeclaration(validator.body, "outer");
+  const outerCall = outerDeclaration?.initializer;
+  if (
+    outerDeclaration === null ||
+    outerCall === undefined ||
+    !ts.isCallExpression(outerCall) ||
+    outerCall.questionDotToken !== undefined ||
+    (outerCall.typeArguments?.length ?? 0) !== 0 ||
+    !ts.isIdentifier(outerCall.expression) ||
+    outerCall.expression.text !== "exactRecord" ||
+    outerCall.arguments.length !== 4 ||
+    !ts.isIdentifier(outerCall.arguments[0]) ||
+    outerCall.arguments[0].text !== "snapshot" ||
+    expressionPath(outerCall.arguments[3])?.join(".") !== "context.signal"
+  ) {
+    return null;
+  }
+
+  const contentsDeclaration = directConstDeclaration(validator.body, "contents");
+  const contentsCall = contentsDeclaration?.initializer;
+  const contentsGet =
+    contentsCall !== undefined &&
+    ts.isCallExpression(contentsCall) &&
+    contentsCall.arguments.length === 2
+      ? contentsCall.arguments[0]
+      : undefined;
+  if (
+    contentsDeclaration === null ||
+    contentsCall === undefined ||
+    !ts.isCallExpression(contentsCall) ||
+    contentsCall.questionDotToken !== undefined ||
+    (contentsCall.typeArguments?.length ?? 0) !== 0 ||
+    !ts.isIdentifier(contentsCall.expression) ||
+    contentsCall.expression.text !== "denseArray" ||
+    contentsCall.arguments.length !== 2 ||
+    contentsGet === undefined ||
+    !ts.isCallExpression(contentsGet) ||
+    contentsGet.questionDotToken !== undefined ||
+    (contentsGet.typeArguments?.length ?? 0) !== 0 ||
+    !ts.isPropertyAccessExpression(contentsGet.expression) ||
+    !ts.isIdentifier(contentsGet.expression.expression) ||
+    contentsGet.expression.expression.text !== "outer" ||
+    contentsGet.expression.name.text !== "get" ||
+    contentsGet.arguments.length !== 1 ||
+    !ts.isStringLiteral(contentsGet.arguments[0]) ||
+    contentsGet.arguments[0].text !== "contents" ||
+    expressionPath(contentsCall.arguments[1])?.join(".") !== "context.signal"
+  ) {
+    return null;
+  }
+
+  const sourcesDeclaration = directConstDeclaration(validator.body, "sources");
+  const mapCall = sourcesDeclaration?.initializer;
+  const callback =
+    mapCall !== undefined &&
+    ts.isCallExpression(mapCall) &&
+    mapCall.arguments.length === 1
+      ? mapCall.arguments[0]
+      : undefined;
+  if (
+    sourcesDeclaration === null ||
+    mapCall === undefined ||
+    !ts.isCallExpression(mapCall) ||
+    mapCall.questionDotToken !== undefined ||
+    (mapCall.typeArguments?.length ?? 0) !== 0 ||
+    !ts.isPropertyAccessExpression(mapCall.expression) ||
+    !ts.isIdentifier(mapCall.expression.expression) ||
+    mapCall.expression.expression.text !== "contents" ||
+    mapCall.expression.name.text !== "map" ||
+    mapCall.arguments.length !== 1 ||
+    callback === undefined ||
+    !ts.isArrowFunction(callback) ||
+    callback.parameters.length !== 1 ||
+    !ts.isIdentifier(callback.parameters[0].name) ||
+    callback.parameters[0].name.text !== "source" ||
+    callback.parameters[0].initializer !== undefined ||
+    callback.parameters[0].dotDotDotToken !== undefined ||
+    callback.parameters[0].questionToken !== undefined ||
+    !ts.isBlock(callback.body) ||
+    validator.body.statements.indexOf(
+      outerDeclaration.parent.parent as ts.VariableStatement
+    ) >= validator.body.statements.indexOf(
+      contentsDeclaration.parent.parent as ts.VariableStatement
+    ) ||
+    validator.body.statements.indexOf(
+      contentsDeclaration.parent.parent as ts.VariableStatement
+    ) >= validator.body.statements.indexOf(
+      sourcesDeclaration.parent.parent as ts.VariableStatement
+    )
+  ) {
+    return null;
+  }
+
+  const resolvedBindingScope = (identifier: ts.Identifier): ts.Node | null => {
+    let current: ts.Node | undefined = identifier.parent;
+    while (current !== undefined) {
+      if (bindingsByScope.get(current)?.has(identifier.text) === true) {
+        return current;
+      }
+      current = current.parent;
+    }
+    return null;
+  };
+
+  const isWithin = (node: ts.Node, ancestor: ts.Node): boolean => {
+    let current: ts.Node | undefined = node;
+    while (current !== undefined) {
+      if (current === ancestor) return true;
+      current = current.parent;
+    }
+    return false;
+  };
+  if (
+    [...bindingsByScope].some(
+      ([scope, bindings]) =>
+        scope !== sourceFile &&
+        isWithin(scope, validator) &&
+        [...helperNames].some((helperName) => bindings.has(helperName))
+    )
+  ) {
+    return null;
+  }
+
+  const protectedCallbackBindings = new Set(["source", "context"]);
+  let hasCompetingCallbackBinding = false;
+  const findCompetingCallbackBinding = (node: ts.Node): void => {
+    if (hasCompetingCallbackBinding) return;
+    if (
+      ts.isVariableDeclaration(node) &&
+      [...protectedCallbackBindings].some((name) =>
+        bindingNameContains(node.name, name)
+      )
+    ) {
+      hasCompetingCallbackBinding = true;
+      return;
+    }
+    if (
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isClassDeclaration(node) ||
+        ts.isClassExpression(node) ||
+        ts.isEnumDeclaration(node) ||
+        ts.isModuleDeclaration(node)) &&
+      node.name !== undefined &&
+      ts.isIdentifier(node.name) &&
+      protectedCallbackBindings.has(node.name.text)
+    ) {
+      hasCompetingCallbackBinding = true;
+      return;
+    }
+    if (
+      isFunctionScope(node) &&
+      node.parameters.some((parameter) =>
+        [...protectedCallbackBindings].some((name) =>
+          bindingNameContains(parameter.name, name)
+        )
+      )
+    ) {
+      hasCompetingCallbackBinding = true;
+      return;
+    }
+    ts.forEachChild(node, findCompetingCallbackBinding);
+  };
+  findCompetingCallbackBinding(callback.body);
+  if (hasCompetingCallbackBinding) return null;
+
+  const protectedValidatorBindings = new Set(["snapshot", "context"]);
+  let hasCompetingValidatorBinding = false;
+  const findCompetingValidatorBinding = (node: ts.Node): void => {
+    if (hasCompetingValidatorBinding) return;
+    if (
+      ts.isVariableDeclaration(node) &&
+      [...protectedValidatorBindings].some((name) =>
+        bindingNameContains(node.name, name)
+      )
+    ) {
+      hasCompetingValidatorBinding = true;
+      return;
+    }
+    if (
+      (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isClassDeclaration(node) ||
+        ts.isClassExpression(node) ||
+        ts.isEnumDeclaration(node) ||
+        ts.isModuleDeclaration(node)) &&
+      node.name !== undefined &&
+      ts.isIdentifier(node.name) &&
+      protectedValidatorBindings.has(node.name.text)
+    ) {
+      hasCompetingValidatorBinding = true;
+      return;
+    }
+    if (
+      isFunctionScope(node) &&
+      node !== validator &&
+      node.parameters.some((parameter) =>
+        [...protectedValidatorBindings].some((name) =>
+          bindingNameContains(parameter.name, name)
+        )
+      )
+    ) {
+      hasCompetingValidatorBinding = true;
+      return;
+    }
+    ts.forEachChild(node, findCompetingValidatorBinding);
+  };
+  findCompetingValidatorBinding(validator.body);
+  if (hasCompetingValidatorBinding) return null;
+
+  const referencesValidatorBinding = (node: ts.Node): boolean => {
+    let found = false;
+    const inspect = (candidate: ts.Node): void => {
+      if (found) return;
+      if (
+        ts.isIdentifier(candidate) &&
+        !isNonValueIdentifier(candidate) &&
+        (candidate.text === "snapshot" || candidate.text === "context") &&
+        resolvedBindingScope(candidate) === validator
+      ) {
+        found = true;
+        return;
+      }
+      ts.forEachChild(candidate, inspect);
+    };
+    inspect(node);
+    return found;
+  };
+  let hasValidatorParameterWrite = false;
+  const findValidatorParameterWrite = (node: ts.Node): void => {
+    if (hasValidatorParameterWrite) return;
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+      referencesValidatorBinding(node.left)
+    ) {
+      hasValidatorParameterWrite = true;
+      return;
+    }
+    if (
+      (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
+      !ts.isVariableDeclarationList(node.initializer) &&
+      referencesValidatorBinding(node.initializer)
+    ) {
+      hasValidatorParameterWrite = true;
+      return;
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      referencesValidatorBinding(node.operand)
+    ) {
+      hasValidatorParameterWrite = true;
+      return;
+    }
+    ts.forEachChild(node, findValidatorParameterWrite);
+  };
+  findValidatorParameterWrite(validator.body);
+  if (hasValidatorParameterWrite) return null;
+
+  const recordDeclarations: ts.VariableDeclaration[] = [];
+  const findRecord = (node: ts.Node): void => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === "record"
+    ) {
+      recordDeclarations.push(node);
+    }
+    ts.forEachChild(node, findRecord);
+  };
+  findRecord(callback.body);
+  const recordDeclaration = recordDeclarations[0];
+  const recordCall = recordDeclaration?.initializer;
+  if (
+    recordDeclarations.length !== 1 ||
+    recordDeclaration === undefined ||
+    !ts.isVariableDeclarationList(recordDeclaration.parent) ||
+    (recordDeclaration.parent.flags & ts.NodeFlags.Const) === 0 ||
+    recordCall === undefined ||
+    !ts.isCallExpression(recordCall) ||
+    recordCall.questionDotToken !== undefined ||
+    (recordCall.typeArguments?.length ?? 0) !== 0 ||
+    !ts.isIdentifier(recordCall.expression) ||
+    recordCall.expression.text !== "exactRecord" ||
+    recordCall.arguments.length !== 4 ||
+    !ts.isIdentifier(recordCall.arguments[0]) ||
+    recordCall.arguments[0].text !== "source" ||
+    recordDeclaration.parent.parent.parent !== callback.body
+  ) {
+    return null;
+  }
+  const required = unwrapExpression(recordCall.arguments[1]);
+  const optional = unwrapExpression(recordCall.arguments[2]);
+  const signalPath = expressionPath(recordCall.arguments[3]);
+  if (
+    !ts.isArrayLiteralExpression(required) ||
+    required.elements.length !== SANITIZER_RAW_SOURCE_KEYS.length ||
+    !required.elements.every(
+      (element, index) =>
+        ts.isStringLiteral(element) &&
+        element.text === SANITIZER_RAW_SOURCE_KEYS[index]
+    ) ||
+    !ts.isArrayLiteralExpression(optional) ||
+    optional.elements.length !== 0 ||
+    signalPath?.join(".") !== "context.signal"
+  ) {
+    return null;
+  }
+
+  let validUses = true;
+  let sourceIdGet: ts.CallExpression | null = null;
+  let sourceIdGetLiteral: ts.StringLiteral | null = null;
+  const allowedCallbackModuleBindings = new Set([
+    "exactRecord",
+    "protocolString",
+    "validateFrozenDenseByteMetadata",
+    "SOURCE_HANDLE",
+    "SOURCE_TYPES",
+    "fail",
+    "cloneJson"
+  ]);
+  const isApprovedContextUse = (identifier: ts.Identifier): boolean => {
+    const parent = identifier.parent;
+    if (
+      ts.isPropertyAccessExpression(parent) &&
+      parent.expression === identifier &&
+      parent.name.text === "signal"
+    ) {
+      const call = parent.parent;
+      if (
+        ts.isCallExpression(call) &&
+        call.questionDotToken === undefined &&
+        (call.typeArguments?.length ?? 0) === 0
+      ) {
+        if (call === recordCall && call.arguments[3] === parent) return true;
+        if (
+          call.arguments.length === 2 &&
+          call.arguments[1] === parent &&
+          ts.isIdentifier(call.expression) &&
+          call.expression.text === "validateFrozenDenseByteMetadata"
+        ) {
+          return true;
+        }
+      }
+      return false;
+    }
+    if (
+      ts.isCallExpression(parent) &&
+      parent.questionDotToken === undefined &&
+      (parent.typeArguments?.length ?? 0) === 0 &&
+      parent.arguments.length === 2 &&
+      parent.arguments[1] === identifier &&
+      ts.isIdentifier(parent.expression) &&
+      (parent.expression.text === "protocolString" ||
+        parent.expression.text === "cloneJson")
+    ) {
+      return true;
+    }
+    return false;
+  };
+  const inspectUses = (node: ts.Node): void => {
+    if (ts.isIdentifier(node) && !isNonValueIdentifier(node)) {
+      const bindingScope = resolvedBindingScope(node);
+      if (
+        node.text === "arguments" ||
+        (bindingScope === sourceFile &&
+          !allowedCallbackModuleBindings.has(node.text)) ||
+        (node.text === "context" &&
+          (bindingScope !== validator || !isApprovedContextUse(node))) ||
+        ((bindingScope === validator || bindingScope === validator.body) &&
+          !(node.text === "context" && bindingScope === validator))
+      ) {
+        validUses = false;
+      }
+      if (
+        node.text === "source" &&
+        (bindingScope !== callback ||
+          !(node.parent === recordCall && recordCall.arguments[0] === node))
+      ) {
+        validUses = false;
+      }
+      if (node.text === "record") {
+        const access = node.parent;
+        const call =
+          ts.isPropertyAccessExpression(access) &&
+          ts.isCallExpression(access.parent)
+            ? access.parent
+            : null;
+        const key = call?.arguments[0];
+        if (
+          !ts.isPropertyAccessExpression(access) ||
+          access.expression !== node ||
+          access.name.text !== "get" ||
+          call === null ||
+          call.expression !== access ||
+          call.arguments.length !== 1 ||
+          key === undefined ||
+          !ts.isStringLiteral(key) ||
+          !SANITIZER_RAW_SOURCE_KEYS.includes(key.text as never)
+        ) {
+          validUses = false;
+        } else if (key.text === "source_id") {
+          if (sourceIdGet !== null) validUses = false;
+          sourceIdGet = call;
+          sourceIdGetLiteral = key;
+        }
+      }
+    }
+    ts.forEachChild(node, inspectUses);
+  };
+  inspectUses(callback.body);
+
+  const validation = sourceIdGet?.parent;
+  if (
+    !validUses ||
+    sourceIdGet === null ||
+    sourceIdGetLiteral === null ||
+    !ts.isCallExpression(validation) ||
+    validation.questionDotToken !== undefined ||
+    (validation.typeArguments?.length ?? 0) !== 0 ||
+    validation.arguments.length !== 2 ||
+    validation.arguments[0] !== sourceIdGet ||
+    !ts.isIdentifier(validation.expression) ||
+    validation.expression.text !== "protocolString" ||
+    !ts.isIdentifier(validation.arguments[1]) ||
+    validation.arguments[1].text !== "context" ||
+    !ts.isExpressionStatement(validation.parent) ||
+    validation.parent.expression !== validation ||
+    validation.parent.parent !== callback.body
+  ) {
+    return null;
+  }
+
+  const recordStatement = recordDeclaration.parent.parent as ts.VariableStatement;
+  const validationStatement = validation.parent;
+  const recordIndex = callback.body.statements.indexOf(recordStatement);
+  const validationIndex = callback.body.statements.indexOf(validationStatement);
+  if (recordIndex < 0 || validationIndex <= recordIndex) return null;
+
+  let returnBeforeValidation = false;
+  const findCallbackReturn = (node: ts.Node): void => {
+    if (ts.isReturnStatement(node)) {
+      returnBeforeValidation = true;
+      return;
+    }
+    if (node !== callback && ts.isFunctionLike(node)) return;
+    ts.forEachChild(node, findCallbackReturn);
+  };
+  for (const statement of callback.body.statements.slice(0, validationIndex)) {
+    findCallbackReturn(statement);
+  }
+  if (returnBeforeValidation) return null;
+
+  const validatorReturns: ts.ReturnStatement[] = [];
+  const findValidatorReturns = (node: ts.Node): void => {
+    if (ts.isReturnStatement(node)) {
+      validatorReturns.push(node);
+      return;
+    }
+    if (node !== validator.body && ts.isFunctionLike(node)) return;
+    ts.forEachChild(node, findValidatorReturns);
+  };
+  findValidatorReturns(validator.body);
+  const validatorReturn = validatorReturns[0];
+  const returnedValue =
+    validatorReturn?.expression === undefined
+      ? undefined
+      : unwrapExpression(validatorReturn.expression);
+  if (
+    validatorReturns.length !== 1 ||
+    validatorReturn === undefined ||
+    validatorReturn.parent !== validator.body ||
+    validator.body.statements.at(-1) !== validatorReturn ||
+    returnedValue === undefined ||
+    !ts.isObjectLiteralExpression(returnedValue)
+  ) {
+    return null;
+  }
+  const returnedSources = returnedValue.properties.filter((property) => {
+    const name = property.name;
+    return name !== undefined && ts.isIdentifier(name) && name.text === "sources";
+  });
+  if (
+    returnedSources.length !== 1 ||
+    !ts.isShorthandPropertyAssignment(returnedSources[0]) ||
+    returnedValue.properties.at(-1) !== returnedSources[0]
+  ) {
+    return null;
+  }
+  const allowedSourcesIdentifiers = new Set<ts.Identifier>([
+    sourcesDeclaration.name as ts.Identifier,
+    returnedSources[0].name
+  ]);
+  let hasUnexpectedSourcesUse = false;
+  const findSourcesUse = (node: ts.Node): void => {
+    if (
+      ts.isIdentifier(node) &&
+      node.text === "sources" &&
+      !allowedSourcesIdentifiers.has(node)
+    ) {
+      hasUnexpectedSourcesUse = true;
+      return;
+    }
+    ts.forEachChild(node, findSourcesUse);
+  };
+  findSourcesUse(validator.body);
+  if (hasUnexpectedSourcesUse) return null;
+
+  const originalSnapshotUses = returnedValue.properties.flatMap((property) => {
+    if (
+      !ts.isPropertyAssignment(property) ||
+      !ts.isIdentifier(property.name) ||
+      property.name.text !== "original"
+    ) {
+      return [];
+    }
+    const value = unwrapExpression(property.initializer);
+    return ts.isIdentifier(value) && value.text === "snapshot" ? [value] : [];
+  });
+  const allowedSnapshotUses = new Set<ts.Identifier>([
+    outerCall.arguments[0] as ts.Identifier,
+    ...originalSnapshotUses
+  ]);
+  const outerGetConsumers = new Map([
+    ["request_id", "protocolString"],
+    ["evaluation_mode", "protocolString"],
+    ["canonical_request_sha256", "protocolString"],
+    ["stage", "protocolString"],
+    ["profile", "ownDataValue"],
+    ["tool_request", "exactRecord"]
+  ]);
+  const isAllowedOuterUse = (identifier: ts.Identifier): boolean => {
+    if (resolvedBindingScope(identifier) !== validator.body) return false;
+    const access = identifier.parent;
+    if (
+      !ts.isPropertyAccessExpression(access) ||
+      access.expression !== identifier
+    ) {
+      return false;
+    }
+    const call = access.parent;
+    if (
+      !ts.isCallExpression(call) ||
+      call.expression !== access ||
+      call.questionDotToken !== undefined ||
+      (call.typeArguments?.length ?? 0) !== 0 ||
+      call.arguments.length !== 1 ||
+      !ts.isStringLiteral(call.arguments[0])
+    ) {
+      return false;
+    }
+    const key = call.arguments[0].text;
+    if (access.name.text === "has") return key === "tool_request";
+    if (access.name.text !== "get") return false;
+    if (key === "contents") {
+      return call === contentsGet && contentsCall.arguments[0] === call;
+    }
+    const consumer = call.parent;
+    const expectedConsumer = outerGetConsumers.get(key);
+    return (
+      expectedConsumer !== undefined &&
+      ts.isCallExpression(consumer) &&
+      consumer.arguments.includes(call) &&
+      ts.isIdentifier(consumer.expression) &&
+      consumer.expression.text === expectedConsumer
+    );
+  };
+  const isAllowedContentsUse = (identifier: ts.Identifier): boolean => {
+    if (resolvedBindingScope(identifier) !== validator.body) return false;
+    if (identifier === mapCall.expression.expression) return true;
+    const access = identifier.parent;
+    return (
+      ts.isPropertyAccessExpression(access) &&
+      access.expression === identifier &&
+      access.name.text === "length"
+    );
+  };
+  let hasUnexpectedRawBindingUse = false;
+  const findUnexpectedRawBindingUse = (node: ts.Node): void => {
+    if (hasUnexpectedRawBindingUse) return;
+    if (ts.isIdentifier(node) && !isNonValueIdentifier(node)) {
+      if (
+        node.text === "snapshot" &&
+        resolvedBindingScope(node) === validator &&
+        !allowedSnapshotUses.has(node)
+      ) {
+        hasUnexpectedRawBindingUse = true;
+        return;
+      }
+      if (
+        node.text === "outer" &&
+        !isAllowedOuterUse(node)
+      ) {
+        hasUnexpectedRawBindingUse = true;
+        return;
+      }
+      if (
+        node.text === "contents" &&
+        !isAllowedContentsUse(node)
+      ) {
+        hasUnexpectedRawBindingUse = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, findUnexpectedRawBindingUse);
+  };
+  findUnexpectedRawBindingUse(validator.body);
+  if (hasUnexpectedRawBindingUse) return null;
+
+  const isTypeOnlyIdentifier = (identifier: ts.Identifier): boolean => {
+    let current: ts.Node | undefined = identifier.parent;
+    while (current !== undefined) {
+      if (
+        ts.isTypeNode(current) ||
+        ts.isInterfaceDeclaration(current) ||
+        ts.isTypeAliasDeclaration(current) ||
+        ts.isTypeParameterDeclaration(current) ||
+        ts.isPropertySignature(current) ||
+        ts.isMethodSignature(current)
+      ) {
+        return true;
+      }
+      if (ts.isImportSpecifier(current) || ts.isExportSpecifier(current)) {
+        if (current.isTypeOnly) return true;
+      }
+      if (ts.isImportClause(current)) return current.isTypeOnly;
+      current = current.parent;
+    }
+    return false;
+  };
+  let hasUnexpectedSourceIdIdentifier = false;
+  const findSourceIdIdentifier = (node: ts.Node): void => {
+    if (
+      ts.isIdentifier(node) &&
+      node.text === "source_id" &&
+      !isTypeOnlyIdentifier(node)
+    ) {
+      hasUnexpectedSourceIdIdentifier = true;
+      return;
+    }
+    ts.forEachChild(node, findSourceIdIdentifier);
+  };
+  findSourceIdIdentifier(sourceFile);
+  if (hasUnexpectedSourceIdIdentifier) return null;
+
+  const literals: ts.StringLiteral[] = [];
+  const findSourceIdLiterals = (node: ts.Node): void => {
+    if (ts.isStringLiteral(node) && node.text === "source_id") literals.push(node);
+    ts.forEachChild(node, findSourceIdLiterals);
+  };
+  findSourceIdLiterals(sourceFile);
+  const requiredLiteral = required.elements[1];
+  return literals.length === 2 &&
+    ts.isStringLiteral(requiredLiteral) &&
+    literals.includes(requiredLiteral) &&
+    literals.includes(sourceIdGetLiteral)
+    ? new Set(literals)
+    : null;
+}
+
 function analyzeSource(source: SourceRecord, roots: ScanRoots = ROOTS): SourceAnalysis {
   const sourceFile = ts.createSourceFile(
     source.path,
@@ -679,6 +1482,21 @@ function analyzeSource(source: SourceRecord, roots: ScanRoots = ROOTS): SourceAn
     ts.forEachChild(node, collectBindings);
   };
   collectBindings(sourceFile);
+
+  let allowedSourceIdLiterals: ReadonlySet<ts.StringLiteralLike> = new Set();
+  if (source.enforceSanitizerSourceOwner === true) {
+    const inspected =
+      source.path === roots.deterministicSanitizer
+        ? inspectSanitizerSourceOwner(sourceFile, bindingsByScope)
+        : null;
+    if (inspected === null) {
+      violations.push(
+        `${displayPath(source.path, roots)}: sanitizer raw-source ownership is invalid`
+      );
+    } else {
+      allowedSourceIdLiterals = inspected;
+    }
+  }
 
   for (const statement of sourceFile.statements) {
     if (ts.isVariableStatement(statement)) {
@@ -1114,6 +1932,7 @@ function analyzeSource(source: SourceRecord, roots: ScanRoots = ROOTS): SourceAn
       ts.isStringLiteralLike(node) &&
       !ts.isImportDeclaration(node.parent) &&
       !ts.isExportDeclaration(node.parent) &&
+      !allowedSourceIdLiterals.has(node) &&
       FORBIDDEN_ORACLE_LITERAL.test(node.text)
     ) {
       violations.push(
@@ -1215,6 +2034,117 @@ function analyzeProductionMutation(
   );
 }
 
+const SANITIZER_RAW_SOURCE_KEYS = [
+  "source_handle", "source_id", "source_type", "media_type",
+  "authority_kind", "value", "provenance_ref", "original_utf8_bytes",
+  "original_value_sha256", "comparison_value", "trust_class"
+] as const;
+
+interface SanitizerOwnerFixtureOptions {
+  readonly beforeFunction?: string;
+  readonly exactRecordHelper?: string;
+  readonly denseArrayHelper?: string;
+  readonly protocolStringHelper?: string;
+  readonly functionName?: string;
+  readonly snapshotParameter?: string;
+  readonly contextParameter?: string;
+  readonly callbackParameter?: string;
+  readonly mapMethod?: string;
+  readonly outerInitializer?: string;
+  readonly contentsInitializer?: string;
+  readonly sourceIdRequired?: string;
+  readonly callbackBeforeRecord?: string;
+  readonly callbackBeforeValidation?: string;
+  readonly callbackAfterRecord?: string;
+  readonly callbackBody?: string;
+  readonly deadDecoyMap?: boolean;
+  readonly recordCallee?: string;
+  readonly validation?: string;
+  readonly validatorBeforeOuter?: string;
+  readonly validatorAfterOuter?: string;
+  readonly validatorReturn?: string;
+  readonly afterFunction?: string;
+}
+
+const SANITIZER_OWNER_EXACT_RECORD_HELPER = `
+function exactRecord(
+  value: unknown,
+  required: readonly string[],
+  optional: readonly string[],
+  signal: AbortSignal
+): ReadonlyMap<string, unknown> {
+  void value;
+  void required;
+  void optional;
+  void signal;
+  return new Map();
+}`;
+
+const SANITIZER_OWNER_PROTOCOL_STRING_HELPER = `
+function protocolString(value: unknown, context: unknown): string {
+  void context;
+  return value as string;
+}`;
+
+const SANITIZER_OWNER_DENSE_ARRAY_HELPER = `
+function denseArray(value: unknown, signal: AbortSignal): readonly unknown[] {
+  void signal;
+  return value as readonly unknown[];
+}`;
+
+function sanitizerOwnerFixture(
+  options: SanitizerOwnerFixtureOptions = {}
+): string {
+  const requiredKeys = SANITIZER_RAW_SOURCE_KEYS.map((key) =>
+    key === "source_id"
+      ? (options.sourceIdRequired ?? JSON.stringify(key))
+      : JSON.stringify(key)
+  ).join(", ");
+  const callbackBody = options.callbackBody ?? `
+    ${options.callbackBeforeRecord ?? ""}
+    const record = ${options.recordCallee ?? "exactRecord"}(source, [${requiredKeys}], [], context.signal);
+    ${options.callbackBeforeValidation ?? ""}
+    ${options.validation ?? 'protocolString(record.get("source_id"), context);'}
+    ${options.callbackAfterRecord ?? ""}
+    return {};`;
+  const mapExpression = `contents.${options.mapMethod ?? "map"}((${options.callbackParameter ?? "source"}) => {${callbackBody}
+  })`;
+  return `${options.exactRecordHelper ?? SANITIZER_OWNER_EXACT_RECORD_HELPER}
+${options.denseArrayHelper ?? SANITIZER_OWNER_DENSE_ARRAY_HELPER}
+${options.protocolStringHelper ?? SANITIZER_OWNER_PROTOCOL_STRING_HELPER}
+${options.beforeFunction ?? ""}
+function ${options.functionName ?? "validateSnapshot"}(${options.snapshotParameter ?? "snapshot: unknown"}, ${options.contextParameter ?? "context: any"}): unknown {
+  ${options.validatorBeforeOuter ?? ""}
+  const outer = ${options.outerInitializer ?? 'exactRecord(snapshot, ["contents"], [], context.signal)'};
+  ${options.validatorAfterOuter ?? ""}
+  const contents = ${options.contentsInitializer ?? 'denseArray(outer.get("contents"), context.signal)'};
+  const sources = ${options.deadDecoyMap === true ? `false ? ${mapExpression} : []` : mapExpression};
+  ${options.validatorReturn ?? "return { sources };"}
+}
+${options.afterFunction ?? ""}`;
+}
+
+function analyzeSanitizerOwnerFixture(
+  options: SanitizerOwnerFixtureOptions = {},
+  relativePath = "deterministic-sanitizer.ts"
+): SourceAnalysis {
+  return analyzeSource({
+    path: join(PRODUCTION_ROOT, relativePath),
+    text: sanitizerOwnerFixture(options),
+    tree: "production",
+    enforceSanitizerSourceOwner: true
+  });
+}
+
+function assertSanitizerOwnerViolation(analysis: SourceAnalysis): void {
+  assert.ok(
+    analysis.violations.some((violation) =>
+      violation.includes("sanitizer raw-source ownership is invalid")
+    ),
+    `expected deterministic sanitizer owner violation, received:\n${analysis.violations.join("\n")}`
+  );
+}
+
 test("REQ-SBX-GENERAL-002 production boundary has an isolated source root", () => {
   assert.equal(
     existsSync(PRODUCTION_ROOT),
@@ -1231,6 +2161,326 @@ test("REQ-SBX-GENERAL-002 production boundary has an isolated source root", () =
 test("REQ-SBX-GENERAL-002 actual core and production trees satisfy the permanent boundary gate", () => {
   const violations = analyzeActualBoundary();
   assert.deepEqual(violations, [], violations.join("\n"));
+});
+
+for (const mutation of [
+  {
+    name: "a nonliteral required source_id key",
+    options: {
+      beforeFunction: 'const SOURCE_ID_FIELD = "source_" + "id";',
+      sourceIdRequired: "SOURCE_ID_FIELD"
+    }
+  },
+  {
+    name: "a missing validateSnapshot function",
+    options: { functionName: "validateRawSnapshot" }
+  },
+  {
+    name: "a wrong contents map shape",
+    options: { mapMethod: "filter" }
+  },
+  {
+    name: "a local protocolString shadow",
+    options: { callbackBeforeRecord: "const protocolString = () => undefined;" }
+  },
+  {
+    name: "a local exactRecord shadow",
+    options: { callbackBeforeRecord: "const exactRecord = () => new Map();" }
+  },
+  {
+    name: "an early callback return before source_id validation",
+    options: { callbackBeforeValidation: "return {};" }
+  },
+  {
+    name: "source_id validation in a dead callback block",
+    options: {
+      callbackBody: `
+        if (false) {
+          const record = exactRecord(source, [${SANITIZER_RAW_SOURCE_KEYS.map(JSON.stringify).join(", ")}], [], context.signal);
+          protocolString(record.get("source_id"), context);
+        }
+        return {};`
+    }
+  },
+  {
+    name: "a conditionally dead decoy contents map",
+    options: { deadDecoyMap: true }
+  },
+  {
+    name: "a decoy outer record",
+    options: { outerInitializer: "new Map([[\"contents\", []]])" }
+  },
+  {
+    name: "contents not derived from outer.get",
+    options: { contentsInitializer: "[]" }
+  },
+  {
+    name: "a missing module denseArray helper",
+    options: { denseArrayHelper: "" }
+  },
+  {
+    name: "a local denseArray shadow",
+    options: {
+      validatorBeforeOuter:
+        "const denseArray = (_value: unknown, _signal: AbortSignal) => [];"
+    }
+  },
+  {
+    name: "a reassigned denseArray helper",
+    options: { beforeFunction: "denseArray = () => [];" }
+  },
+  {
+    name: "a missing module exactRecord helper",
+    options: { exactRecordHelper: "" }
+  },
+  {
+    name: "a missing module protocolString helper",
+    options: { protocolStringHelper: "" }
+  },
+  {
+    name: "a non-module-bound exactRecord helper",
+    options: {
+      exactRecordHelper:
+        "function exactRecordHolder() { function exactRecord() { return new Map(); } void exactRecord; }"
+    }
+  },
+  {
+    name: "a non-module-bound protocolString helper",
+    options: {
+      protocolStringHelper:
+        "function protocolStringHolder() { function protocolString() { return \"\"; } void protocolString; }"
+    }
+  },
+  {
+    name: "a non-function exactRecord module identity",
+    options: { exactRecordHelper: "const exactRecord = () => new Map();" }
+  },
+  {
+    name: "a non-function protocolString module identity",
+    options: { protocolStringHelper: "const protocolString = () => \"\";" }
+  },
+  {
+    name: "a reassigned exactRecord helper",
+    options: { beforeFunction: "exactRecord = () => new Map();" }
+  },
+  {
+    name: "a reassigned protocolString helper",
+    options: { beforeFunction: "protocolString = () => \"\";" }
+  },
+  {
+    name: "an exactRecord for-of assignment target",
+    options: { beforeFunction: "for (exactRecord of [exactRecord]) {}" }
+  },
+  {
+    name: "a protocolString for-in assignment target",
+    options: { beforeFunction: "for (protocolString in { replacement: true }) {}" }
+  },
+  {
+    name: "a denseArray destructured for-of assignment target",
+    options: { beforeFunction: "for ([denseArray] of [[denseArray]]) {}" }
+  },
+  {
+    name: "an optional exactRecord call",
+    options: { recordCallee: "exactRecord?." }
+  },
+  {
+    name: "an optional protocolString call",
+    options: { validation: 'protocolString?.(record.get("source_id"), context);' }
+  },
+  {
+    name: "an exactRecord call with type arguments",
+    options: { recordCallee: "exactRecord<unknown>" }
+  },
+  {
+    name: "a protocolString call with type arguments",
+    options: { validation: 'protocolString<string>(record.get("source_id"), context);' }
+  },
+  {
+    name: "an extra source_id capture",
+    options: { callbackAfterRecord: 'const captured = record.get("source_id"); void captured;' }
+  },
+  {
+    name: "a direct source capture",
+    options: { callbackAfterRecord: "void source;" }
+  },
+  {
+    name: "a dynamic source access",
+    options: { callbackAfterRecord: 'void source["value"];' }
+  },
+  {
+    name: "a direct record capture",
+    options: { callbackAfterRecord: "void record;" }
+  },
+  {
+    name: "a dynamic record key",
+    options: {
+      callbackAfterRecord: 'const key = "value"; void record.get(key);'
+    }
+  },
+  {
+    name: "a local context shadow in the source callback",
+    options: {
+      callbackBeforeRecord:
+        "const context = { signal: undefined as never };"
+    }
+  },
+  {
+    name: "a var redeclaration of the source callback parameter",
+    options: { callbackBeforeRecord: "var source = {};" }
+  },
+  {
+    name: "a module-local mutable raw channel into the source callback",
+    options: {
+      beforeFunction: "let rawChannel: unknown;",
+      validatorBeforeOuter:
+        "rawChannel = (snapshot as any).contents[0];",
+      callbackAfterRecord:
+        "return { value: rawChannel } as never;"
+    }
+  },
+  {
+    name: "a validator context raw channel into the source callback",
+    options: {
+      validatorBeforeOuter:
+        "(context as any).raw = (snapshot as any).contents[0];",
+      callbackAfterRecord:
+        "return { value: (context as any).raw } as never;"
+    }
+  },
+  {
+    name: "a var redeclaration of the snapshot validator parameter",
+    options: { validatorBeforeOuter: "var snapshot = {};" }
+  },
+  {
+    name: "a var redeclaration of the context validator parameter",
+    options: {
+      validatorBeforeOuter:
+        "var context = { signal: undefined as never };"
+    }
+  },
+  {
+    name: "a persisted default snapshot validator parameter",
+    options: {
+      beforeFunction: "let cachedSnapshot: unknown;",
+      snapshotParameter: "snapshot: unknown = cachedSnapshot",
+      validatorBeforeOuter: "cachedSnapshot = snapshot;"
+    }
+  },
+  {
+    name: "a reassigned snapshot validator parameter",
+    options: { validatorBeforeOuter: "snapshot = {};" }
+  },
+  {
+    name: "a context validator parameter loop assignment target",
+    options: {
+      validatorBeforeOuter: "for (context of [] as any[]) {}"
+    }
+  },
+  {
+    name: "a defaulted source callback parameter",
+    options: { callbackParameter: "source = undefined" }
+  },
+  {
+    name: "a rest source callback parameter",
+    options: { callbackParameter: "...source" }
+  },
+  {
+    name: "an optional source callback parameter",
+    options: { callbackParameter: "source?: unknown" }
+  },
+  {
+    name: "a mutation of the inspected outer record",
+    options: {
+      validatorAfterOuter: 'outer.set("contents", []);'
+    }
+  },
+  {
+    name: "an alias mutation of the inspected outer record",
+    options: {
+      validatorAfterOuter:
+        'const outerAlias = outer; outerAlias.set("contents", []);'
+    }
+  },
+  {
+    name: "an outer snapshot capture from the source callback",
+    options: { callbackAfterRecord: "return snapshot as never;" }
+  },
+  {
+    name: "an outer record capture from the source callback",
+    options: { callbackAfterRecord: "return outer as never;" }
+  },
+  {
+    name: "an outer contents capture from the source callback",
+    options: { callbackAfterRecord: "return contents as never;" }
+  },
+  {
+    name: "an aliased outer snapshot capture from the source callback",
+    options: {
+      validatorBeforeOuter: "const rawAlias = snapshot;",
+      callbackAfterRecord: "return rawAlias as never;"
+    }
+  },
+  {
+    name: "a lexical arguments capture from the source callback",
+    options: { callbackAfterRecord: "return arguments[0] as never;" }
+  },
+  {
+    name: "an unpaired source_id schema literal",
+    options: { validation: 'protocolString(record.get("source_type"), context);' }
+  },
+  {
+    name: "a third source_id literal",
+    options: { afterFunction: 'void "source_id";' }
+  },
+  {
+    name: "a validator return not bound to inspected sources",
+    options: { validatorReturn: "return {};" }
+  },
+  {
+    name: "a validator return with sources overridden by a later spread",
+    options: {
+      validatorReturn:
+        "const replacement = { sources: [] }; return { sources, ...replacement };"
+    }
+  },
+  {
+    name: "a push into inspected sources before return",
+    options: {
+      validatorReturn:
+        "sources.push(snapshot as never); return { sources };"
+    }
+  },
+  {
+    name: "a splice into inspected sources before return",
+    options: {
+      validatorReturn:
+        "sources.splice(0, 1, snapshot as never); return { sources };"
+    }
+  },
+  {
+    name: "an alias of inspected sources before return",
+    options: {
+      validatorReturn:
+        "const sourceAlias = sources; void sourceAlias; return { sources };"
+    }
+  },
+  {
+    name: "a value-level source_id property outside validation",
+    options: {
+      afterFunction:
+        "function leak(raw: any): unknown { return raw.contents[0].source_id; }"
+    }
+  }
+] as const) {
+  test(`REQ-SBX-GENERAL-002 repository gate rejects sanitizer owner mutation with ${mutation.name}`, () => {
+    assertSanitizerOwnerViolation(analyzeSanitizerOwnerFixture(mutation.options));
+  });
+}
+
+test("REQ-SBX-GENERAL-002 repository gate rejects sanitizer source_id ownership in the wrong file", () => {
+  assertSanitizerOwnerViolation(
+    analyzeSanitizerOwnerFixture({}, "deterministic-sanitizer-copy.ts")
+  );
 });
 
 for (const mutation of [

@@ -5522,3 +5522,43 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - operator constraint: no P1-T3 production rule-detector spec was repeated
 - commit: the exact Phase 2 evidence commit containing this record
 - next: Phase 3 entry gate, then P3-T1 deterministic structured sanitizer
+
+## 2026-07-20 - REQ-SBX-GENERAL-002 P3-T1 sanitizer owner-gate correction
+
+- phase/task: Phase 3 / P3-T1 repository owner correction
+- status: VERIFIED_OWNER_CORRECTION
+- exact implementation file:
+  - `tests/repository/sandbox-security-production.spec.ts`
+- correction boundary:
+  - the sanitizer owner gate now requires exact write-once `snapshot` and
+    `context` parameters, an exact single `source` map parameter, and a
+    closed lexical binding/provenance path from `snapshot` through
+    `outer -> contents -> map -> inspected record`
+  - callback values may use only the real validator context at approved
+    helper call sites; module-local channels, aliases, lexical arguments,
+    parameter redeclarations/defaults/rest/optional forms, outer mutations,
+    and raw aggregate captures fail closed
+  - the correction remains repository-test ownership only and does not alter
+    frozen GENERAL-001 or P3-T1 production behavior
+- TDD evidence:
+  - reviewer mutation RED cycles failed the intended assertions for direct
+    outer captures (`164/167`), validator aliases/lexical arguments
+    (`167/169`), callback binding identity (`169/171`), and the consolidated
+    provenance matrix (`171/183`); none failed from import or syntax errors
+  - final owner correction GREEN passed `183/183`
+  - the owner correction was never validated by the P1-T3 rule-detector spec
+- final verification:
+  - repository owner + sanitizer + frozen-boundary combined gate passed
+    `287/287`
+  - sandbox TypeScript, frontend production build, and `git diff --check`
+    passed; the frontend retained its existing non-failing chunk-size warning
+- independent review:
+  - Specification Compliance Review: `APPROVED`; all five provenance and
+    binding findings resolved, no new blocking issue
+  - Code Quality/Security Review: `APPROVED`; no Critical, Important, or
+    Minor findings
+- documentation scope: no README, architecture, or API contract change is
+  required for a repository-only owner gate correction
+- operator constraint: no P1-T3 detector validation command was repeated
+- commit: the exact owner-correction commit containing this evidence
+- next: commit the owned P3-T1 sanitizer and sanitizer test files
