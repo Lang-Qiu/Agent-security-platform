@@ -5767,3 +5767,47 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   was run
 - commit: the exact P3-T4 task commit containing this evidence
 - next: Phase 3 exit gate and independent phase review
+
+## 2026-07-20 - REQ-SBX-GENERAL-002 Phase 3 sanitizer and Judge VERIFIED
+
+- phase: Phase 3 / deterministic sanitizer and OpenAI Judge
+- status: VERIFIED
+- task commits:
+  - P3-T1 sanitizer owner-gate correction: `94d030e`
+  - P3-T1 deterministic sanitizer: `74d39b8`
+  - P3-T2 exact OpenAI Responses contract: `bba4beb`
+  - P3-T3 obligation-bound OpenAI Judge detector: `9ec99b1`
+  - P3-T4 external pipeline Engine integration: `acf7e8f`
+- frozen boundaries:
+  - the only GENERAL-001 deep import remains the approved sanitizer derive
+    helper; no other Phase 3 production module deep-imports the frozen core
+  - raw source content, provider prose/IDs/usage/reasoning, credentials,
+    endpoints, benchmark truth, and fixture metadata do not cross the
+    sanitizer/Judge result boundary
+  - prompt version/bytes/hash, strict request/schema, 64 KiB caps, completed
+    Responses grammar, current obligation binding, confidence/severity mapping,
+    and omission-only partial coverage are fixed
+  - real Engine integration proves unsafe sanitizer input and malformed
+    sanitizer output cause zero Judge calls; cancellation, local/Judge timeout,
+    transport failure, short circuit, repeated evaluations, and Track1 remain
+    core-owned and content-free
+- exit verification from clean `acf7e8f`:
+  - repository tests passed `294/294`
+  - the exact `test:engine:sandbox` explicit file list passed `1028/1028`; the
+    script was inspected before execution and does not contain the prohibited
+    P1-T3 production rule-detector spec
+  - sandbox TypeScript and frontend production build passed; the frontend
+    retained its existing non-failing chunk-size advisory
+  - `git diff --check`, `git diff --summary`, and `git status --short` were
+    clean
+- phase review:
+  - independent reviewer found no P0-P3 issues and concluded `APPROVED`
+  - sole deep import, bounded/frozen sanitizer, no raw egress, exact Judge
+    contract, current-obligation mapping, real Engine zero-call/cancel/timeout,
+    and P1/P2/Track1 compatibility were all accepted
+  - no correction or re-review loop was required
+- process note: this evidence-only update is a documentation exception to full
+  business-logic TDD
+- operator constraint: no P1-T3 production rule-detector spec was run
+- commit: the exact Phase 3 evidence commit containing this record
+- next: Phase 4 entry gate, then P4-T1 production composition
