@@ -5991,3 +5991,72 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   production API change
 - commit: the exact P4-T3 task commit containing this evidence
 - next: stop after P4-T3; P4-T4 begins only on the next explicit instruction
+
+## 2026-07-20 - REQ-SBX-GENERAL-002 P4-T4 full production Engine integration
+
+- phase/task: Phase 4 / P4-T4
+- status: VERIFIED
+- owned files:
+  - `engines/sandbox/tests/sandbox-security-production-integration.spec.ts`
+  - `package.json`
+  - `docs/progress.md`
+- integration boundary:
+  - the public production index is exercised for real `rule_only` Engine
+    evaluation and pre-evaluation configuration failures; deterministic
+    sibling-only composition ports exercise `rule_only`, `local`, and
+    `local_and_judge` without a live provider or public override
+  - integration coverage preserves the exact decision/run contract, rule
+    short circuit, sanitizer failure with zero Judge calls, local/Judge slot
+    timeouts, caller cancellation, timer cleanup, and recursively frozen
+    decisions
+  - hermetic replay consumes the real inventory/prewarm qualification prefix,
+    evaluates an actual Engine for both no-match and routed-risk inputs, and
+    proves the routed case reaches the OpenAI Judge operation before returning
+    a risk decision
+  - replay inputs close through `try/finally`; an injected benchmark identity
+    sentinel cannot appear in serialized decisions; the complete ordered Track
+    1 compatibility report is compared structurally and byte-for-byte
+  - the permanent `test:engine:sandbox:production` script is registered with
+    the exact Master-plan command; the later `test:all` composition remains
+    owned by P7-T3 and was not changed early
+- TDD evidence:
+  - the initial integration RED passed `9/10` and failed only because the
+    production test script was absent; all real Engine paths already executed,
+    so the RED was not a missing-module, import, syntax, or environment error
+  - adding the exact package script produced the first focused GREEN at
+    `10/10`
+  - the accepted quality-review replay coverage regression used a test-local
+    no-match placeholder and passed `10/11`; the sole intended AssertionError
+    observed `local=no_match` and `Judge=skipped` instead of both matched
+  - the routed cassette now uses local confidence `0.6`, meeting the balanced
+    routing floor while remaining below the `0.85` qualification threshold;
+    this preserves an unresolved signal and drives the actual sanitizer/Judge
+    path rather than directly accepting the local result
+  - the final focused suite passed `11/11`
+- final verification:
+  - all production detector/composition/integration specs, including P1-T3,
+    passed `290/290`
+  - the required repository production/integration/Track 1 gate passed
+    `253/253`
+  - repository tests passed `294/294`; sandbox engine tests passed `1028/1028`
+  - sandbox TypeScript and frontend production build passed; the frontend
+    retained its existing non-failing chunk-size advisory
+  - `git diff --check` passed
+- independent review:
+  - the Specification Compliance Review found no P0-P2 issues and concluded
+    `APPROVED` for all ten original acceptance areas
+  - the Code Quality/Security Review initially returned `CHANGES_REQUIRED` for
+    routed replay Judge coverage, sentinel/deep-freeze strength, replay
+    lifecycle cleanup, environment restoration, and exact Track 1 report
+    comparison; all accepted findings were corrected in the integration owner
+    file and marked `RESOLVED`
+  - suggestions to replace the exact package glob or alter `test:all` in P4
+    were rejected as plan conflicts: the exact glob is locked by the Master,
+    and `test:all` package ownership is explicitly deferred to P7-T3
+  - final combined re-review found no new P0-P3 issues and concluded `APPROVED`
+- documentation scope: `README.md`, `docs/architecture.md`, and
+  `docs/api-contract.md` require no change because P4-T4 adds only test
+  integration coverage and the already-approved test script, without changing
+  a platform route, shared DTO, or production architecture boundary
+- commit: the exact P4-T4 task commit containing this evidence
+- next: Phase 4 exit gate and independent Phase review
