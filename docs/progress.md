@@ -5705,3 +5705,65 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   was run
 - commit: the exact P3-T3 task commit containing this evidence
 - next: P3-T4 external pipeline Engine integration
+
+## 2026-07-20 - REQ-SBX-GENERAL-002 P3-T4 external pipeline Engine integration
+
+- phase/task: Phase 3 / P3-T4
+- status: VERIFIED
+- exact implementation files:
+  - `engines/sandbox/src/security-production/external-pipeline.ts`
+  - `engines/sandbox/tests/sandbox-security-production-external-pipeline.spec.ts`
+- design boundary:
+  - the sibling-only factory accepts one exact closed transport input and
+    returns a frozen pair containing the real P3-T1 deterministic sanitizer
+    and P3-T3 obligation-bound Judge; it is not added to a public production
+    index and retains no snapshot, payload, response, or provider state
+  - integration fixtures construct the registry and Engine only through the
+    frozen `security/index.ts` public factories and expose only content-free
+    call/timer/listener counters in test memory
+  - current obligations flow through the real sanitizer/request/parser/Judge
+    path; two evaluations using the same pipeline have distinct request IDs,
+    content-derived categories, decision IDs, and current bound results
+- TDD evidence:
+  - guarded RED ran `8` cases with six intended behavioral failures and two
+    existing Engine behaviors passing; the first failure was zero inert Judge
+    transport calls versus the required one, not an import, syntax, or
+    environment error
+  - the initial GREEN passed `8/8`; required malformed-sanitizer integration
+    coverage and accepted review regressions expanded the final focused gate to
+    `11/11`
+  - a review regression RED passed `9/10` and failed only because the transport
+    harness exposed/stored `calls` instead of the required `call_count`; the
+    corrected harness retains no HTTP request or sanitized body
+- Engine-path evidence:
+  - valid sanitized Judge risks and partial coverage become current
+    obligation-bound findings without raw/provider prose
+  - the unsafe URL `https://example.com/a\\b` passes shared request
+    normalization but the real sanitizer fails closed with zero Judge calls
+    and `external_redaction_failed`; malformed sanitizer output is independently
+    rejected by the frozen core before Judge
+  - qualifying rule short circuit makes zero Judge calls; transport failure is
+    recorded as a safe failed run; in-flight caller cancellation rejects with
+    the fixed cancelled error; local and Judge slot timeouts clean their
+    listeners/timers and preserve Engine run semantics
+- final verification:
+  - focused external-pipeline tests passed `11/11`
+  - the exact sanitizer/OpenAI contract/Judge/external-pipeline/Engine/Track1
+    integration gate, excluding the P1-T3 rule-detector spec, passed `405/405`
+  - sandbox TypeScript and frontend production build passed; the frontend
+    retained its existing non-failing chunk-size advisory
+  - `git diff --check` passed
+- independent review:
+  - Specification Compliance Review: `APPROVED`; P0-P3 none
+  - initial Code Quality/Security Review: `CHANGES_REQUIRED` for request
+    retention, non-pending cancellation/cleanup evidence, incomplete hostile
+    constructor paths, and weak nested-freeze/cross-evaluation discrimination
+  - combined re-review: all four original issues `RESOLVED`, new issues none,
+    final conclusion `APPROVED`
+- documentation scope: `README.md`, `docs/architecture.md`, and
+  `docs/api-contract.md` require no change because this is an internal
+  production assembly seam with no platform-facing DTO or route
+- operator constraint: no P1-T3 production rule-detector validation command
+  was run
+- commit: the exact P3-T4 task commit containing this evidence
+- next: Phase 3 exit gate and independent phase review
