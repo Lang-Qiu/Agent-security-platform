@@ -5866,3 +5866,66 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   index
 - commit: the exact P4-T1 task commit containing this evidence
 - next: stop after P4-T1; P4-T2 begins only on the next explicit instruction
+
+## 2026-07-20 - REQ-SBX-GENERAL-002 P4-T2 exact public production index
+
+- phase/task: Phase 4 / P4-T2
+- status: VERIFIED
+- owned files:
+  - `engines/sandbox/src/security-production/index.ts`
+  - `engines/sandbox/tests/sandbox-security-production-index.spec.ts`
+  - `docs/progress.md`
+- public production boundary:
+  - the runtime export inventory is exactly the production rule-detector
+    factory, deterministic-sanitizer factory, and async production Engine
+    factory; the first two are transparent identity-preserving re-exports
+  - the Engine factory accepts only the exact closed `{ runtime, mode }` input,
+    where mode is `rule_only`, `local`, or `local_and_judge`, and delegates the
+    unchanged input to the P4-T1 production composition
+  - the source has exactly two named re-export edges, one type-only core-index
+    edge for `SandboxSecurityEngine` and `SandboxSecurityRuntimePorts`, and one
+    value edge for the production composition; no type or internal helper is
+    re-exported
+  - the public index exposes no transport, environment, credential, endpoint,
+    model, prompt, schema, provider, qualification, replay, or benchmark
+    control and has no benchmark-composition edge
+- TDD evidence:
+  - the initial guarded RED ran `4` cases with `1` pass and `3` intended
+    behavioral failures: the guarded detector factory identity differed, the
+    production Engine factory was absent, and the source module-edge inventory
+    was empty; there was no missing-module, syntax, or environment failure
+  - the first minimal GREEN passed `4/4`
+  - the first sandbox TypeScript gate exposed test-probe-only diagnostic
+    placement and AST narrowing errors; moving each `@ts-expect-error` to its
+    actual diagnostic node and using the repository modifier-narrowing pattern
+    preserved every negative contract and restored the TypeScript gate
+  - the accepted quality-review finding received a new mutation RED: focused
+    tests passed `4/6` and failed only because an unexported top-level side
+    effect and a hidden dynamic import did not raise the required assertion
+  - the strengthened source validator now requires the exact five-statement
+    top-level sequence and rejects dynamic imports anywhere in the syntax tree;
+    the final focused suite passed `6/6`
+- final verification:
+  - the required production repository/index/composition gate passed `202/202`
+  - all production detector/composition specs, explicitly including P1-T3,
+    passed `263/263`
+  - repository tests passed `294/294`; sandbox engine tests passed `1028/1028`
+  - sandbox TypeScript and frontend production build passed; the frontend
+    retained its existing non-failing chunk-size advisory
+  - `git diff --check` passed
+- independent review:
+  - fresh Specification Compliance Review found no P0-P3 issues and concluded
+    `APPROVED`, including the exact runtime/type inventories, parameter
+    visibility, import graph, benchmark absence, and zero provider/secret
+    control surface
+  - fresh Code Quality/Security Review returned `CHANGES_REQUIRED` for one
+    Important mutation-test gap covering unexported top-level side effects and
+    dynamic imports; after RED-first correction, the same reviewer marked the
+    finding `RESOLVED`, found no new Critical, Important, or Minor issues, and
+    concluded `APPROVED`
+- documentation scope: `README.md`, `docs/architecture.md`, and
+  `docs/api-contract.md` require no change because P4-T2 implements the already
+  approved production API surface without changing a platform route, shared
+  DTO, or architecture boundary
+- commit: the exact P4-T2 task commit containing this evidence
+- next: stop after P4-T2; P4-T3 begins only on the next explicit instruction
