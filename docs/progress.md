@@ -5811,3 +5811,58 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - operator constraint: no P1-T3 production rule-detector spec was run
 - commit: the exact Phase 3 evidence commit containing this record
 - next: Phase 4 entry gate, then P4-T1 production composition
+
+## 2026-07-20 - REQ-SBX-GENERAL-002 P4-T1 production mode composition
+
+- phase/task: Phase 4 / P4-T1
+- status: VERIFIED
+- owned files:
+  - `engines/sandbox/src/security-production/composition.ts`
+  - `engines/sandbox/tests/sandbox-security-production-composition.spec.ts`
+- composition boundary:
+  - `rule_only` creates only the production rule registry; `local` and
+    `local_and_judge` create validated private configuration, capture the
+    normalized Ollama digest, consume that config into one sealed transport,
+    and qualify/prewarm the local detector before returning an Engine
+  - qualification uses a composition-owned AbortController and one exact
+    `1000` ms runtime timer; cleanup is attempted once and cannot replace the
+    settled qualification outcome
+  - `local_and_judge` passes the same transport identity into the P3 external
+    pipeline and delegates registry/Engine construction only through
+    `security/index.ts`; the composition adds no profile resolution, reducer,
+    evaluation wrapper, provider override, or fallback detector
+  - public input, internal runtime, and WithPorts factory bags are exact closed
+    records whose validated methods are copied into frozen views before any
+    configuration or provider effect
+- TDD evidence:
+  - the initial guarded RED ran `8` cases and failed `8/8` on the absent
+    composition behavior, led by `guarded-composition-placeholder`, rather
+    than an import typo or test-environment error
+  - the specification-review Proxy regression RED passed `8/9` and failed only
+    because a post-validation runtime `get` leaked
+    `runtime-get-sentinel`; the frozen runtime-method snapshot closed it
+  - the quality-review cleanup regression RED passed `11/12` and failed only
+    because `cleanup-mask-sentinel` replaced the original qualification error;
+    best-effort timer cleanup now preserves rejected and successful outcomes
+  - the final focused suite passed `13/13`, including all three Engine modes,
+    same-transport Judge routing, caller cancellation, configuration failures,
+    proof-consumption order, and `21` hostile input/runtime/ports combinations
+- final verification:
+  - the production repository/composition/Engine/Track1 compatibility gate
+    passed `517/517`
+  - repository tests passed `294/294`; sandbox engine tests passed `1028/1028`
+  - sandbox TypeScript and frontend production build passed; the frontend
+    retained its existing non-failing chunk-size advisory
+- independent review:
+  - initial Specification Compliance Review: `CHANGES_REQUIRED` for the runtime
+    Proxy read and required Engine/config/proof coverage; re-review resolved all
+    findings with no new P0-P3 issues and concluded `APPROVED`
+  - initial Code Quality/Security Review: `CHANGES_REQUIRED` for cleanup error
+    masking and hostile-record coverage; re-review marked both `RESOLVED`, found
+    no new P0-P3 issues, and concluded `APPROVED`
+- documentation scope: `README.md`, `docs/architecture.md`, and
+  `docs/api-contract.md` require no change because P4-T1 remains a sibling-only
+  engine assembly seam with no platform-facing DTO, route, or public production
+  index
+- commit: the exact P4-T1 task commit containing this evidence
+- next: stop after P4-T1; P4-T2 begins only on the next explicit instruction
