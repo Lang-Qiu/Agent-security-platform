@@ -5656,3 +5656,52 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   was run
 - commit: the exact P3-T2 task commit containing this evidence
 - next: P3-T3 obligation-bound OpenAI Judge detector
+
+## 2026-07-20 - REQ-SBX-GENERAL-002 P3-T3 obligation-bound OpenAI Judge detector
+
+- phase/task: Phase 3 / P3-T3
+- status: VERIFIED
+- exact implementation files:
+  - `engines/sandbox/src/security-production/openai-judge-detector.ts`
+  - `engines/sandbox/tests/sandbox-security-production-openai-detector.spec.ts`
+- design boundary:
+  - sibling-only `SanitizedExternalDetector` construction accepts the closed
+    HTTP transport port and exposes no endpoint, credential, environment,
+    benchmark, raw snapshot, or frozen-core deep import
+  - each call reuses the exact Engine-provided signal, builds only the fixed
+    P3-T2 request, sends one exact OpenAI `responses` operation with the
+    inherited 64 KiB cap, and accepts only an exact HTTP `200`
+    `application/json` response
+  - parsed results are bound to the current core-validated routed obligations;
+    category, subject scope, and reason code are copied rather than invented,
+    confidence maps to `0.60`/`0.80`/`0.90`, omission remains partial coverage,
+    and the result is a fresh recursively frozen content-free value
+  - invalid response forms fail closed; transport and abort/termination errors
+    retain their original identity and are never converted to `no_match`
+- TDD evidence:
+  - guarded focused RED ran `11` cases with `10` intended behavioral failures
+    and one incidental static pass; the first failure was zero inert transport
+    calls versus the required one call, not an import, syntax, or environment
+    error
+  - focused GREEN passed `11/11`
+  - combined repository/OpenAI contract/Judge detector/sanitized-boundary gate,
+    explicitly excluding the P1-T3 rule-detector spec, passed `264/264`
+  - the first sandbox TypeScript gate exposed one test-fixture-only implicit
+    `any`; root-cause comparison with the Ollama fixture led to one explicit
+    `Readonly<SandboxSecurityHttpRequest>` parameter annotation, after which
+    TypeScript and focused tests passed
+- final verification:
+  - sandbox TypeScript and frontend production build passed; the frontend
+    retained its existing non-failing chunk-size advisory
+  - `git diff --check` passed
+- independent review:
+  - Specification Compliance Review: `APPROVED`; P0-P3 none
+  - Code Quality/Security Review: `APPROVED`; Critical/Important/Minor none
+  - no accepted finding required a production correction or re-review loop
+- documentation scope: `README.md`, `docs/architecture.md`, and
+  `docs/api-contract.md` require no change because P3-T3 remains a private
+  production-layer adapter with no platform-facing contract
+- operator constraint: no P1-T3 production rule-detector validation command
+  was run
+- commit: the exact P3-T3 task commit containing this evidence
+- next: P3-T4 external pipeline Engine integration
