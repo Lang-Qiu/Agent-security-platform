@@ -6060,3 +6060,47 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   a platform route, shared DTO, or production architecture boundary
 - commit: the exact P4-T4 task commit containing this evidence
 - next: Phase 4 exit gate and independent Phase review
+
+## 2026-07-20 - REQ-SBX-GENERAL-002 Phase 4 production composition VERIFIED
+
+- phase: Phase 4 / production composition and benchmark seams
+- status: VERIFIED
+- task commits:
+  - P4-T1 production mode composition: `a401775`
+  - P4-T2 exact public production index: `ed0f1d0`
+  - P4-T3 benchmark composition seams: `bb2346d`
+  - P4-T4 full production Engine integration: `473f3e0`
+- frozen boundaries:
+  - the public production index exports exactly the rule factory,
+    deterministic sanitizer factory, and production Engine factory; it exposes
+    no provider, transport, environment, credential, endpoint, prompt, model,
+    schema, qualification, replay, or benchmark control
+  - `rule_only`, `local`, and `local_and_judge` delegate registry and Engine
+    behavior to the frozen GENERAL-001 public core; local modes use one sealed
+    transport and finish exact-digest qualification/prewarm before returning an
+    Engine, with no fallback or duplicate policy/reducer path
+  - live and replay benchmark factories remain direct-import-only seams outside
+    the public index; runner lifecycle methods and content-free outcomes do not
+    cross the production transport boundary
+  - qualification, evaluation, sanitizer/Judge routing, caller cancellation,
+    slot timeouts, error identity, timer/listener cleanup, recursively frozen
+    decisions, and all nine Track 1 compatibility rows are covered through
+    actual Engine evaluation
+- exit verification from clean `473f3e0`:
+  - repository tests passed `294/294`
+  - sandbox engine tests passed `1028/1028`
+  - the additional production detector/composition/integration suite passed
+    `290/290`, including P1-T3 and routed hermetic Judge evaluation
+  - sandbox TypeScript and frontend production build passed; the frontend
+    retained its existing non-failing chunk-size advisory
+  - `git diff --check`, `git diff --summary`, and `git status --short` were
+    clean
+- phase review:
+  - the independent reviewer inspected composition, exact public surface,
+    benchmark seam lifecycle/capability boundaries, error/abort/timer paths,
+    actual Engine integration, and Track 1 compatibility
+  - no P0-P3 correction was required and the final conclusion was `APPROVED`
+- process note: this evidence-only update is a documentation exception to full
+  business-logic TDD
+- commit: the exact Phase 4 evidence commit containing this record
+- next: Phase 5 entry gate, then P5-T1 benchmark envelope contracts
