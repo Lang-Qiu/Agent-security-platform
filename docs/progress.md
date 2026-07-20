@@ -5929,3 +5929,65 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   DTO, or architecture boundary
 - commit: the exact P4-T2 task commit containing this evidence
 - next: stop after P4-T2; P4-T3 begins only on the next explicit instruction
+
+## 2026-07-20 - REQ-SBX-GENERAL-002 P4-T3 benchmark composition seams
+
+- phase/task: Phase 4 / P4-T3
+- status: VERIFIED
+- owned files:
+  - `engines/sandbox/src/security-production/benchmark-composition.ts`
+  - `engines/sandbox/tests/sandbox-security-production-benchmark-composition.spec.ts`
+  - `docs/progress.md`
+- benchmark-only boundary:
+  - the two direct-import-only factories accept exact closed runner-owned
+    inputs, fix composition to `local_and_judge`, and remain absent from the
+    public production index
+  - live composition reads production configuration internally, creates one
+    default transport, wraps it for content-free normalized outcome capture,
+    and shares that wrapper across qualification, local evaluation, and Judge
+  - live construction records exactly one inventory then one prewarm outcome
+    before returning an Engine; evaluation records contain no provider request,
+    raw body, credential, endpoint, fixture ID, truth, metric, or expected result
+  - replay validates the exact sealed model, digest, prompt, schema, catalog,
+    and sanitizer values before runtime or transport effects, then consumes the
+    inventory/prewarm prefix and its real one-use qualification proof
+  - qualification, local evaluation, and Judge share one frozen request-only
+    replay facade; runner-owned `beginInput`, `endInput`, and `assertDrained`
+    lifecycle methods never cross the production transport boundary
+  - failure capture is best-effort and never replaces the original provider
+    rejection; caller cancellation remains uncaptured
+- TDD evidence:
+  - the initial guarded RED ran `11` cases with `4` passing and `7` intended
+    behavioral failures; the first failure was the missing qualification-event
+    assertion rather than an import, syntax, or environment error
+  - the first minimal GREEN passed `11/11`
+  - the high-risk Judge-routing, malformed-response, and connection-failure
+    expansion first passed `12/15` with three intended behavioral failures,
+    then passed `15/15` after the minimal capture/replay corrections
+  - the accepted specification-review error-identity regression first passed
+    `15/16` and failed only because a throwing capture sink replaced the
+    provider error with `capture-record-sentinel`; the final focused suite
+    passed `16/16` after containing only that failure-path record side effect
+- final verification:
+  - the required production repository/index/benchmark gate passed `205/205`
+  - all production detector/composition specs, explicitly including P1-T3,
+    passed `279/279`
+  - repository tests passed `294/294`; sandbox engine tests passed `1028/1028`
+  - sandbox TypeScript and frontend production build passed; the frontend
+    retained its existing non-failing chunk-size advisory
+  - `git diff --check` passed
+- independent review:
+  - initial Specification Compliance Review returned `CHANGES_REQUIRED` for
+    failure-path capture masking the original provider error; the same reviewer
+    marked the RED-first correction `RESOLVED`, found no new P0-P3 issues, and
+    concluded `APPROVED`
+  - independent Code Quality/Security Review found no P0-P3 issues and
+    concluded `APPROVED`, including hostile record validation, cleanup and
+    error identity, content retention, request-only replay forwarding, state
+    reuse, lifecycle ownership, import isolation, and test integrity
+- documentation scope: `README.md`, `docs/architecture.md`, and
+  `docs/api-contract.md` require no change because P4-T3 is an internal
+  benchmark-only composition seam with no platform route, shared DTO, or public
+  production API change
+- commit: the exact P4-T3 task commit containing this evidence
+- next: stop after P4-T3; P4-T4 begins only on the next explicit instruction
