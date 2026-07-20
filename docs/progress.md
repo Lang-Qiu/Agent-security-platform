@@ -6104,3 +6104,63 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   business-logic TDD
 - commit: the exact Phase 4 evidence commit containing this record
 - next: Phase 5 entry gate, then P5-T1 benchmark envelope contracts
+
+## 2026-07-21 - REQ-SBX-GENERAL-002 P5-T1 benchmark envelope contracts
+
+- phase/task: Phase 5 / P5-T1
+- status: VERIFIED
+- owned files:
+  - `scripts/benchmark/sandbox-security/contracts.ts`
+  - `scripts/benchmark/sandbox-security/tsconfig.json`
+  - `tests/benchmark/sandbox-security-contracts.spec.ts`
+  - `package.json`
+  - `docs/progress.md`
+- contract boundary:
+  - versioned exact-key normalizers cover source locks, input envelopes,
+    safe/risk truth unions, ordered manifests, content-free replay outcomes,
+    capture qualification metadata, and seals
+  - input envelopes contain only opaque `ssb-v1-NNNN` fixture IDs and a
+    normalized Engine evaluation request; authoritative source cardinality and
+    simulation/enforcement authority rules mirror GENERAL-001
+  - source and obligation references are bounded to the shared 64-source and
+    32-routed-obligation limits; local candidates and subject references follow
+    the production adapter's duplicate and ordinal rules
+  - capture metadata pins the four prompt/schema literals and binds response
+    inventory/prewarm digests to the sealed Ollama digest; replay outcomes admit
+    only content-free response, HTTP, transport, and termination branches
+  - canonical JSON and tree hashes use deterministic sorted bytes, reject
+    accessors/inheritance/symbols/cycles/lone surrogates, and enforce shared
+    depth/node/text limits plus streaming, symlink-free bounded tree traversal
+- TDD evidence:
+  - initial guarded RED failed only because the benchmark compiler project and
+    package registration were absent; no raw missing-module or environment
+    failure was used as RED
+  - the first schema GREEN passed `10/10`; an ES2022 typecheck RED then exposed
+    unsupported `String.prototype.isWellFormed`, with a lone-surrogate
+    regression proving the runtime behavior before the minimal UTF-16 fix
+  - specification counterexamples first produced intended failures for
+    authority cardinality/mode, shared limits, capture bindings, provider
+    parity, symlink handling, and canonical bounds; the corrected focused suite
+    passed `15/15`
+  - the quality-review directory-resource regression first passed `15/16` with
+    the expected missing-bound failure; streaming directory enumeration and
+    stat prechecks produced the final `16/16`
+- final verification:
+  - contract plus production repository gate passed `199/199`
+  - benchmark TypeScript and sandbox TypeScript checks passed
+  - frontend production build passed with the repository's existing non-failing
+    chunk-size advisory
+  - `git diff --check` passed
+- independent review:
+  - Specification Compliance Review initially returned `CHANGES_REQUIRED` for
+    eight boundary gaps; regression REDs and minimal fixes were re-reviewed and
+    approved
+  - Code Quality/Security Review initially returned one Important directory
+    resource-bound finding; the RED/fix/re-review cycle resolved it and final
+    review concluded `APPROVED` with no P0-P3 findings
+- documentation scope: `README.md`, `docs/architecture.md`, and
+  `docs/api-contract.md` require no change because this task adds only
+  benchmark tooling/contracts and no platform route, shared API, or production
+  detector import
+- commit: the exact P5-T1 task commit containing this evidence
+- next: P5-T2 reviewed source admission, lock, and attribution

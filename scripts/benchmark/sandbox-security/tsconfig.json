@@ -1,0 +1,14 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "../../../",
+    "types": ["node"],
+    "noEmit": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": [
+    "../../../scripts/benchmark/sandbox-security/**/*.ts",
+    "../../../tests/benchmark/**/*.ts"
+  ],
+  "exclude": ["../../../node_modules", "../../../**/dist"]
+}
