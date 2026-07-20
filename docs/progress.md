@@ -6164,3 +6164,65 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   detector import
 - commit: the exact P5-T1 task commit containing this evidence
 - next: P5-T2 reviewed source admission, lock, and attribution
+
+## 2026-07-21 - REQ-SBX-GENERAL-002 P5-T2 reviewed source admission, lock, and attribution
+
+- phase/task: Phase 5 / P5-T2
+- status: VERIFIED
+- owned files:
+  - `scripts/benchmark/sandbox-security/import-sources.ts`
+  - `samples/sandbox-security-benchmark/v1/sources.lock.json`
+  - `samples/sandbox-security-benchmark/v1/ATTRIBUTION.md`
+  - `tests/benchmark/sandbox-security-source-admission.spec.ts`
+  - `docs/progress.md`
+- admission boundary:
+  - the importer accepts only caller-supplied, exact-key, dense reviewed
+    records; it has no network, credential, child-process, or file-write
+    capability and never writes the lock automatically
+  - four source families are pinned to official URLs, immutable revisions,
+    family-specific license evidence hashes, exact license attribution, and
+    bounded record-locator grammars; normalized outputs are recursively frozen
+  - the lock contains 246 reviewed records: AgentDojo 27, ToolEmu 60,
+    deepset prompt-injections 39, and OASST1 120; lock and attribution refs
+    and hashes are one-to-one with no excluded source family
+  - OASST1 attribution records the exact five-field canonical projection,
+    fixed pinned gzip size/SHA-256, viewer-order sampling offsets and
+    predicates including `synthetic === false`; independent recomputation
+    matched all 120 hashes (English 60, Chinese 60)
+- TDD evidence:
+  - the guarded initial admission suite was intentionally RED at `2/9`
+    passing and `7/9` failing on admission, evidence, grouping, capability,
+    and committed-lock assertions; failures were named admission/lock
+    assertions rather than raw environment or unrelated import failures
+  - the first minimal implementation reached `9/9`; a source metadata conflict
+    correction and lock curation closed the remaining intended assertions
+  - hostile Proxy/array, duplicate-hash, exact-attribution, family-locator,
+    and license-evidence regressions were each made RED before their minimal
+    fixes; the focused suite reached `12/12`, then `13/13` after the license
+    snapshot fix and `14/14` after the OASST reproduction contract
+  - the quality-review iterator/resource regression was RED at `14/15` and
+    fixed with a bounded indexed descriptor snapshot; the foreign prefixed
+    TypeError regression was RED at `15/16` and fixed with a private frozen
+    error identity; the final focused suite passed `16/16`
+- final verification:
+  - contracts, source admission, and repository production tests passed
+    `215/215`
+  - sandbox TypeScript and benchmark TypeScript checks passed
+  - frontend production build passed with only the existing non-failing
+    chunk-size advisory
+  - `git diff --check` passed
+- independent review:
+  - Specification Compliance Review initially identified evidence-hash,
+    locator, attribution, Proxy TOCTOU, OASST reproducibility, and
+    `synthetic` selection gaps; each accepted finding received a RED/fix and
+    the final re-review concluded `APPROVED` with no P0-P3 findings
+  - Code Quality/Security Review identified two P2 boundary issues: hostile
+    `Symbol.iterator` injection and forged admission-looking TypeError
+    leakage; both received RED/fix/re-review and the final conclusion was
+    `APPROVED` with no P0-P2 findings
+- documentation scope: `README.md`, `docs/architecture.md`, and
+  `docs/api-contract.md` require no change because P5-T2 adds only benchmark
+  admission/data governance and no platform route, shared API, or production
+  detector import
+- commit: the exact P5-T2 task commit containing this evidence
+- next: P5-T3 fixed 300-input corpus, truth, and manifest
