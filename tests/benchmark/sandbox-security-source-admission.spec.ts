@@ -508,6 +508,125 @@ test("REQ-SBX-GENERAL-002 committed source lock and attribution cover every revi
   }
 });
 
+test("REQ-SBX-GENERAL-002 P5-T2 corrective admits matrix-capable ToolEmu replacements with pinned hashes", () => {
+  assert.equal(existsSync(LOCK_URL), true, "source admission field: committed lock");
+  if (!existsSync(LOCK_URL)) return;
+
+  const raw = JSON.parse(readFileSync(LOCK_URL, "utf8")) as {
+    sources: readonly {
+      source_id: string;
+      records: readonly { record_ref: string; upstream_sha256: string }[];
+    }[];
+  };
+  const normalized = importReviewedRecords({
+    reviewed_records: flattenLockToReviewedRecords(raw)
+  }) as typeof raw;
+  assert.deepEqual(normalized, raw);
+
+  const familyCounts = Object.fromEntries(
+    normalized.sources.map((source) => [source.source_id, source.records.length])
+  );
+  assert.deepEqual(familyCounts, {
+    agentdojo: 27,
+    toolem: 60,
+    "deepset-prompt-injections": 39,
+    oasst1: 120
+  });
+  assert.equal(
+    normalized.sources.reduce((total, source) => total + source.records.length, 0),
+    246
+  );
+
+  const toolem = normalized.sources.find((source) => source.source_id === "toolem");
+  assert.notEqual(toolem, undefined);
+  const byRef = new Map(
+    toolem!.records.map((record) => [record.record_ref, record.upstream_sha256])
+  );
+
+  const requiredReplacements = {
+    "assets.all-cases.official_60":
+      "9ff0a6316746580e313efc402a13ea71211d89962215968bf55ef70969d0defc",
+    "assets.all-cases.official_111":
+      "c4cf4d3e0b5af65c8378cbb01e2ff83533017a0fdf69748193c7a8c41cabe040",
+    "assets.all-cases.official_75":
+      "2c9665eb2e6fd42cf2d7c85da60a0fe6af224c4d6a5dc941b1a309710d02218c",
+    "assets.all-cases.official_110":
+      "b92f5e977c1727fff19667508008b1ff9fe58a9a9a8a1254287e07389d9b415b",
+    "assets.all-cases.official_112":
+      "1304dd657af9972cc657afb9b770d7144c04dc6df1613f8f9f99b97c1bf507f4",
+    "assets.all-cases.official_79":
+      "4b0e7c99ebbcafd2b4933775af93b940069da4615ab8e2ca6935d82c4520aae9",
+    "assets.all-cases.official_80":
+      "d7dfcd2ebbe9f299348fff824d119c93928ce6c63a6b7b5963e1647ea859e4dd",
+    "assets.all-cases.official_62":
+      "99cb1c44651b788041e6dd0b82c8d721ab9d963edd513dae4c9368a36be63612",
+    "assets.all-cases.official_120":
+      "3061cc67b0e4f59e4d85fc0f8de82de797cf00d131c208ab3270c6fec86bdcf3",
+    "assets.all-cases.official_71":
+      "3a39fc2edc871f0658d8f141d747d6a98de0c49a42e8a61119e3de19ad8e443d",
+    "assets.all-cases.official_73":
+      "8531cdd575b57ae58f64c3e2245736e2149d09ca85d93c9cccaff7084b6d4b15",
+    "assets.all-cases.official_81":
+      "cde5191864cce94c503241315cfb3cd842f11711acd899c2364f684ef5958e12",
+    "assets.all-cases.official_83":
+      "2748c6cd3f8da72ea8636e6c091ac7eb9165e784a02b9237093186f94946984b",
+    "assets.all-cases.official_84":
+      "8599315f5b346eb718210e61a65fae13d77c860e0f16fd8292256b51c612f954",
+    "assets.all-cases.official_70":
+      "22e28d4d2b21a0f3b9e78c6a2f5897059c250d43cb92e40547808494081e42e4"
+  } as const;
+
+  const rejectedReplacements = [
+    "assets.all-cases.official_37",
+    "assets.all-cases.official_19",
+    "assets.all-cases.official_9",
+    "assets.all-cases.official_35",
+    "assets.all-cases.official_31",
+    "assets.all-cases.official_46",
+    "assets.all-cases.official_38",
+    "assets.all-cases.official_36",
+    "assets.all-cases.official_56",
+    "assets.all-cases.official_8",
+    "assets.all-cases.official_53",
+    "assets.all-cases.official_11",
+    "assets.all-cases.official_52",
+    "assets.all-cases.official_23",
+    "assets.all-cases.official_5"
+  ] as const;
+
+  for (const [recordRef, upstreamSha256] of Object.entries(requiredReplacements)) {
+    assert.equal(
+      byRef.get(recordRef),
+      upstreamSha256,
+      `source admission field: missing or mis-hashed corrective ToolEmu record ${recordRef}`
+    );
+  }
+
+  for (const recordRef of rejectedReplacements) {
+    assert.equal(
+      byRef.has(recordRef),
+      false,
+      `source admission field: replaced weak ToolEmu record must leave the lock: ${recordRef}`
+    );
+  }
+
+  const attribution = readFileSync(ATTRIBUTION_URL, "utf8");
+  for (const recordRef of Object.keys(requiredReplacements)) {
+    assert.match(
+      attribution,
+      new RegExp(`\\b${escapeRegExp(recordRef)}\\b`, "u"),
+      `source admission field: attribution missing corrective record ${recordRef}`
+    );
+  }
+  for (const recordRef of rejectedReplacements) {
+    assert.doesNotMatch(
+      attribution,
+      new RegExp(`\\b${escapeRegExp(recordRef)}\\b`, "u"),
+      `source admission field: attribution must drop replaced record ${recordRef}`
+    );
+  }
+});
+
 test("REQ-SBX-GENERAL-002 attribution declares an independently reproducible OASST1 hash projection", () => {
   const attribution = readFileSync(ATTRIBUTION_URL, "utf8");
   assert.match(

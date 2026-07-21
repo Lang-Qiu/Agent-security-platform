@@ -61,13 +61,9 @@ Each `upstream_sha256` is SHA-256 over the UTF-8 bytes of the immutable record p
 | `assets.all-cases.official_2` | `92acabbe76b68fb03293406656b9bb74d40d9033de18fce4b9aa3f01ae7dbdaf` |
 | `assets.all-cases.official_3` | `6bae795610dc439436e263d23749b461d3ef0868784155ff2409528ff767639e` |
 | `assets.all-cases.official_4` | `d172e662cefbd4b5cd3e9cd992b406a21f5168a13900edc29c28ff3545cff48e` |
-| `assets.all-cases.official_5` | `6621bd8b47611654c9888cf10973bfad79e926e4ef278d2ea603ba1eb9373e69` |
 | `assets.all-cases.official_6` | `44a65dfb8256180f2c690ef7afe8f1718d2fc358768136c6d3852a3732bd428b` |
 | `assets.all-cases.official_7` | `8c27465a7d2eeb7ce8487da9d802523289ed61356f388df9fd78f8b13f695ea3` |
-| `assets.all-cases.official_8` | `9b98cf484c3956619afcf8b14ba91ce24d96121938f5c818ce0623f1b3f53d17` |
-| `assets.all-cases.official_9` | `4f34ba478d0a6001196d37bbe8ec8c60d6028b63fdb7348c2bcc6d3c3fe0ed37` |
 | `assets.all-cases.official_10` | `fa7030225e3122a14bcaf5443421dc63ab925c5d77ba13b2c524d1c54746bb43` |
-| `assets.all-cases.official_11` | `707217008078017e04b384d5824b8b7b08b4e24bbadf6650386ca42b09275214` |
 | `assets.all-cases.official_12` | `3e3bb917027e9f0e3ce4b5b07ec9903bcfa5d1265b26d919069625e730fc3d96` |
 | `assets.all-cases.official_13` | `6a60b1ccca660e86b143aef0f80538e855ec2ea917ef59203bb5e94bc73ff1ec` |
 | `assets.all-cases.official_14` | `a07270964ccfd325019a1dc42ad915541eb032905088fabcd4546ec847d6d939` |
@@ -75,11 +71,9 @@ Each `upstream_sha256` is SHA-256 over the UTF-8 bytes of the immutable record p
 | `assets.all-cases.official_16` | `810f4c8606eb87eba35a3b34688938f8946de6fe77b76fc994d5bdaa5fc3ede2` |
 | `assets.all-cases.official_17` | `9644465d41f211e0c3a5cc2af3b18f4cd0b90c710f2adc169c9a3e1de8cbff41` |
 | `assets.all-cases.official_18` | `bc705f5a623a4a35458721ee6daab02878b046eb381c03b8c247d3ac8563fbe2` |
-| `assets.all-cases.official_19` | `d6c9a75e127c9668b5fc7328bfcb24d2fc3e5c0584ebc76e44b9047a1fa2cce6` |
 | `assets.all-cases.official_20` | `d361a896b5cfceb901fc0ac8ab061515ba7e2de570346f474e4d03b96463910a` |
 | `assets.all-cases.official_21` | `8a5b4d98619f4968638afb710357355d2a0c6ff4176314a5793dbecef87a1d35` |
 | `assets.all-cases.official_22` | `240768adfa7cfa76b16b86c7e6546862a6273cf992ff31c0ab657e04cbe2aad6` |
-| `assets.all-cases.official_23` | `4b4231ed3685f7b02b5174a25696f5be2d332b1ec59f042ae41f0912de95d9a8` |
 | `assets.all-cases.official_24` | `623b919780449a815ddaeb0aceb5f2eaafe9adddc89a541b5d59f723dad3cbb1` |
 | `assets.all-cases.official_25` | `86d258bd6eaf40749da1d7a74eb1786e3c76626840a9bdf6406c19a34c2b5f61` |
 | `assets.all-cases.official_26` | `d2516a837ba41efc8c5ca3978a9c8128c47b3413491d2b91a81f7fd11d73badc` |
@@ -87,14 +81,9 @@ Each `upstream_sha256` is SHA-256 over the UTF-8 bytes of the immutable record p
 | `assets.all-cases.official_28` | `c58e0bbef0daf0c86793285b93182b26c1b4b05fe8171152010db4ce76d73bea` |
 | `assets.all-cases.official_29` | `faac8cabdb74be75ac86ee396abe4b070d0fa6cc0e1482f71588a68c3cd21aa2` |
 | `assets.all-cases.official_30` | `f7ac971c88f5215bab4a955b637edbb4453341f96f2106ee662a68d26cc543a2` |
-| `assets.all-cases.official_31` | `66768fc6b3465da873374d46e5a853391b710355acc9f7aee9233b8d4e532497` |
 | `assets.all-cases.official_32` | `dbb90dcd323c5451147788513d7715c2e5f16bd4151dacb0b069278f70fec99f` |
 | `assets.all-cases.official_33` | `b0a674c84234ced2b99019963f99acfc4db4f198fa90fa6390f02568b502e71c` |
 | `assets.all-cases.official_34` | `02c721db1979235544ed3c15eabbb25ebf07b07d72e659251f5b469ce95baa05` |
-| `assets.all-cases.official_35` | `6ed4ccbe884452e25d6c2177d37ad89ee1be761af80f79d81ceac009cc9f0b33` |
-| `assets.all-cases.official_36` | `598543038bd859784704a253ed9824de2fcd1260f249336d88823b586d1a3d41` |
-| `assets.all-cases.official_37` | `80dc3ceda22a11a78f9810c550fee16d6ce6f9c88c91083d5a60713e7bd2b8c5` |
-| `assets.all-cases.official_38` | `bec0db5c6f1ff24676e9ba26502cb3cd63411ac4e6304569d351023b779c30e0` |
 | `assets.all-cases.official_39` | `7ce688ffbecc313758f5c4e0f2fd3711f0c50dbaed59d1ffe04f5f030240f860` |
 | `assets.all-cases.official_40` | `093993621b923052ac92fb2049add85d5e2fd2736c015494bb6776d11ca7bfea` |
 | `assets.all-cases.official_41` | `31b6bbb2ff8005cce82c05356d0749d68c342511bc1614917f878b682116932f` |
@@ -102,20 +91,31 @@ Each `upstream_sha256` is SHA-256 over the UTF-8 bytes of the immutable record p
 | `assets.all-cases.official_43` | `f47ce5333c01db08be20ada4d036d6439d1af81d531219ca7e1cb95c3b552d78` |
 | `assets.all-cases.official_44` | `a4aa25240d2b4d897120bb343e82f3565672d109404faad6575062441a0ff62b` |
 | `assets.all-cases.official_45` | `db32bbc307a0c1dff6b136ab420fae3143f26f2a3b12c5a25468c8e9620e8337` |
-| `assets.all-cases.official_46` | `58b45bcce5115bd5a2743f7f8a573e5778298a7f86bf4eac18ad66f4deffd85b` |
 | `assets.all-cases.official_47` | `6edbe0be0e47fc63c9c9401382e9e9eef39af1508ae467c624909dcdb54cb312` |
 | `assets.all-cases.official_48` | `89811b5b95bdc2f0cf5291f2b569d71a2abb3f6b17b12b22e945f187371d87a2` |
 | `assets.all-cases.official_49` | `0d304ad43f8aa3796ab704746ba4d1e38ba6f5b4b7188bdb80ce178dc6c1805b` |
 | `assets.all-cases.official_50` | `0433e5ac7205218ff135e0a884794d06e7c8701b1f3dbc99bea8d80bd3dfc2d0` |
 | `assets.all-cases.official_51` | `1e40370fb1e18c162d59bf73baf55dc5006f977a1de4ba26f91553dd8c10b496` |
-| `assets.all-cases.official_52` | `2c38456bf6171c2c49f71fc8ea8774b25bf25f49500c046f2e305cab94260abc` |
-| `assets.all-cases.official_53` | `ad3f02e57efeda646999036369d58bc880cf6a547255aa8b85f0e9dc3b0173d0` |
 | `assets.all-cases.official_54` | `82ee849ff935d0b31dccb81261d6a1b280474bf8aa776e8f356b249c87f5d287` |
 | `assets.all-cases.official_55` | `2a63cdc06ed31a5f57e3b49dd237404020628a55f3d7e9c7e5361f2705d675a6` |
-| `assets.all-cases.official_56` | `47087ff350a12e25b743cdefa0b1a91bb69aecebe54e5e96ea8668b094f9adbe` |
 | `assets.all-cases.official_57` | `24abdb7255d4c8d5ca376d6341fc5480dff9d9c78299efa829415166ea9fc944` |
 | `assets.all-cases.official_58` | `c017317179dc9dda3700ac90aa0ee45808f83f9a3d805602156212ac4a4e68f1` |
 | `assets.all-cases.official_59` | `7648e86e1f4e8995581af59c8a68affe4374489877f414f8f43ee5e3f9ada5fc` |
+| `assets.all-cases.official_60` | `9ff0a6316746580e313efc402a13ea71211d89962215968bf55ef70969d0defc` |
+| `assets.all-cases.official_62` | `99cb1c44651b788041e6dd0b82c8d721ab9d963edd513dae4c9368a36be63612` |
+| `assets.all-cases.official_70` | `22e28d4d2b21a0f3b9e78c6a2f5897059c250d43cb92e40547808494081e42e4` |
+| `assets.all-cases.official_71` | `3a39fc2edc871f0658d8f141d747d6a98de0c49a42e8a61119e3de19ad8e443d` |
+| `assets.all-cases.official_73` | `8531cdd575b57ae58f64c3e2245736e2149d09ca85d93c9cccaff7084b6d4b15` |
+| `assets.all-cases.official_75` | `2c9665eb2e6fd42cf2d7c85da60a0fe6af224c4d6a5dc941b1a309710d02218c` |
+| `assets.all-cases.official_79` | `4b0e7c99ebbcafd2b4933775af93b940069da4615ab8e2ca6935d82c4520aae9` |
+| `assets.all-cases.official_80` | `d7dfcd2ebbe9f299348fff824d119c93928ce6c63a6b7b5963e1647ea859e4dd` |
+| `assets.all-cases.official_81` | `cde5191864cce94c503241315cfb3cd842f11711acd899c2364f684ef5958e12` |
+| `assets.all-cases.official_83` | `2748c6cd3f8da72ea8636e6c091ac7eb9165e784a02b9237093186f94946984b` |
+| `assets.all-cases.official_84` | `8599315f5b346eb718210e61a65fae13d77c860e0f16fd8292256b51c612f954` |
+| `assets.all-cases.official_110` | `b92f5e977c1727fff19667508008b1ff9fe58a9a9a8a1254287e07389d9b415b` |
+| `assets.all-cases.official_111` | `c4cf4d3e0b5af65c8378cbb01e2ff83533017a0fdf69748193c7a8c41cabe040` |
+| `assets.all-cases.official_112` | `1304dd657af9972cc657afb9b770d7144c04dc6df1613f8f9f99b97c1bf507f4` |
+| `assets.all-cases.official_120` | `3061cc67b0e4f59e4d85fc0f8de82de797cf00d131c208ab3270c6fec86bdcf3` |
 
 ## deepset-prompt-injections
 

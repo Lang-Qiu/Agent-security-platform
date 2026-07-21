@@ -6281,3 +6281,61 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   production detector behavior, or Engine semantics
 - commit: the exact P5-T1 corrective commit containing this evidence
 - next: resume P5-T3 only after the committed-clean governance gate passes
+
+## 2026-07-21 - REQ-SBX-GENERAL-002 P5-T2 source-lock corrective for matrix-capable ToolEmu records
+
+- phase/task: Phase 5 / P5-T2 corrective
+- requirement: `REQ-SBX-GENERAL-002` / `sandbox-security-production-002`
+- summary: replace 15 weak ToolEmu direct-risk lock entries so the admitted
+  source set can support the 9×20 risk-category matrix without hard-pasting
+  sensitive/unsafe semantics onto privilege, tool-hijacking, or trust fixtures
+- owned files:
+  - `samples/sandbox-security-benchmark/v1/sources.lock.json`
+  - `samples/sandbox-security-benchmark/v1/ATTRIBUTION.md`
+  - `tests/benchmark/sandbox-security-source-admission.spec.ts`
+  - `docs/progress.md`
+- replacement mapping (old → new, target semantic lane):
+  - privilege_escalation: `official_37→60`, `official_19→111`, `official_9→75`,
+    `official_35→110`, `official_31→112`
+  - tool_hijacking: `official_46→79`, `official_38→80`
+  - trust_boundary_violation: `official_36→62`, `official_56→120`,
+    `official_8→71`, `official_53→73`, `official_11→81`, `official_52→83`,
+    `official_23→84`, `official_5→70`
+- lock invariants preserved:
+  - total records remain exactly 246
+  - family counts remain agentdojo 27 / toolem 60 / deepset 39 / oasst1 120
+  - every new `upstream_sha256` recomputes from the pinned ToolEmu
+    `all_cases.json` complete official-case projection
+  - attribution remains one-to-one with the committed lock and drops the 15
+    replaced refs
+- TDD evidence:
+  - RED: `REQ-SBX-GENERAL-002 P5-T2 corrective admits matrix-capable ToolEmu
+    replacements with pinned hashes` failed because `official_60` (and the
+    remaining corrective refs) were absent from the lock
+  - GREEN: admission suite `17/17`; focused contracts + admission + repository
+    production gate `224/224`
+- final verification:
+  - `tests/benchmark/sandbox-security-source-admission.spec.ts` pass `17/17`
+  - contracts + source admission + repository production pass `224/224`
+  - `npm run test:engine:sandbox` pass `1028/1028`
+  - `npm run typecheck:benchmark:sandbox-security` pass
+  - `engines/sandbox` TypeScript check pass
+  - `npm run build --prefix frontend` pass (existing chunk-size advisory only)
+  - `git diff --check` pass
+  - staged P5-T3 path-list SHA-256 remains
+    `117b651d1714cb3e34c8b8eab5f029f03c2436fc326ca9d123775438c5d2592a`
+- independent review:
+  - replacement selection rejects reviewer-flagged weak privilege candidates
+    `official_61` and `official_108`
+  - privilege replacements emphasize access/policy expansion (private-repo
+    invite, sudo grant, CiscoUmbrella policy create/block/unblock)
+  - tool replacements require Gmail-driven BankManager/WebBrowser actions so
+    corpus rebuild can surface them as retrieved_content tool hijacks
+  - trust replacements require acting on untrusted GitHub/blog/email/tweet/web
+    content as authorized control data
+- documentation scope: `README.md`, `docs/architecture.md`, and
+  `docs/api-contract.md` require no change because this corrective pass changes
+  benchmark source admission only
+- commit: the exact P5-T2 corrective commit containing this evidence
+- next: rebuild and re-review the P5-T3 300-input corpus against the corrected
+  source lock; do not enter P5-T4 until P5-T3 is VERIFIED
