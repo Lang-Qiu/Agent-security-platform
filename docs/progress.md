@@ -6339,3 +6339,63 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - commit: the exact P5-T2 corrective commit containing this evidence
 - next: rebuild and re-review the P5-T3 300-input corpus against the corrected
   source lock; do not enter P5-T4 until P5-T3 is VERIFIED
+
+## 2026-07-21 - REQ-SBX-GENERAL-002 P5-T3 sealed 300-fixture sandbox security corpus
+
+- phase/task: Phase 5 / P5-T3
+- requirement: `REQ-SBX-GENERAL-002` / `sandbox-security-production-002`
+- summary: rebuild and seal the fixed 300-input benchmark corpus against the
+  P5-T2-corrected source lock, with surface-label inheritance, 30 unique benign
+  structural controls, request-ID ledger binding, and fixture-specific risk
+  adjudications
+- owned files:
+  - `samples/sandbox-security-benchmark/v1/inputs/**`
+  - `samples/sandbox-security-benchmark/v1/truth/**`
+  - `samples/sandbox-security-benchmark/v1/reviews/reviews.json`
+  - `samples/sandbox-security-benchmark/v1/request-ids/request-ids.json`
+  - `samples/sandbox-security-benchmark/v1/manifest.json`
+  - `scripts/benchmark/sandbox-security/validate-corpus.ts`
+  - `tests/benchmark/sandbox-security-corpus.spec.ts`
+  - `docs/progress.md`
+- sealed matrix:
+  - total 300; risk 180 / safe 120; zh 150 / en 150; stages 100 each
+  - each primary risk category 20 (9×20)
+  - transformed risk 54; surface transforms 34 with seed category/severity inheritance
+  - severity: low 62 / medium 58 / high 26 / critical 34 (high+critical 60)
+  - safe multi-source 10 per stage; safe retrieved 15 / safe memory 15
+  - risk single-source by stage: user_input 6 / model_output 20 / tool_request 32
+  - direct record coverage 246/246 including human_translation non-transformed
+- packaging fixes applied during seal:
+  - benign-control provenance uses contract-valid segment form
+    `retrieval|memory://benchmark/benign-control/sha256/{64hex}` (not
+    `sha256-{64hex}`, which exceeds the 64-char provenance path segment limit)
+  - surface inheritance runs after adjustable category/severity rebalance and is
+    re-checked to zero seed mismatch
+  - request IDs rebound from pre-label ledger slots; reviews rewritten with
+    fixture-specific rationales bound to current input hashes
+  - ZH hard anchor replaces removed `official_11` with sealed `official_112`
+- verification:
+  - `scripts/benchmark/sandbox-security/validate-corpus.ts` GREEN
+  - `tests/benchmark/sandbox-security-corpus.spec.ts` pass `39/39`
+  - contracts + source admission + corpus + repository production pass `263/263`
+  - `npm run test:engine:sandbox` pass `1028/1028`
+  - `npm run typecheck:benchmark:sandbox-security` pass
+  - `engines/sandbox` TypeScript check pass
+  - `npm run build --prefix frontend` pass (existing chunk-size advisory only)
+  - `git diff --check` pass
+- independent review:
+  - specification self-review: matrix, direct coverage, surface inheritance,
+    controls, request-ID ledger, review binding, and new ToolEmu refs satisfied
+  - residual note: `official_80` is multi-item retrieved_content phishing-link
+    browser action labeled `trust_boundary_violation` (defensible); `official_79`
+    is multi-item retrieved_content bank-transfer tool_hijacking
+  - quality/security self-review: no ordinal benign provenance, no banned
+    generic rationales, request IDs opaque and pre-label-bound, hard anchors and
+    projection hashes recomputed from sealed corpus
+- documentation scope: `README.md`, `docs/architecture.md`, and
+  `docs/api-contract.md` require no change because this task seals benchmark
+  corpus artifacts only
+- commit: the exact P5-T3 task commit containing this evidence
+- next: P5-T4 only after this P5-T3 commit; do not start live capture until
+  remaining Phase 5 gates are VERIFIED
+

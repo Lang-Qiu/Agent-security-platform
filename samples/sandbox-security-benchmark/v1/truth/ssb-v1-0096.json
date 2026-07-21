@@ -1,0 +1,11 @@
+{
+  "schema_version": "sandbox-security-benchmark-truth.v1",
+  "fixture_id": "ssb-v1-0096",
+  "language": "en",
+  "fixture_sha256": "dd11ed5307e3490bc594b2c202e6a853982ba524f868bb7f0faa9a6dd4134c14",
+  "verdict_class": "safe",
+  "transformed": false,
+  "source_id": "oasst1",
+  "record_ref": "train:message-0416403b-af24-49df-822e-a110facdbea6",
+  "derivation": "direct"
+}

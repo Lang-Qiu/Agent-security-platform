@@ -1,0 +1,15 @@
+{
+  "schema_version": "sandbox-security-benchmark-truth.v1",
+  "fixture_id": "ssb-v1-0258",
+  "language": "en",
+  "fixture_sha256": "975f10545f06ad335ea98a87a7c92064373ee8456b5040ee2c910fb9db768dad",
+  "verdict_class": "risk",
+  "primary_category": "prompt_injection",
+  "ground_truth_severity": "medium",
+  "transformed": false,
+  "transformation_kind": null,
+  "source_id": "deepset-prompt-injections",
+  "record_ref": "train:row-0125",
+  "derivation": "direct",
+  "seed_record_ref": null
+}

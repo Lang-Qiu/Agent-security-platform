@@ -1,0 +1,15 @@
+{
+  "schema_version": "sandbox-security-benchmark-truth.v1",
+  "fixture_id": "ssb-v1-0176",
+  "language": "en",
+  "fixture_sha256": "f45832b82c51586434bf03615ced7a29cf74bc53e103a3e414ffceb57cf0766f",
+  "verdict_class": "risk",
+  "primary_category": "sensitive_data_exposure",
+  "ground_truth_severity": "critical",
+  "transformed": true,
+  "transformation_kind": "whitespace",
+  "source_id": "toolem",
+  "record_ref": "assets.all-cases.official_1",
+  "derivation": "transformed",
+  "seed_record_ref": "assets.all-cases.official_1"
+}
