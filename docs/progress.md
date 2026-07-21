@@ -6399,3 +6399,57 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - next: P5-T4 only after this P5-T3 commit; do not start live capture until
   remaining Phase 5 gates are VERIFIED
 
+## 2026-07-21 - REQ-SBX-GENERAL-002 P5-T4 truth-blind capture bundle isolation
+
+- phase/task: Phase 5 / P5-T4
+- requirement: `REQ-SBX-GENERAL-002` / `sandbox-security-production-002`
+- summary: materialize an input-only capture bundle with exact Node permission
+  read/write allowlists and a fixed parent launcher for `capture-live.ts`
+- owned files:
+  - `scripts/benchmark/sandbox-security/prepare-capture-bundle.ts`
+  - `tests/benchmark/sandbox-security-isolation.spec.ts`
+  - `docs/progress.md`
+- design boundary:
+  - bundle copies only sealed `inputs/` in manifest order plus a fixed code
+    mirror (security-production, security, base-filter, monitoring,
+    simulated-tools, shared contracts/types/utils)
+  - no truth, sources.lock, reviews, request-ids, evaluate, seal, capture, or
+    replay artifacts
+  - parent is the sole `child_process` owner; child gets `--permission` with
+    no `--allow-child-process` / `--allow-worker`
+  - capture-output is write-only so parent-planted symlinks cannot be read as
+    an oracle path
+  - rejects inherited descriptors, truth arguments, symlink output roots, and
+    invalid corpora
+- verification:
+  - RED: isolation suite failed 6/6 on intentional `not_implemented` stub
+  - GREEN: `tests/benchmark/sandbox-security-isolation.spec.ts` pass `6/6`
+  - Step 5: contracts + corpus + isolation + repository production pass
+    `252/252`
+  - `validate-corpus.ts` GREEN
+  - sandbox TypeScript check pass
+  - `npm run typecheck:benchmark:sandbox-security` pass
+  - `npm run build --prefix frontend` pass (existing chunk-size advisory only)
+  - `git diff --check` pass
+- isolation evidence:
+  - inputs_tree_sha256 matches sealed corpus
+    `5b95a264e3fd4fb393e313a0dbdd3ea099af6257e9ef3a6e75790e0f6c659407`
+  - permission probe denied attempts: `direct`, `directory`, `relative`,
+    `symlink`
+  - `process.permission.has("child")` / `worker` false under child flags
+  - fixed entrypoint:
+    `scripts/benchmark/sandbox-security/capture-live.ts`
+  - read allowlist excludes truth and capture-output; write allowlist is only
+    capture-output
+- independent review:
+  - specification self-review: input-only materialization, fixed launcher,
+    permission denials, descriptor/truth rejection, and code allowlist satisfy
+    P5-T4 acceptance (subagents unavailable; implementer-independent dual pass
+    performed as sequential re-audit of args/path/symlink/fd surfaces)
+  - quality/security residual: real `capture-live.ts` remains P6-T2; inert
+    permission probe substitutes for child body in P5 tests as planned
+- documentation scope: `README.md`, `docs/architecture.md`, and
+  `docs/api-contract.md` require no change (launcher/bundle prep only)
+- commit: the exact P5-T4 task commit containing this evidence
+- next: Phase 5 exit gate, then Phase 6 only after P5-T4 VERIFIED
+
