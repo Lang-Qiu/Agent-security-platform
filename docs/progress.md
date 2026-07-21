@@ -6488,3 +6488,48 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - commit: the exact P6-T1 task commit containing this evidence
 - next: P6-T2 capture-live runner
 
+## 2026-07-21 - REQ-SBX-GENERAL-002 P6-T2 permission-limited live capture runner
+
+- phase/task: Phase 6 / P6-T2
+- requirement: `REQ-SBX-GENERAL-002` / `sandbox-security-production-002`
+- summary: implement truth-blind capture-live child that performs non-benchmark
+  Judge readiness first, evaluates ordered inputs with beginInput/endInput in
+  finally, drains the anonymous sink, and writes only a candidate content-free
+  package (no seal/replay)
+- owned files:
+  - `scripts/benchmark/sandbox-security/capture-live.ts`
+  - `tests/benchmark/sandbox-security-capture-live.spec.ts`
+  - `docs/progress.md`
+- design boundary:
+  - accepts only materialized bundle paths + inputs tree hash
+  - rejects truth/evaluate/metrics args, inherited descriptors, child/worker
+  - live config required before readiness (`SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST`,
+    `OPENAI_API_KEY`, `SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE=1`)
+  - readiness: independent 4000 ms budget, no retry, not counted as decision
+  - engine via `createSandboxSecurityLiveCaptureEngine` + capture sink
+  - serial evaluate; `beginInput` before evaluate; `endInput` in finally
+  - candidate package under capture-output only; no seal.json/replay
+- verification:
+  - focused capture-live tests pass `13/13`
+  - Step 5: isolation + sink + capture-live + repository production pass
+    `209/209`
+  - `npm run test:engine:sandbox` pass `1028/1028`
+  - sandbox TypeScript check pass
+  - `npm run typecheck:benchmark:sandbox-security` pass
+  - `npm run build --prefix frontend` pass (chunk-size advisory only)
+  - `git diff --check` pass
+- independent review:
+  - specification self-review: readiness-before-evaluate order, finally close,
+    forbidden arg/fd/permission rejection, candidate-only output, and fake-port
+    isolation match P6-T2 acceptance (subagents unavailable; sequential dual
+    re-audit of lifecycle/path/timeout surfaces)
+  - quality/security residual: real credentialed live run deferred to P6-T4;
+    unit suite uses injected readiness/engine ports only
+- documentation scope: no README/architecture/api-contract change
+- non-CI live command (credentials required; do not log secrets):
+  `node --experimental-strip-types scripts/benchmark/sandbox-security/prepare-capture-bundle.ts`
+  then permission-limited
+  `node --experimental-strip-types scripts/benchmark/sandbox-security/capture-live.ts --bundle-root=... --input-root=... --capture-output=... --inputs-tree-sha256=...`
+- commit: the exact P6-T2 task commit containing this evidence
+- next: P6-T3 isolated metric evaluator
+
