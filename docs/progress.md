@@ -6580,3 +6580,35 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - documentation scope: no README/architecture/api-contract change
 - commit: the exact P6-T3 task commit containing this evidence
 - next: P6-T4 credentialed live seal, or BLOCKED if live prerequisites missing
+
+## 2026-07-21 - REQ-SBX-GENERAL-002 P6-T4 credentialed live seal BLOCKED
+
+- phase/task: Phase 6 / P6-T4
+- requirement: `REQ-SBX-GENERAL-002` / `sandbox-security-production-002`
+- status: **BLOCKED**
+- reason: required live qualification prerequisites are unavailable in this
+  environment; fabricating capture/replay/seal is forbidden
+- non-secret missing prerequisites:
+  - `SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST` unset
+  - `SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE` is not `1`
+  - Ollama loopback listener at `127.0.0.1:11434` is down
+  - `ollama` CLI is not installed
+- present non-secret signals:
+  - `OPENAI_API_KEY` is present (value not logged)
+- intentionally not created:
+  - `scripts/benchmark/sandbox-security/seal.ts`
+  - `samples/sandbox-security-benchmark/v1/capture.json`
+  - `samples/sandbox-security-benchmark/v1/replay/`
+  - `samples/sandbox-security-benchmark/v1/seal.json`
+  - `tests/benchmark/sandbox-security-live-evidence.spec.ts`
+- policy applied:
+  - no synthetic/mock provider cassette
+  - no placeholder seal or weakened thresholds
+  - Phase 7 hermetic closure not started
+- upstream verified tasks still valid:
+  - P6-T1 capture sink
+  - P6-T2 capture-live runner
+  - P6-T3 metric evaluator (`7cbb9fe`)
+- next: provide exact `qwen3:8b` digest, enable OpenAI Judge (`=1`), start local
+  Ollama listener with that model, then re-run P6-T4 live capture → evaluate →
+  seal without fabricating evidence
