@@ -6453,3 +6453,38 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - commit: the exact P5-T4 task commit containing this evidence
 - next: Phase 5 exit gate, then Phase 6 only after P5-T4 VERIFIED
 
+## 2026-07-21 - REQ-SBX-GENERAL-002 P6-T1 anonymous capture sink
+
+- phase/task: Phase 6 / P6-T1
+- requirement: `REQ-SBX-GENERAL-002` / `sandbox-security-production-002`
+- summary: implement the closed anonymous capture sink state machine for
+  qualification inventory/prewarm and 300 two-slot evaluation units
+- owned files:
+  - `scripts/benchmark/sandbox-security/capture-sink.ts`
+  - `tests/benchmark/sandbox-security-capture-sink.spec.ts`
+  - `docs/progress.md`
+- design boundary:
+  - states: qualification_inventory -> qualification_prewarm -> ready ->
+    input_open -> drained (or failed)
+  - success qualification only; non-success permanently fails the sink
+  - evaluation records only while an input is open; `endInput` fills untouched
+    slots with explicit `not_called`
+  - no fixture ID/truth/category/severity/verdict/metric/raw content fields
+  - `assertDrained` requires ready qualification, no open input, exactly 300
+    closed units
+- verification:
+  - focused sink tests pass `7/7`
+  - Step 5: contracts + sink + repository production pass `214/214`
+  - sandbox TypeScript check pass
+  - `npm run typecheck:benchmark:sandbox-security` pass
+  - `npm run build --prefix frontend` pass (chunk-size advisory only)
+  - `git diff --check` pass
+- independent review:
+  - specification self-review: inventory/prewarm/ready/input/drain transitions,
+    duplicate/out-of-boundary rejection, not_called fill, and freeze/oracle
+    absence match Spec capture-sink semantics
+  - quality/security residual: none accepted
+- documentation scope: no README/architecture/api-contract change
+- commit: the exact P6-T1 task commit containing this evidence
+- next: P6-T2 capture-live runner
+
