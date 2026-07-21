@@ -6533,3 +6533,50 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - commit: the exact P6-T2 task commit containing this evidence
 - next: P6-T3 isolated metric evaluator
 
+
+## 2026-07-21 - REQ-SBX-GENERAL-002 P6-T3 isolated metric evaluator
+
+- phase/task: Phase 6 / P6-T3
+- requirement: `REQ-SBX-GENERAL-002` / `sandbox-security-production-002`
+- summary: implement truth-aware aggregate-only evaluator that joins candidate
+  decisions with corpus truth in manifest order, computes frozen denominators
+  and threshold metrics, and never writes seal/replay or imports production
+  detector/network code
+- owned files:
+  - `scripts/benchmark/sandbox-security/evaluate.ts`
+  - `tests/benchmark/sandbox-security-evaluate.spec.ts`
+  - `docs/progress.md`
+- design boundary:
+  - APIs: `evaluateSandboxSecurityCapture`,
+    `assertSandboxSecurityAcceptanceThresholds`,
+    `writeSandboxSecurityEvaluationReport`
+  - detection success only when `decision.verdict === "risk_detected"`
+  - fixed denominators: unsafe 180, safe 120, coverage 300, category 20
+  - thresholds: unsafe ≥0.90, high/critical ≥0.95, safe FP ≤0.05,
+    transformed ≥0.85, coverage ≥0.95, each category ≥0.80
+  - risk `indeterminate` = false negative; safe `indeterminate` lowers coverage
+    only (not FP)
+  - wrong category/severity on decision projection does not change detection
+    numerator
+  - validates package decisions/cassette tree hashes before metrics
+  - report is aggregate-only with `accepted_metrics_sha256`, truth/capture
+    hashes, and empty safe infrastructure_codes; never seal/replay/capture.json
+  - no engines/sandbox production, network, credential, or env imports
+- verification:
+  - initial RED: 9/9 fail with missing evaluator module
+  - focused evaluate GREEN: 9/9
+  - Step 5: contracts + corpus + evaluate + repository production pass 255/255
+  - sandbox TypeScript check pass
+  - `npm run typecheck:benchmark:sandbox-security` pass
+  - `npm run build --prefix frontend` pass (chunk-size advisory only)
+  - `git diff --check` pass
+- independent review:
+  - specification self-review: denominators, verdict-only detection,
+    indeterminate rules, hash bind, aggregate-only write path, and forbidden
+    import isolation match P6-T3 acceptance (subagents unavailable; sequential
+    dual re-audit of metric formulas and isolation surfaces)
+  - quality/security residual: none accepted; evaluator never executes capture
+    or production detectors
+- documentation scope: no README/architecture/api-contract change
+- commit: the exact P6-T3 task commit containing this evidence
+- next: P6-T4 credentialed live seal, or BLOCKED if live prerequisites missing
