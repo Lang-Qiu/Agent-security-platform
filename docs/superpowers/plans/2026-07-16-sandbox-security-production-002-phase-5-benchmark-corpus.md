@@ -8,13 +8,15 @@
 
 **Goal:** Define exact benchmark envelopes, admit only independently reviewed
 public-source records with compatible licensing, curate the fixed 300-input
-corpus with separately isolated truth, and build a permission-limited
-input-only capture bundle.
+corpus with separately isolated truth, manifest-bound review evidence, and a
+pre-label request-ID ledger, and build a permission-limited input-only capture
+bundle.
 
 **Architecture:** Scripts under scripts/benchmark/sandbox-security are not
 production detector code and cannot be imported by it. Sources.lock.json pins
 record-level evidence. Inputs contain only Engine requests; truth contains labels
-and provenance. Manifest ties immutable ordered inputs/truth trees to locks.
+and provenance. Manifest ties immutable ordered inputs/truth, review, and
+pre-label request-ID trees to locks.
 Capture preparation emits an input-only materialized bundle plus an exact
 source/code allowlist, then invokes a child under Node permissions later in
 Phase 6.
@@ -28,9 +30,9 @@ immutable JSON envelopes, no network fetch during normal tests.
 
 | Task | Sole files owned in this Phase |
 | --- | --- |
-| P5-T1 | benchmark contracts module and schema tests |
+| P5-T1 | benchmark, review-ledger, request-ID-ledger contracts and schema tests |
 | P5-T2 | source admission importer, sources lock, attribution, admission tests |
-| P5-T3 | corpus validator, 300 inputs/truth/manifest, corpus tests |
+| P5-T3 | corpus validator, 300 inputs/truth/reviews/request IDs/manifest, corpus tests |
 | P5-T4 | input-only capture bundle preparation and isolation tests |
 
 No production source imports scripts/benchmark, samples, truth, manifest,
@@ -69,6 +71,33 @@ P5-T3 may not begin until the source lock and attribution have been independentl
 reviewed. The 300 data files are created only in P5-T3, after every selected
 record has a lock entry.
 
+### P5-T1 Corrective Governance Gate
+
+The review-ledger amendment, the GENERAL-002 Master plan, and this Phase 5 plan
+are owned by one P5-T1 corrective commit together with the accepted contract
+and schema-test fixes:
+
+- `docs/superpowers/specs/2026-07-21-sandbox-security-benchmark-review-ledger-amendment.md`
+- `docs/superpowers/plans/2026-07-16-sandbox-security-production-002-master.md`
+- `docs/superpowers/plans/2026-07-16-sandbox-security-production-002-phase-5-benchmark-corpus.md`
+
+None of these governance documents belongs in the P5-T3 corpus commit. P5-T3
+may not begin or continue, and Step 10 may not create its commit, until all
+three paths are already committed together by P5-T1 and the worktree is clean
+for them. Run this gate before beginning or continuing P5-T3 and again
+immediately before its commit:
+
+~~~bash
+git ls-files --error-unmatch \
+  docs/superpowers/specs/2026-07-21-sandbox-security-benchmark-review-ledger-amendment.md \
+  docs/superpowers/plans/2026-07-16-sandbox-security-production-002-master.md \
+  docs/superpowers/plans/2026-07-16-sandbox-security-production-002-phase-5-benchmark-corpus.md
+test -z "$(git status --short -- \
+  docs/superpowers/specs/2026-07-21-sandbox-security-benchmark-review-ledger-amendment.md \
+  docs/superpowers/plans/2026-07-16-sandbox-security-production-002-master.md \
+  docs/superpowers/plans/2026-07-16-sandbox-security-production-002-phase-5-benchmark-corpus.md)"
+~~~
+
 ## Shared Task Closure Protocol
 
 Every task Independent Reviews step contains two ordered implementer-independent passes: first a Specification Compliance Review followed by accepted-finding RED/fix/full rerun, then a Code Quality/Security Review followed by its accepted-finding RED/fix/full rerun. Step 8 re-reviews and closes both finding sets before VERIFIED.
@@ -83,10 +112,11 @@ its deterministic validation gate remains mandatory.
 ### P5-T1: Benchmark Envelope Contracts and Canonical Hashes
 
 **Goal / acceptance:** Define exact-key normalizers and canonical hash helpers
-for source lock, input envelope, truth union, manifest, content-free replay
-envelope, capture manifest, and seal. The module enforces bounded arrays,
-opaque fixture IDs, record hashes, no raw provider prose, and no truth data in
-input shapes.
+for source lock, input envelope, truth union, review ledger, pre-label request-ID
+ledger, manifest, content-free replay envelope, capture manifest, and seal. The
+module enforces bounded arrays, opaque fixture IDs, record hashes, independent
+approved reviewers, label-blind request-ID slots, no raw provider prose, and no
+truth data in input shapes.
 
 **Files:**
 
@@ -128,6 +158,7 @@ Cover all closed licenses, fixture ID grammar, 64-char hashes, exact source
 fields, direct/human_translation/transformed constraints, risk/safe union
 fields, category/severity/language/transformation combinations, 1..N source and
 obligation ordinals, replay outcome branches, capture qualification,
+review and request-ID ledger exact fields/status/ordering/reviewer independence,
 manifest/seal hash fields, unknown/inherited/accessor keys, recursive limits,
 defensive copies, and stable canonical tree hashing.
 
@@ -152,6 +183,14 @@ export function normalizeSandboxSecurityBenchmarkInputEnvelope(
 export function normalizeSandboxSecurityBenchmarkTruthEnvelope(
   value: unknown
 ): Readonly<SandboxSecurityBenchmarkTruthEnvelope>;
+
+export function normalizeSandboxSecurityBenchmarkReviews(
+  value: unknown
+): Readonly<SandboxSecurityBenchmarkReviews>;
+
+export function normalizeSandboxSecurityBenchmarkRequestIds(
+  value: unknown
+): Readonly<SandboxSecurityBenchmarkRequestIds>;
 
 export interface SandboxSecurityReplayInputUnit {
   readonly ollama: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse>;
@@ -212,7 +251,8 @@ git diff --check
 - [ ] **Step 6: Independent Reviews**
 
 Audit every schema discriminant, proof hash, fixture-ID opacity, input/truth
-separation, provider-prose exclusion, limit, and import graph.
+separation, review/request-ID exact-key boundary, independent approval,
+pre-label label blindness, provider-prose exclusion, limit, and import graph.
 
 - [ ] **Step 7: Fix accepted review findings with regression RED evidence**
 
@@ -225,8 +265,8 @@ Require APPROVED after Step 4/5 evidence.
 
 - [ ] **Step 9: Synchronize task evidence**
 
-Record P5-T1 schema version names, deterministic hash rules, review, and commit
-in docs/progress.md.
+Record P5-T1 schema version names, deterministic hash rules, durable review and
+pre-label request-ID boundaries, review, and commit in docs/progress.md.
 
 - [ ] **Step 10: Commit only the owned files**
 
@@ -238,6 +278,41 @@ git commit -m "feat(benchmark): define sandbox security corpus contracts"
 ~~~
 
 Stop after the commit and report the evidence.
+
+Accepted review-ledger corrections use a P5-T1 corrective commit. That commit
+includes `scripts/benchmark/sandbox-security/contracts.ts`,
+`tests/benchmark/sandbox-security-contracts.spec.ts`, and all three governance
+documents listed in the P5-T1 Corrective Governance Gate above; it must close
+before any P5-T3 work continues.
+
+For this corrective pass, use this exact replacement commit scope rather than
+reusing the original P5-T1 Step 10 list:
+
+~~~bash
+p5_t3_staged_before="$(git diff --cached --name-only)"
+git add scripts/benchmark/sandbox-security/contracts.ts \
+  tests/benchmark/sandbox-security-contracts.spec.ts \
+  docs/superpowers/specs/2026-07-21-sandbox-security-benchmark-review-ledger-amendment.md \
+  docs/superpowers/plans/2026-07-16-sandbox-security-production-002-master.md \
+  docs/superpowers/plans/2026-07-16-sandbox-security-production-002-phase-5-benchmark-corpus.md \
+  docs/progress.md
+git commit --only -m "fix(benchmark): bind corpus review evidence" -- \
+  scripts/benchmark/sandbox-security/contracts.ts \
+  tests/benchmark/sandbox-security-contracts.spec.ts \
+  docs/superpowers/specs/2026-07-21-sandbox-security-benchmark-review-ledger-amendment.md \
+  docs/superpowers/plans/2026-07-16-sandbox-security-production-002-master.md \
+  docs/superpowers/plans/2026-07-16-sandbox-security-production-002-phase-5-benchmark-corpus.md \
+  docs/progress.md
+test "$p5_t3_staged_before" = "$(git diff --cached --name-only)"
+test "$(git diff-tree --no-commit-id --name-only -r HEAD | sort)" = \
+  "$(printf '%s\n' \
+    scripts/benchmark/sandbox-security/contracts.ts \
+    tests/benchmark/sandbox-security-contracts.spec.ts \
+    docs/superpowers/specs/2026-07-21-sandbox-security-benchmark-review-ledger-amendment.md \
+    docs/superpowers/plans/2026-07-16-sandbox-security-production-002-master.md \
+    docs/superpowers/plans/2026-07-16-sandbox-security-production-002-phase-5-benchmark-corpus.md \
+    docs/progress.md | sort)"
+~~~
 
 ### P5-T2: Reviewed Source Admission, Lock, and Attribution
 
@@ -400,13 +475,19 @@ provenance. No production detector sees any of these files.
 - Create: scripts/benchmark/sandbox-security/validate-corpus.ts
 - Create: samples/sandbox-security-benchmark/v1/inputs/
 - Create: samples/sandbox-security-benchmark/v1/truth/
+- Create: samples/sandbox-security-benchmark/v1/reviews/reviews.json
+- Create: samples/sandbox-security-benchmark/v1/request-ids/request-ids.json
 - Create: samples/sandbox-security-benchmark/v1/manifest.json
 - Create: tests/benchmark/sandbox-security-corpus.spec.ts
 
 **Dependencies / frozen inputs:** P5-T1 and P5-T2 are verified. Every fixture
-maps to a sources.lock record, a verified source hash, and a human review
-record. At least 54 risk fixtures are independently authored transformations;
-Chinese derivatives require human material revision and a second reviewer.
+maps to a sources.lock record, a verified source hash, and one approved record
+in the manifest-bound review ledger. Every risk label receives independent
+category/severity adjudication under `sandbox-security-severity-rubric.v1`.
+At least 54 risk fixtures are independently authored transformations; Chinese
+derivatives require human material revision and a second reviewer. Every input
+request ID maps by manifest ordinal to an independently approved, label-blind,
+pre-label random-ID slot.
 
 - [ ] **Step 1: Write failing corpus-matrix tests**
 
@@ -437,7 +518,11 @@ Include deterministic invalid fixtures for duplicate normalized content, unsafe
 truth shape, wrong fixture hash, source record not locked, unreviewed machine
 translation, invalid transformation kind, transformed seed/development overlap,
 wrong high/critical counts, stage imbalance, category imbalance, and leaked
-fixture/category/severity/action in an Engine request.
+fixture/category/severity/action in an Engine request. Also cover missing,
+pending, mismatched, or same-author review records; review/request tree tamper;
+sequential and ordinal/fixture/source/truth/label-derived request IDs; insufficient
+safe multi-source/retrieved/memory controls; malformed UTF-8; and validator
+resource-budget exhaustion. Each mutation asserts one precise failure code.
 
 - [ ] **Step 2: Run the RED command**
 
@@ -459,12 +544,17 @@ export function validateSandboxSecurityBenchmarkCorpus(input: Readonly<{
 }>): Readonly<SandboxSecurityBenchmarkCorpusValidationReport>;
 ~~~
 
-Create 300 input files and 300 truth files in immutable manifest input order.
+Create 300 input files, 300 truth files, 300 approved review records, and 300
+approved pre-label request-ID slots in immutable manifest input order.
 Use opaque fixture IDs with no category/label semantics. The validator must
 prove exactly 180 risk, 120 safe, twenty risks for each of nine categories,
 100 per stage, 150 Chinese/150 English, at least 54 transformed risk fixtures,
 at least sixty high/critical risks, at least twenty high and twenty critical,
-unique normalized source records, and valid tree/file/fixture hashes. Curate
+at least ten safe multi-source fixtures per stage, at least ten safe fixtures
+containing retrieved content, at least ten containing memory content, at least
+five risk single-source fixtures per stage, unique normalized source records,
+and valid lock/tree/file/fixture hashes. Decode JSON with fatal UTF-8 handling
+and keep oracle/provenance scans under explicit aggregate budgets. Curate
 only reviewed records/derivatives; do not generate filler text, copy an entire
 upstream dataset, or reuse a Track 1/development fixture.
 
@@ -497,9 +587,11 @@ git diff --check
 - [ ] **Step 6: Independent Reviews**
 
 Review the matrix against actual files, every source lock reference/hash, every
-Chinese and transformed review record, input/truth separation, no duplicate
-normalized content, no Track 1/development overlap, opaque ID discipline, and
-the exact high/critical/category/stage counts.
+review-ledger record and label adjudication, every pre-label request-ID slot and
+attestation, input/truth/review/request separation, benign structural controls,
+no duplicate normalized content, no Track 1/development overlap, opaque ID
+discipline, validator resource bounds, fatal UTF-8 handling, and the exact
+high/critical/category/stage counts.
 
 - [ ] **Step 7: Fix accepted review findings with regression RED evidence**
 
@@ -524,6 +616,8 @@ logs.
 git add scripts/benchmark/sandbox-security/validate-corpus.ts \
   samples/sandbox-security-benchmark/v1/inputs \
   samples/sandbox-security-benchmark/v1/truth \
+  samples/sandbox-security-benchmark/v1/reviews/reviews.json \
+  samples/sandbox-security-benchmark/v1/request-ids/request-ids.json \
   samples/sandbox-security-benchmark/v1/manifest.json \
   tests/benchmark/sandbox-security-corpus.spec.ts \
   docs/progress.md

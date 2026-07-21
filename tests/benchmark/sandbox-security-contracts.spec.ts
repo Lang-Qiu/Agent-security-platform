@@ -43,6 +43,12 @@ const normalizeInput = normalizer(
 const normalizeTruth = normalizer(
   "normalizeSandboxSecurityBenchmarkTruthEnvelope"
 );
+const normalizeReviews = normalizer(
+  "normalizeSandboxSecurityBenchmarkReviews"
+);
+const normalizeRequestIds = normalizer(
+  "normalizeSandboxSecurityBenchmarkRequestIds"
+);
 const normalizeManifest = normalizer(
   "normalizeSandboxSecurityBenchmarkManifest"
 );
@@ -132,6 +138,86 @@ function riskTruth() {
     derivation: "transformed",
     seed_record_ref: "task:seed-0001",
     fixture_sha256: B
+  };
+}
+
+function safeReviewRecord() {
+  return {
+    fixture_id: FIXTURE_ID,
+    input_sha256: A,
+    source_id: "oasst1",
+    record_ref: "message:0001",
+    upstream_sha256: B,
+    verdict_class: "safe",
+    language: "en",
+    derivation: "direct",
+    transformed: false,
+    transformation_kind: null,
+    seed_record_ref: null,
+    seed_upstream_sha256: null,
+    author_id: "curator_alpha",
+    independent_reviewer_id: "reviewer_beta",
+    review_status: "approved",
+    translation_review_status: "not_applicable",
+    transformation_review_status: "not_applicable",
+    primary_category: null,
+    ground_truth_severity: null,
+    category_review_status: "not_applicable",
+    severity_review_status: "not_applicable",
+    severity_rubric_version: null,
+    adjudication_rationale: null
+  };
+}
+
+function riskReviewRecord() {
+  return {
+    fixture_id: "ssb-v1-0002",
+    input_sha256: B,
+    source_id: "agentdojo",
+    record_ref: "task:0001",
+    upstream_sha256: C,
+    verdict_class: "risk",
+    language: "zh",
+    derivation: "transformed",
+    transformed: true,
+    transformation_kind: "split_token",
+    seed_record_ref: "task:seed-0001",
+    seed_upstream_sha256: D,
+    author_id: "curator_gamma",
+    independent_reviewer_id: "reviewer_delta",
+    review_status: "approved",
+    translation_review_status: "not_applicable",
+    transformation_review_status: "approved",
+    primary_category: "prompt_injection",
+    ground_truth_severity: "high",
+    category_review_status: "approved",
+    severity_review_status: "approved",
+    severity_rubric_version: "sandbox-security-severity-rubric.v1",
+    adjudication_rationale: "Material instruction injection with a broad tool-side effect."
+  };
+}
+
+function reviewsLedger() {
+  return {
+    schema_version: "sandbox-security-benchmark-reviews.v1",
+    severity_rubric_version: "sandbox-security-severity-rubric.v1",
+    records: [safeReviewRecord(), riskReviewRecord()]
+  };
+}
+
+function requestIdsLedger() {
+  return {
+    schema_version: "sandbox-security-benchmark-request-ids.v1",
+    generation_method: "node:crypto.randomBytes",
+    entropy_bytes: 16,
+    generation_phase: "pre_label",
+    generator_id: "request_generator_alpha",
+    independent_reviewer_id: "request_reviewer_beta",
+    review_status: "approved",
+    records: [
+      { slot_ordinal: 1, request_id: "0123456789abcdef0123456789abcdef" },
+      { slot_ordinal: 2, request_id: "fedcba9876543210fedcba9876543210" }
+    ]
   };
 }
 
@@ -269,6 +355,8 @@ test("REQ-SBX-GENERAL-002 benchmark contracts expose the closed normalizer surfa
     "normalizeSandboxSecurityBenchmarkSourcesLock",
     "normalizeSandboxSecurityBenchmarkInputEnvelope",
     "normalizeSandboxSecurityBenchmarkTruthEnvelope",
+    "normalizeSandboxSecurityBenchmarkReviews",
+    "normalizeSandboxSecurityBenchmarkRequestIds",
     "normalizeSandboxSecurityBenchmarkManifest",
     "normalizeSandboxSecurityBenchmarkReplayEnvelope",
     "normalizeSandboxSecurityBenchmarkCaptureManifest",
@@ -336,6 +424,197 @@ test("REQ-SBX-GENERAL-002 truth union enforces provenance and transformation con
   assert.throws(() => normalizeTruth({ ...riskTruth(), transformation_kind: null }));
   assert.throws(() => normalizeTruth({ ...riskTruth(), seed_record_ref: null }));
   assert.throws(() => normalizeTruth({ ...riskTruth(), derivation: "direct" }));
+});
+
+test("REQ-SBX-GENERAL-002 review ledger requires independent approved adjudication evidence", () => {
+  const value = reviewsLedger();
+  const normalized = normalizeReviews(value);
+  assert.deepEqual(normalized, value);
+  assert.notEqual(normalized, value);
+  assertDeeplyFrozen(normalized);
+
+  const sameReviewer = structuredClone(value);
+  sameReviewer.records[0].independent_reviewer_id = sameReviewer.records[0].author_id;
+  assert.throws(() => normalizeReviews(sameReviewer));
+
+  const pending = structuredClone(value);
+  pending.records[1].review_status = "pending";
+  assert.throws(() => normalizeReviews(pending));
+
+  const unsafeSafeLabel = structuredClone(value);
+  unsafeSafeLabel.records[0].ground_truth_severity = "high";
+  assert.throws(() => normalizeReviews(unsafeSafeLabel));
+
+  const missingRiskApproval = structuredClone(value);
+  missingRiskApproval.records[1].severity_review_status = "not_applicable";
+  assert.throws(() => normalizeReviews(missingRiskApproval));
+
+  const missingCategoryApproval = structuredClone(value);
+  missingCategoryApproval.records[1].category_review_status = "not_applicable";
+  assert.throws(() => normalizeReviews(missingCategoryApproval));
+
+  const missingSeedHash = structuredClone(value);
+  missingSeedHash.records[1].seed_upstream_sha256 = null;
+  assert.throws(() => normalizeReviews(missingSeedHash));
+
+  const transformedSafe = structuredClone(value);
+  Object.assign(transformedSafe.records[0], {
+    derivation: "transformed",
+    transformed: true,
+    transformation_kind: "whitespace",
+    seed_record_ref: "message:seed-0001",
+    seed_upstream_sha256: C,
+    transformation_review_status: "approved"
+  });
+  assert.throws(() => normalizeReviews(transformedSafe));
+
+  const directChineseTranslationApproval = structuredClone(value);
+  directChineseTranslationApproval.records[0].language = "zh";
+  directChineseTranslationApproval.records[0].translation_review_status = "approved";
+  assert.throws(() => normalizeReviews(directChineseTranslationApproval));
+
+  const unapprovedTranslation = structuredClone(value);
+  unapprovedTranslation.records[0].language = "zh";
+  unapprovedTranslation.records[0].derivation = "human_translation";
+  assert.throws(() => normalizeReviews(unapprovedTranslation));
+
+  const unapprovedTransformation = structuredClone(value);
+  unapprovedTransformation.records[1].transformation_review_status = "not_applicable";
+  assert.throws(() => normalizeReviews(unapprovedTransformation));
+
+  const duplicateFixture = structuredClone(value);
+  duplicateFixture.records[1].fixture_id = duplicateFixture.records[0].fixture_id;
+  assert.throws(() => normalizeReviews(duplicateFixture));
+
+  assert.throws(() => normalizeReviews({ ...value, records: [] }));
+  const oversized = structuredClone(value);
+  oversized.records = Array.from({ length: 301 }, (_, index) => ({
+    ...safeReviewRecord(),
+    fixture_id: `ssb-v1-${String(index + 1).padStart(4, "0")}`
+  }));
+  assert.throws(() => normalizeReviews(oversized));
+
+  const wrongRubric = structuredClone(value);
+  wrongRubric.records[1].severity_rubric_version = "sandbox-security-severity-rubric.v2";
+  assert.throws(() => normalizeReviews(wrongRubric));
+
+  const missingRationale = structuredClone(value);
+  missingRationale.records[1].adjudication_rationale = "";
+  assert.throws(() => normalizeReviews(missingRationale));
+
+  assert.throws(() => normalizeReviews({ ...value, metric_threshold: 0.9 }));
+});
+
+test("REQ-SBX-GENERAL-002 review ledger accepts human-translation and direct-risk reviews", () => {
+  const humanTranslation = safeReviewRecord();
+  Object.assign(humanTranslation, {
+    language: "zh",
+    derivation: "human_translation",
+    translation_review_status: "approved"
+  });
+  const directRisk = riskReviewRecord();
+  Object.assign(directRisk, {
+    fixture_id: "ssb-v1-0003",
+    derivation: "direct",
+    transformed: false,
+    transformation_kind: null,
+    seed_record_ref: null,
+    seed_upstream_sha256: null,
+    transformation_review_status: "not_applicable"
+  });
+  const value = {
+    ...reviewsLedger(),
+    records: [humanTranslation, directRisk]
+  };
+
+  assert.deepEqual(normalizeReviews(value), value);
+});
+
+test("REQ-SBX-GENERAL-002 review ledger defensively copies reviews records and record objects", () => {
+  const value = reviewsLedger();
+  const normalized = normalizeReviews(value) as {
+    records: Array<Record<string, unknown>>;
+  };
+
+  assert.notEqual(normalized, value);
+  assert.notEqual(normalized.records, value.records);
+  assert.notEqual(normalized.records[0], value.records[0]);
+
+  value.records[0].author_id = "mutated_author";
+  value.records.reverse();
+  assert.equal(normalized.records[0].author_id, "curator_alpha");
+  assert.equal(normalized.records[0].fixture_id, FIXTURE_ID);
+  assertDeeplyFrozen(normalized);
+});
+
+test("REQ-SBX-GENERAL-002 non-transformed reviews require literal null seed evidence", () => {
+  for (const [field, invalidValue] of [
+    ["seed_record_ref", 42],
+    ["seed_record_ref", false],
+    ["seed_upstream_sha256", 42],
+    ["seed_upstream_sha256", false]
+  ] as const) {
+    const mutant = reviewsLedger() as {
+      records: Array<Record<string, unknown>>;
+    };
+    mutant.records[0][field] = invalidValue;
+    assert.throws(() => normalizeReviews(mutant), `${field}=${String(invalidValue)}`);
+  }
+});
+
+test("REQ-SBX-GENERAL-002 risk review rationale rejects ASCII and Unicode whitespace-only values", () => {
+  for (const rationale of [" \t\r\n", "\u00a0\u2003\u3000"]) {
+    const mutant = reviewsLedger();
+    mutant.records[1].adjudication_rationale = rationale;
+    assert.throws(() => normalizeReviews(mutant), JSON.stringify(rationale));
+  }
+});
+
+test("REQ-SBX-GENERAL-002 request-ID ledger is pre-label label-blind and independently approved", () => {
+  const value = requestIdsLedger();
+  const normalized = normalizeRequestIds(value);
+  assert.deepEqual(normalized, value);
+  assert.notEqual(normalized, value);
+  assertDeeplyFrozen(normalized);
+
+  assert.throws(() => normalizeRequestIds({
+    ...value,
+    independent_reviewer_id: value.generator_id
+  }));
+  assert.throws(() => normalizeRequestIds({ ...value, review_status: "pending" }));
+  assert.throws(() => normalizeRequestIds({ ...value, generation_phase: "post_label" }));
+  assert.throws(() => normalizeRequestIds({
+    ...value,
+    generation_method: "node:crypto.randomUUID"
+  }));
+  assert.throws(() => normalizeRequestIds({ ...value, entropy_bytes: 8 }));
+
+  const nonContiguous = structuredClone(value);
+  nonContiguous.records[1].slot_ordinal = 3;
+  assert.throws(() => normalizeRequestIds(nonContiguous));
+
+  const duplicate = structuredClone(value);
+  duplicate.records[1].request_id = duplicate.records[0].request_id;
+  assert.throws(() => normalizeRequestIds(duplicate));
+
+  const labelLeak = structuredClone(value) as Record<string, unknown> & {
+    records: Array<Record<string, unknown>>;
+  };
+  labelLeak.records[0].primary_category = "prompt_injection";
+  assert.throws(() => normalizeRequestIds(labelLeak));
+
+  const malformedId = structuredClone(value);
+  malformedId.records[0].request_id = "request_001";
+  assert.throws(() => normalizeRequestIds(malformedId));
+
+  for (const requestId of [
+    "ABCDEF0123456789ABCDEF0123456789",
+    "g".repeat(32)
+  ]) {
+    const invalidExactLengthId = structuredClone(value);
+    invalidExactLengthId.records[0].request_id = requestId;
+    assert.throws(() => normalizeRequestIds(invalidExactLengthId));
+  }
 });
 
 test("REQ-SBX-GENERAL-002 source lock accepts only closed licenses hashes and nonempty records", () => {
@@ -479,6 +758,8 @@ test("REQ-SBX-GENERAL-002 benchmark manifest fixes ordered opaque IDs and tree h
     sources_lock_sha256: A,
     inputs_tree_sha256: B,
     truth_tree_sha256: C,
+    reviews_tree_sha256: D,
+    request_ids_tree_sha256: A,
     fixture_ids: ["ssb-v1-0001", "ssb-v1-0002"]
   };
   assert.deepEqual(normalizeManifest(manifest), manifest);
@@ -486,6 +767,10 @@ test("REQ-SBX-GENERAL-002 benchmark manifest fixes ordered opaque IDs and tree h
     ...manifest,
     fixture_ids: ["ssb-v1-0001", "ssb-v1-0001"]
   }));
+  const { reviews_tree_sha256: _reviews, ...missingReviews } = manifest;
+  assert.throws(() => normalizeManifest(missingReviews));
+  const { request_ids_tree_sha256: _requestIds, ...missingRequestIds } = manifest;
+  assert.throws(() => normalizeManifest(missingRequestIds));
   assert.throws(() => normalizeManifest({ ...manifest, metric_threshold: 0.9 }));
 });
 
@@ -506,6 +791,43 @@ test("REQ-SBX-GENERAL-002 normalizers reject accessors symbols sparse arrays and
     schema_version: "sandbox-security-benchmark-sources.v1",
     sources: sparse
   }));
+});
+
+test("REQ-SBX-GENERAL-002 normalizers reject Proxy records that hide label fields", () => {
+  const target = {
+    ...safeReviewRecord(),
+    hidden_label: "risk"
+  };
+  const hiddenLabelRecord = new Proxy(target, {
+    ownKeys(record) {
+      return Reflect.ownKeys(record).filter((key) => key !== "hidden_label");
+    }
+  });
+  const value = reviewsLedger();
+  value.records[0] = hiddenLabelRecord;
+
+  assert.throws(() => normalizeReviews(value), { message: /benchmark_contract_invalid/ });
+});
+
+test("REQ-SBX-GENERAL-002 normalizers reject Proxy arrays that hide label fields", () => {
+  const records = reviewsLedger().records as Array<Record<string, unknown>> & {
+    hidden_label?: string;
+  };
+  Object.defineProperty(records, "hidden_label", {
+    configurable: true,
+    enumerable: true,
+    value: "risk"
+  });
+  const hiddenLabelArray = new Proxy(records, {
+    ownKeys(array) {
+      return Reflect.ownKeys(array).filter((key) => key !== "hidden_label");
+    }
+  });
+
+  assert.throws(
+    () => normalizeReviews({ ...reviewsLedger(), records: hiddenLabelArray }),
+    { message: /benchmark_contract_invalid/ }
+  );
 });
 
 test("REQ-SBX-GENERAL-002 string validation rejects lone surrogates without ES2024 APIs", () => {

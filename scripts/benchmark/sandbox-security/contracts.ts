@@ -5,6 +5,7 @@ import {
   readFileSync
 } from "node:fs";
 import { relative, resolve, sep } from "node:path";
+import { types as utilTypes } from "node:util";
 
 import {
   SANDBOX_SECURITY_MAX_CONTENT_ITEMS,
@@ -24,6 +25,10 @@ export const SANDBOX_SECURITY_BENCHMARK_INPUT_SCHEMA_VERSION =
   "sandbox-security-benchmark-input.v1" as const;
 export const SANDBOX_SECURITY_BENCHMARK_TRUTH_SCHEMA_VERSION =
   "sandbox-security-benchmark-truth.v1" as const;
+export const SANDBOX_SECURITY_BENCHMARK_REVIEWS_SCHEMA_VERSION =
+  "sandbox-security-benchmark-reviews.v1" as const;
+export const SANDBOX_SECURITY_BENCHMARK_REQUEST_IDS_SCHEMA_VERSION =
+  "sandbox-security-benchmark-request-ids.v1" as const;
 export const SANDBOX_SECURITY_BENCHMARK_MANIFEST_SCHEMA_VERSION =
   "sandbox-security-benchmark-manifest.v1" as const;
 export const SANDBOX_SECURITY_BENCHMARK_REPLAY_SCHEMA_VERSION =
@@ -43,6 +48,15 @@ export type SandboxSecurityBenchmarkLicense =
   | "CC-BY-4.0"
   | "CC0-1.0";
 export type SandboxSecurityBenchmarkLanguage = "zh" | "en";
+export type SandboxSecurityBenchmarkReviewStatus = "approved";
+export type SandboxSecurityBenchmarkReviewApplicability =
+  | "approved"
+  | "not_applicable";
+export type SandboxSecurityBenchmarkSeverity =
+  | "low"
+  | "medium"
+  | "high"
+  | "critical";
 export type SandboxSecurityBenchmarkTransformationKind =
   | null
   | "encoding"
@@ -148,12 +162,62 @@ export type SandboxSecurityBenchmarkTruthEnvelope =
       readonly fixture_sha256: SandboxSecurityBenchmarkSha256;
     }>;
 
+export interface SandboxSecurityBenchmarkReviewRecord {
+  readonly fixture_id: string;
+  readonly input_sha256: SandboxSecurityBenchmarkSha256;
+  readonly source_id: string;
+  readonly record_ref: string;
+  readonly upstream_sha256: SandboxSecurityBenchmarkSha256;
+  readonly verdict_class: "safe" | "risk";
+  readonly language: SandboxSecurityBenchmarkLanguage;
+  readonly derivation: SandboxSecurityBenchmarkDerivation;
+  readonly transformed: boolean;
+  readonly transformation_kind: SandboxSecurityBenchmarkTransformationKind;
+  readonly seed_record_ref: string | null;
+  readonly seed_upstream_sha256: SandboxSecurityBenchmarkSha256 | null;
+  readonly author_id: string;
+  readonly independent_reviewer_id: string;
+  readonly review_status: SandboxSecurityBenchmarkReviewStatus;
+  readonly translation_review_status: SandboxSecurityBenchmarkReviewApplicability;
+  readonly transformation_review_status: SandboxSecurityBenchmarkReviewApplicability;
+  readonly primary_category: string | null;
+  readonly ground_truth_severity: SandboxSecurityBenchmarkSeverity | null;
+  readonly category_review_status: SandboxSecurityBenchmarkReviewApplicability;
+  readonly severity_review_status: SandboxSecurityBenchmarkReviewApplicability;
+  readonly severity_rubric_version: "sandbox-security-severity-rubric.v1" | null;
+  readonly adjudication_rationale: string | null;
+}
+
+export interface SandboxSecurityBenchmarkReviews {
+  readonly schema_version: typeof SANDBOX_SECURITY_BENCHMARK_REVIEWS_SCHEMA_VERSION;
+  readonly severity_rubric_version: "sandbox-security-severity-rubric.v1";
+  readonly records: readonly SandboxSecurityBenchmarkReviewRecord[];
+}
+
+export interface SandboxSecurityBenchmarkRequestIdRecord {
+  readonly slot_ordinal: number;
+  readonly request_id: string;
+}
+
+export interface SandboxSecurityBenchmarkRequestIds {
+  readonly schema_version: typeof SANDBOX_SECURITY_BENCHMARK_REQUEST_IDS_SCHEMA_VERSION;
+  readonly generation_method: "node:crypto.randomBytes";
+  readonly entropy_bytes: 16;
+  readonly generation_phase: "pre_label";
+  readonly generator_id: string;
+  readonly independent_reviewer_id: string;
+  readonly review_status: SandboxSecurityBenchmarkReviewStatus;
+  readonly records: readonly SandboxSecurityBenchmarkRequestIdRecord[];
+}
+
 export interface SandboxSecurityBenchmarkManifest {
   readonly schema_version: typeof SANDBOX_SECURITY_BENCHMARK_MANIFEST_SCHEMA_VERSION;
   readonly benchmark_revision: "v1";
   readonly sources_lock_sha256: SandboxSecurityBenchmarkSha256;
   readonly inputs_tree_sha256: SandboxSecurityBenchmarkSha256;
   readonly truth_tree_sha256: SandboxSecurityBenchmarkSha256;
+  readonly reviews_tree_sha256: SandboxSecurityBenchmarkSha256;
+  readonly request_ids_tree_sha256: SandboxSecurityBenchmarkSha256;
   readonly fixture_ids: readonly string[];
 }
 
@@ -298,6 +362,8 @@ const DIGEST = /^sha256:[a-f0-9]{64}$/u;
 const FIXTURE_ID = /^ssb-v1-[0-9]{4}$/u;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u;
 const SOURCE_ID = /^[a-z][a-z0-9_-]{1,63}$/u;
+const REQUEST_ID = /^[a-f0-9]{32}$/u;
+const SEVERITY_RUBRIC_VERSION = "sandbox-security-severity-rubric.v1" as const;
 const MAX_SOURCES = 32;
 const MAX_RECORDS = 2048;
 const MAX_FIXTURES = 300;
@@ -329,6 +395,7 @@ function dataRecord(value: unknown): Record<string, unknown> {
   if (
     value === null ||
     typeof value !== "object" ||
+    utilTypes.isProxy(value) ||
     Array.isArray(value) ||
     Object.getPrototypeOf(value) !== Object.prototype
   ) {
@@ -370,6 +437,7 @@ function exact(
 function denseArray(value: unknown, min: number, max: number): unknown[] {
   if (
     !Array.isArray(value) ||
+    utilTypes.isProxy(value) ||
     Object.getPrototypeOf(value) !== Array.prototype ||
     value.length < min ||
     value.length > max
@@ -756,6 +824,259 @@ export function normalizeSandboxSecurityBenchmarkTruthEnvelope(value: unknown): 
   });
 }
 
+function normalizeSandboxSecurityBenchmarkReviewRecord(
+  value: unknown
+): SandboxSecurityBenchmarkReviewRecord {
+  const root = exact(value, [
+    "fixture_id",
+    "input_sha256",
+    "source_id",
+    "record_ref",
+    "upstream_sha256",
+    "verdict_class",
+    "language",
+    "derivation",
+    "transformed",
+    "transformation_kind",
+    "seed_record_ref",
+    "seed_upstream_sha256",
+    "author_id",
+    "independent_reviewer_id",
+    "review_status",
+    "translation_review_status",
+    "transformation_review_status",
+    "primary_category",
+    "ground_truth_severity",
+    "category_review_status",
+    "severity_review_status",
+    "severity_rubric_version",
+    "adjudication_rationale"
+  ]);
+  const verdict = enumValue(root.verdict_class, ["safe", "risk"] as const);
+  const language = enumValue(root.language, ["zh", "en"] as const);
+  const derivation = enumValue(root.derivation, [
+    "direct",
+    "human_translation",
+    "transformed"
+  ] as const);
+  if (root.review_status !== "approved") return invalid();
+  const transformed = root.transformed;
+  if (typeof transformed !== "boolean") return invalid();
+  const transformationKind = root.transformation_kind;
+  if (
+    transformationKind !== null &&
+    ![
+      "encoding",
+      "whitespace",
+      "case",
+      "synonym",
+      "split_token",
+      "cross_source"
+    ].includes(String(transformationKind))
+  ) {
+    return invalid();
+  }
+  if (transformed !== (transformationKind !== null)) return invalid();
+  if (transformed !== (derivation === "transformed")) return invalid();
+  if (verdict === "safe" && (transformed || derivation === "transformed")) {
+    return invalid();
+  }
+  const seedRecordRef = root.seed_record_ref;
+  const seedUpstreamSha256 = root.seed_upstream_sha256;
+  if (transformed) {
+    if (
+      typeof seedRecordRef !== "string" ||
+      typeof seedUpstreamSha256 !== "string"
+    ) {
+      return invalid();
+    }
+  } else if (seedRecordRef !== null || seedUpstreamSha256 !== null) {
+    return invalid();
+  }
+  const authorId = identifier(root.author_id);
+  const reviewerId = identifier(root.independent_reviewer_id);
+  if (authorId === reviewerId) return invalid();
+  const translationStatus = enumValue(root.translation_review_status, [
+    "approved",
+    "not_applicable"
+  ] as const);
+  if (translationStatus !== (
+    derivation === "human_translation" ? "approved" : "not_applicable"
+  )) {
+    return invalid();
+  }
+  const transformationStatus = enumValue(root.transformation_review_status, [
+    "approved",
+    "not_applicable"
+  ] as const);
+  if (transformationStatus !== (transformed ? "approved" : "not_applicable")) {
+    return invalid();
+  }
+  const base = {
+    fixture_id: fixtureId(root.fixture_id),
+    input_sha256: sha(root.input_sha256),
+    source_id: sourceId(root.source_id),
+    record_ref: identifier(root.record_ref),
+    upstream_sha256: sha(root.upstream_sha256),
+    verdict_class: verdict,
+    language,
+    derivation,
+    transformed,
+    transformation_kind: transformationKind as SandboxSecurityBenchmarkTransformationKind,
+    seed_record_ref: transformed ? identifier(seedRecordRef) : null,
+    seed_upstream_sha256: transformed ? sha(seedUpstreamSha256) : null,
+    author_id: authorId,
+    independent_reviewer_id: reviewerId,
+    review_status: "approved" as const,
+    translation_review_status: translationStatus,
+    transformation_review_status: transformationStatus
+  };
+  if (verdict === "safe") {
+    const categoryStatus = enumValue(root.category_review_status, [
+      "approved",
+      "not_applicable"
+    ] as const);
+    const severityStatus = enumValue(root.severity_review_status, [
+      "approved",
+      "not_applicable"
+    ] as const);
+    if (
+      root.primary_category !== null ||
+      root.ground_truth_severity !== null ||
+      categoryStatus !== "not_applicable" ||
+      severityStatus !== "not_applicable" ||
+      root.severity_rubric_version !== null ||
+      root.adjudication_rationale !== null
+    ) {
+      return invalid();
+    }
+    return deepFreeze({
+      ...base,
+      primary_category: null,
+      ground_truth_severity: null,
+      category_review_status: "not_applicable" as const,
+      severity_review_status: "not_applicable" as const,
+      severity_rubric_version: null,
+      adjudication_rationale: null
+    });
+  }
+  const category = enumValue(root.primary_category, CATEGORIES);
+  const severity = enumValue(root.ground_truth_severity, [
+    "low",
+    "medium",
+    "high",
+    "critical"
+  ] as const);
+  if (
+    root.category_review_status !== "approved" ||
+    root.severity_review_status !== "approved" ||
+    root.severity_rubric_version !== SEVERITY_RUBRIC_VERSION
+  ) {
+    return invalid();
+  }
+  const rationale = stringValue(root.adjudication_rationale, 2048);
+  if (rationale.trim().length === 0) return invalid();
+  return deepFreeze({
+    ...base,
+    primary_category: category,
+    ground_truth_severity: severity,
+    category_review_status: "approved" as const,
+    severity_review_status: "approved" as const,
+    severity_rubric_version: SEVERITY_RUBRIC_VERSION,
+    adjudication_rationale: rationale
+  });
+}
+
+export function normalizeSandboxSecurityBenchmarkReviews(
+  value: unknown
+): Readonly<SandboxSecurityBenchmarkReviews> {
+  return safeCall(() => {
+    const root = exact(value, [
+      "schema_version",
+      "severity_rubric_version",
+      "records"
+    ]);
+    if (
+      root.schema_version !== SANDBOX_SECURITY_BENCHMARK_REVIEWS_SCHEMA_VERSION ||
+      root.severity_rubric_version !== SEVERITY_RUBRIC_VERSION
+    ) {
+      return invalid();
+    }
+    const records = denseArray(root.records, 1, MAX_FIXTURES).map(
+      normalizeSandboxSecurityBenchmarkReviewRecord
+    );
+    const fixtureIds = new Set<string>();
+    for (const record of records) {
+      if (fixtureIds.has(record.fixture_id)) return invalid();
+      fixtureIds.add(record.fixture_id);
+    }
+    return deepFreeze({
+      schema_version: SANDBOX_SECURITY_BENCHMARK_REVIEWS_SCHEMA_VERSION,
+      severity_rubric_version: SEVERITY_RUBRIC_VERSION,
+      records
+    });
+  });
+}
+
+function normalizeSandboxSecurityBenchmarkRequestIdRecord(
+  value: unknown,
+  expectedOrdinal: number
+): SandboxSecurityBenchmarkRequestIdRecord {
+  const root = exact(value, ["slot_ordinal", "request_id"]);
+  if (root.slot_ordinal !== expectedOrdinal) return invalid();
+  const requestId = stringValue(root.request_id, 32);
+  if (!REQUEST_ID.test(requestId)) return invalid();
+  return deepFreeze({ slot_ordinal: expectedOrdinal, request_id: requestId });
+}
+
+export function normalizeSandboxSecurityBenchmarkRequestIds(
+  value: unknown
+): Readonly<SandboxSecurityBenchmarkRequestIds> {
+  return safeCall(() => {
+    const root = exact(value, [
+      "schema_version",
+      "generation_method",
+      "entropy_bytes",
+      "generation_phase",
+      "generator_id",
+      "independent_reviewer_id",
+      "review_status",
+      "records"
+    ]);
+    if (
+      root.schema_version !== SANDBOX_SECURITY_BENCHMARK_REQUEST_IDS_SCHEMA_VERSION ||
+      root.generation_method !== "node:crypto.randomBytes" ||
+      root.entropy_bytes !== 16 ||
+      root.generation_phase !== "pre_label" ||
+      root.review_status !== "approved"
+    ) {
+      return invalid();
+    }
+    const generatorId = identifier(root.generator_id);
+    const reviewerId = identifier(root.independent_reviewer_id);
+    if (generatorId === reviewerId) return invalid();
+    const rawRecords = denseArray(root.records, 1, MAX_FIXTURES);
+    const records = rawRecords.map((record, index) =>
+      normalizeSandboxSecurityBenchmarkRequestIdRecord(record, index + 1)
+    );
+    const requestIds = new Set<string>();
+    for (const record of records) {
+      if (requestIds.has(record.request_id)) return invalid();
+      requestIds.add(record.request_id);
+    }
+    return deepFreeze({
+      schema_version: SANDBOX_SECURITY_BENCHMARK_REQUEST_IDS_SCHEMA_VERSION,
+      generation_method: "node:crypto.randomBytes" as const,
+      entropy_bytes: 16 as const,
+      generation_phase: "pre_label" as const,
+      generator_id: generatorId,
+      independent_reviewer_id: reviewerId,
+      review_status: "approved" as const,
+      records
+    });
+  });
+}
+
 function normalizeInventory(value: unknown): SandboxSecurityReplayOllamaInventoryResponse {
   const root = exact(value, ["model", "digest"]);
   if (root.model !== "qwen3:8b") return invalid();
@@ -885,11 +1206,11 @@ export function normalizeSandboxSecurityBenchmarkReplayEnvelope(value: unknown):
 
 export function normalizeSandboxSecurityBenchmarkManifest(value: unknown): Readonly<SandboxSecurityBenchmarkManifest> {
   return safeCall(() => {
-    const root = exact(value, ["schema_version", "benchmark_revision", "sources_lock_sha256", "inputs_tree_sha256", "truth_tree_sha256", "fixture_ids"]);
+    const root = exact(value, ["schema_version", "benchmark_revision", "sources_lock_sha256", "inputs_tree_sha256", "truth_tree_sha256", "reviews_tree_sha256", "request_ids_tree_sha256", "fixture_ids"]);
     if (root.schema_version !== SANDBOX_SECURITY_BENCHMARK_MANIFEST_SCHEMA_VERSION || root.benchmark_revision !== "v1") return invalid();
     const fixture_ids = denseArray(root.fixture_ids, 1, MAX_FIXTURES).map(fixtureId);
     if (new Set(fixture_ids).size !== fixture_ids.length) return invalid();
-    return deepFreeze({ schema_version: SANDBOX_SECURITY_BENCHMARK_MANIFEST_SCHEMA_VERSION, benchmark_revision: "v1" as const, sources_lock_sha256: sha(root.sources_lock_sha256), inputs_tree_sha256: sha(root.inputs_tree_sha256), truth_tree_sha256: sha(root.truth_tree_sha256), fixture_ids });
+    return deepFreeze({ schema_version: SANDBOX_SECURITY_BENCHMARK_MANIFEST_SCHEMA_VERSION, benchmark_revision: "v1" as const, sources_lock_sha256: sha(root.sources_lock_sha256), inputs_tree_sha256: sha(root.inputs_tree_sha256), truth_tree_sha256: sha(root.truth_tree_sha256), reviews_tree_sha256: sha(root.reviews_tree_sha256), request_ids_tree_sha256: sha(root.request_ids_tree_sha256), fixture_ids });
   });
 }
 

@@ -6226,3 +6226,58 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   detector import
 - commit: the exact P5-T2 task commit containing this evidence
 - next: P5-T3 fixed 300-input corpus, truth, and manifest
+
+## 2026-07-21 - REQ-SBX-GENERAL-002 P5-T1 review-evidence corrective pass
+
+- phase/task: Phase 5 / P5-T1 corrective pass
+- status: VERIFIED
+- owned files:
+  - `scripts/benchmark/sandbox-security/contracts.ts`
+  - `tests/benchmark/sandbox-security-contracts.spec.ts`
+  - `docs/superpowers/specs/2026-07-21-sandbox-security-benchmark-review-ledger-amendment.md`
+  - `docs/superpowers/plans/2026-07-16-sandbox-security-production-002-master.md`
+  - `docs/superpowers/plans/2026-07-16-sandbox-security-production-002-phase-5-benchmark-corpus.md`
+  - `docs/progress.md`
+- corrective boundary:
+  - added exact-key `sandbox-security-benchmark-reviews.v1` and
+    `sandbox-security-benchmark-request-ids.v1` contracts and bound their tree
+    hashes into the benchmark manifest
+  - review records bind fixture/input/source/seed evidence, independent
+    approvals, translation/transformation review, and versioned risk-label
+    adjudication; pre-label request-ID records remain label-blind and require
+    unique 32-character lowercase hexadecimal IDs
+  - non-transformed seed fields are literal `null`, hostile Proxy records and
+    arrays are rejected at the structural boundary, and risk adjudication
+    rationale must contain non-whitespace text
+  - the corrective amendment and both governing plans are owned by this task;
+    P5-T3 cannot continue or commit until those governance paths are committed
+    and clean
+- TDD evidence:
+  - the accepted quality-review regressions were RED at `20/24`, with exactly
+    four intended failures for non-null seed evidence, ASCII/Unicode whitespace
+    rationale, a Proxy record, and a Proxy array
+  - the minimal contract correction produced focused GREEN at `24/24`
+  - positive human-translation and direct-risk reviews, three-level defensive
+    copying, and uppercase/non-hex exact-length request IDs are covered
+- final verification:
+  - contracts plus the production repository gate passed `207/207`
+  - benchmark TypeScript and sandbox TypeScript checks passed
+  - frontend production build passed with only the existing non-failing
+    chunk-size advisory
+  - `git diff --check` passed
+- independent review:
+  - the earlier Specification Compliance Review approved the review-ledger,
+    request-ID, manifest, and governance amendment design after its accepted
+    findings were corrected
+  - Code Quality/Security Review initially required strict null seed fields,
+    Proxy rejection, non-whitespace rationale, stronger positive/mutation/copy
+    tests, and an index-safe corrective commit boundary
+  - every accepted finding received RED/fix evidence where behavioral; the
+    same reviewer independently reran the focused suite at `24/24` and gave
+    final `APPROVED` with no remaining P0-P3 findings
+- documentation scope: `README.md`, `docs/architecture.md`, and
+  `docs/api-contract.md` require no change because this corrective pass changes
+  benchmark-only governance/contracts and no platform route, shared DTO,
+  production detector behavior, or Engine semantics
+- commit: the exact P5-T1 corrective commit containing this evidence
+- next: resume P5-T3 only after the committed-clean governance gate passes

@@ -103,6 +103,7 @@ CI/environment blocker, not a reason to weaken the no-network gate.
 - `docs/superpowers/specs/2026-07-10-sandbox-general-security-design.md`
 - `docs/superpowers/specs/2026-07-10-sandbox-security-core-spec.md`
 - `docs/superpowers/specs/2026-07-16-sandbox-security-production-detectors-spec.md`
+- `docs/superpowers/specs/2026-07-21-sandbox-security-benchmark-review-ledger-amendment.md`
 - `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-master.md`
 - `engines/sandbox/src/security/index.ts`
 - `engines/sandbox/src/security/detector-contract.ts`
@@ -112,6 +113,33 @@ CI/environment blocker, not a reason to weaken the no-network gate.
 When this plan conflicts with the approved GENERAL-002 Spec or a frozen
 GENERAL-001 contract/profile/reducer/state machine, the Spec/core wins. Stop and
 return to the owning plan document; do not patch the core to fit an adapter.
+
+## P5-T1 Corrective Governance Ownership
+
+The review-ledger amendment is a P5-T1 correction. These three governance
+documents belong to the same P5-T1 corrective commit as the accepted contract
+and schema-test fixes:
+
+- `docs/superpowers/specs/2026-07-21-sandbox-security-benchmark-review-ledger-amendment.md`
+- `docs/superpowers/plans/2026-07-16-sandbox-security-production-002-master.md`
+- `docs/superpowers/plans/2026-07-16-sandbox-security-production-002-phase-5-benchmark-corpus.md`
+
+Do not defer any of them to, or fold any of them into, P5-T3. P5-T3 may not
+begin or continue, and its task commit may not be created, until all three paths
+have been committed together by P5-T1 and the worktree is clean for those
+paths. Verify that gate both before P5-T3 begins or continues and immediately
+before its commit:
+
+~~~bash
+git ls-files --error-unmatch \
+  docs/superpowers/specs/2026-07-21-sandbox-security-benchmark-review-ledger-amendment.md \
+  docs/superpowers/plans/2026-07-16-sandbox-security-production-002-master.md \
+  docs/superpowers/plans/2026-07-16-sandbox-security-production-002-phase-5-benchmark-corpus.md
+test -z "$(git status --short -- \
+  docs/superpowers/specs/2026-07-21-sandbox-security-benchmark-review-ledger-amendment.md \
+  docs/superpowers/plans/2026-07-16-sandbox-security-production-002-master.md \
+  docs/superpowers/plans/2026-07-16-sandbox-security-production-002-phase-5-benchmark-corpus.md)"
+~~~
 
 ## Locked Public Surface
 
@@ -293,6 +321,8 @@ and independent review.
 | `scripts/benchmark/sandbox-security/validate-corpus.ts` | P5-T3 |
 | `samples/sandbox-security-benchmark/v1/inputs/` | P5-T3 |
 | `samples/sandbox-security-benchmark/v1/truth/` | P5-T3 |
+| `samples/sandbox-security-benchmark/v1/reviews/` | P5-T3 |
+| `samples/sandbox-security-benchmark/v1/request-ids/` | P5-T3 |
 | `samples/sandbox-security-benchmark/v1/manifest.json` | P5-T3 |
 | `scripts/benchmark/sandbox-security/prepare-capture-bundle.ts` | P5-T4 |
 | `scripts/benchmark/sandbox-security/capture-sink.ts` | P6-T1 |
@@ -389,8 +419,8 @@ Phase review/fix/re-review is approved, and its status record is committed.
 | deterministic sanitizer | P3-T1 |
 | OpenAI Judge adapter | P3-T2, P3-T3 |
 | production composition | P4-T1, P4-T2 |
-| source lock and corpus contracts | P5-T1, P5-T2 |
-| sealed input and truth curation | P5-T3 |
+| source lock, corpus, review, and pre-label request-ID contracts | P5-T1, P5-T2 |
+| sealed input, truth, review, request-ID, and structural-control curation | P5-T3 |
 | live capture and evaluator | P6-T1 through P6-T4 |
 | hermetic replay and anti-oracle gates | P7-T1 through P7-T3 |
 | documentation, full regression, and global review | P7-T4 |
@@ -416,9 +446,9 @@ Phase review/fix/re-review is approved, and its status record is committed.
 | exact public export allowlist | P4-T2 |
 | live/replay benchmark-only composition seams | P4-T3 |
 | full production Engine and Track 1 regression | P4-T4 |
-| exact benchmark schemas and normalizers | P5-T1 |
+| exact benchmark, review, request-ID schemas and normalizers | P5-T1 |
 | immutable reviewed source admission/attribution | P5-T2 |
-| 300 input/truth matrix and provenance | P5-T3 |
+| 300 input/truth/review/request-ID matrix and provenance | P5-T3 |
 | truth-blind permission bundle | P5-T4 |
 | anonymous capture lifecycle and not_called slots | P6-T1 |
 | Ollama/OpenAI readiness and live runner | P6-T2 |
