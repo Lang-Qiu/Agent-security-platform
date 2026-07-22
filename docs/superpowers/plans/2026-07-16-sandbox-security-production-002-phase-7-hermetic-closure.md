@@ -304,8 +304,8 @@ export async function runSandboxSecurityHermeticReplay(input: Readonly<{
 export async function main(): Promise<void>;
 ~~~
 
-The parent unsets OPENAI_API_KEY, SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST, and
-SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE, validates replay envelope hashes/order,
+The parent unsets SANDBOX_SECURITY_JUDGE_API_KEY, SANDBOX_SECURITY_JUDGE_BASE_URL, SANDBOX_SECURITY_JUDGE_MODEL, SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST, and
+SANDBOX_SECURITY_ENABLE_JUDGE, validates replay envelope hashes/order,
 removes fixture_id, and creates anonymous two-slot units. It launches an Engine
 child with read permission for code/input/replay but no truth/evaluator path.
 That child runs the full Engine path, begin/end in finally, awaits actual signal
@@ -321,8 +321,8 @@ unshare namespace, and the production graph never sees fixture ID or truth.
 ~~~bash
 node --experimental-strip-types --experimental-test-isolation=none --test \
   tests/benchmark/sandbox-security-replay-hermetic.spec.ts
-env -u OPENAI_API_KEY -u SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST \
-  -u SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE unshare --net \
+env -u SANDBOX_SECURITY_JUDGE_API_KEY -u SANDBOX_SECURITY_JUDGE_BASE_URL -u SANDBOX_SECURITY_JUDGE_MODEL -u SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST \
+  -u SANDBOX_SECURITY_ENABLE_JUDGE unshare --net \
   node --experimental-strip-types scripts/benchmark/sandbox-security/replay-hermetic.ts
 ~~~
 
@@ -442,7 +442,7 @@ Master-required benchmark/repository scripts:
 {
   "test:repo:sandbox-security-production": "node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/sandbox-security-production.spec.ts tests/repository/sandbox-security-benchmark.spec.ts",
   "benchmark:sandbox-security:validate": "node --experimental-strip-types scripts/benchmark/sandbox-security/validate-corpus.ts",
-  "benchmark:sandbox-security:replay": "env -u OPENAI_API_KEY -u SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST -u SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE unshare --net node --experimental-strip-types scripts/benchmark/sandbox-security/replay-hermetic.ts",
+  "benchmark:sandbox-security:replay": "env -u SANDBOX_SECURITY_JUDGE_API_KEY -u SANDBOX_SECURITY_JUDGE_BASE_URL -u SANDBOX_SECURITY_JUDGE_MODEL -u SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST -u SANDBOX_SECURITY_ENABLE_JUDGE unshare --net node --experimental-strip-types scripts/benchmark/sandbox-security/replay-hermetic.ts",
   "benchmark:sandbox-security:qualify:live": "node --experimental-strip-types scripts/benchmark/sandbox-security/prepare-capture-bundle.ts"
 }
 ~~~

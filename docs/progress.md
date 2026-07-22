@@ -6639,3 +6639,26 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - next: supply a credential accepted by the fixed OpenAI endpoint, enable the
   Judge, and provide a digest-pinned loopback `qwen3:8b` listener; only then
   restart P6-T4 live capture → evaluate → seal. Phase 7 remains unstarted.
+
+## 2026-07-22 - REQ-SBX-GENERAL-002 Dynamic Judge Provider amendment implementation (deterministic)
+
+- phase/task: Amendment to GENERAL-002 / Dynamic Judge Provider
+- status: DETERMINISTIC_GATES_IN_PROGRESS → GREEN for production + benchmark unit suites
+- amendment: `docs/superpowers/specs/2026-07-22-sandbox-security-dynamic-judge-provider-amendment.md`
+- plan: `docs/superpowers/plans/2026-07-22-sandbox-security-dynamic-judge-provider.md`
+- implemented:
+  - `production-config.ts` reads only `SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST`, `SANDBOX_SECURITY_JUDGE_BASE_URL`, `SANDBOX_SECURITY_JUDGE_MODEL`, `SANDBOX_SECURITY_JUDGE_API_KEY`, `SANDBOX_SECURITY_ENABLE_JUDGE`
+  - source-controlled allowlist starts with Doro (`https://doro.lol/v1` → `https://doro.lol/v1/responses`)
+  - public summary exposes non-secret provider fields; API key never serialized
+  - default HTTP transport posts to resolved allowlisted Responses URL with `judge_api_key`
+  - Judge request serializes runtime requested model; parser accepts dynamic resolved model (alias OK)
+  - sealed provider config + capture manifest replace `openai_model` with five judge binding fields
+  - `prepare-capture-bundle` forwards closed Judge/Ollama env names to capture child only
+- verification:
+  - `engines/sandbox/tests/sandbox-security-production-*.spec.ts` → pass
+  - `tests/benchmark/sandbox-security-*.spec.ts` → pass
+- intentionally not created:
+  - accepted capture/replay/seal artifacts
+  - real credentialed P6-T4 live run
+- remaining for live seal: Doro-accepted `SANDBOX_SECURITY_JUDGE_API_KEY`, `SANDBOX_SECURITY_ENABLE_JUDGE=1`, digest-pinned loopback `qwen3:8b`, then restart P6-T4
+- next: documentation/plan Phase 6-7 env-name sync residual if any; then P6-T4 when live prerequisites exist

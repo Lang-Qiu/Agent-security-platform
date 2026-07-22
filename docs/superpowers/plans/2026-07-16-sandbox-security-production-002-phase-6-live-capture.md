@@ -46,8 +46,10 @@ or a per-fixture decision.
 
 ~~~text
 SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST=sha256:<64 lowercase hex>
-OPENAI_API_KEY=<nonempty secret supplied only by environment or ignored .env>
-SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE=1
+SANDBOX_SECURITY_JUDGE_API_KEY=<nonempty secret supplied only by environment or ignored .env>
+SANDBOX_SECURITY_JUDGE_BASE_URL=https://doro.lol/v1
+SANDBOX_SECURITY_JUDGE_MODEL=gpt-5.4-mini
+SANDBOX_SECURITY_ENABLE_JUDGE=1
 Ollama qwen3:8b listener bound only at 127.0.0.1:11434
 ~~~
 
@@ -532,8 +534,10 @@ failure. Do not make this green with placeholders or mocked records.
 Check presence without printing secrets:
 
 ~~~bash
-test -n "$OPENAI_API_KEY"
-test "$SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE" = "1"
+test -n "$SANDBOX_SECURITY_JUDGE_API_KEY"
+test "$SANDBOX_SECURITY_JUDGE_BASE_URL" = "https://doro.lol/v1"
+test -n "$SANDBOX_SECURITY_JUDGE_MODEL"
+test "$SANDBOX_SECURITY_ENABLE_JUDGE" = "1"
 test -n "$SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST"
 node --experimental-strip-types scripts/benchmark/sandbox-security/prepare-capture-bundle.ts
 node --experimental-strip-types scripts/benchmark/sandbox-security/evaluate.ts --report

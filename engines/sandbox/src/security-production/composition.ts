@@ -43,6 +43,7 @@ export interface SandboxSecurityProductionCompositionPorts {
   }>): Promise<RawLocalDetector>;
   create_external_pipeline(input: Readonly<{
     transport: SandboxSecurityHttpTransport;
+    judge_requested_model: string;
   }>): Readonly<{
     sanitizer: SandboxSecuritySanitizer;
     judge: SanitizedExternalDetector;
@@ -264,7 +265,14 @@ export async function createSandboxSecurityProductionCompositionWithPorts(
     });
   }
 
-  const pipeline = factories.create_external_pipeline({ transport });
+  const judgeRequestedModel = config.summary.judge_requested_model;
+  if (typeof judgeRequestedModel !== "string") {
+    return compositionInvalid();
+  }
+  const pipeline = factories.create_external_pipeline({
+    transport,
+    judge_requested_model: judgeRequestedModel
+  });
   return createSandboxSecurityEngine({
     registry: createSandboxSecurityDetectorRegistry({
       rule,

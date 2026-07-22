@@ -34,7 +34,9 @@ import {
   createSandboxSecurityProductionTransport
 } from "../../../engines/sandbox/src/security-production/production-config.ts";
 import {
-  createSandboxSecurityOpenAiJudgeRequest
+  createSandboxSecurityOpenAiJudgeRequest,
+  parseSandboxSecurityOpenAiJudgeResponse,
+  SANDBOX_SECURITY_OPENAI_JUDGE_PROMPT_VERSION
 } from "../../../engines/sandbox/src/security-production/openai-judge-contract.ts";
 import {
   SANDBOX_SECURITY_BENCHMARK_CAPTURE_SCHEMA_VERSION,
@@ -57,17 +59,14 @@ import {
 import {
   SANDBOX_SECURITY_OLLAMA_LOCAL_PROMPT_VERSION
 } from "../../../engines/sandbox/src/security-production/ollama-contract.ts";
-import {
-  SANDBOX_SECURITY_OPENAI_JUDGE_PROMPT_VERSION
-} from "../../../engines/sandbox/src/security-production/openai-judge-contract.ts";
 
 const INVALID = "sandbox_security_capture_live_reject";
 const READINESS_TIMEOUT_MS = 4000 as const;
-const JUDGE_MODEL = "gpt-5.6-terra" as const;
 const LOCAL_SCHEMA_VERSION = "sandbox-security-local-model.v1" as const;
 const JUDGE_SCHEMA_VERSION = "sandbox-security-judge.v1" as const;
 const OLLAMA_MODEL = "qwen3:8b" as const;
 const SHA256 = /^[0-9a-f]{64}$/u;
+let judgeResolvedModelForCapture: string | null = null;
 
 export type SandboxSecurityLiveCaptureEvent =
   | "judge_readiness"
@@ -235,11 +234,15 @@ function assertLiveConfig(ports: Readonly<SandboxSecurityLiveCapturePorts>): voi
   }
   // Production path: require exact env surface without logging secrets.
   const digest = process.env.SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST?.trim() ?? "";
-  const key = process.env.OPENAI_API_KEY?.trim() ?? "";
-  const enabled = process.env.SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE?.trim() ?? "";
+  const key = process.env.SANDBOX_SECURITY_JUDGE_API_KEY?.trim() ?? "";
+  const enabled = process.env.SANDBOX_SECURITY_ENABLE_JUDGE?.trim() ?? "";
+  const baseUrl = process.env.SANDBOX_SECURITY_JUDGE_BASE_URL?.trim() ?? "";
+  const model = process.env.SANDBOX_SECURITY_JUDGE_MODEL?.trim() ?? "";
   if (!/^sha256:[a-f0-9]{64}$/u.test(digest)) fail("missing_live_config:digest");
-  if (key.length === 0) fail("missing_live_config:openai_key");
+  if (key.length === 0) fail("missing_live_config:judge_key");
   if (enabled !== "1") fail("missing_live_config:judge_enable");
+  if (baseUrl !== "https://doro.lol/v1") fail("missing_live_config:judge_base_url");
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(model)) fail("missing_live_config:judge_model");
 }
 
 function readinessPayloadBody(): Uint8Array {
@@ -272,7 +275,7 @@ function readinessPayloadBody(): Uint8Array {
       }
     ]
   };
-  return createSandboxSecurityOpenAiJudgeRequest(payload as never).body;
+  return createSandboxSecurityOpenAiJudgeRequest(payload as never, { judge_requested_model: process.env.SANDBOX_SECURITY_JUDGE_MODEL?.trim() || "gpt-5.4-mini" }).body;
 }
 
 async function defaultJudgeReadiness(input: Readonly<{
@@ -308,6 +311,39 @@ async function defaultJudgeReadiness(input: Readonly<{
       fail("judge_readiness_failed");
     }
     if (response.content_type !== "application/json") {
+      fail("judge_readiness_failed");
+    }
+    // Readiness payload uses synthetic obligation; parse only for model identity.
+    const readinessPayload = {
+      request_token: "token://sandbox/security/readiness/0001",
+      decision_id: "decision-readiness",
+      stage: "user_input",
+      content_sources: [],
+      tool_request: null,
+      routed_obligations: [
+        {
+          obligation_id: "obligation://sandbox/security/readiness/0001",
+          category: "prompt_injection",
+          subject_refs: [
+            {
+              kind: "content_source",
+              source_token: "token://sandbox/security/source/0001",
+              locator: { kind: "whole_source" }
+            }
+          ]
+        }
+      ]
+    } as never;
+    try {
+      const parsed = parseSandboxSecurityOpenAiJudgeResponse(
+        response.body,
+        readinessPayload
+      );
+      if (typeof parsed.model !== "string" || parsed.model.length === 0) {
+        fail("judge_readiness_failed");
+      }
+      judgeResolvedModelForCapture = parsed.model;
+    } catch {
       fail("judge_readiness_failed");
     }
   } catch (error) {
@@ -410,7 +446,13 @@ function writeCandidatePackage(input: Readonly<{
       inventory: input.accumulator.qualification_inventory,
       prewarm: input.accumulator.qualification_prewarm
     },
-    openai_model: JUDGE_MODEL,
+    judge_provider_id: "doro",
+    judge_base_url: "https://doro.lol/v1",
+    judge_responses_url: "https://doro.lol/v1/responses",
+    judge_requested_model: process.env.SANDBOX_SECURITY_JUDGE_MODEL?.trim() ?? "gpt-5.4-mini",
+    judge_resolved_model:
+      judgeResolvedModelForCapture ??
+      (process.env.SANDBOX_SECURITY_JUDGE_MODEL?.trim() ?? "gpt-5.4-mini"),
     local_prompt_version: SANDBOX_SECURITY_OLLAMA_LOCAL_PROMPT_VERSION,
     judge_prompt_version: SANDBOX_SECURITY_OPENAI_JUDGE_PROMPT_VERSION,
     local_schema_version: LOCAL_SCHEMA_VERSION,

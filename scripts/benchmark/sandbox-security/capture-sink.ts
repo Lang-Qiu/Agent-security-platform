@@ -187,6 +187,7 @@ function assertNoOracleFields(value: unknown, depth = 0): void {
       key === "metric" ||
       key === "request_id" ||
       key === "OPENAI_API_KEY" ||
+      key === "SANDBOX_SECURITY_JUDGE_API_KEY" ||
       key === "raw_body" ||
       key === "sanitized_content"
     ) {

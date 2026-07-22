@@ -111,7 +111,7 @@ function obligation(
 
 function openAi(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    model: "gpt-5.6-terra",
+    model: "gpt-5.4-mini",
     status: "completed",
     parsed: {
       schema_version: "sandbox-security-judge.v1",

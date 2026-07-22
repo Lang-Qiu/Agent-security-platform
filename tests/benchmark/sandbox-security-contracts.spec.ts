@@ -311,7 +311,11 @@ function captureManifest() {
         }
       }
     },
-    openai_model: "gpt-5.6-terra",
+    judge_provider_id: "doro",
+    judge_base_url: "https://doro.lol/v1",
+    judge_responses_url: "https://doro.lol/v1/responses",
+    judge_requested_model: "gpt-5.4-mini",
+    judge_resolved_model: "gpt-5.4-mini",
     local_prompt_version: "sandbox-security-ollama-local-prompt.v1",
     judge_prompt_version: "sandbox-security-openai-judge-prompt.v1",
     local_schema_version: "sandbox-security-local-model.v1",
@@ -693,7 +697,7 @@ test("REQ-SBX-GENERAL-002 replay normalization matches provider duplicate and HT
     http_status: 200,
     content_type: "application/json",
     normalized_response: {
-      model: "gpt-5.6-terra",
+      model: "gpt-5.4-mini",
       status: "completed",
       parsed: {
         schema_version: "sandbox-security-judge.v1",

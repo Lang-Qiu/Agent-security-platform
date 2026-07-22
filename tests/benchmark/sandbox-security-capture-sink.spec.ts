@@ -120,7 +120,7 @@ function evaluationJudge(): SandboxSecurityCapturedProviderOutcome {
       http_status: 200,
       content_type: "application/json",
       normalized_response: Object.freeze({
-        model: "gpt-5.6-terra",
+        model: "gpt-5.4-mini",
         status: "completed",
         parsed: Object.freeze({
           schema_version: "sandbox-security-judge.v1",
@@ -285,7 +285,7 @@ test("REQ-SBX-GENERAL-002 sink freezes snapshot and omits oracle fields", () => 
   const serialized = JSON.stringify(snap);
   assert.doesNotMatch(
     serialized,
-    /fixture_id|primary_category|ground_truth_severity|verdict_class|OPENAI_API_KEY/
+    /fixture_id|primary_category|ground_truth_severity|verdict_class|SANDBOX_SECURITY_JUDGE_API_KEY/
   );
 });
 

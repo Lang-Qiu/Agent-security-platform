@@ -95,7 +95,11 @@ export type SandboxSecurityCapturedProviderOutcome =
 export interface SandboxSecuritySealedProviderConfig {
   ollama_model: "qwen3:8b";
   ollama_digest: string;
-  openai_model: "gpt-5.6-terra";
+  judge_provider_id: string;
+  judge_base_url: string;
+  judge_responses_url: string;
+  judge_requested_model: string;
+  judge_resolved_model: string;
   local_prompt_version: "sandbox-security-ollama-local-prompt.v1";
   local_schema_version: "sandbox-security-local-model.v1";
   judge_prompt_version: "sandbox-security-openai-judge-prompt.v1";
@@ -122,6 +126,13 @@ const INVALID = "sandbox_security_benchmark_composition_invalid";
 const NORMALIZED_DIGEST = /^sha256:[a-f0-9]{64}$/;
 const LOCAL_SCHEMA_VERSION = "sandbox-security-local-model.v1";
 const JUDGE_SCHEMA_VERSION = "sandbox-security-judge.v1";
+const JUDGE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
+const JUDGE_PROVIDER_ALLOWLIST = Object.freeze({
+  doro: Object.freeze({
+    base_url: "https://doro.lol/v1",
+    responses_url: "https://doro.lol/v1/responses"
+  })
+});
 const RUNTIME_METHODS = [
   "now",
   "nextDecisionId",
@@ -241,7 +252,11 @@ function normalizedSealedConfig(
   const values = exactDataRecord(value, [
     "ollama_model",
     "ollama_digest",
-    "openai_model",
+    "judge_provider_id",
+    "judge_base_url",
+    "judge_responses_url",
+    "judge_requested_model",
+    "judge_resolved_model",
     "local_prompt_version",
     "local_schema_version",
     "judge_prompt_version",
@@ -250,11 +265,27 @@ function normalizedSealedConfig(
     "sanitizer_version"
   ]);
   const digest = values.get("ollama_digest");
+  const providerId = values.get("judge_provider_id");
+  const baseUrl = values.get("judge_base_url");
+  const responsesUrl = values.get("judge_responses_url");
+  const requestedModel = values.get("judge_requested_model");
+  const resolvedModel = values.get("judge_resolved_model");
+  const allowlisted =
+    typeof providerId === "string" &&
+    Object.prototype.hasOwnProperty.call(JUDGE_PROVIDER_ALLOWLIST, providerId)
+      ? JUDGE_PROVIDER_ALLOWLIST[providerId as keyof typeof JUDGE_PROVIDER_ALLOWLIST]
+      : null;
   if (
     values.get("ollama_model") !== "qwen3:8b" ||
     typeof digest !== "string" ||
     !NORMALIZED_DIGEST.test(digest) ||
-    values.get("openai_model") !== "gpt-5.6-terra" ||
+    allowlisted === null ||
+    baseUrl !== allowlisted.base_url ||
+    responsesUrl !== allowlisted.responses_url ||
+    typeof requestedModel !== "string" ||
+    !JUDGE_MODEL.test(requestedModel) ||
+    typeof resolvedModel !== "string" ||
+    !JUDGE_MODEL.test(resolvedModel) ||
     values.get("local_prompt_version") !==
       SANDBOX_SECURITY_OLLAMA_LOCAL_PROMPT_VERSION ||
     values.get("local_schema_version") !== LOCAL_SCHEMA_VERSION ||
@@ -271,7 +302,11 @@ function normalizedSealedConfig(
   return Object.freeze({
     ollama_model: "qwen3:8b",
     ollama_digest: digest,
-    openai_model: "gpt-5.6-terra",
+    judge_provider_id: providerId as string,
+    judge_base_url: allowlisted.base_url,
+    judge_responses_url: allowlisted.responses_url,
+    judge_requested_model: requestedModel,
+    judge_resolved_model: resolvedModel,
     local_prompt_version: SANDBOX_SECURITY_OLLAMA_LOCAL_PROMPT_VERSION,
     local_schema_version: LOCAL_SCHEMA_VERSION,
     judge_prompt_version: SANDBOX_SECURITY_OPENAI_JUDGE_PROMPT_VERSION,
@@ -787,7 +822,11 @@ function replayPorts(
     summary: Object.freeze({
       ollama_configured: true,
       judge_configured: true,
-      ollama_digest: sealedConfig.ollama_digest
+      ollama_digest: sealedConfig.ollama_digest,
+      judge_provider_id: sealedConfig.judge_provider_id,
+      judge_base_url: sealedConfig.judge_base_url,
+      judge_responses_url: sealedConfig.judge_responses_url,
+      judge_requested_model: sealedConfig.judge_requested_model
     })
   });
   const facade: SandboxSecurityHttpTransport = Object.freeze({

@@ -1393,7 +1393,8 @@ test("REQ-SBX-GENERAL-002 default transport performs fixed GET to POST and block
   ]);
   const transport = createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: DIGEST,
-    openai_api_key: null,
+    judge_api_key: null,
+    judge_responses_url: null,
     request_factory: wire.factory
   });
   const qualificationController = new AbortController();

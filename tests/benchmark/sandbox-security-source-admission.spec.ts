@@ -466,7 +466,7 @@ test("REQ-SBX-GENERAL-002 source importer has no download credential or automati
   const source = readFileSync(IMPORTER_URL, "utf8");
   assert.doesNotMatch(source, /node:(?:https?|child_process|net|tls|undici)/u);
   assert.doesNotMatch(source, /\b(?:fetch|XMLHttpRequest|spawn|execFile|fork)\s*\(/u);
-  assert.doesNotMatch(source, /\bprocess\.env\b|OPENAI_API_KEY|authorization/iu);
+  assert.doesNotMatch(source, /\bprocess\.env\b|OPENAI_API_KEY|SANDBOX_SECURITY_JUDGE_API_KEY|authorization/iu);
   assert.doesNotMatch(source, /\b(?:writeFile|appendFile|createWriteStream|rename|copyFile|mkdir)Sync?\b/u);
   assert.doesNotMatch(source, /sources\.lock\.json/u);
 });

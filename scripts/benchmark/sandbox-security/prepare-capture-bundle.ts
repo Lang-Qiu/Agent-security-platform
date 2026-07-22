@@ -485,7 +485,7 @@ export function buildSandboxSecurityCaptureChildCommand(
   ]);
 
   const joined = args.join(" ");
-  if (/(?:^|[\s=])(?:truth|evaluate|metrics|OPENAI_API_KEY)(?:$|[\s=/])/iu.test(joined)) {
+  if (/(?:^|[\s=])(?:truth|evaluate|metrics|OPENAI_API_KEY|SANDBOX_SECURITY_JUDGE_API_KEY)(?:$|[\s=/])/iu.test(joined)) {
     fail("capture_bundle_reject:command_contains_forbidden_token");
   }
 
@@ -527,11 +527,26 @@ export async function launchSandboxSecurityCaptureChild(input: Readonly<{
   return await new Promise((resolvePromise, rejectPromise) => {
     const child = spawn(command.exec_path, [...command.args], {
       cwd: command.cwd,
-      env: {
-        PATH: process.env.PATH ?? "",
-        HOME: process.env.HOME ?? "",
-        LANG: process.env.LANG ?? "C"
-      },
+      env: (() => {
+        const childEnv: Record<string, string> = {
+          PATH: process.env.PATH ?? "",
+          HOME: process.env.HOME ?? "",
+          LANG: process.env.LANG ?? "C"
+        };
+        for (const key of [
+          "SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST",
+          "SANDBOX_SECURITY_JUDGE_BASE_URL",
+          "SANDBOX_SECURITY_JUDGE_MODEL",
+          "SANDBOX_SECURITY_JUDGE_API_KEY",
+          "SANDBOX_SECURITY_ENABLE_JUDGE"
+        ] as const) {
+          const value = process.env[key];
+          if (typeof value === "string" && value.length > 0) {
+            childEnv[key] = value;
+          }
+        }
+        return childEnv;
+      })(),
       stdio: ["ignore", "pipe", "pipe"],
       // Never pass custom uid/gid or detached with inherited sockets.
       windowsHide: true

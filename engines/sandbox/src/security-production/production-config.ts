@@ -12,6 +12,10 @@ export type SandboxSecurityProductionConfigSummary = Readonly<{
   ollama_configured: boolean;
   judge_configured: boolean;
   ollama_digest?: string;
+  judge_provider_id?: string;
+  judge_base_url?: string;
+  judge_responses_url?: string;
+  judge_requested_model?: string;
 }>;
 
 export interface SandboxSecurityProductionConfig {
@@ -20,14 +24,26 @@ export interface SandboxSecurityProductionConfig {
 }
 
 const SHA256_DIGEST = /^sha256:[a-f0-9]{64}$/;
+const JUDGE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
 const INVALID_CONFIG_ERROR = "sandbox_security_production_config_invalid";
 const OLLAMA_DIGEST_ENV = "SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST";
-const OPENAI_API_KEY_ENV = "OPENAI_API_KEY";
-const ENABLE_OPENAI_JUDGE_ENV = "SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE";
+const JUDGE_BASE_URL_ENV = "SANDBOX_SECURITY_JUDGE_BASE_URL";
+const JUDGE_MODEL_ENV = "SANDBOX_SECURITY_JUDGE_MODEL";
+const JUDGE_API_KEY_ENV = "SANDBOX_SECURITY_JUDGE_API_KEY";
+const ENABLE_JUDGE_ENV = "SANDBOX_SECURITY_ENABLE_JUDGE";
+
+const JUDGE_PROVIDER_ALLOWLIST = Object.freeze([
+  Object.freeze({
+    provider_id: "doro",
+    base_url: "https://doro.lol/v1",
+    responses_url: "https://doro.lol/v1/responses"
+  })
+]);
 
 interface PrivateConfigState {
   expected_ollama_digest: string | null;
-  openai_api_key: string | null;
+  judge_api_key: string | null;
+  judge_responses_url: string | null;
 }
 
 const PRIVATE_CONFIG_STATES = new WeakMap<
@@ -65,11 +81,30 @@ function readOwnEnvironmentValue(
   }
 }
 
+function resolveAllowlistedJudgeProvider(
+  baseUrl: string
+): (typeof JUDGE_PROVIDER_ALLOWLIST)[number] {
+  for (const entry of JUDGE_PROVIDER_ALLOWLIST) {
+    if (entry.base_url === baseUrl) {
+      return entry;
+    }
+  }
+  return invalidConfig();
+}
+
+function validateJudgeApiKey(value: string): string {
+  if (value.length === 0 || /[\u0000-\u001f\u007f]/.test(value)) {
+    return invalidConfig();
+  }
+  return value;
+}
+
 function bindConfigView(
   mode: SandboxSecurityProductionMode,
   summary: SandboxSecurityProductionConfigSummary,
   expectedOllamaDigest: string | null,
-  openAiApiKey: string | null
+  judgeApiKey: string | null,
+  judgeResponsesUrl: string | null
 ): Readonly<SandboxSecurityProductionConfig> {
   const config = Object.freeze({
     mode,
@@ -77,7 +112,8 @@ function bindConfigView(
   });
   PRIVATE_CONFIG_STATES.set(config, {
     expected_ollama_digest: expectedOllamaDigest,
-    openai_api_key: openAiApiKey
+    judge_api_key: judgeApiKey,
+    judge_responses_url: judgeResponsesUrl
   });
   return config;
 }
@@ -94,6 +130,7 @@ export function normalizeSandboxSecurityProductionConfigForTest(
         judge_configured: false
       },
       null,
+      null,
       null
     );
   }
@@ -104,28 +141,56 @@ export function normalizeSandboxSecurityProductionConfigForTest(
   if (digest === undefined || !SHA256_DIGEST.test(digest)) {
     return invalidConfig();
   }
-  let openAiApiKey: string | null = null;
+
+  let judgeApiKey: string | null = null;
+  let judgeResponsesUrl: string | null = null;
+  let judgeSummary: SandboxSecurityProductionConfigSummary = {
+    ollama_configured: true,
+    judge_configured: false,
+    ollama_digest: digest
+  };
+
   if (mode === "local_and_judge") {
-    openAiApiKey = readOwnEnvironmentValue(env, OPENAI_API_KEY_ENV)?.trim() ?? null;
-    const enableJudge = readOwnEnvironmentValue(
-      env,
-      ENABLE_OPENAI_JUDGE_ENV
-    )?.trim();
-    if (openAiApiKey === null || openAiApiKey === "" || enableJudge !== "1") {
+    const baseUrl = readOwnEnvironmentValue(env, JUDGE_BASE_URL_ENV)?.trim();
+    const requestedModel = readOwnEnvironmentValue(env, JUDGE_MODEL_ENV)?.trim();
+    const rawKey = readOwnEnvironmentValue(env, JUDGE_API_KEY_ENV)?.trim();
+    const enableJudge = readOwnEnvironmentValue(env, ENABLE_JUDGE_ENV)?.trim();
+
+    if (
+      baseUrl === undefined ||
+      requestedModel === undefined ||
+      rawKey === undefined ||
+      enableJudge !== "1"
+    ) {
       return invalidConfig();
     }
+    if (!JUDGE_MODEL.test(requestedModel)) {
+      return invalidConfig();
+    }
+
+    const provider = resolveAllowlistedJudgeProvider(baseUrl);
+    judgeApiKey = validateJudgeApiKey(rawKey);
+    judgeResponsesUrl = provider.responses_url;
+    judgeSummary = {
+      ollama_configured: true,
+      judge_configured: true,
+      ollama_digest: digest,
+      judge_provider_id: provider.provider_id,
+      judge_base_url: provider.base_url,
+      judge_responses_url: provider.responses_url,
+      judge_requested_model: requestedModel
+    };
   }
+
   const config = bindConfigView(
     mode,
-    {
-      ollama_configured: true,
-      judge_configured: mode === "local_and_judge",
-      ollama_digest: digest
-    },
+    judgeSummary,
     digest,
-    openAiApiKey
+    judgeApiKey,
+    judgeResponsesUrl
   );
-  openAiApiKey = null;
+  judgeApiKey = null;
+  judgeResponsesUrl = null;
   return config;
 }
 
@@ -156,16 +221,20 @@ export function createSandboxSecurityProductionTransport(
   PRIVATE_CONFIG_STATES.delete(config);
 
   const expectedOllamaDigest = privateState.expected_ollama_digest;
-  let openAiApiKey = privateState.openai_api_key;
+  let judgeApiKey = privateState.judge_api_key;
+  let judgeResponsesUrl = privateState.judge_responses_url;
   privateState.expected_ollama_digest = null;
-  privateState.openai_api_key = null;
+  privateState.judge_api_key = null;
+  privateState.judge_responses_url = null;
 
   try {
     return createSandboxSecurityDefaultHttpTransport({
       expected_ollama_digest: expectedOllamaDigest,
-      openai_api_key: openAiApiKey
+      judge_api_key: judgeApiKey,
+      judge_responses_url: judgeResponsesUrl
     });
   } finally {
-    openAiApiKey = null;
+    judgeApiKey = null;
+    judgeResponsesUrl = null;
   }
 }

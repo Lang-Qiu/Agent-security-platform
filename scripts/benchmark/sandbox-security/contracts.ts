@@ -266,7 +266,7 @@ export interface SandboxSecurityReplayObligationResult {
 }
 
 export interface SandboxSecurityReplayOpenAIResponse {
-  readonly model: "gpt-5.6-terra";
+  readonly model: string;
   readonly status: "completed";
   readonly parsed: Readonly<{
     readonly schema_version: "sandbox-security-judge.v1";
@@ -321,7 +321,11 @@ export interface SandboxSecurityBenchmarkCaptureManifest {
     readonly inventory: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaInventoryResponse>;
     readonly prewarm: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse>;
   }>;
-  readonly openai_model: "gpt-5.6-terra";
+  readonly judge_provider_id: string;
+  readonly judge_base_url: string;
+  readonly judge_responses_url: string;
+  readonly judge_requested_model: string;
+  readonly judge_resolved_model: string;
   readonly local_prompt_version: "sandbox-security-ollama-local-prompt.v1";
   readonly judge_prompt_version: "sandbox-security-openai-judge-prompt.v1";
   readonly local_schema_version: "sandbox-security-local-model.v1";
@@ -377,6 +381,7 @@ const MAX_TREE_TOTAL_BYTES = 256 * 1024 * 1024;
 const LOCAL_PROMPT_VERSION = "sandbox-security-ollama-local-prompt.v1" as const;
 const JUDGE_PROMPT_VERSION = "sandbox-security-openai-judge-prompt.v1" as const;
 const LOCAL_SCHEMA_VERSION = "sandbox-security-local-model.v1" as const;
+const JUDGE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
 const JUDGE_SCHEMA_VERSION = "sandbox-security-judge.v1" as const;
 
 function invalid(): never {
@@ -1140,7 +1145,7 @@ function normalizeLocal(value: unknown): SandboxSecurityReplayOllamaResponse {
 
 function normalizeJudge(value: unknown): SandboxSecurityReplayOpenAIResponse {
   const root = exact(value, ["model", "status", "parsed"]);
-  if (root.model !== "gpt-5.6-terra" || root.status !== "completed") return invalid();
+  if (typeof root.model !== "string" || !JUDGE_MODEL.test(root.model) || root.status !== "completed") return invalid();
   const parsed = exact(root.parsed, ["schema_version", "obligation_results"]);
   if (parsed.schema_version !== "sandbox-security-judge.v1") return invalid();
   const results = denseArray(parsed.obligation_results, 0, MAX_OUTCOMES).map((item) => {
@@ -1160,7 +1165,7 @@ function normalizeJudge(value: unknown): SandboxSecurityReplayOpenAIResponse {
     if (result.outcome === "risk" && result.severity === null) return invalid();
     if (result.outcome === "clearance" && result.severity !== null) return invalid();
   }
-  return deepFreeze({ model: "gpt-5.6-terra", status: "completed" as const, parsed: { schema_version: "sandbox-security-judge.v1" as const, obligation_results: results } });
+  return deepFreeze({ model: root.model, status: "completed" as const, parsed: { schema_version: "sandbox-security-judge.v1" as const, obligation_results: results } });
 }
 
 function normalizeOutcome<T>(value: unknown, response: (value: unknown) => T): SandboxSecurityReplayTransportOutcome<T> {
@@ -1216,8 +1221,11 @@ export function normalizeSandboxSecurityBenchmarkManifest(value: unknown): Reado
 
 export function normalizeSandboxSecurityBenchmarkCaptureManifest(value: unknown): Readonly<SandboxSecurityBenchmarkCaptureManifest> {
   return safeCall(() => {
-    const root = exact(value, ["schema_version", "benchmark_manifest_sha256", "sources_lock_sha256", "inputs_tree_sha256", "decisions_tree_sha256", "cassette_tree_sha256", "ollama_model", "ollama_digest", "ollama_qualification", "openai_model", "local_prompt_version", "judge_prompt_version", "local_schema_version", "judge_schema_version", "rule_catalog_version", "sanitizer_version"]);
-    if (root.schema_version !== SANDBOX_SECURITY_BENCHMARK_CAPTURE_SCHEMA_VERSION || root.ollama_model !== "qwen3:8b" || root.openai_model !== "gpt-5.6-terra") return invalid();
+    const root = exact(value, ["schema_version", "benchmark_manifest_sha256", "sources_lock_sha256", "inputs_tree_sha256", "decisions_tree_sha256", "cassette_tree_sha256", "ollama_model", "ollama_digest", "ollama_qualification", "judge_provider_id", "judge_base_url", "judge_responses_url", "judge_requested_model", "judge_resolved_model", "local_prompt_version", "judge_prompt_version", "local_schema_version", "judge_schema_version", "rule_catalog_version", "sanitizer_version"]);
+    if (root.schema_version !== SANDBOX_SECURITY_BENCHMARK_CAPTURE_SCHEMA_VERSION || root.ollama_model !== "qwen3:8b") return invalid();
+    if (root.judge_provider_id !== "doro" || root.judge_base_url !== "https://doro.lol/v1" || root.judge_responses_url !== "https://doro.lol/v1/responses") return invalid();
+    if (typeof root.judge_requested_model !== "string" || !JUDGE_MODEL.test(root.judge_requested_model)) return invalid();
+    if (typeof root.judge_resolved_model !== "string" || !JUDGE_MODEL.test(root.judge_resolved_model)) return invalid();
     if (root.local_prompt_version !== LOCAL_PROMPT_VERSION ||
       root.judge_prompt_version !== JUDGE_PROMPT_VERSION ||
       root.local_schema_version !== LOCAL_SCHEMA_VERSION ||
@@ -1241,7 +1249,11 @@ export function normalizeSandboxSecurityBenchmarkCaptureManifest(value: unknown)
         inventory,
         prewarm
       },
-      openai_model: "gpt-5.6-terra" as const,
+      judge_provider_id: "doro",
+      judge_base_url: "https://doro.lol/v1",
+      judge_responses_url: "https://doro.lol/v1/responses",
+      judge_requested_model: root.judge_requested_model,
+      judge_resolved_model: root.judge_resolved_model,
       local_prompt_version: LOCAL_PROMPT_VERSION,
       judge_prompt_version: JUDGE_PROMPT_VERSION,
       local_schema_version: LOCAL_SCHEMA_VERSION,

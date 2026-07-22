@@ -225,7 +225,7 @@ function judgeResponse(
     status: 200,
     content_type: "application/json",
     body: ENCODER.encode(JSON.stringify({
-      model: "gpt-5.6-terra",
+      model: "gpt-5.4-mini",
       status: "completed",
       error: null,
       incomplete_details: null,
@@ -281,9 +281,8 @@ function engineWithPipeline(input: Readonly<{
   rule?: RawLocalDetector;
   runtime?: SandboxSecurityRuntimePorts;
 }>) {
-  const pipeline = createSandboxSecurityExternalPipeline({
-    transport: input.transport
-  });
+  const pipeline = createSandboxSecurityExternalPipeline({ transport: input.transport
+  , judge_requested_model: "gpt-5.4-mini" });
   const engine = createSandboxSecurityEngine({
     registry: createSandboxSecurityDetectorRegistry({
       rule: input.rule ?? ruleDetector(),
@@ -401,9 +400,8 @@ test("REQ-SBX-GENERAL-002 real sanitizer unsafe URL failure makes zero Judge cal
 
 test("REQ-SBX-GENERAL-002 frozen core rejects malformed sanitizer output before Judge", async () => {
   const harness = transportHarness(() => judgeResponse([]));
-  const pipeline = createSandboxSecurityExternalPipeline({
-    transport: harness.transport
-  });
+  const pipeline = createSandboxSecurityExternalPipeline({ transport: harness.transport
+  , judge_requested_model: "gpt-5.4-mini" });
   const engine = createSandboxSecurityEngine({
     registry: createSandboxSecurityDetectorRegistry({
       rule: ruleDetector(),
@@ -569,9 +567,8 @@ test("REQ-SBX-GENERAL-002 local timeout cleans its lease before Judge pipeline r
       }
     ]);
   });
-  const pipeline = createSandboxSecurityExternalPipeline({
-    transport: harness.transport
-  });
+  const pipeline = createSandboxSecurityExternalPipeline({ transport: harness.transport
+  , judge_requested_model: "gpt-5.4-mini" });
   const engine = createSandboxSecurityEngine({
     registry: createSandboxSecurityDetectorRegistry({
       rule: ruleDetector(),
@@ -689,7 +686,7 @@ test("REQ-SBX-GENERAL-002 external pipeline rejects open injection and direct ca
     );
   }
   assert.equal(getterCalls, 0);
-  assert.equal(proxyTrapCalls, 2);
+  assert.equal(proxyTrapCalls, 1);
 
   const source = existsSync(pipelinePath) ? readFileSync(pipelinePath, "utf8") : "";
   assert.doesNotMatch(source, /node:(?:http|https|net|tls|dns|fs|child_process)/);

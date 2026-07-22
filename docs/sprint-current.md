@@ -35,7 +35,7 @@ authorized in the exact Master/Phase DAG order.
 - Add a deterministic production rule detector.
 - Add a digest-pinned Ollama `qwen3:8b` local-model adapter.
 - Add a deterministic structured sanitizer.
-- Add an OpenAI Responses API Judge adapter using `gpt-5.6-terra`.
+- Add a Responses-protocol Judge adapter with allowlisted dynamic provider/model selection (initial Doro profile; requested model runtime-selected, e.g. `gpt-5.4-mini`).
 - Add production composition without changing GENERAL-001 semantics.
 - Curate and seal the fixed 300-sample `sandbox-security-benchmark.v1`.
 - Require both controlled live qualification and hermetic replay.
@@ -83,13 +83,14 @@ authorized in the exact Master/Phase DAG order.
 - The user explicitly approved the reviewed GENERAL-002 Spec and Plan.
 - Status is `IMPLEMENTATION_IN_PROGRESS`; implementation follows the exact
   Master/Phase DAG with one task closed at a time.
-- The plan set is one Master plus seven ordered Phase plans covering production
-  boundaries/rules, transport/local model, sanitizer/Judge, composition,
-  benchmark corpus, live capture, and hermetic closure.
-- A permanent repository plan gate is GREEN: all eight plan documents are
-  complete, semantically self-consistent, and independently re-reviewed.
-- Plan review record: first review `CHANGES_REQUIRED` with seven blocking
-  findings; all fixed; re-review `APPROVED`; no new findings.
+- Formal amendment approved: `docs/superpowers/specs/2026-07-22-sandbox-security-dynamic-judge-provider-amendment.md`.
+- Amendment implementation plan: `docs/superpowers/plans/2026-07-22-sandbox-security-dynamic-judge-provider.md`.
+- Dynamic Judge Provider amendment applies in place to unsealed
+  `sandbox-security-benchmark.v1` (no v2 corpus): allowlisted endpoint, runtime
+  model, `SANDBOX_SECURITY_JUDGE_*` env surface, capture five-field binding.
+- Deterministic production and benchmark suites are GREEN for the amendment.
+- P6-T4 credentialed live seal remains blocked until Doro-accepted key, enable
+  flag, and digest-pinned loopback Ollama are present.
 - Current execution node: Phase 1, P1-T1 boundary gate.
 - Each task requires RED, GREEN, static/integration/build gates, independent
   Specification Compliance Review, fix/re-review, independent Code

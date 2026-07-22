@@ -78,7 +78,7 @@ export interface SandboxSecurityReplayOllamaResponse {
 }
 
 export interface SandboxSecurityReplayOpenAIResponse {
-  readonly model: "gpt-5.6-terra";
+  readonly model: string;
   readonly status: "completed";
   readonly parsed: Readonly<{
     schema_version: "sandbox-security-judge.v1";
@@ -108,6 +108,7 @@ const TRANSPORT_ERROR_CODES = [
 const TERMINATION_REASONS = ["slot_timeout", "work_budget"] as const;
 const TOOL_COMPONENTS = ["whole_call", "tool_name", "target", "arguments"] as const;
 const SHA256_DIGEST = /^sha256:[a-f0-9]{64}$/;
+const JUDGE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
 const MAX_REPLAY_COPY_NODES = 512;
 const MAX_REPLAY_COPY_RECORD_KEYS = 32;
 const MAX_REPLAY_COPY_ARRAY_LENGTH = 32;
@@ -532,7 +533,11 @@ function normalizeSandboxSecurityReplayOpenAIResponseImpl(
 ): SandboxSecurityReplayOpenAIResponse {
   const state: ValidationState = { seen: new WeakSet<object>() };
   const record = exactRecord(value, ["model", "status", "parsed"], state);
-  const model = literalValue(dataProperty(record, "model"), "gpt-5.6-terra");
+  const modelRaw = dataProperty(record, "model");
+  if (typeof modelRaw !== "string" || !JUDGE_MODEL.test(modelRaw)) {
+    invalid();
+  }
+  const model = modelRaw;
   const status = literalValue(dataProperty(record, "status"), "completed");
   const parsedRecord = exactRecord(
     dataProperty(record, "parsed"),

@@ -20,7 +20,7 @@ interface ParsedObligationResult {
 }
 
 interface ParsedResponse {
-  readonly model: "gpt-5.6-terra";
+  readonly model: string;
   readonly status: "completed";
   readonly obligation_results: readonly ParsedObligationResult[];
 }
@@ -29,7 +29,8 @@ interface ContractModule {
   readonly SANDBOX_SECURITY_OPENAI_JUDGE_PROMPT_VERSION:
     "sandbox-security-openai-judge-prompt.v1";
   createSandboxSecurityOpenAiJudgeRequest(
-    payload: Readonly<SandboxSecuritySanitizedJudgePayload>
+    payload: Readonly<SandboxSecuritySanitizedJudgePayload>,
+    options: Readonly<{ judge_requested_model: string }>
   ): Readonly<{ body: Uint8Array }>;
   parseSandboxSecurityOpenAiJudgeResponse(
     body: Uint8Array,
@@ -59,6 +60,7 @@ const {
   parseSandboxSecurityOpenAiJudgeResponse
 } = contractModule;
 
+const DEFAULT_JUDGE_REQUESTED_MODEL = "gpt-5.4-mini";
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const NONCE = "a".repeat(32);
@@ -193,7 +195,7 @@ function expectedRequestBytes(
     "\nEND_SANITIZED_PAYLOAD";
   return encoder.encode(
     JSON.stringify({
-      model: "gpt-5.6-terra",
+      model: DEFAULT_JUDGE_REQUESTED_MODEL,
       store: false,
       reasoning: { effort: "low" },
       max_output_tokens: 4096,
@@ -259,7 +261,7 @@ function completedEnvelope(
   ]
 ): Record<string, unknown> {
   return {
-    model: "gpt-5.6-terra",
+    model: DEFAULT_JUDGE_REQUESTED_MODEL,
     status: "completed",
     error: null,
     incomplete_details: null,
@@ -297,8 +299,8 @@ test("REQ-SBX-GENERAL-002 OpenAI Judge request uses the exact fixed prompt and b
   assert.equal(sha256(promptBytes), PROMPT_SHA256);
 
   const payload = validPayload();
-  const first = createSandboxSecurityOpenAiJudgeRequest(payload).body;
-  const second = createSandboxSecurityOpenAiJudgeRequest(payload).body;
+  const first = createSandboxSecurityOpenAiJudgeRequest(payload, { judge_requested_model: DEFAULT_JUDGE_REQUESTED_MODEL }).body;
+  const second = createSandboxSecurityOpenAiJudgeRequest(payload, { judge_requested_model: DEFAULT_JUDGE_REQUESTED_MODEL }).body;
   const expected = expectedRequestBytes(payload);
 
   assert.deepEqual(first, expected);
@@ -329,7 +331,7 @@ test("REQ-SBX-GENERAL-002 OpenAI Judge request uses the exact fixed prompt and b
 });
 
 test("REQ-SBX-GENERAL-002 OpenAI request has no caller-controlled provider fields or raw sentinels", () => {
-  const body = createSandboxSecurityOpenAiJudgeRequest(validPayload()).body;
+  const body = createSandboxSecurityOpenAiJudgeRequest(validPayload(), { judge_requested_model: DEFAULT_JUDGE_REQUESTED_MODEL }).body;
   const text = new TextDecoder().decode(body);
   for (const forbidden of [
     "fixture_id",
@@ -344,7 +346,7 @@ test("REQ-SBX-GENERAL-002 OpenAI request has no caller-controlled provider field
   ]) {
     assert.equal(text.includes(forbidden), false, forbidden);
   }
-  assert.equal(text.includes('"model":"gpt-5.6-terra"'), true);
+  assert.equal(text.includes('"model":"gpt-5.4-mini"'), true);
   assert.equal(text.includes('"store":false'), true);
   assert.equal(text.includes('"effort":"low"'), true);
   assert.equal(text.includes('"max_output_tokens":4096'), true);
@@ -368,10 +370,10 @@ test("REQ-SBX-GENERAL-002 OpenAI request enforces the inclusive 64 KiB UTF-8 bod
     65_537
   );
   assert.equal(
-    createSandboxSecurityOpenAiJudgeRequest(acceptedPayload).body.byteLength,
+    createSandboxSecurityOpenAiJudgeRequest(acceptedPayload, { judge_requested_model: DEFAULT_JUDGE_REQUESTED_MODEL }).body.byteLength,
     65_536
   );
-  assert.throws(() => createSandboxSecurityOpenAiJudgeRequest(rejectedPayload));
+  assert.throws(() => createSandboxSecurityOpenAiJudgeRequest(rejectedPayload, { judge_requested_model: DEFAULT_JUDGE_REQUESTED_MODEL }));
 });
 
 test("REQ-SBX-GENERAL-002 parser accepts one completed output_text and allows omission", () => {
@@ -388,7 +390,7 @@ test("REQ-SBX-GENERAL-002 parser accepts one completed output_text and allows om
     payload
   );
   assert.deepEqual(parsed, {
-    model: "gpt-5.6-terra",
+    model: DEFAULT_JUDGE_REQUESTED_MODEL,
     status: "completed",
     obligation_results: [
       {
@@ -483,7 +485,7 @@ test("REQ-SBX-GENERAL-002 parser accepts known Responses metadata and discards i
   assert.deepEqual(
     parseSandboxSecurityOpenAiJudgeResponse(wire(envelope), payload),
     {
-      model: "gpt-5.6-terra",
+      model: DEFAULT_JUDGE_REQUESTED_MODEL,
       status: "completed",
       obligation_results: [
         {
@@ -563,7 +565,7 @@ test("REQ-SBX-GENERAL-002 parser rejects incomplete, refused, mismatched, and mu
   const payload = validPayload();
   const invalidEnvelopes: Record<string, unknown>[] = [];
   for (const [key, value] of [
-    ["model", "gpt-5.5"],
+    ["model", ""],
     ["status", "incomplete"],
     ["error", { code: "provider_error" }],
     ["incomplete_details", { reason: "max_output_tokens" }],
@@ -801,3 +803,30 @@ test("REQ-SBX-GENERAL-002 parser returns a frozen ordered content-free projectio
     assert.equal(serialized.includes(forbidden), false, forbidden);
   }
 });
+
+test("REQ-SBX-GENERAL-002 OpenAI request serializes the runtime requested model", () => {
+  const body = createSandboxSecurityOpenAiJudgeRequest(validPayload(), {
+    judge_requested_model: "provider/alias:v1"
+  }).body;
+  const text = decoder.decode(body);
+  assert.equal(text.includes('"model":"provider/alias:v1"'), true);
+  assert.equal(text.includes('"model":"gpt-5.4-mini"'), false);
+});
+
+test("REQ-SBX-GENERAL-002 parser accepts dynamic resolved model alias different from request", () => {
+  const payload = validPayload();
+  const envelope = completedEnvelope(payload);
+  envelope.model = "deployed-alias-001";
+  const parsed = parseSandboxSecurityOpenAiJudgeResponse(wire(envelope), payload);
+  assert.equal(parsed.model, "deployed-alias-001");
+});
+
+test("REQ-SBX-GENERAL-002 parser rejects malformed resolved model identifiers", () => {
+  const payload = validPayload();
+  for (const model of ["", "-bad", "a".repeat(129), "has space"]) {
+    const envelope = completedEnvelope(payload);
+    envelope.model = model;
+    assertParserInvalid(envelope, payload);
+  }
+});
+

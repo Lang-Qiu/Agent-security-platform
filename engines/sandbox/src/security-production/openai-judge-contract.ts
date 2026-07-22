@@ -6,7 +6,7 @@ export const SANDBOX_SECURITY_OPENAI_JUDGE_PROMPT_VERSION =
   "sandbox-security-openai-judge-prompt.v1" as const;
 
 export interface SandboxSecurityParsedOpenAIResponse {
-  readonly model: "gpt-5.6-terra";
+  readonly model: string;
   readonly status: "completed";
   readonly obligation_results: readonly {
     readonly obligation_id: string;
@@ -24,6 +24,7 @@ interface ParsedObligationResult {
 }
 
 const MAX_BODY_BYTES = 64 * 1024;
+const JUDGE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
 const MAX_RESULT_ITEMS = 32;
 const OBLIGATION_ID =
   /^obligation:\/\/sandbox\/security\/[A-Za-z0-9_.-]{1,128}\/0[0-9]{3}$/u;
@@ -162,7 +163,8 @@ function withResponseValidation<T>(action: () => T): T {
 }
 
 function requestBodyBytes(
-  payload: Readonly<SandboxSecuritySanitizedJudgePayload>
+  payload: Readonly<SandboxSecuritySanitizedJudgePayload>,
+  judgeRequestedModel: string
 ): Uint8Array {
   let serializedPayload: string | undefined;
   try {
@@ -178,7 +180,7 @@ function requestBodyBytes(
     "\nEND_SANITIZED_PAYLOAD";
   const body = ENCODER.encode(
     JSON.stringify({
-      model: "gpt-5.6-terra",
+      model: judgeRequestedModel,
       store: false,
       reasoning: { effort: "low" },
       max_output_tokens: 4096,
@@ -207,11 +209,38 @@ function requestBodyBytes(
 }
 
 export function createSandboxSecurityOpenAiJudgeRequest(
-  payload: Readonly<SandboxSecuritySanitizedJudgePayload>
+  payload: Readonly<SandboxSecuritySanitizedJudgePayload>,
+  options: Readonly<{ judge_requested_model: string }>
 ): Readonly<{ body: Uint8Array }> {
-  return withRequestValidation(() =>
-    Object.freeze({ body: requestBodyBytes(payload) })
-  );
+  return withRequestValidation(() => {
+    if (
+      options === null ||
+      typeof options !== "object" ||
+      Array.isArray(options) ||
+      Object.getPrototypeOf(options) !== Object.prototype
+    ) {
+      return requestInvalid();
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(
+      options,
+      "judge_requested_model"
+    );
+    if (
+      descriptor === undefined ||
+      !("value" in descriptor) ||
+      typeof descriptor.value !== "string" ||
+      !JUDGE_MODEL.test(descriptor.value)
+    ) {
+      return requestInvalid();
+    }
+    const keys = Reflect.ownKeys(options);
+    if (keys.length !== 1 || keys[0] !== "judge_requested_model") {
+      return requestInvalid();
+    }
+    return Object.freeze({
+      body: requestBodyBytes(payload, descriptor.value)
+    });
+  });
 }
 
 function responseBodyBytes(value: unknown): Uint8Array {
@@ -687,8 +716,10 @@ function parseEnvelope(
     RESPONSE_OPTIONAL_KEYS
   );
   validateResponseMetadata(envelope);
+  const resolvedModel = dataProperty(envelope, "model");
   if (
-    dataProperty(envelope, "model") !== "gpt-5.6-terra" ||
+    typeof resolvedModel !== "string" ||
+    !JUDGE_MODEL.test(resolvedModel) ||
     dataProperty(envelope, "status") !== "completed" ||
     dataProperty(envelope, "error") !== null ||
     dataProperty(envelope, "incomplete_details") !== null
@@ -745,7 +776,7 @@ function parseEnvelope(
   }
 
   return deepFreeze({
-    model: "gpt-5.6-terra",
+    model: resolvedModel,
     status: "completed",
     obligation_results: [...obligationResults]
   });

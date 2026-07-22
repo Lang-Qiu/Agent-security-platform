@@ -395,12 +395,15 @@ async function detect(
   transport: SandboxSecurityHttpTransport,
   request: SandboxSecurityHttpTransport["request"],
   payload: Readonly<SandboxSecuritySanitizedJudgePayload>,
-  signal: AbortSignal
+  signal: AbortSignal,
+  judgeRequestedModel: string
 ): Promise<Readonly<SandboxSecurityExternalDetectorResult>> {
   assertNotAborted(signal);
   const prepared = withDetectorValidation(() => ({
     bindings: obligationBindings(payload),
-    body: createSandboxSecurityOpenAiJudgeRequest(payload).body
+    body: createSandboxSecurityOpenAiJudgeRequest(payload, {
+      judge_requested_model: judgeRequestedModel
+    }).body
   }));
   const wire = await requestTransport(
     transport,
@@ -424,10 +427,21 @@ async function detect(
 
 export function createSandboxSecurityOpenAiJudgeDetector(input: Readonly<{
   transport: SandboxSecurityHttpTransport;
+  judge_requested_model: string;
 }>): SanitizedExternalDetector {
   return withDetectorValidation(() => {
-    const inputValues = exactDataRecord(input, ["transport"]);
+    const inputValues = exactDataRecord(input, [
+      "transport",
+      "judge_requested_model"
+    ]);
     const transport = inputValues.get("transport") as SandboxSecurityHttpTransport;
+    const judgeRequestedModel = inputValues.get("judge_requested_model");
+    if (
+      typeof judgeRequestedModel !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(judgeRequestedModel)
+    ) {
+      return detectorInvalid();
+    }
     const transportValues = exactDataRecord(transport, ["request"]);
     const request = transportValues.get("request");
     if (typeof request !== "function") return detectorInvalid();
@@ -440,7 +454,8 @@ export function createSandboxSecurityOpenAiJudgeDetector(input: Readonly<{
           transport,
           request as SandboxSecurityHttpTransport["request"],
           payload,
-          signal
+          signal,
+          judgeRequestedModel
         );
       }
     });

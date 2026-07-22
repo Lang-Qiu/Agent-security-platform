@@ -35,6 +35,7 @@ interface CompositionPorts {
   }>): Promise<RawLocalDetector>;
   create_external_pipeline(input: Readonly<{
     transport: SandboxSecurityHttpTransport;
+    judge_requested_model: string;
   }>): Readonly<{
     sanitizer: SandboxSecuritySanitizer;
     judge: SanitizedExternalDetector;
@@ -125,7 +126,15 @@ function config(mode: SandboxSecurityProductionMode) {
     summary: Object.freeze({
       ollama_configured: mode !== "rule_only",
       judge_configured: mode === "local_and_judge",
-      ...(mode === "rule_only" ? {} : { ollama_digest: DIGEST })
+      ...(mode === "rule_only" ? {} : { ollama_digest: DIGEST }),
+      ...(mode === "local_and_judge"
+        ? {
+            judge_provider_id: "doro",
+            judge_base_url: "https://doro.lol/v1",
+            judge_responses_url: "https://doro.lol/v1/responses",
+            judge_requested_model: "gpt-5.4-mini"
+          }
+        : {})
     })
   }) as Readonly<SandboxSecurityProductionConfig>;
 }
@@ -187,6 +196,9 @@ function portsHarness() {
     create_external_pipeline(input) {
       calls.push("pipeline");
       pipelineTransport = input.transport;
+      if (input.judge_requested_model !== "gpt-5.4-mini") {
+        throw new Error("unexpected-judge-requested-model");
+      }
       return Object.freeze({ sanitizer: SANITIZER, judge: JUDGE });
     }
   };
@@ -317,7 +329,8 @@ test("REQ-SBX-GENERAL-002 composed engines preserve selected slots and caller ca
       });
       return detector;
     };
-    harness.ports.create_external_pipeline = ({ transport }) => {
+    harness.ports.create_external_pipeline = ({ transport, judge_requested_model }) => {
+      assert.equal(judge_requested_model, "gpt-5.4-mini");
       assert.equal(transport, TRANSPORT);
       return Object.freeze({
         sanitizer: createSandboxSecurityDeterministicSanitizer(),
@@ -455,8 +468,10 @@ test("REQ-SBX-GENERAL-002 public local composition surfaces missing production c
   const runtime = runtimeHarness();
   const keys = [
     "SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST",
-    "OPENAI_API_KEY",
-    "SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE"
+    "SANDBOX_SECURITY_JUDGE_BASE_URL",
+    "SANDBOX_SECURITY_JUDGE_MODEL",
+    "SANDBOX_SECURITY_JUDGE_API_KEY",
+    "SANDBOX_SECURITY_ENABLE_JUDGE"
   ] as const;
   const previous = keys.map((key) => [key, process.env[key]] as const);
   for (const key of keys) delete process.env[key];
@@ -477,8 +492,10 @@ test("REQ-SBX-GENERAL-002 public local composition surfaces missing production c
 test("REQ-SBX-GENERAL-002 public local_and_judge rejects missing key and disabled Judge before transport", async () => {
   const keys = [
     "SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST",
-    "OPENAI_API_KEY",
-    "SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE"
+    "SANDBOX_SECURITY_JUDGE_BASE_URL",
+    "SANDBOX_SECURITY_JUDGE_MODEL",
+    "SANDBOX_SECURITY_JUDGE_API_KEY",
+    "SANDBOX_SECURITY_ENABLE_JUDGE"
   ] as const;
   const previous = keys.map((key) => [key, process.env[key]] as const);
   const invalidJudgeValues = [
@@ -491,12 +508,14 @@ test("REQ-SBX-GENERAL-002 public local_and_judge rejects missing key and disable
   try {
     for (const invalid of invalidJudgeValues) {
       process.env.SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST = DIGEST;
-      if (invalid.key === undefined) delete process.env.OPENAI_API_KEY;
-      else process.env.OPENAI_API_KEY = invalid.key;
+      process.env.SANDBOX_SECURITY_JUDGE_BASE_URL = "https://doro.lol/v1";
+      process.env.SANDBOX_SECURITY_JUDGE_MODEL = "gpt-5.4-mini";
+      if (invalid.key === undefined) delete process.env.SANDBOX_SECURITY_JUDGE_API_KEY;
+      else process.env.SANDBOX_SECURITY_JUDGE_API_KEY = invalid.key;
       if (invalid.enabled === undefined) {
-        delete process.env.SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE;
+        delete process.env.SANDBOX_SECURITY_ENABLE_JUDGE;
       } else {
-        process.env.SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE = invalid.enabled;
+        process.env.SANDBOX_SECURITY_ENABLE_JUDGE = invalid.enabled;
       }
       const runtime = runtimeHarness();
       await assert.rejects(

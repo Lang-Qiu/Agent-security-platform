@@ -74,7 +74,9 @@ export interface SandboxSecurityHttpTransport {
 const MAX_RESPONSE_BYTES = 65536;
 const OLLAMA_INVENTORY_URL = "http://127.0.0.1:11434/api/tags";
 const OLLAMA_CHAT_URL = "http://127.0.0.1:11434/api/chat";
-const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
+const ALLOWED_JUDGE_RESPONSES_URLS = new Set<string>([
+  "https://doro.lol/v1/responses"
+]);
 const SHA256_DIGEST = /^sha256:[a-f0-9]{64}$/;
 const TYPED_ARRAY_BYTE_LENGTH_GETTER = Object.getOwnPropertyDescriptor(
   Object.getPrototypeOf(Uint8Array.prototype) as object,
@@ -639,7 +641,8 @@ function normalizeTransportConfiguration(
 ): Readonly<{
   factory: SandboxSecurityPrivateRequestFactory;
   expected_ollama_digest: string | null;
-  openai_api_key: string | null;
+  judge_api_key: string | null;
+  judge_responses_url: string | null;
 }> {
   try {
     const values = plainDataValues(value);
@@ -647,14 +650,27 @@ function normalizeTransportConfiguration(
     assertExactKeys(
       values,
       hasRequestFactory
-        ? ["expected_ollama_digest", "openai_api_key", "request_factory"]
-        : ["expected_ollama_digest", "openai_api_key"]
+        ? [
+            "expected_ollama_digest",
+            "judge_api_key",
+            "judge_responses_url",
+            "request_factory"
+          ]
+        : ["expected_ollama_digest", "judge_api_key", "judge_responses_url"]
     );
     const expectedOllamaDigest = values.get("expected_ollama_digest");
-    const openAiApiKey = values.get("openai_api_key");
+    const judgeApiKey = values.get("judge_api_key");
+    const judgeResponsesUrl = values.get("judge_responses_url");
     if (
       (typeof expectedOllamaDigest !== "string" && expectedOllamaDigest !== null) ||
-      (typeof openAiApiKey !== "string" && openAiApiKey !== null)
+      (typeof judgeApiKey !== "string" && judgeApiKey !== null) ||
+      (typeof judgeResponsesUrl !== "string" && judgeResponsesUrl !== null)
+    ) {
+      return invalid();
+    }
+    if (
+      judgeResponsesUrl !== null &&
+      !ALLOWED_JUDGE_RESPONSES_URLS.has(judgeResponsesUrl)
     ) {
       return invalid();
     }
@@ -663,7 +679,8 @@ function normalizeTransportConfiguration(
         ? normalizeRequestFactory(values.get("request_factory"))
         : defaultRequestFactory,
       expected_ollama_digest: expectedOllamaDigest,
-      openai_api_key: openAiApiKey
+      judge_api_key: judgeApiKey,
+      judge_responses_url: judgeResponsesUrl
     });
   } catch {
     return invalid();
@@ -711,13 +728,15 @@ function normalizeHttpRequest(value: unknown): Readonly<SandboxSecurityHttpReque
 
 export function createSandboxSecurityDefaultHttpTransport(input: Readonly<{
   expected_ollama_digest: string | null;
-  openai_api_key: string | null;
+  judge_api_key: string | null;
+  judge_responses_url: string | null;
   request_factory?: SandboxSecurityPrivateRequestFactory;
 }>): SandboxSecurityHttpTransport {
   const {
     factory,
     expected_ollama_digest: expectedOllamaDigest,
-    openai_api_key: openAiApiKey
+    judge_api_key: judgeApiKey,
+    judge_responses_url: judgeResponsesUrl
   } = normalizeTransportConfiguration(input);
 
   return Object.freeze({
@@ -761,19 +780,21 @@ export function createSandboxSecurityDefaultHttpTransport(input: Readonly<{
       }
       if (normalizedRequest.provider === "openai" && normalizedRequest.operation === "responses") {
         if (
-          typeof openAiApiKey !== "string" ||
-          openAiApiKey.length === 0 ||
-          openAiApiKey.trim() !== openAiApiKey ||
-          /[\u0000-\u001f\u007f]/.test(openAiApiKey)
+          typeof judgeApiKey !== "string" ||
+          judgeApiKey.length === 0 ||
+          judgeApiKey.trim() !== judgeApiKey ||
+          /[\u0000-\u001f\u007f]/.test(judgeApiKey) ||
+          typeof judgeResponsesUrl !== "string" ||
+          !ALLOWED_JUDGE_RESPONSES_URLS.has(judgeResponsesUrl)
         ) {
           return invalid();
         }
         return requestWire(factory, {
-          url: OPENAI_RESPONSES_URL,
+          url: judgeResponsesUrl,
           method: "POST",
           headers: Object.freeze({
             "content-type": "application/json",
-            authorization: `Bearer ${openAiApiKey}`
+            authorization: `Bearer ${judgeApiKey}`
           }),
           body: copyUint8ArrayInternalBytes(normalizedRequest.body),
           signal: normalizedRequest.signal

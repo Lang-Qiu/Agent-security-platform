@@ -28,6 +28,8 @@ adapt to the existing core rather than change it.
 
 ## Goal
 
+> **Amendment:** Judge provider/endpoint/model/credential configuration is superseded in place by `docs/superpowers/specs/2026-07-22-sandbox-security-dynamic-judge-provider-amendment.md` (keep `sandbox-security-benchmark.v1`; no v2 corpus).
+
 Deliver the production implementations that plug into the GENERAL-001 detector
 ports without weakening its trust, privacy, timeout, qualification, policy, or
 compatibility guarantees:
@@ -35,7 +37,7 @@ compatibility guarantees:
 1. a deterministic production rule detector;
 2. a digest-pinned Ollama local-model detector using `qwen3:8b`;
 3. a deterministic in-process sanitizer;
-4. an OpenAI Responses API Judge adapter using `gpt-5.6-terra`;
+4. a Responses-protocol Judge adapter with allowlisted dynamic provider/model selection (see Dynamic Judge Provider amendment);
 5. a production composition root; and
 6. an independently sourced, sealed 300-sample benchmark with live capture and
    hermetic replay gates.
@@ -109,8 +111,8 @@ The user approved the following GENERAL-002 choices on `2026-07-16`:
 | Rule catalog | Versioned TypeScript data, fixed operators, exact validation, recursively frozen |
 | Sanitizer | Deterministic NFKC-based structured redaction; fail closed when uncertain |
 | Judge vendor | OpenAI |
-| Judge protocol | Responses API at `https://api.openai.com/v1/responses` |
-| Judge model | `gpt-5.6-terra`, `reasoning.effort: low`, `store: false` |
+| Judge protocol | OpenAI Responses wire protocol at an allowlisted HTTPS Responses URL (initial `https://doro.lol/v1/responses`) |
+| Judge model | Runtime-selected safe identifier (initial live may use `gpt-5.4-mini`), `reasoning.effort: low`, `store: false` |
 | Benchmark sources | Multiple public datasets with locked provenance |
 | Derived Chinese data | Allowed only after human review |
 | Transformed attacks | Independently authored derivatives with provenance and review |
@@ -246,7 +248,11 @@ export type SandboxSecurityCapturedProviderOutcome =
 export interface SandboxSecuritySealedProviderConfig {
   ollama_model: "qwen3:8b";
   ollama_digest: string;
-  openai_model: "gpt-5.6-terra";
+  judge_provider_id: string;
+  judge_base_url: string;
+  judge_responses_url: string;
+  judge_requested_model: string;
+  judge_resolved_model: string;
   local_prompt_version: "sandbox-security-ollama-local-prompt.v1";
   local_schema_version: "sandbox-security-local-model.v1";
   judge_prompt_version: "sandbox-security-openai-judge-prompt.v1";
@@ -830,14 +836,14 @@ review.
 
 ### Fixed Provider Configuration
 
-- Endpoint: `https://api.openai.com/v1/responses`
-- Model: `gpt-5.6-terra`
+- Endpoint: allowlisted Responses URL selected via `SANDBOX_SECURITY_JUDGE_BASE_URL` (initial `https://doro.lol/v1/responses`)
+- Model: runtime `SANDBOX_SECURITY_JUDGE_MODEL` (safe regex; not a source constant)
 - Reasoning effort: `low`
 - Storage: `false`
 - Output: strict JSON Schema
 - Redirects: forbidden
 - Retry: forbidden
-- Credential source: `OPENAI_API_KEY` through production environment loading
+- Credential source: `SANDBOX_SECURITY_JUDGE_API_KEY` through production environment loading; enable `SANDBOX_SECURITY_ENABLE_JUDGE=1`
 
 Callers cannot override endpoint, model, system instruction, schema, or storage.
 Only the validated sanitized payload is serialized. Raw snapshot fields,
@@ -872,7 +878,7 @@ const userMessage =
   "\\nEND_SANITIZED_PAYLOAD";
 
 {
-  model: "gpt-5.6-terra",
+  model: "<judge_requested_model>",
   store: false,
   reasoning: { effort: "low" },
   max_output_tokens: 4096,
@@ -972,7 +978,7 @@ The raw HTTP body is capped at the inherited 64 KiB limit before parsing.
 
 For an HTTP 200 response, the adapter requires top-level `status` to be
 `completed`, `error` and `incomplete_details` to be null, and `model` to equal
-`gpt-5.6-terra`. `output` may contain content-free reasoning items with no
+the resolved provider model identifier. `output` may contain content-free reasoning items with no
 summary, but it must contain exactly one completed assistant message and that
 message must contain exactly one `output_text` item holding the schema-valid
 JSON object. Any refusal, incomplete, error, or model mismatch, any refusal or
@@ -1010,7 +1016,10 @@ must not call `fetch`, `process.getBuiltinModule`, dynamic import, `eval`, or
 The environment normalizer reads only:
 
 - `SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST`
-- `OPENAI_API_KEY`
+- `SANDBOX_SECURITY_JUDGE_API_KEY`
+- `SANDBOX_SECURITY_JUDGE_BASE_URL`
+- `SANDBOX_SECURITY_JUDGE_MODEL`
+- `SANDBOX_SECURITY_ENABLE_JUDGE`
 - `SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE`, which must equal `1`
 
 No endpoint or model environment override exists. Values are exact-key checked,
@@ -1322,7 +1331,11 @@ interface SandboxSecurityBenchmarkCaptureManifest {
       SandboxSecurityReplayOllamaResponse
     >;
   };
-  openai_model: "gpt-5.6-terra";
+  judge_provider_id: string;
+  judge_base_url: string;
+  judge_responses_url: string;
+  judge_requested_model: string;
+  judge_resolved_model: string;
   local_prompt_version: "sandbox-security-ollama-local-prompt.v1";
   judge_prompt_version: "sandbox-security-openai-judge-prompt.v1";
   local_schema_version: "sandbox-security-local-model.v1";
@@ -1399,7 +1412,7 @@ The live capture gate runs the full `local_and_judge` composition over all 300
 inputs using:
 
 - an Ollama instance containing exactly the expected `qwen3:8b` digest; and
-- OpenAI Responses API with `gpt-5.6-terra` and an explicitly enabled live gate.
+- Allowlisted Responses-protocol Judge with runtime model selection and an explicitly enabled live gate (`SANDBOX_SECURITY_ENABLE_JUDGE=1`).
 
 The capture process receives inputs but no truth, expected verdict, category,
 severity, or metric. V1 runs fixtures serially in immutable manifest input order.

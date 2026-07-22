@@ -604,7 +604,7 @@ test("REQ-SBX-GENERAL-002 evaluator has no provider or production import path", 
   );
   assert.doesNotMatch(source, /node:(?:https?|child_process|net|tls|undici)/u);
   assert.doesNotMatch(source, /\b(?:fetch|XMLHttpRequest|spawn|execFile|fork)\s*\(/u);
-  assert.doesNotMatch(source, /\bprocess\.env\b|OPENAI_API_KEY|authorization/iu);
+  assert.doesNotMatch(source, /\bprocess\.env\b|OPENAI_API_KEY|SANDBOX_SECURITY_JUDGE_API_KEY|authorization/iu);
   assert.doesNotMatch(
     source,
     /createSandboxSecurityLiveCaptureEngine|SandboxSecurityEngine/u
@@ -653,7 +653,7 @@ test("REQ-SBX-GENERAL-002 evaluator emits aggregate report but never writes repl
   assert.equal(typeof written.cassette_tree_sha256, "string");
   assert.ok(Array.isArray(written.infrastructure_codes));
   const text = JSON.stringify(written);
-  assert.doesNotMatch(text, /ssb-v1-0001|primary_category|verdict_class|OPENAI_API_KEY/u);
+  assert.doesNotMatch(text, /ssb-v1-0001|primary_category|verdict_class|OPENAI_API_KEY|SANDBOX_SECURITY_JUDGE_API_KEY/u);
 });
 
 test("REQ-SBX-GENERAL-002 evaluator joins in manifest order and binds truth and capture hashes", async () => {

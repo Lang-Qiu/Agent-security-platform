@@ -83,8 +83,10 @@ qualification cannot become `VERIFIED` until the operator supplies:
 
 ```text
 SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST=sha256:<64 lowercase hex>
-OPENAI_API_KEY=<nonempty secret>
-SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE=1
+SANDBOX_SECURITY_JUDGE_BASE_URL=https://doro.lol/v1
+SANDBOX_SECURITY_JUDGE_MODEL=gpt-5.4-mini
+SANDBOX_SECURITY_JUDGE_API_KEY=<nonempty secret>
+SANDBOX_SECURITY_ENABLE_JUDGE=1
 ```
 
 and runs the exact `qwen3:8b` digest on loopback. There is no fake, skipped, or
@@ -103,6 +105,8 @@ CI/environment blocker, not a reason to weaken the no-network gate.
 - `docs/superpowers/specs/2026-07-10-sandbox-general-security-design.md`
 - `docs/superpowers/specs/2026-07-10-sandbox-security-core-spec.md`
 - `docs/superpowers/specs/2026-07-16-sandbox-security-production-detectors-spec.md`
+- `docs/superpowers/specs/2026-07-22-sandbox-security-dynamic-judge-provider-amendment.md`
+- `docs/superpowers/plans/2026-07-22-sandbox-security-dynamic-judge-provider.md`
 - `docs/superpowers/specs/2026-07-21-sandbox-security-benchmark-review-ledger-amendment.md`
 - `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-master.md`
 - `engines/sandbox/src/security/index.ts`
@@ -419,7 +423,9 @@ Phase review/fix/re-review is approved, and its status record is committed.
 | deterministic sanitizer | P3-T1 |
 | OpenAI Judge adapter | P3-T2, P3-T3 |
 | production composition | P4-T1, P4-T2 |
+| source lock and corpus contracts | P5-T1, P5-T2 |
 | source lock, corpus, review, and pre-label request-ID contracts | P5-T1, P5-T2 |
+| sealed input and truth curation | P5-T3 |
 | sealed input, truth, review, request-ID, and structural-control curation | P5-T3 |
 | live capture and evaluator | P6-T1 through P6-T4 |
 | hermetic replay and anti-oracle gates | P7-T1 through P7-T3 |

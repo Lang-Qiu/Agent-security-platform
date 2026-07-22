@@ -79,7 +79,11 @@ interface ReplayTransport extends SandboxSecurityHttpTransport {
 interface SealedProviderConfig {
   ollama_model: "qwen3:8b";
   ollama_digest: string;
-  openai_model: "gpt-5.6-terra";
+  judge_provider_id: string;
+  judge_base_url: string;
+  judge_responses_url: string;
+  judge_requested_model: string;
+  judge_resolved_model: string;
   local_prompt_version: "sandbox-security-ollama-local-prompt.v1";
   local_schema_version: "sandbox-security-local-model.v1";
   judge_prompt_version: "sandbox-security-openai-judge-prompt.v1";
@@ -143,7 +147,11 @@ function sealedConfig(
   return Object.freeze({
     ollama_model: "qwen3:8b",
     ollama_digest: DIGEST,
-    openai_model: "gpt-5.6-terra",
+    judge_provider_id: "doro",
+    judge_base_url: "https://doro.lol/v1",
+    judge_responses_url: "https://doro.lol/v1/responses",
+    judge_requested_model: "gpt-5.4-mini",
+    judge_resolved_model: "gpt-5.4-mini",
     local_prompt_version: "sandbox-security-ollama-local-prompt.v1",
     local_schema_version: "sandbox-security-local-model.v1",
     judge_prompt_version: "sandbox-security-openai-judge-prompt.v1",
@@ -268,7 +276,7 @@ function ollamaNormalized(
 
 function openAiNormalized(): SandboxSecurityReplayOpenAIResponse {
   return normalizeSandboxSecurityReplayOpenAIResponse({
-    model: "gpt-5.6-terra",
+    model: "gpt-5.4-mini",
     status: "completed",
     parsed: {
       schema_version: "sandbox-security-judge.v1",
@@ -739,13 +747,17 @@ async function close(server: Server): Promise<void> {
 function withProductionEnvironment(action: () => Promise<void>): Promise<void> {
   const keys = [
     "SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST",
-    "OPENAI_API_KEY",
-    "SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE"
+    "SANDBOX_SECURITY_JUDGE_BASE_URL",
+    "SANDBOX_SECURITY_JUDGE_MODEL",
+    "SANDBOX_SECURITY_JUDGE_API_KEY",
+    "SANDBOX_SECURITY_ENABLE_JUDGE"
   ] as const;
   const previous = new Map(keys.map((key) => [key, process.env[key]]));
   process.env.SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST = DIGEST;
-  process.env.OPENAI_API_KEY = "benchmark-test-key";
-  process.env.SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE = "1";
+  process.env.SANDBOX_SECURITY_JUDGE_BASE_URL = "https://doro.lol/v1";
+  process.env.SANDBOX_SECURITY_JUDGE_MODEL = "gpt-5.4-mini";
+  process.env.SANDBOX_SECURITY_JUDGE_API_KEY = "benchmark-test-key";
+  process.env.SANDBOX_SECURITY_ENABLE_JUDGE = "1";
   return action().finally(() => {
     for (const key of keys) {
       const value = previous.get(key);
@@ -1142,7 +1154,7 @@ test("REQ-SBX-GENERAL-002 replay rejects every sealed config mismatch before pro
     { ollama_model: "qwen3:latest" },
     { ollama_digest: `sha256:${"A".repeat(64)}` },
     { ollama_digest: `sha256:${"a".repeat(63)}` },
-    { openai_model: "gpt-5.6" },
+    { judge_requested_model: "-bad" },
     { local_prompt_version: "sandbox-security-ollama-local-prompt.v2" },
     { local_schema_version: "sandbox-security-local-model.v2" },
     { judge_prompt_version: "sandbox-security-openai-judge-prompt.v2" },
@@ -1417,7 +1429,11 @@ test("REQ-SBX-GENERAL-002 sealed config field inventory and constants are exact"
   assert.deepEqual(Object.keys(sealedConfig()), [
     "ollama_model",
     "ollama_digest",
-    "openai_model",
+    "judge_provider_id",
+    "judge_base_url",
+    "judge_responses_url",
+    "judge_requested_model",
+    "judge_resolved_model",
     "local_prompt_version",
     "local_schema_version",
     "judge_prompt_version",
@@ -1435,7 +1451,7 @@ test("REQ-SBX-GENERAL-002 sealed config field inventory and constants are exact"
     SANDBOX_SECURITY_DETERMINISTIC_SANITIZER_VERSION
   );
   assert.deepEqual(openAiNormalized(), {
-    model: "gpt-5.6-terra",
+    model: "gpt-5.4-mini",
     status: "completed",
     parsed: {
       schema_version: "sandbox-security-judge.v1",

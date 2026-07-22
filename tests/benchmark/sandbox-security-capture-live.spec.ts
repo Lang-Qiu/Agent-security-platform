@@ -449,8 +449,8 @@ test("REQ-SBX-GENERAL-002 candidate package is content-free and output-contained
   ) as { inputs: unknown[] };
   assert.equal(cassette.inputs.length, 2);
   const decisionText = readFileSync(join(decisionsDir, "ssb-v1-0001.json"), "utf8");
-  assert.doesNotMatch(decisionText, /OPENAI_API_KEY|fixture text|primary_category|verdict_class/);
-  assert.doesNotMatch(JSON.stringify(cassette), /OPENAI_API_KEY|primary_category|truth/);
+  assert.doesNotMatch(decisionText, /SANDBOX_SECURITY_JUDGE_API_KEY|fixture text|primary_category|verdict_class/);
+  assert.doesNotMatch(JSON.stringify(cassette), /SANDBOX_SECURITY_JUDGE_API_KEY|primary_category|truth/);
 });
 
 test("REQ-SBX-GENERAL-002 rejects bundle hash mismatch before readiness", async () => {
@@ -469,6 +469,6 @@ test("REQ-SBX-GENERAL-002 writes no per-fixture diagnostic stdout payload", asyn
   const result = await runSandboxSecurityLiveCapture(ports);
   assert.equal(result.stdout_summary.includes("ssb-v1-0001"), false);
   assert.equal(result.stdout_summary.includes("fixture text"), false);
-  assert.doesNotMatch(result.stdout_summary, /primary_category|verdict_class|OPENAI_API_KEY/);
+  assert.doesNotMatch(result.stdout_summary, /primary_category|verdict_class|SANDBOX_SECURITY_JUDGE_API_KEY/);
   assert.match(result.stdout_summary, /decision_count|candidate|capture_complete/);
 });

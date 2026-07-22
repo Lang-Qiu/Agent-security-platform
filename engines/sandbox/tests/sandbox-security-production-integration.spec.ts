@@ -261,7 +261,15 @@ function deterministicPorts(input: Readonly<{
         summary: Object.freeze({
           ollama_configured: mode !== "rule_only",
           judge_configured: mode === "local_and_judge",
-          ...(mode === "rule_only" ? {} : { ollama_digest: DIGEST })
+          ...(mode === "rule_only" ? {} : { ollama_digest: DIGEST }),
+          ...(mode === "local_and_judge"
+            ? {
+                judge_provider_id: "doro",
+                judge_base_url: "https://doro.lol/v1",
+                judge_responses_url: "https://doro.lol/v1/responses",
+                judge_requested_model: "gpt-5.4-mini"
+              }
+            : {})
         })
       }) as Readonly<SandboxSecurityProductionConfig>;
     },
@@ -356,8 +364,10 @@ async function waitForCall(calls: () => number): Promise<void> {
 async function withoutProductionEnvironment<T>(action: () => Promise<T>): Promise<T> {
   const keys = [
     "SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST",
-    "OPENAI_API_KEY",
-    "SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE"
+    "SANDBOX_SECURITY_JUDGE_BASE_URL",
+    "SANDBOX_SECURITY_JUDGE_MODEL",
+    "SANDBOX_SECURITY_JUDGE_API_KEY",
+    "SANDBOX_SECURITY_ENABLE_JUDGE"
   ] as const;
   const previous = new Map(keys.map((key) => [key, process.env[key]]));
   for (const key of keys) delete process.env[key];
@@ -376,7 +386,11 @@ function sealedConfig(): Readonly<SandboxSecuritySealedProviderConfig> {
   return Object.freeze({
     ollama_model: "qwen3:8b",
     ollama_digest: DIGEST,
-    openai_model: "gpt-5.6-terra",
+    judge_provider_id: "doro",
+    judge_base_url: "https://doro.lol/v1",
+    judge_responses_url: "https://doro.lol/v1/responses",
+    judge_requested_model: "gpt-5.4-mini",
+    judge_resolved_model: "gpt-5.4-mini",
     local_prompt_version: SANDBOX_SECURITY_OLLAMA_LOCAL_PROMPT_VERSION,
     local_schema_version: "sandbox-security-local-model.v1",
     judge_prompt_version: SANDBOX_SECURITY_OPENAI_JUDGE_PROMPT_VERSION,
@@ -477,7 +491,7 @@ function replayTransport(routed = false) {
         status: 200,
         content_type: "application/json",
         body: ENCODER.encode(JSON.stringify({
-          model: "gpt-5.6-terra",
+          model: "gpt-5.4-mini",
           status: "completed",
           error: null,
           incomplete_details: null,

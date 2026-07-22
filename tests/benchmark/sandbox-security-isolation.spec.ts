@@ -190,7 +190,7 @@ test("REQ-SBX-GENERAL-002 capture bundle contains inputs and code allowlist but 
   const serialized = JSON.stringify(bundle);
   assert.doesNotMatch(
     serialized,
-    /primary_category|ground_truth_severity|verdict_class|unsafe_recall|OPENAI_API_KEY/
+    /primary_category|ground_truth_severity|verdict_class|unsafe_recall|OPENAI_API_KEY|SANDBOX_SECURITY_JUDGE_API_KEY/
   );
   // structural absence: no truth path capability in the bundle descriptor
   assert.equal("truth_root" in bundle, false);
@@ -264,7 +264,7 @@ test("REQ-SBX-GENERAL-002 parent launches only the fixed capture-live entrypoint
     );
     assert.doesNotMatch(
       command.args.join(" "),
-      /truth|evaluate|metrics|OPENAI_API_KEY/
+      /truth|evaluate|metrics|OPENAI_API_KEY|SANDBOX_SECURITY_JUDGE_API_KEY/
     );
     assert.ok(command.args.includes("--permission"));
     assert.ok(
