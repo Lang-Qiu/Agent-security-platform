@@ -6612,3 +6612,30 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 - next: provide exact `qwen3:8b` digest, enable OpenAI Judge (`=1`), start local
   Ollama listener with that model, then re-run P6-T4 live capture → evaluate →
   seal without fabricating evidence
+
+## 2026-07-22 - REQ-SBX-GENERAL-002 P6-T4 live prerequisite recheck BLOCKED
+
+- phase/task: Phase 6 / P6-T4
+- requirement: `REQ-SBX-GENERAL-002` / `sandbox-security-production-002`
+- status: **BLOCKED**
+- purpose: rechecked the live prerequisite gate after an explicit unblock request;
+  this is a documentation-only update, so the full RED/GREEN workflow does not
+  apply and no production behavior changed
+- confirmed non-secret blocker: `OPENAI_API_KEY` is nonempty, but the required
+  fixed Judge endpoint `https://api.openai.com/v1/models` returns HTTP `401`; a
+  present but unaccepted credential cannot qualify a real `local_and_judge` run
+- remaining non-secret prerequisites are also not ready:
+  - `SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE` is not `1`
+  - `SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST` is unset
+  - the required `127.0.0.1:11434` Ollama listener is down
+- boundary preserved: the approved transport fixes the Judge endpoint and model,
+  so an alternate proxy or model cannot replace the required live qualification
+- intentionally not created or modified:
+  - `scripts/benchmark/sandbox-security/seal.ts`
+  - `samples/sandbox-security-benchmark/v1/capture.json`
+  - `samples/sandbox-security-benchmark/v1/replay/`
+  - `samples/sandbox-security-benchmark/v1/seal.json`
+  - `tests/benchmark/sandbox-security-live-evidence.spec.ts`
+- next: supply a credential accepted by the fixed OpenAI endpoint, enable the
+  Judge, and provide a digest-pinned loopback `qwen3:8b` listener; only then
+  restart P6-T4 live capture → evaluate → seal. Phase 7 remains unstarted.
