@@ -30,6 +30,9 @@ the following implementation remains RED-first.
   constant.
 - Read a rotatable credential only from `SANDBOX_SECURITY_JUDGE_API_KEY`.
   Never persist, hash, serialize, log, or expose it in public configuration.
+- The permission parent forwards only the approved Judge and Ollama environment
+  names to the capture child. It never places their values in child arguments,
+  bundle metadata, stdout, stderr, or tracked files.
 - Require `SANDBOX_SECURITY_ENABLE_JUDGE=1` for `local_and_judge`. The former
   `SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE` and `OPENAI_API_KEY` names are not
   accepted as valid Judge configuration after this amendment.
@@ -62,6 +65,26 @@ after construction.
 
 Changing an API key, base URL, or requested model requires a new process. It
 does not mutate an already created config, capture, replay, or seal.
+
+## Permission Child Environment Handoff
+
+`prepare-capture-bundle.ts` is the only parent that launches the permissioned
+live-capture child. In addition to its existing process-location values, it may
+forward exactly these values when present:
+
+- `SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST`
+- `SANDBOX_SECURITY_JUDGE_BASE_URL`
+- `SANDBOX_SECURITY_JUDGE_MODEL`
+- `SANDBOX_SECURITY_JUDGE_API_KEY`
+- `SANDBOX_SECURITY_ENABLE_JUDGE`
+
+The parent constructs a fresh child environment from this closed list. The
+credential is inherited in memory only; it is not included in command arguments
+or any serialized capture-bundle descriptor. The child remains unable to read
+truth, evaluator, metric, source-lock, review, request-ID, or inherited-file
+descriptor capability. Production source continues to read Judge configuration
+only through `production-config.ts`; this parent handoff exists solely to pass
+the already selected runtime values across the process boundary.
 
 ## Requested and Resolved Models
 
