@@ -6662,3 +6662,44 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   - real credentialed P6-T4 live run
 - remaining for live seal: Doro-accepted `SANDBOX_SECURITY_JUDGE_API_KEY`, `SANDBOX_SECURITY_ENABLE_JUDGE=1`, digest-pinned loopback `qwen3:8b`, then restart P6-T4
 - next: documentation/plan Phase 6-7 env-name sync residual if any; then P6-T4 when live prerequisites exist
+
+## 2026-07-22 - REQ-SBX-GENERAL-002 Master continuation: amendment committed; P6-T4 still BLOCKED
+
+- phase/task: Phase 6 / P6-T4 (Master continuation toward acceptance)
+- status: **BLOCKED**
+- HEAD: `ae7b23a` (`feat(sandbox): select allowlisted dynamic Judge provider for GENERAL-002`)
+- completed before this gate:
+  - Phases 1–5 VERIFIED (prior evidence)
+  - P6-T1 capture-sink VERIFIED
+  - P6-T2 capture-live VERIFIED
+  - P6-T3 evaluate VERIFIED
+  - Dynamic Judge Provider amendment implemented and committed
+- P6-T4 non-secret prerequisite recheck after amendment:
+  - `SANDBOX_SECURITY_JUDGE_API_KEY`: unset (legacy `OPENAI_API_KEY` present length 51 but **not accepted** after amendment)
+  - `SANDBOX_SECURITY_JUDGE_BASE_URL`: unset (required allowlisted exact `https://doro.lol/v1`)
+  - `SANDBOX_SECURITY_JUDGE_MODEL`: unset
+  - `SANDBOX_SECURITY_ENABLE_JUDGE`: not `1`
+  - `SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST`: unset
+  - loopback Ollama `127.0.0.1:11434`: DOWN (connection refused)
+  - `ollama` CLI: absent (install attempts: zstd-required official package, incomplete prior `tgz`, GitHub 404/API TLS failures, snap core24 partial download stalled)
+  - `unshare` available: yes
+  - Doro `https://doro.lol/v1/models` with present legacy key: HTTP 200; available model IDs: `grok-4.5` only (not `gpt-5.4-mini`)
+  - Doro Responses probe: `gpt-5.4-mini` → HTTP 503 `model_not_found`; `grok-4.5` → HTTP 200 completed (resolved model alias `grok-4.5-build-free`)
+- artifacts intentionally absent (cannot fabricate):
+  - `scripts/benchmark/sandbox-security/seal.ts`
+  - `samples/sandbox-security-benchmark/v1/capture.json`
+  - `samples/sandbox-security-benchmark/v1/replay/`
+  - `samples/sandbox-security-benchmark/v1/seal.json`
+  - `tests/benchmark/sandbox-security-live-evidence.spec.ts`
+- plan gate preserved:
+  - Phase 6 cannot pass while P6-T4 is BLOCKED
+  - Phase 7 hermetic closure must not start without accepted live seal
+- next operator actions (non-secret):
+  1. Install Ollama and serve digest-pinned `qwen3:8b` on `127.0.0.1:11434`
+  2. Export `SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST=sha256:<64 lowercase hex>`
+  3. Export Judge env using amendment names, for example:
+     - `SANDBOX_SECURITY_JUDGE_BASE_URL=https://doro.lol/v1`
+     - `SANDBOX_SECURITY_JUDGE_MODEL=grok-4.5` (or another allowlisted/available model)
+     - `SANDBOX_SECURITY_JUDGE_API_KEY=<accepted key>`
+     - `SANDBOX_SECURITY_ENABLE_JUDGE=1`
+  4. Re-run P6-T4: prepare-capture-bundle → evaluate → seal → live-evidence tests

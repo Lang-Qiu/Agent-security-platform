@@ -89,8 +89,11 @@ authorized in the exact Master/Phase DAG order.
   `sandbox-security-benchmark.v1` (no v2 corpus): allowlisted endpoint, runtime
   model, `SANDBOX_SECURITY_JUDGE_*` env surface, capture five-field binding.
 - Deterministic production and benchmark suites are GREEN for the amendment.
-- P6-T4 credentialed live seal remains blocked until Doro-accepted key, enable
-  flag, and digest-pinned loopback Ollama are present.
+- Amendment implementation committed at `ae7b23a`.
+- P6-T4 still BLOCKED after Master continuation: missing Ollama loopback + digest,
+  missing `SANDBOX_SECURITY_JUDGE_*` enable/key/base/model exports (legacy
+  `OPENAI_API_KEY` alone is not valid). Doro currently exposes `grok-4.5` only.
+- Phase 7 remains unstarted until P6-T4 is VERIFIED with accepted capture/replay/seal.
 - Current execution node: Phase 1, P1-T1 boundary gate.
 - Each task requires RED, GREEN, static/integration/build gates, independent
   Specification Compliance Review, fix/re-review, independent Code
