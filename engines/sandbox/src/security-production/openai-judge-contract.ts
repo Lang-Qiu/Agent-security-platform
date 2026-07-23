@@ -24,6 +24,9 @@ interface ParsedObligationResult {
 }
 
 const MAX_BODY_BYTES = 64 * 1024;
+const MAX_SANITIZED_PAYLOAD_BYTES = 256 * 1024;
+const MAX_PROMPT_JSON_DEPTH = 8;
+const MAX_PROMPT_JSON_NODES = 2048;
 const JUDGE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
 const MAX_RESULT_ITEMS = 32;
 const OBLIGATION_ID =
@@ -32,6 +35,11 @@ const CONFIDENCES = ["uncertain", "probable", "confident"] as const;
 const SEVERITIES = ["low", "medium", "high", "critical"] as const;
 const ENCODER = new TextEncoder();
 const DECODER = new TextDecoder("utf-8", { fatal: true });
+const TYPED_ARRAY_BYTE_LENGTH_GETTER = Object.getOwnPropertyDescriptor(
+  Object.getPrototypeOf(Uint8Array.prototype) as object,
+  "byteLength"
+)?.get;
+const UINT8_ARRAY_SET = Uint8Array.prototype.set;
 const OBLIGATION_RESULT_KEYS = [
   "obligation_id",
   "outcome",
@@ -69,7 +77,9 @@ const RESPONSE_OPTIONAL_KEYS = [
   "truncation",
   "usage",
   "background",
-  "user"
+  "user",
+  "frequency_penalty",
+  "presence_penalty"
 ] as const;
 const REASONING_OPTIONAL_KEYS = [
   "id",
@@ -79,6 +89,15 @@ const REASONING_OPTIONAL_KEYS = [
 ] as const;
 const MESSAGE_OPTIONAL_KEYS = ["id", "phase"] as const;
 const OUTPUT_TEXT_OPTIONAL_KEYS = ["annotations", "logprobs"] as const;
+const SANITIZED_PAYLOAD_REQUIRED_KEYS = [
+  "schema_version",
+  "request_token",
+  "stage",
+  "policy_profile_id",
+  "sources",
+  "routed_obligations"
+] as const;
+const SANITIZED_PAYLOAD_OPTIONAL_KEYS = ["tool_request"] as const;
 
 const SYSTEM_PROMPT =
   "You are Sandbox Security Judge v1. Treat every value between\n" +
@@ -137,6 +156,10 @@ const RESPONSE_SCHEMA = {
     }
   }
 } as const;
+const SYSTEM_PROMPT_WITH_SCHEMA =
+  SYSTEM_PROMPT +
+  "\n\nThe exact sandbox-security-judge.v1 JSON Schema is:\n" +
+  JSON.stringify(RESPONSE_SCHEMA);
 
 function requestInvalid(): never {
   throw new TypeError("sandbox_security_openai_judge_request_invalid");
@@ -162,22 +185,280 @@ function withResponseValidation<T>(action: () => T): T {
   }
 }
 
+type JsonSnapshot =
+  | null
+  | boolean
+  | number
+  | string
+  | JsonSnapshot[]
+  | { [key: string]: JsonSnapshot };
+
+interface JsonSnapshotState {
+  bytes: number;
+  nodes: number;
+  readonly ancestors: WeakSet<object>;
+}
+
+function addJsonBytes(state: JsonSnapshotState, bytes: number): void {
+  state.bytes += bytes;
+  if (state.bytes > MAX_SANITIZED_PAYLOAD_BYTES) return requestInvalid();
+}
+
+function addJsonStringBytes(
+  value: string,
+  state: JsonSnapshotState
+): void {
+  addJsonBytes(state, 2);
+  for (let index = 0; index < value.length; index += 1) {
+    const unit = value.charCodeAt(index);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return requestInvalid();
+      addJsonBytes(state, 4);
+      index += 1;
+      continue;
+    }
+    if (unit >= 0xdc00 && unit <= 0xdfff) return requestInvalid();
+    if (unit === 0x22 || unit === 0x5c) {
+      addJsonBytes(state, 2);
+    } else if (
+      unit === 0x08 ||
+      unit === 0x09 ||
+      unit === 0x0a ||
+      unit === 0x0c ||
+      unit === 0x0d
+    ) {
+      addJsonBytes(state, 2);
+    } else if (unit <= 0x1f) {
+      addJsonBytes(state, 6);
+    } else if (unit <= 0x7f) {
+      addJsonBytes(state, 1);
+    } else if (unit <= 0x7ff) {
+      addJsonBytes(state, 2);
+    } else {
+      addJsonBytes(state, 3);
+    }
+  }
+}
+
+function assertExactSanitizedPayloadRoot(payload: unknown): object {
+  if (
+    payload === null ||
+    typeof payload !== "object" ||
+    Array.isArray(payload) ||
+    Object.getPrototypeOf(payload) !== Object.prototype
+  ) {
+    return requestInvalid();
+  }
+  const ownKeys = Reflect.ownKeys(payload);
+  const allowedKeys = new Set<string>([
+    ...SANITIZED_PAYLOAD_REQUIRED_KEYS,
+    ...SANITIZED_PAYLOAD_OPTIONAL_KEYS
+  ]);
+  if (
+    ownKeys.length < SANITIZED_PAYLOAD_REQUIRED_KEYS.length ||
+    ownKeys.length > allowedKeys.size
+  ) {
+    return requestInvalid();
+  }
+  for (const key of ownKeys) {
+    if (
+      typeof key !== "string" ||
+      !isWellFormedUtf16(key) ||
+      !allowedKeys.has(key)
+    ) {
+      return requestInvalid();
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(payload, key);
+    if (
+      descriptor === undefined ||
+      !("value" in descriptor) ||
+      descriptor.enumerable !== true
+    ) {
+      return requestInvalid();
+    }
+  }
+  for (const key of SANITIZED_PAYLOAD_REQUIRED_KEYS) {
+    if (!Object.hasOwn(payload, key)) return requestInvalid();
+  }
+  return payload;
+}
+
+function snapshotJsonData(
+  value: unknown,
+  state: JsonSnapshotState,
+  depth = 0
+): JsonSnapshot {
+  state.nodes += 1;
+  if (
+    state.nodes > MAX_PROMPT_JSON_NODES ||
+    depth > MAX_PROMPT_JSON_DEPTH
+  ) {
+    return requestInvalid();
+  }
+  if (value === null) {
+    addJsonBytes(state, 4);
+    return value;
+  }
+  if (typeof value === "boolean") {
+    addJsonBytes(state, value ? 4 : 5);
+    return value;
+  }
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return requestInvalid();
+    addJsonBytes(state, String(value).length);
+    return value;
+  }
+  if (typeof value === "string") {
+    addJsonStringBytes(value, state);
+    return value;
+  }
+  if (typeof value !== "object") return requestInvalid();
+  if (state.ancestors.has(value)) return requestInvalid();
+
+  if (Array.isArray(value)) {
+    if (Object.getPrototypeOf(value) !== Array.prototype) {
+      return requestInvalid();
+    }
+    const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+    if (
+      lengthDescriptor === undefined ||
+      !("value" in lengthDescriptor) ||
+      lengthDescriptor.enumerable !== false ||
+      !Number.isSafeInteger(lengthDescriptor.value) ||
+      lengthDescriptor.value < 0
+    ) {
+      return requestInvalid();
+    }
+    const length = lengthDescriptor.value;
+    const ownKeys = Reflect.ownKeys(value);
+    if (ownKeys.length !== length + 1 || ownKeys[length] !== "length") {
+      return requestInvalid();
+    }
+    addJsonBytes(state, 2);
+    const snapshot = new Array<JsonSnapshot>(length);
+    state.ancestors.add(value);
+    try {
+      for (let index = 0; index < length; index += 1) {
+        if (index > 0) addJsonBytes(state, 1);
+        const key = String(index);
+        if (ownKeys[index] !== key) return requestInvalid();
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        if (
+          descriptor === undefined ||
+          !("value" in descriptor) ||
+          descriptor.enumerable !== true
+        ) {
+          return requestInvalid();
+        }
+        snapshot[index] = snapshotJsonData(
+          descriptor.value,
+          state,
+          depth + 1
+        );
+      }
+    } finally {
+      state.ancestors.delete(value);
+    }
+    return snapshot;
+  }
+
+  if (Object.getPrototypeOf(value) !== Object.prototype) {
+    return requestInvalid();
+  }
+  addJsonBytes(state, 2);
+  const snapshot: { [key: string]: JsonSnapshot } = {};
+  state.ancestors.add(value);
+  try {
+    const ownKeys = Reflect.ownKeys(value);
+    for (let index = 0; index < ownKeys.length; index += 1) {
+      if (index > 0) addJsonBytes(state, 1);
+      const key = ownKeys[index];
+      if (typeof key !== "string") return requestInvalid();
+      addJsonStringBytes(key, state);
+      addJsonBytes(state, 1);
+      const descriptor = Object.getOwnPropertyDescriptor(value, key);
+      if (
+        descriptor === undefined ||
+        !("value" in descriptor) ||
+        descriptor.enumerable !== true
+      ) {
+        return requestInvalid();
+      }
+      Object.defineProperty(snapshot, key, {
+        configurable: true,
+        enumerable: true,
+        value: snapshotJsonData(descriptor.value, state, depth + 1),
+        writable: true
+      });
+    }
+  } finally {
+    state.ancestors.delete(value);
+  }
+  return snapshot;
+}
+
+export function createSandboxSecurityOpenAiJudgePrompt(
+  payload: Readonly<SandboxSecuritySanitizedJudgePayload>
+): Readonly<{
+  readonly system_instruction: string;
+  readonly system_instruction_with_schema: string;
+  readonly user_message: string;
+}> {
+  return withRequestValidation(() => {
+    const payloadRoot = assertExactSanitizedPayloadRoot(payload);
+    const state: JsonSnapshotState = {
+      bytes: 0,
+      nodes: 0,
+      ancestors: new WeakSet<object>()
+    };
+    const snapshot = snapshotJsonData(payloadRoot, state);
+    const serializedPayload = JSON.stringify(snapshot);
+    const serializedPayloadBytes = ENCODER.encode(serializedPayload).byteLength;
+    if (
+      serializedPayloadBytes !== state.bytes ||
+      serializedPayloadBytes > MAX_SANITIZED_PAYLOAD_BYTES
+    ) {
+      return requestInvalid();
+    }
+    return Object.freeze({
+      system_instruction: SYSTEM_PROMPT,
+      system_instruction_with_schema: SYSTEM_PROMPT_WITH_SCHEMA,
+      user_message:
+        "BEGIN_SANITIZED_PAYLOAD\n" +
+        serializedPayload +
+        "\nEND_SANITIZED_PAYLOAD"
+    });
+  });
+}
+
+export function validateSandboxSecurityOpenAiJudgeRequestedModel(
+  value: unknown
+): string {
+  return withRequestValidation(() => {
+    if (typeof value !== "string" || !JUDGE_MODEL.test(value)) {
+      return requestInvalid();
+    }
+    return value;
+  });
+}
+
+export function validateSandboxSecurityOpenAiJudgeResolvedModel(
+  value: unknown
+): string {
+  return withResponseValidation(() => {
+    if (typeof value !== "string" || !JUDGE_MODEL.test(value)) {
+      return responseInvalid();
+    }
+    return value;
+  });
+}
+
 function requestBodyBytes(
   payload: Readonly<SandboxSecuritySanitizedJudgePayload>,
   judgeRequestedModel: string
 ): Uint8Array {
-  let serializedPayload: string | undefined;
-  try {
-    serializedPayload = JSON.stringify(payload);
-  } catch {
-    return requestInvalid();
-  }
-  if (serializedPayload === undefined) return requestInvalid();
-
-  const userMessage =
-    "BEGIN_SANITIZED_PAYLOAD\n" +
-    serializedPayload +
-    "\nEND_SANITIZED_PAYLOAD";
+  const prompt = createSandboxSecurityOpenAiJudgePrompt(payload);
   const body = ENCODER.encode(
     JSON.stringify({
       model: judgeRequestedModel,
@@ -187,11 +468,13 @@ function requestBodyBytes(
       input: [
         {
           role: "developer",
-          content: [{ type: "input_text", text: SYSTEM_PROMPT }]
+          content: [
+            { type: "input_text", text: prompt.system_instruction }
+          ]
         },
         {
           role: "user",
-          content: [{ type: "input_text", text: userMessage }]
+          content: [{ type: "input_text", text: prompt.user_message }]
         }
       ],
       text: {
@@ -228,8 +511,8 @@ export function createSandboxSecurityOpenAiJudgeRequest(
     if (
       descriptor === undefined ||
       !("value" in descriptor) ||
-      typeof descriptor.value !== "string" ||
-      !JUDGE_MODEL.test(descriptor.value)
+      descriptor.enumerable !== true ||
+      typeof descriptor.value !== "string"
     ) {
       return requestInvalid();
     }
@@ -238,24 +521,47 @@ export function createSandboxSecurityOpenAiJudgeRequest(
       return requestInvalid();
     }
     return Object.freeze({
-      body: requestBodyBytes(payload, descriptor.value)
+      body: requestBodyBytes(
+        payload,
+        validateSandboxSecurityOpenAiJudgeRequestedModel(descriptor.value)
+      )
     });
   });
 }
 
 function responseBodyBytes(value: unknown): Uint8Array {
-  if (!(value instanceof Uint8Array)) return responseInvalid();
-  let byteLength: number;
-  try {
-    byteLength = value.byteLength;
-  } catch {
+  if (
+    !(value instanceof Uint8Array) ||
+    TYPED_ARRAY_BYTE_LENGTH_GETTER === undefined ||
+    Object.getPrototypeOf(value) !== Uint8Array.prototype
+  ) {
     return responseInvalid();
   }
+  const byteLength = Reflect.apply(
+    TYPED_ARRAY_BYTE_LENGTH_GETTER,
+    value,
+    []
+  ) as number;
   if (!Number.isSafeInteger(byteLength) || byteLength > MAX_BODY_BYTES) {
     return responseInvalid();
   }
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.length !== byteLength) return responseInvalid();
+  for (let index = 0; index < byteLength; index += 1) {
+    const key = ownKeys[index];
+    if (key !== String(index)) return responseInvalid();
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (
+      descriptor === undefined ||
+      !("value" in descriptor) ||
+      descriptor.enumerable !== true ||
+      typeof descriptor.value !== "number"
+    ) {
+      return responseInvalid();
+    }
+  }
   const copy = new Uint8Array(byteLength);
-  copy.set(value);
+  Reflect.apply(UINT8_ARRAY_SET, copy, [value]);
   return copy;
 }
 
@@ -373,10 +679,38 @@ function validateUsage(value: unknown): void {
   const usage = exactRecord(
     value,
     ["input_tokens", "output_tokens", "total_tokens"],
-    ["input_tokens_details", "output_tokens_details"]
+    [
+      "input_tokens_details",
+      "output_tokens_details",
+      "num_sources_used",
+      "num_server_side_tools_used",
+      "cost_in_usd_ticks",
+      "context_details"
+    ]
   );
   for (const key of ["input_tokens", "output_tokens", "total_tokens"] as const) {
     assertSafeNonnegativeInteger(dataProperty(usage, key));
+  }
+  for (const key of [
+    "num_sources_used",
+    "num_server_side_tools_used",
+    "cost_in_usd_ticks"
+  ] as const) {
+    if (hasDataProperty(usage, key)) {
+      assertSafeNonnegativeInteger(dataProperty(usage, key));
+    }
+  }
+  if (hasDataProperty(usage, "context_details")) {
+    const details = exactRecord(
+      dataProperty(usage, "context_details"),
+      [],
+      ["input_tokens", "output_tokens"]
+    );
+    for (const key of ["input_tokens", "output_tokens"] as const) {
+      if (hasDataProperty(details, key)) {
+        assertSafeNonnegativeInteger(dataProperty(details, key));
+      }
+    }
   }
   for (const [key, detailKey] of [
     ["input_tokens_details", "cached_tokens"],
@@ -397,11 +731,9 @@ function validateResponseMetadata(envelope: Record<string, unknown>): void {
   }
   if (hasDataProperty(envelope, "conversation")) {
     const conversation = dataProperty(envelope, "conversation");
-    if (
-      conversation !== null &&
-      typeof conversation !== "string"
-    ) {
-      assertPlainDataRecord(conversation);
+    if (conversation !== null) {
+      if (typeof conversation === "string") assertString(conversation);
+      else assertPlainDataRecord(conversation);
     }
   }
   if (hasDataProperty(envelope, "created_at")) {
@@ -413,17 +745,20 @@ function validateResponseMetadata(envelope: Record<string, unknown>): void {
   }
   if (hasDataProperty(envelope, "instructions")) {
     const instructions = dataProperty(envelope, "instructions");
-    if (instructions !== null && typeof instructions !== "string") {
-      if (!Array.isArray(instructions)) return responseInvalid();
-      exactArray(instructions);
+    if (instructions !== null) {
+      if (typeof instructions === "string") assertString(instructions);
+      else {
+        if (!Array.isArray(instructions)) return responseInvalid();
+        exactArray(instructions);
+      }
     }
   }
   if (hasDataProperty(envelope, "metadata")) {
     const metadata = assertPlainDataRecord(dataProperty(envelope, "metadata"));
     for (const key of Reflect.ownKeys(metadata)) {
-      if (typeof dataProperty(metadata, key as string) !== "string") {
-        return responseInvalid();
-      }
+      if (typeof key !== "string") return responseInvalid();
+      assertString(key);
+      assertString(dataProperty(metadata, key));
     }
   }
   if (hasDataProperty(envelope, "max_output_tokens")) {
@@ -482,6 +817,12 @@ function validateResponseMetadata(envelope: Record<string, unknown>): void {
   if (hasDataProperty(envelope, "temperature")) {
     assertFiniteNumberOrNull(dataProperty(envelope, "temperature"));
   }
+  if (hasDataProperty(envelope, "frequency_penalty")) {
+    assertFiniteNumberOrNull(dataProperty(envelope, "frequency_penalty"));
+  }
+  if (hasDataProperty(envelope, "presence_penalty")) {
+    assertFiniteNumberOrNull(dataProperty(envelope, "presence_penalty"));
+  }
   if (hasDataProperty(envelope, "top_p")) {
     assertFiniteNumberOrNull(dataProperty(envelope, "top_p"));
   }
@@ -490,7 +831,8 @@ function validateResponseMetadata(envelope: Record<string, unknown>): void {
   }
   if (hasDataProperty(envelope, "tool_choice")) {
     const toolChoice = dataProperty(envelope, "tool_choice");
-    if (typeof toolChoice !== "string") assertPlainDataRecord(toolChoice);
+    if (typeof toolChoice === "string") assertString(toolChoice);
+    else assertPlainDataRecord(toolChoice);
   }
   if (hasDataProperty(envelope, "tools")) exactArray(dataProperty(envelope, "tools"));
   if (hasDataProperty(envelope, "top_logprobs")) {
@@ -640,6 +982,70 @@ function parseStructuredObject(
   return values.map((item) => parseStructuredResult(item, allowedObligationIds, seen));
 }
 
+function allowedObligationIds(
+  payload: Readonly<SandboxSecuritySanitizedJudgePayload>
+): ReadonlySet<string> {
+  const payloadRecord = exactRecord(
+    payload,
+    [
+      "schema_version",
+      "request_token",
+      "stage",
+      "policy_profile_id",
+      "sources",
+      "routed_obligations"
+    ],
+    ["tool_request"]
+  );
+  const routed = exactArray(dataProperty(payloadRecord, "routed_obligations"));
+  const allowed = new Set<string>();
+  for (const obligation of routed) {
+    const obligationRecord = exactRecord(obligation, [
+      "obligation_id",
+      "category",
+      "subject_refs"
+    ]);
+    const obligationId = dataProperty(obligationRecord, "obligation_id");
+    if (
+      typeof obligationId !== "string" ||
+      !OBLIGATION_ID.test(obligationId) ||
+      allowed.has(obligationId)
+    ) {
+      return responseInvalid();
+    }
+    allowed.add(obligationId);
+  }
+  return allowed;
+}
+
+export function parseSandboxSecurityOpenAiJudgeAssistantContent(
+  content: unknown,
+  resolvedModel: unknown,
+  payload: Readonly<SandboxSecuritySanitizedJudgePayload>
+): Readonly<SandboxSecurityParsedOpenAIResponse> {
+  return withResponseValidation(() => {
+    const model = validateSandboxSecurityOpenAiJudgeResolvedModel(resolvedModel);
+    if (typeof content !== "string" || !isWellFormedUtf16(content)) {
+      return responseInvalid();
+    }
+    let structured: unknown;
+    try {
+      structured = JSON.parse(content) as unknown;
+    } catch {
+      return responseInvalid();
+    }
+    const obligationResults = parseStructuredObject(
+      structured,
+      allowedObligationIds(payload)
+    );
+    return deepFreeze({
+      model,
+      status: "completed",
+      obligation_results: [...obligationResults]
+    });
+  });
+}
+
 function parseReasoningItem(value: unknown): void {
   const record = exactRecord(value, ["type"], REASONING_OPTIONAL_KEYS);
   if (dataProperty(record, "type") !== "reasoning") return responseInvalid();
@@ -656,8 +1062,9 @@ function parseReasoningItem(value: unknown): void {
 
 function parseAssistantMessage(
   value: unknown,
-  allowedObligationIds: ReadonlySet<string>
-): readonly ParsedObligationResult[] {
+  resolvedModel: string,
+  payload: Readonly<SandboxSecuritySanitizedJudgePayload>
+): Readonly<SandboxSecurityParsedOpenAIResponse> {
   const message = exactRecord(
     value,
     ["type", "role", "status", "content"],
@@ -694,16 +1101,11 @@ function parseAssistantMessage(
     }
   }
   const text = dataProperty(outputText, "text");
-  if (typeof text !== "string" || !isWellFormedUtf16(text)) {
-    return responseInvalid();
-  }
-  let structured: unknown;
-  try {
-    structured = JSON.parse(text) as unknown;
-  } catch {
-    return responseInvalid();
-  }
-  return parseStructuredObject(structured, allowedObligationIds);
+  return parseSandboxSecurityOpenAiJudgeAssistantContent(
+    text,
+    resolvedModel,
+    payload
+  );
 }
 
 function parseEnvelope(
@@ -716,10 +1118,10 @@ function parseEnvelope(
     RESPONSE_OPTIONAL_KEYS
   );
   validateResponseMetadata(envelope);
-  const resolvedModel = dataProperty(envelope, "model");
+  const resolvedModel = validateSandboxSecurityOpenAiJudgeResolvedModel(
+    dataProperty(envelope, "model")
+  );
   if (
-    typeof resolvedModel !== "string" ||
-    !JUDGE_MODEL.test(resolvedModel) ||
     dataProperty(envelope, "status") !== "completed" ||
     dataProperty(envelope, "error") !== null ||
     dataProperty(envelope, "incomplete_details") !== null
@@ -727,25 +1129,9 @@ function parseEnvelope(
     return responseInvalid();
   }
 
-  const routed = payload.routed_obligations;
-  if (!Array.isArray(routed)) return responseInvalid();
-  const allowed = new Set<string>();
-  for (const obligation of routed) {
-    if (
-      obligation === null ||
-      typeof obligation !== "object" ||
-      typeof obligation.obligation_id !== "string" ||
-      !OBLIGATION_ID.test(obligation.obligation_id) ||
-      allowed.has(obligation.obligation_id)
-    ) {
-      return responseInvalid();
-    }
-    allowed.add(obligation.obligation_id);
-  }
-
   const output = exactArray(dataProperty(envelope, "output"));
   let messageCount = 0;
-  let obligationResults: readonly ParsedObligationResult[] | undefined;
+  let parsedResponse: Readonly<SandboxSecurityParsedOpenAIResponse> | undefined;
   for (const item of output) {
     if (
       item !== null &&
@@ -766,20 +1152,15 @@ function parseEnvelope(
     ) {
       messageCount += 1;
       if (messageCount > 1) return responseInvalid();
-      obligationResults = parseAssistantMessage(item, allowed);
+      parsedResponse = parseAssistantMessage(item, resolvedModel, payload);
       continue;
     }
     return responseInvalid();
   }
-  if (messageCount !== 1 || obligationResults === undefined) {
+  if (messageCount !== 1 || parsedResponse === undefined) {
     return responseInvalid();
   }
-
-  return deepFreeze({
-    model: resolvedModel,
-    status: "completed",
-    obligation_results: [...obligationResults]
-  });
+  return parsedResponse;
 }
 
 export function parseSandboxSecurityOpenAiJudgeResponse(

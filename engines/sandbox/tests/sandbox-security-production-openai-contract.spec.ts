@@ -36,6 +36,20 @@ interface ContractModule {
     body: Uint8Array,
     payload: Readonly<SandboxSecuritySanitizedJudgePayload>
   ): Readonly<ParsedResponse>;
+  createSandboxSecurityOpenAiJudgePrompt(
+    payload: Readonly<SandboxSecuritySanitizedJudgePayload>
+  ): Readonly<{
+    readonly system_instruction: string;
+    readonly system_instruction_with_schema: string;
+    readonly user_message: string;
+  }>;
+  validateSandboxSecurityOpenAiJudgeRequestedModel(value: unknown): string;
+  validateSandboxSecurityOpenAiJudgeResolvedModel(value: unknown): string;
+  parseSandboxSecurityOpenAiJudgeAssistantContent(
+    content: unknown,
+    resolvedModel: unknown,
+    payload: Readonly<SandboxSecuritySanitizedJudgePayload>
+  ): Readonly<ParsedResponse>;
 }
 
 // Keep the first RED run meaningful while the production module is absent.
@@ -47,6 +61,22 @@ const inertContractModule: ContractModule = {
   },
   parseSandboxSecurityOpenAiJudgeResponse() {
     return {} as ParsedResponse;
+  },
+  createSandboxSecurityOpenAiJudgePrompt() {
+    return {
+      system_instruction: "",
+      system_instruction_with_schema: "",
+      user_message: ""
+    };
+  },
+  validateSandboxSecurityOpenAiJudgeRequestedModel() {
+    return "";
+  },
+  validateSandboxSecurityOpenAiJudgeResolvedModel() {
+    return "";
+  },
+  parseSandboxSecurityOpenAiJudgeAssistantContent() {
+    return {} as ParsedResponse;
   }
 };
 
@@ -57,13 +87,18 @@ const contractModule: ContractModule = existsSync(contractPath)
 const {
   SANDBOX_SECURITY_OPENAI_JUDGE_PROMPT_VERSION,
   createSandboxSecurityOpenAiJudgeRequest,
-  parseSandboxSecurityOpenAiJudgeResponse
+  parseSandboxSecurityOpenAiJudgeResponse,
+  createSandboxSecurityOpenAiJudgePrompt,
+  validateSandboxSecurityOpenAiJudgeRequestedModel,
+  validateSandboxSecurityOpenAiJudgeResolvedModel,
+  parseSandboxSecurityOpenAiJudgeAssistantContent
 } = contractModule;
 
 const DEFAULT_JUDGE_REQUESTED_MODEL = "gpt-5.4-mini";
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 const NONCE = "a".repeat(32);
+const MAX_SANITIZED_PAYLOAD_BYTES = 256 * 1024;
 const RAW_SENTINEL = "RAW_PROVIDER_SENTINEL_MUST_NOT_LEAK";
 const PROMPT_SHA256 =
   "703f674a6090ce919cf06f1c3346e3f4ebce3e6832135a2ff51bde8566f9e116";
@@ -273,6 +308,39 @@ function wire(value: unknown): Uint8Array {
   return encoder.encode(JSON.stringify(value));
 }
 
+function serializedPayloadByteLength(
+  payload: Readonly<SandboxSecuritySanitizedJudgePayload>
+): number {
+  return encoder.encode(JSON.stringify(payload)).byteLength;
+}
+
+function largestPayloadWithinByteCap(
+  decision: string,
+  sourceValue: (units: number) => unknown
+): Readonly<{
+  payload: SandboxSecuritySanitizedJudgePayload;
+  units: number;
+  bytes: number;
+}> {
+  let low = 0;
+  let high = MAX_SANITIZED_PAYLOAD_BYTES + 1;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    const candidate = validPayload(decision, sourceValue(middle));
+    if (serializedPayloadByteLength(candidate) <= MAX_SANITIZED_PAYLOAD_BYTES) {
+      low = middle;
+    } else {
+      high = middle - 1;
+    }
+  }
+  const payload = validPayload(decision, sourceValue(low));
+  return Object.freeze({
+    payload,
+    units: low,
+    bytes: serializedPayloadByteLength(payload)
+  });
+}
+
 function assertParserInvalid(
   value: unknown,
   payload: Readonly<SandboxSecuritySanitizedJudgePayload> = validPayload()
@@ -282,12 +350,265 @@ function assertParserInvalid(
   );
 }
 
+function assertResponseBodyInvalid(
+  body: unknown,
+  payload: Readonly<SandboxSecuritySanitizedJudgePayload> = validPayload(),
+  forbidden: readonly string[] = []
+): void {
+  let thrown: unknown;
+  try {
+    parseSandboxSecurityOpenAiJudgeResponse(body as Uint8Array, payload);
+  } catch (error) {
+    thrown = error;
+  }
+  assert.ok(thrown instanceof TypeError, "expected fixed response TypeError");
+  assert.equal(thrown.message, "sandbox_security_openai_judge_response_invalid");
+  for (const sentinel of forbidden) {
+    assert.equal(String(thrown).includes(sentinel), false);
+  }
+}
+
+function assertPromptInvalid(
+  payload: unknown,
+  forbidden: readonly string[] = []
+): void {
+  let thrown: unknown;
+  try {
+    createSandboxSecurityOpenAiJudgePrompt(payload as never);
+  } catch (error) {
+    thrown = error;
+  }
+  assert.ok(thrown instanceof TypeError, "expected fixed prompt TypeError");
+  assert.equal(thrown.message, "sandbox_security_openai_judge_request_invalid");
+  for (const sentinel of forbidden) {
+    assert.equal(String(thrown).includes(sentinel), false);
+  }
+}
+
 function assertDeepFrozen(value: unknown, seen = new Set<object>()): void {
   if (value === null || typeof value !== "object" || seen.has(value)) return;
   seen.add(value);
   assert.equal(Object.isFrozen(value), true);
   for (const child of Object.values(value)) assertDeepFrozen(child, seen);
 }
+
+test("REQ-SBX-GENERAL-002 Responses exports only frozen shared Judge semantics", () => {
+  const payload = validPayload();
+  const prompt = createSandboxSecurityOpenAiJudgePrompt(payload);
+  assert.deepEqual(prompt, {
+    system_instruction: EXPECTED_PROMPT,
+    system_instruction_with_schema:
+      EXPECTED_PROMPT +
+      "\n\nThe exact sandbox-security-judge.v1 JSON Schema is:\n" +
+      JSON.stringify(EXPECTED_SCHEMA),
+    user_message:
+      "BEGIN_SANITIZED_PAYLOAD\n" +
+      JSON.stringify(payload) +
+      "\nEND_SANITIZED_PAYLOAD"
+  });
+  assert.equal(Object.isFrozen(prompt), true);
+  assert.equal(
+    Reflect.ownKeys(contractModule).some((key) =>
+      typeof key === "string" && /response_schema|judge_schema/i.test(key)
+    ),
+    false
+  );
+
+  assert.equal(
+    validateSandboxSecurityOpenAiJudgeRequestedModel("provider/alias:v1"),
+    "provider/alias:v1"
+  );
+  assert.equal(
+    validateSandboxSecurityOpenAiJudgeResolvedModel("resolved-model-001"),
+    "resolved-model-001"
+  );
+  assert.throws(
+    () => validateSandboxSecurityOpenAiJudgeRequestedModel("-invalid"),
+    (error: unknown) =>
+      error instanceof TypeError &&
+      error.message === "sandbox_security_openai_judge_request_invalid"
+  );
+  assert.throws(
+    () => validateSandboxSecurityOpenAiJudgeResolvedModel("invalid model"),
+    (error: unknown) =>
+      error instanceof TypeError &&
+      error.message === "sandbox_security_openai_judge_response_invalid"
+  );
+
+  const id = payload.routed_obligations[0]!.obligation_id;
+  assert.deepEqual(
+    parseSandboxSecurityOpenAiJudgeAssistantContent(
+      JSON.stringify(parsedObject([result(id)])),
+      "resolved-model-001",
+      payload
+    ),
+    {
+      model: "resolved-model-001",
+      status: "completed",
+      obligation_results: [
+        {
+          obligation_id: id,
+          outcome: "risk",
+          confidence: "confident",
+          severity: "high"
+        }
+      ]
+    }
+  );
+});
+
+test("REQ-SBX-GENERAL-002 shared prompt snapshots exact JSON data without invoking payload code", () => {
+  const payload = validPayload();
+  let getterCalls = 0;
+  let toJsonCalls = 0;
+
+  const accessor: Record<string, unknown> = { safe: true };
+  Object.defineProperty(accessor, "nested", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      throw new Error(RAW_SENTINEL);
+    }
+  });
+  const withToJson = {
+    safe: true,
+    toJSON() {
+      toJsonCalls += 1;
+      return { leaked: RAW_SENTINEL };
+    }
+  };
+  const cyclic: Record<string, unknown> = { safe: true };
+  cyclic.self = cyclic;
+  const hidden: Record<string, unknown> = { safe: true };
+  Object.defineProperty(hidden, "hidden", {
+    enumerable: false,
+    value: RAW_SENTINEL
+  });
+  const symbolKey = {
+    safe: true,
+    [Symbol(RAW_SENTINEL)]: true
+  };
+  const invalidKey = { ["\ud800"]: true };
+  const sparse = new Array(1);
+  let tooDeep: unknown = "leaf";
+  for (let index = 0; index < 9; index += 1) tooDeep = [tooDeep];
+  const tooManyNodes = Array.from({ length: 2_049 }, () => null);
+
+  const invalidNestedValues: readonly unknown[] = [
+    accessor,
+    withToJson,
+    cyclic,
+    { value: undefined },
+    { value: () => RAW_SENTINEL },
+    { value: 1n },
+    { value: Symbol(RAW_SENTINEL) },
+    { value: Number.NaN },
+    { value: Number.POSITIVE_INFINITY },
+    { value: "\ud800" },
+    invalidKey,
+    new Date(0),
+    Object.create(null),
+    sparse,
+    hidden,
+    symbolKey,
+    tooDeep,
+    tooManyNodes
+  ];
+  for (const nested of invalidNestedValues) {
+    assertPromptInvalid(validPayload("decision-snapshot", nested), [RAW_SENTINEL]);
+  }
+  assertPromptInvalid(
+    { ...payload, fixture_id: RAW_SENTINEL },
+    [RAW_SENTINEL]
+  );
+  assert.equal(getterCalls, 0);
+  assert.equal(toJsonCalls, 0);
+});
+
+test("REQ-SBX-GENERAL-002 shared prompt accepts exact and near 256 KiB payload boundaries", () => {
+  const exactAscii = largestPayloadWithinByteCap(
+    "decision-prompt-byte-cap-ascii",
+    (units) => "x".repeat(units)
+  );
+  assert.equal(exactAscii.bytes, MAX_SANITIZED_PAYLOAD_BYTES);
+  assert.equal(
+    createSandboxSecurityOpenAiJudgePrompt(exactAscii.payload).user_message,
+    "BEGIN_SANITIZED_PAYLOAD\n" +
+      JSON.stringify(exactAscii.payload) +
+      "\nEND_SANITIZED_PAYLOAD"
+  );
+
+  const nearMultibyte = largestPayloadWithinByteCap(
+    "decision-prompt-byte-cap-multibyte",
+    (units) => "\u96ea".repeat(units)
+  );
+  assert.equal(nearMultibyte.bytes <= MAX_SANITIZED_PAYLOAD_BYTES, true);
+  assert.equal(MAX_SANITIZED_PAYLOAD_BYTES - nearMultibyte.bytes < 3, true);
+  assert.equal(
+    createSandboxSecurityOpenAiJudgePrompt(nearMultibyte.payload).user_message,
+    "BEGIN_SANITIZED_PAYLOAD\n" +
+      JSON.stringify(nearMultibyte.payload) +
+      "\nEND_SANITIZED_PAYLOAD"
+  );
+});
+
+test("REQ-SBX-GENERAL-002 shared prompt rejects aggregate payload JSON over 256 KiB", () => {
+  const exactAscii = largestPayloadWithinByteCap(
+    "decision-prompt-byte-cap-overflow",
+    (units) => "x".repeat(units)
+  );
+  const singleOverflow = validPayload(
+    "decision-prompt-byte-cap-overflow",
+    "x".repeat(exactAscii.units + 1)
+  );
+  assert.equal(
+    serializedPayloadByteLength(singleOverflow),
+    MAX_SANITIZED_PAYLOAD_BYTES + 1
+  );
+
+  const multipleStringOverflow = validPayload(
+    "decision-prompt-byte-cap-multiple",
+    {
+      first: "a".repeat(MAX_SANITIZED_PAYLOAD_BYTES / 2),
+      second: "b".repeat(MAX_SANITIZED_PAYLOAD_BYTES / 2)
+    }
+  );
+  const escapedStringOverflow = validPayload(
+    "decision-prompt-byte-cap-escaped",
+    "\u0000".repeat(Math.ceil(MAX_SANITIZED_PAYLOAD_BYTES / 6))
+  );
+  const oversizedKeyOverflow = validPayload(
+    "decision-prompt-byte-cap-key",
+    { ["k".repeat(MAX_SANITIZED_PAYLOAD_BYTES)]: true }
+  );
+  const overflowPayloads = [
+    singleOverflow,
+    multipleStringOverflow,
+    escapedStringOverflow,
+    oversizedKeyOverflow
+  ];
+  for (const payload of overflowPayloads) {
+    assert.equal(
+      serializedPayloadByteLength(payload) > MAX_SANITIZED_PAYLOAD_BYTES,
+      true
+    );
+  }
+
+  const errors = overflowPayloads.map((payload) => {
+    try {
+      createSandboxSecurityOpenAiJudgePrompt(payload);
+      return null;
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  });
+  assert.deepEqual(
+    errors,
+    overflowPayloads.map(
+      () => "sandbox_security_openai_judge_request_invalid"
+    )
+  );
+});
 
 test("REQ-SBX-GENERAL-002 OpenAI Judge request uses the exact fixed prompt and bytes", () => {
   assert.equal(
@@ -328,6 +649,24 @@ test("REQ-SBX-GENERAL-002 OpenAI Judge request uses the exact fixed prompt and b
     "strict",
     "schema"
   ]);
+});
+
+test("REQ-SBX-GENERAL-002 OpenAI request rejects a non-enumerable requested model option", () => {
+  const options: Record<string, unknown> = {};
+  Object.defineProperty(options, "judge_requested_model", {
+    enumerable: false,
+    value: DEFAULT_JUDGE_REQUESTED_MODEL
+  });
+  assert.throws(
+    () =>
+      createSandboxSecurityOpenAiJudgeRequest(
+        validPayload(),
+        options as Readonly<{ judge_requested_model: string }>
+      ),
+    (error: unknown) =>
+      error instanceof TypeError &&
+      error.message === "sandbox_security_openai_judge_request_invalid"
+  );
 });
 
 test("REQ-SBX-GENERAL-002 OpenAI request has no caller-controlled provider fields or raw sentinels", () => {
@@ -429,7 +768,7 @@ test("REQ-SBX-GENERAL-002 parser accepts one completed output_text and allows om
   );
 });
 
-test("REQ-SBX-GENERAL-002 parser accepts known Responses metadata and discards it", () => {
+test("REQ-SBX-GENERAL-002 parser accepts observed Doro Responses metadata and discards it", () => {
   const payload = validPayload();
   const id = payload.routed_obligations[0]!.obligation_id;
   const envelope = completedEnvelope(payload, [result(id)]);
@@ -442,8 +781,14 @@ test("REQ-SBX-GENERAL-002 parser accepts known Responses metadata and discards i
       input_tokens_details: { cached_tokens: 0 },
       output_tokens: 18,
       output_tokens_details: { reasoning_tokens: 0 },
-      total_tokens: 30
+      total_tokens: 30,
+      num_sources_used: 1,
+      num_server_side_tools_used: 0,
+      cost_in_usd_ticks: 123,
+      context_details: { input_tokens: 12, output_tokens: 18 }
     },
+    frequency_penalty: 0,
+    presence_penalty: 0,
     parallel_tool_calls: false,
     previous_response_id: null,
     service_tier: "default",
@@ -535,6 +880,78 @@ test("REQ-SBX-GENERAL-002 parser rejects malformed known Responses metadata", ()
     }
   ];
   cases.push(invalidAnnotations);
+
+  const invalidFrequencyPenalty = completedEnvelope(payload);
+  invalidFrequencyPenalty.frequency_penalty = "0";
+  cases.push(invalidFrequencyPenalty);
+
+  const invalidPresencePenalty = completedEnvelope(payload);
+  invalidPresencePenalty.presence_penalty = false;
+  cases.push(invalidPresencePenalty);
+
+  const invalidSourceCount = completedEnvelope(payload);
+  invalidSourceCount.usage = {
+    input_tokens: 1,
+    output_tokens: 1,
+    total_tokens: 2,
+    num_sources_used: -1
+  };
+  cases.push(invalidSourceCount);
+
+  const invalidServerToolCount = completedEnvelope(payload);
+  invalidServerToolCount.usage = {
+    input_tokens: 1,
+    output_tokens: 1,
+    total_tokens: 2,
+    num_server_side_tools_used: 0.5
+  };
+  cases.push(invalidServerToolCount);
+
+  const invalidCostTicks = completedEnvelope(payload);
+  invalidCostTicks.usage = {
+    input_tokens: 1,
+    output_tokens: 1,
+    total_tokens: 2,
+    cost_in_usd_ticks: "123"
+  };
+  cases.push(invalidCostTicks);
+
+  const invalidContextDetails = completedEnvelope(payload);
+  invalidContextDetails.usage = {
+    input_tokens: 1,
+    output_tokens: 1,
+    total_tokens: 2,
+    context_details: { unknown: 1 }
+  };
+  cases.push(invalidContextDetails);
+
+  for (const value of cases) assertParserInvalid(value, payload);
+});
+
+test("REQ-SBX-GENERAL-002 parser rejects lone surrogates in direct Responses metadata strings", () => {
+  const payload = validPayload();
+  const loneSurrogate = "\ud800";
+  const cases: Record<string, unknown>[] = [];
+
+  const invalidConversation = completedEnvelope(payload);
+  invalidConversation.conversation = loneSurrogate;
+  cases.push(invalidConversation);
+
+  const invalidInstructions = completedEnvelope(payload);
+  invalidInstructions.instructions = loneSurrogate;
+  cases.push(invalidInstructions);
+
+  const invalidMetadataKey = completedEnvelope(payload);
+  invalidMetadataKey.metadata = { [loneSurrogate]: "valid" };
+  cases.push(invalidMetadataKey);
+
+  const invalidMetadataValue = completedEnvelope(payload);
+  invalidMetadataValue.metadata = { valid: loneSurrogate };
+  cases.push(invalidMetadataValue);
+
+  const invalidToolChoice = completedEnvelope(payload);
+  invalidToolChoice.tool_choice = loneSurrogate;
+  cases.push(invalidToolChoice);
 
   for (const value of cases) assertParserInvalid(value, payload);
 });
@@ -769,6 +1186,34 @@ test("REQ-SBX-GENERAL-002 parser accepts only fatal UTF-8 JSON bodies within 64 
   );
 });
 
+test("REQ-SBX-GENERAL-002 Responses parser rejects hostile response byte containers", () => {
+  const payload = validPayload();
+  const body = wire(completedEnvelope(payload));
+  const proxyBody = new Proxy(body, {
+    getPrototypeOf() {
+      throw new Error(RAW_SENTINEL);
+    }
+  });
+  class InheritedBody extends Uint8Array {}
+  const inheritedBody = new InheritedBody(body);
+  const symbolBody = body.slice() as Uint8Array & Record<symbol, unknown>;
+  symbolBody[Symbol(RAW_SENTINEL)] = true;
+  const extraBody = body.slice() as Uint8Array & { extra?: unknown };
+  Object.defineProperty(extraBody, "extra", {
+    enumerable: false,
+    value: RAW_SENTINEL
+  });
+
+  for (const hostileBody of [
+    proxyBody,
+    inheritedBody,
+    symbolBody,
+    extraBody
+  ]) {
+    assertResponseBodyInvalid(hostileBody, payload, [RAW_SENTINEL]);
+  }
+});
+
 test("REQ-SBX-GENERAL-002 parser returns a frozen ordered content-free projection", () => {
   const payload = validPayload();
   const id = payload.routed_obligations[0]!.obligation_id;
@@ -829,4 +1274,3 @@ test("REQ-SBX-GENERAL-002 parser rejects malformed resolved model identifiers", 
     assertParserInvalid(envelope, payload);
   }
 });
-

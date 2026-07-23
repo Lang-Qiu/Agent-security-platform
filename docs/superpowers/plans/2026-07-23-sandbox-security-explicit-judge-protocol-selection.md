@@ -164,7 +164,7 @@ and replacement of fixed port `11434` listeners.
 - Modify: `engines/sandbox/src/security-production/openai-judge-contract.ts`
 - Modify: `engines/sandbox/tests/sandbox-security-production-openai-contract.spec.ts`
 
-- [ ] **Step 1: Write failing Chat contract tests**
+- [x] **Step 1: Write failing Chat contract tests**
 
 Add tests for the exact request:
 
@@ -193,7 +193,7 @@ choice/message key, zero or multiple choices, nonzero index, non-assistant role,
 null/prose/invalid inner content, `length` or other finish reason, malformed
 model, duplicate/unknown obligation, and invalid outcome/severity coupling.
 
-- [ ] **Step 2: Run RED contract tests**
+- [x] **Step 2: Run RED contract tests**
 
 ```bash
 node --experimental-strip-types --experimental-test-isolation=none --test \
@@ -203,7 +203,7 @@ node --experimental-strip-types --experimental-test-isolation=none --test \
 
 Expected: FAIL because the Chat contract does not exist.
 
-- [ ] **Step 3: Extract only the shared Judge semantics**
+- [x] **Step 3: Extract only the shared Judge semantics**
 
 From `openai-judge-contract.ts`, export narrow helpers that produce the trusted
 system/user messages and parse the exact inner `sandbox-security-judge.v1`
@@ -211,7 +211,7 @@ JSON for a supplied sanitized payload. Keep the Responses request and envelope
 behavior unchanged. Do not export a mutable schema object or weaken exact-key
 validation.
 
-- [ ] **Step 4: Implement the Chat contract**
+- [x] **Step 4: Implement the Chat contract**
 
 Create:
 
@@ -232,7 +232,7 @@ terminal choice, bounded discarded reasoning content, exact resolved model,
 and the shared inner Judge parser. Convert every failure to fixed request or
 response error names; never retain provider prose.
 
-- [ ] **Step 5: Run focused GREEN and typecheck**
+- [x] **Step 5: Run focused GREEN and typecheck**
 
 Run Step 2, then:
 
@@ -243,11 +243,16 @@ git diff --check
 
 Expected: all contract tests and TypeScript checks pass.
 
-- [ ] **Step 6: Independent reviews and re-review**
+- [x] **Step 6: Independent reviews and re-review**
 
 Require specification approval before quality/security approval. Any accepted
 parser finding gets a minimal counterexample test before the fix and a full
 rerun of Step 5.
+
+Task 2 closed on `2026-07-23`: contract tests `36/36`, affected integration
+tests `33/33`, repository gate `294/294`, sandbox and benchmark TypeScript
+checks, frontend build, and `git diff --check` passed. Specification and Code
+Quality/Security re-reviews both returned `APPROVED`.
 
 ### Task 3: Protocol-Selected Production Dispatch
 
