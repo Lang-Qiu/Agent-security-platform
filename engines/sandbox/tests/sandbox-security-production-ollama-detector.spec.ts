@@ -39,6 +39,11 @@ type OllamaDetectorModule = {
     expected_digest: string;
     signal: AbortSignal;
   }>): Promise<Readonly<SandboxSecurityOllamaQualification>>;
+  qualifySandboxSecurityP6LiveCaptureOllama(input: Readonly<{
+    transport: SandboxSecurityHttpTransport;
+    expected_digest: string;
+    signal: AbortSignal;
+  }>): Promise<Readonly<SandboxSecurityOllamaQualification>>;
   createSandboxSecurityOllamaLocalDetector(input: Readonly<{
     transport: SandboxSecurityHttpTransport;
     qualification: Readonly<SandboxSecurityOllamaQualification>;
@@ -52,6 +57,14 @@ const ollamaDetectorPath = new URL(
 
 const inertOllamaDetectorModule: OllamaDetectorModule = {
   async qualifySandboxSecurityOllama() {
+    return Object.freeze({
+      summary: Object.freeze({
+        ollama_digest: "",
+        warmed_probe_latency_ms: Number.NaN
+      })
+    });
+  },
+  async qualifySandboxSecurityP6LiveCaptureOllama() {
     return Object.freeze({
       summary: Object.freeze({
         ollama_digest: "",
@@ -77,7 +90,8 @@ const ollamaDetectorModule: OllamaDetectorModule = existsSync(ollamaDetectorPath
 
 const {
   createSandboxSecurityOllamaLocalDetector,
-  qualifySandboxSecurityOllama
+  qualifySandboxSecurityOllama,
+  qualifySandboxSecurityP6LiveCaptureOllama
 } = ollamaDetectorModule;
 const encoder = new TextEncoder();
 const DIGEST = `sha256:${"a".repeat(64)}`;
@@ -903,7 +917,7 @@ test("REQ-SBX-GENERAL-002 qualification latency measures only the monotonic prew
   );
 });
 
-test("REQ-SBX-GENERAL-002 qualification rejects a validated prewarm latency over 1000 ms", { concurrency: false }, async () => {
+test("REQ-SBX-GENERAL-002 ordinary qualification rejects a validated prewarm latency over 1000 ms", { concurrency: false }, async () => {
   const performanceObject = globalThis.performance;
   const originalNow = Object.getOwnPropertyDescriptor(performanceObject, "now");
   let nowReads = 0;
@@ -920,6 +934,69 @@ test("REQ-SBX-GENERAL-002 qualification rejects a validated prewarm latency over
     await assertQualificationInvalid(() =>
       qualifySandboxSecurityOllama({
         transport: scripted.transport,
+        expected_digest: DIGEST,
+        signal: new AbortController().signal
+      })
+    );
+  } finally {
+    if (originalNow === undefined) {
+      Reflect.deleteProperty(performanceObject, "now");
+    } else {
+      Object.defineProperty(performanceObject, "now", originalNow);
+    }
+  }
+});
+
+test("REQ-SBX-GENERAL-002 only the P6 live-capture adapter admits the approved 1001..5000 ms prewarm interval", { concurrency: false }, async () => {
+  const performanceObject = globalThis.performance;
+  const originalNow = Object.getOwnPropertyDescriptor(performanceObject, "now");
+  let warmedProbeLatency = 1001;
+  let nowReads = 0;
+  Object.defineProperty(performanceObject, "now", {
+    configurable: true,
+    value() {
+      nowReads += 1;
+      return nowReads === 1 ? 0 : warmedProbeLatency;
+    }
+  });
+
+  try {
+    const callerRelaxedQualification = qualifySandboxSecurityOllama as unknown as (
+      input: Readonly<{
+        transport: SandboxSecurityHttpTransport;
+        expected_digest: string;
+        signal: AbortSignal;
+      }>,
+      warmedProbeLatencyLimitMs: number
+    ) => Promise<Readonly<SandboxSecurityOllamaQualification>>;
+    const ordinary = successfulQualificationTransport();
+    await assertQualificationInvalid(() =>
+      callerRelaxedQualification(
+        {
+          transport: ordinary.transport,
+          expected_digest: DIGEST,
+          signal: new AbortController().signal
+        },
+        5000
+      )
+    );
+
+    if (typeof qualifySandboxSecurityP6LiveCaptureOllama !== "function") {
+      assert.fail("missing P6-only live-capture qualification adapter");
+    }
+    nowReads = 0;
+    const live = await qualifySandboxSecurityP6LiveCaptureOllama({
+      transport: successfulQualificationTransport().transport,
+      expected_digest: DIGEST,
+      signal: new AbortController().signal
+    });
+    assert.equal(live.summary.warmed_probe_latency_ms, 1001);
+
+    nowReads = 0;
+    warmedProbeLatency = 5001;
+    await assertQualificationInvalid(() =>
+      qualifySandboxSecurityP6LiveCaptureOllama({
+        transport: successfulQualificationTransport().transport,
         expected_digest: DIGEST,
         signal: new AbortController().signal
       })
@@ -1393,8 +1470,9 @@ test("REQ-SBX-GENERAL-002 default transport performs fixed GET to POST and block
   ]);
   const transport = createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: DIGEST,
+    judge_protocol_id: null,
     judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
     request_factory: wire.factory
   });
   const qualificationController = new AbortController();

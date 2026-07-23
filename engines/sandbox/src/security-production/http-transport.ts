@@ -2,6 +2,12 @@ import { timingSafeEqual } from "node:crypto";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { types as utilTypes } from "node:util";
+import {
+  SANDBOX_SECURITY_OPENAI_CHAT_COMPLETIONS_JSON_PROTOCOL_ID,
+  SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID,
+  normalizeSandboxSecurityJudgeEndpoint,
+  type SandboxSecurityJudgeProtocolId
+} from "./judge-protocol-adapter.ts";
 
 export type SandboxSecurityHttpRequest =
   | Readonly<{
@@ -19,7 +25,7 @@ export type SandboxSecurityHttpRequest =
     }>
   | Readonly<{
       provider: "openai";
-      operation: "responses";
+      operation: "responses" | "chat_completions";
       body: Uint8Array;
       signal: AbortSignal;
       max_response_bytes: 65536;
@@ -72,11 +78,10 @@ export interface SandboxSecurityHttpTransport {
 }
 
 const MAX_RESPONSE_BYTES = 65536;
+const MAX_REQUEST_BODY_BYTES = 65536;
+export const SANDBOX_SECURITY_JUDGE_API_KEY_MAX_UTF8_BYTES = 4096;
 const OLLAMA_INVENTORY_URL = "http://127.0.0.1:11434/api/tags";
 const OLLAMA_CHAT_URL = "http://127.0.0.1:11434/api/chat";
-const ALLOWED_JUDGE_RESPONSES_URLS = new Set<string>([
-  "https://doro.lol/v1/responses"
-]);
 const SHA256_DIGEST = /^sha256:[a-f0-9]{64}$/;
 const TYPED_ARRAY_BYTE_LENGTH_GETTER = Object.getOwnPropertyDescriptor(
   Object.getPrototypeOf(Uint8Array.prototype) as object,
@@ -100,7 +105,48 @@ function invalid(): never {
   throw namedTransportError("sandbox_security_transport_invalid");
 }
 
-function copyUint8ArrayInternalBytes(value: unknown): Uint8Array {
+function judgeOperationForProtocol(
+  protocolId: SandboxSecurityJudgeProtocolId
+): "responses" | "chat_completions" {
+  if (protocolId === SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID) {
+    return "responses";
+  }
+  if (
+    protocolId ===
+    SANDBOX_SECURITY_OPENAI_CHAT_COMPLETIONS_JSON_PROTOCOL_ID
+  ) {
+    return "chat_completions";
+  }
+  return invalid();
+}
+
+function normalizeJudgeEndpointForTransport(
+  protocolId: SandboxSecurityJudgeProtocolId,
+  endpointUrl: string
+): string {
+  try {
+    return normalizeSandboxSecurityJudgeEndpoint(protocolId, endpointUrl)
+      .endpoint_url;
+  } catch {
+    return invalid();
+  }
+}
+
+function validJudgeApiKey(value: string): boolean {
+  return (
+    value.length > 0 &&
+    value.length <= SANDBOX_SECURITY_JUDGE_API_KEY_MAX_UTF8_BYTES &&
+    value.trim() === value &&
+    !/[\u0000-\u001f\u007f]/.test(value) &&
+    new TextEncoder().encode(value).byteLength <=
+      SANDBOX_SECURITY_JUDGE_API_KEY_MAX_UTF8_BYTES
+  );
+}
+
+function copyUint8ArrayInternalBytesAtMost(
+  value: unknown,
+  maxByteLength: number
+): Uint8Array {
   try {
     if (
       !(value instanceof Uint8Array) ||
@@ -113,12 +159,19 @@ function copyUint8ArrayInternalBytes(value: unknown): Uint8Array {
       value,
       []
     ) as number;
+    if (byteLength > maxByteLength) {
+      return invalid();
+    }
     const copy = new Uint8Array(byteLength);
     Reflect.apply(UINT8_ARRAY_SET, copy, [value]);
     return copy;
   } catch {
     return invalid();
   }
+}
+
+function copyUint8ArrayInternalBytes(value: unknown): Uint8Array {
+  return copyUint8ArrayInternalBytesAtMost(value, Number.MAX_SAFE_INTEGER);
 }
 
 function nativeAbortSignalAborted(value: unknown): boolean {
@@ -641,8 +694,9 @@ function normalizeTransportConfiguration(
 ): Readonly<{
   factory: SandboxSecurityPrivateRequestFactory;
   expected_ollama_digest: string | null;
+  judge_protocol_id: SandboxSecurityJudgeProtocolId | null;
   judge_api_key: string | null;
-  judge_responses_url: string | null;
+  judge_endpoint_url: string | null;
 }> {
   try {
     const values = plainDataValues(value);
@@ -650,37 +704,51 @@ function normalizeTransportConfiguration(
     assertExactKeys(
       values,
       hasRequestFactory
-        ? [
+          ? [
+              "expected_ollama_digest",
+              "judge_protocol_id",
+              "judge_api_key",
+              "judge_endpoint_url",
+              "request_factory"
+            ]
+        : [
             "expected_ollama_digest",
+            "judge_protocol_id",
             "judge_api_key",
-            "judge_responses_url",
-            "request_factory"
+            "judge_endpoint_url"
           ]
-        : ["expected_ollama_digest", "judge_api_key", "judge_responses_url"]
     );
     const expectedOllamaDigest = values.get("expected_ollama_digest");
+    const judgeProtocolId = values.get("judge_protocol_id");
     const judgeApiKey = values.get("judge_api_key");
-    const judgeResponsesUrl = values.get("judge_responses_url");
+    const judgeEndpointUrl = values.get("judge_endpoint_url");
     if (
       (typeof expectedOllamaDigest !== "string" && expectedOllamaDigest !== null) ||
+      (typeof judgeProtocolId !== "string" && judgeProtocolId !== null) ||
       (typeof judgeApiKey !== "string" && judgeApiKey !== null) ||
-      (typeof judgeResponsesUrl !== "string" && judgeResponsesUrl !== null)
+      (typeof judgeEndpointUrl !== "string" && judgeEndpointUrl !== null) ||
+      (judgeProtocolId === null) !== (judgeApiKey === null) ||
+      (judgeProtocolId === null) !== (judgeEndpointUrl === null) ||
+      (typeof judgeApiKey === "string" && !validJudgeApiKey(judgeApiKey))
     ) {
       return invalid();
     }
-    if (
-      judgeResponsesUrl !== null &&
-      !ALLOWED_JUDGE_RESPONSES_URLS.has(judgeResponsesUrl)
-    ) {
-      return invalid();
-    }
+    const normalizedJudgeEndpointUrl =
+      judgeProtocolId === null || judgeEndpointUrl === null
+        ? null
+        : normalizeJudgeEndpointForTransport(
+            judgeProtocolId as SandboxSecurityJudgeProtocolId,
+            judgeEndpointUrl
+          );
     return Object.freeze({
       factory: hasRequestFactory
         ? normalizeRequestFactory(values.get("request_factory"))
         : defaultRequestFactory,
       expected_ollama_digest: expectedOllamaDigest,
+      judge_protocol_id:
+        judgeProtocolId as SandboxSecurityJudgeProtocolId | null,
       judge_api_key: judgeApiKey,
-      judge_responses_url: judgeResponsesUrl
+      judge_endpoint_url: normalizedJudgeEndpointUrl
     });
   } catch {
     return invalid();
@@ -707,14 +775,19 @@ function normalizeHttpRequest(value: unknown): Readonly<SandboxSecurityHttpReque
     }
     if (
       (provider === "ollama" && operation === "chat") ||
-      (provider === "openai" && operation === "responses")
+      (provider === "openai" &&
+        (operation === "responses" || operation === "chat_completions"))
     ) {
       assertExactKeys(values, ["provider", "operation", "body", "signal", "max_response_bytes"]);
       const body = values.get("body");
+      const normalizedBody = copyUint8ArrayInternalBytesAtMost(
+        body,
+        MAX_REQUEST_BODY_BYTES
+      );
       const normalized = {
         provider,
         operation,
-        body: copyUint8ArrayInternalBytes(body),
+        body: normalizedBody,
         signal,
         max_response_bytes: MAX_RESPONSE_BYTES
       };
@@ -728,15 +801,17 @@ function normalizeHttpRequest(value: unknown): Readonly<SandboxSecurityHttpReque
 
 export function createSandboxSecurityDefaultHttpTransport(input: Readonly<{
   expected_ollama_digest: string | null;
+  judge_protocol_id: SandboxSecurityJudgeProtocolId | null;
   judge_api_key: string | null;
-  judge_responses_url: string | null;
+  judge_endpoint_url: string | null;
   request_factory?: SandboxSecurityPrivateRequestFactory;
 }>): SandboxSecurityHttpTransport {
   const {
     factory,
     expected_ollama_digest: expectedOllamaDigest,
+    judge_protocol_id: judgeProtocolId,
     judge_api_key: judgeApiKey,
-    judge_responses_url: judgeResponsesUrl
+    judge_endpoint_url: judgeEndpointUrl
   } = normalizeTransportConfiguration(input);
 
   return Object.freeze({
@@ -778,19 +853,23 @@ export function createSandboxSecurityDefaultHttpTransport(input: Readonly<{
           verified_ollama_digest: verifiedOllamaDigest
         });
       }
-      if (normalizedRequest.provider === "openai" && normalizedRequest.operation === "responses") {
+      if (normalizedRequest.provider === "openai") {
         if (
-          typeof judgeApiKey !== "string" ||
-          judgeApiKey.length === 0 ||
-          judgeApiKey.trim() !== judgeApiKey ||
-          /[\u0000-\u001f\u007f]/.test(judgeApiKey) ||
-          typeof judgeResponsesUrl !== "string" ||
-          !ALLOWED_JUDGE_RESPONSES_URLS.has(judgeResponsesUrl)
+          judgeApiKey === null ||
+          !validJudgeApiKey(judgeApiKey) ||
+          judgeProtocolId === null ||
+          typeof judgeEndpointUrl !== "string" ||
+          normalizedRequest.operation !==
+            judgeOperationForProtocol(judgeProtocolId)
         ) {
           return invalid();
         }
+        const normalizedJudgeEndpointUrl = normalizeJudgeEndpointForTransport(
+          judgeProtocolId,
+          judgeEndpointUrl
+        );
         return requestWire(factory, {
-          url: judgeResponsesUrl,
+          url: normalizedJudgeEndpointUrl,
           method: "POST",
           headers: Object.freeze({
             "content-type": "application/json",

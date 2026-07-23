@@ -8,6 +8,10 @@ const transportPath = new URL(
   import.meta.url
 );
 
+type JudgeProtocolId =
+  | "openai_responses_v1"
+  | "openai_chat_completions_json_v1";
+
 type HttpRequestInput =
   | Readonly<{
       provider: "ollama";
@@ -18,7 +22,7 @@ type HttpRequestInput =
     }>
   | Readonly<{
       provider: "openai";
-      operation: "responses";
+      operation: "responses" | "chat_completions";
       body: Uint8Array;
       signal: AbortSignal;
       max_response_bytes: 65536;
@@ -28,8 +32,9 @@ type TransportModule = {
   equalSandboxSecurityNormalizedDigest?: (left: string, right: string) => boolean;
   createSandboxSecurityDefaultHttpTransport(input: Readonly<{
     expected_ollama_digest: string | null;
+    judge_protocol_id: JudgeProtocolId | null;
     judge_api_key: string | null;
-    judge_responses_url: string | null;
+    judge_endpoint_url: string | null;
     request_factory?: unknown;
   }>): Readonly<{
     request(input: HttpRequestInput): Promise<unknown>;
@@ -502,6 +507,19 @@ function openAiResponsesRequest(
   };
 }
 
+function openAiChatCompletionsRequest(
+  signal: AbortSignal,
+  body: Uint8Array = new Uint8Array([7, 8, 9])
+): HttpRequestInput {
+  return {
+    provider: "openai",
+    operation: "chat_completions",
+    body,
+    signal,
+    max_response_bytes: 65536
+  };
+}
+
 test("REQ-SBX-GENERAL-002 transport normalizes exact plain factory configuration synchronously", () => {
   const configAccessorSentinel = "never-leak-config-accessor-sentinel";
   const factoryAccessorSentinel = "never-leak-factory-accessor-sentinel";
@@ -518,8 +536,9 @@ test("REQ-SBX-GENERAL-002 transport normalizes exact plain factory configuration
   });
   const validConfig = {
     expected_ollama_digest: null,
+    judge_protocol_id: null,
     judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
     request_factory: safeFactory
   };
   const accessorConfig: Record<string, unknown> = {
@@ -544,7 +563,7 @@ test("REQ-SBX-GENERAL-002 transport normalizes exact plain factory configuration
   const inheritedConfig = Object.assign(
     Object.create({ expected_ollama_digest: null }),
     { judge_api_key: null,
-    judge_responses_url: null, request_factory: safeFactory }
+    judge_endpoint_url: null, request_factory: safeFactory }
   );
   const inheritedFactory = Object.create({
     request(): FakeRequest {
@@ -566,7 +585,7 @@ test("REQ-SBX-GENERAL-002 transport normalizes exact plain factory configuration
     {
       name: "missing expected digest",
       input: { judge_api_key: null,
-    judge_responses_url: null, request_factory: safeFactory }
+    judge_endpoint_url: null, request_factory: safeFactory }
     },
     {
       name: "missing OpenAI key",
@@ -632,8 +651,9 @@ test("REQ-SBX-GENERAL-002 transport normalizes exact plain factory configuration
   assert.doesNotThrow(() => {
     transportModule.createSandboxSecurityDefaultHttpTransport({
       expected_ollama_digest: null,
+      judge_protocol_id: null,
       judge_api_key: null,
-    judge_responses_url: null
+    judge_endpoint_url: null
     });
   });
 
@@ -658,6 +678,80 @@ test("REQ-SBX-GENERAL-002 transport normalizes exact plain factory configuration
   }
   assert.equal(configAccessorReads, 0);
   assert.equal(factoryAccessorReads, 0);
+});
+
+test("REQ-SBX-GENERAL-002 transport synchronously rejects every partial Judge configuration tuple", () => {
+  const privateKey = "never-leak-partial-judge-key";
+  let factoryCalls = 0;
+  const requestFactory = Object.freeze({
+    request(): FakeRequest {
+      factoryCalls += 1;
+      return new FakeRequest();
+    }
+  });
+  const partialTuples = [
+    {
+      name: "key only",
+      protocolId: null,
+      apiKey: privateKey,
+      endpointUrl: null
+    },
+    {
+      name: "protocol and endpoint without key",
+      protocolId: "openai_responses_v1",
+      apiKey: null,
+      endpointUrl: "https://doro.lol/v1/responses"
+    },
+    {
+      name: "endpoint only",
+      protocolId: null,
+      apiKey: null,
+      endpointUrl: "https://doro.lol/v1/responses"
+    },
+    {
+      name: "key and endpoint without protocol",
+      protocolId: null,
+      apiKey: privateKey,
+      endpointUrl: "https://doro.lol/v1/responses"
+    },
+    {
+      name: "protocol only",
+      protocolId: "openai_responses_v1",
+      apiKey: null,
+      endpointUrl: null
+    },
+    {
+      name: "protocol and key without endpoint",
+      protocolId: "openai_responses_v1",
+      apiKey: privateKey,
+      endpointUrl: null
+    }
+  ] as const;
+
+  for (const partialTuple of partialTuples) {
+    assert.throws(
+      () =>
+        transportModule.createSandboxSecurityDefaultHttpTransport({
+          expected_ollama_digest: null,
+          judge_protocol_id: partialTuple.protocolId,
+          judge_api_key: partialTuple.apiKey,
+          judge_endpoint_url: partialTuple.endpointUrl,
+          request_factory: requestFactory
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error.name, "sandbox_security_transport_invalid");
+        assert.equal(error.message, "sandbox_security_transport_invalid");
+        assert.equal(
+          `${error.stack ?? ""}${JSON.stringify(error)}`.includes(privateKey),
+          false
+        );
+        return true;
+      },
+      partialTuple.name
+    );
+  }
+  assert.equal(factoryCalls, 0);
 });
 
 test("REQ-SBX-GENERAL-002 transport maps Ollama inventory to its fixed GET wire endpoint", async () => {
@@ -692,8 +786,9 @@ test("REQ-SBX-GENERAL-002 transport maps Ollama inventory to its fixed GET wire 
   };
   const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: null,
+    judge_protocol_id: null,
     judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
     request_factory: fakeRequestFactory
   });
 
@@ -738,8 +833,9 @@ test("REQ-SBX-GENERAL-002 transport revalidates Ollama inventory before its fixe
   ]);
   const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: digest,
+    judge_protocol_id: null,
     judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
     request_factory: harness.factory
   });
   const body = new Uint8Array([123, 34, 120, 34, 58, 49, 125]);
@@ -819,8 +915,9 @@ test("REQ-SBX-GENERAL-002 transport blocks Ollama chat before raw bytes on diges
   ]);
   const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: `sha256:${"a".repeat(64)}`,
+    judge_protocol_id: null,
     judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
     request_factory: harness.factory
   });
 
@@ -859,8 +956,9 @@ for (const inventoryStatus of [201, 204, 299] as const) {
     ]);
     const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
       expected_ollama_digest: `sha256:${digestHex}`,
+      judge_protocol_id: null,
       judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
       request_factory: harness.factory
     });
     let failure: unknown;
@@ -895,7 +993,7 @@ for (const inventoryStatus of [201, 204, 299] as const) {
   });
 }
 
-test("REQ-SBX-GENERAL-002 transport maps OpenAI Responses to its fixed authenticated POST wire endpoint", async () => {
+test("REQ-SBX-GENERAL-002 Responses transport rejects Chat operation before its adapter-derived endpoint is used", async () => {
   const controller = new AbortController();
   const apiKey = "private-openai-key";
   const body = jsonBytes({ model: "gpt-5.4-mini", store: false });
@@ -904,10 +1002,17 @@ test("REQ-SBX-GENERAL-002 transport maps OpenAI Responses to its fixed authentic
   ]);
   const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: null,
+    judge_protocol_id: "openai_responses_v1",
     judge_api_key: apiKey,
-    judge_responses_url: "https://doro.lol/v1/responses",
+    judge_endpoint_url: "https://us.doro.lol/v1/responses",
     request_factory: harness.factory
   });
+
+  await assert.rejects(
+    transport.request(openAiChatCompletionsRequest(controller.signal, body)),
+    { name: "sandbox_security_transport_invalid" }
+  );
+  assert.equal(harness.recorded.length, 0);
 
   const response = await transport.request(openAiResponsesRequest(controller.signal, body));
 
@@ -926,7 +1031,7 @@ test("REQ-SBX-GENERAL-002 transport maps OpenAI Responses to its fixed authentic
   })), [
     {
       method: "POST",
-      origin: "https://doro.lol",
+      origin: "https://us.doro.lol",
       path: "/v1/responses",
       authorization: `Bearer ${apiKey}`,
       content_type: "application/json",
@@ -943,10 +1048,253 @@ test("REQ-SBX-GENERAL-002 transport maps OpenAI Responses to its fixed authentic
     content_type: "application/json",
     body: jsonBytes({ status: "completed" })
   });
+
+  let substitutedEndpointFactoryCalls = 0;
+  for (const [protocolId, endpointUrl] of [
+    [
+      "openai_responses_v1",
+      "https://us.doro.lol/v1/chat/completions"
+    ],
+    [
+      "openai_chat_completions_json_v1",
+      "https://us.doro.lol/v1/responses"
+    ]
+  ] as const) {
+    assert.throws(
+      () =>
+        transportModule.createSandboxSecurityDefaultHttpTransport({
+          expected_ollama_digest: null,
+          judge_protocol_id: protocolId,
+          judge_api_key: apiKey,
+          judge_endpoint_url: endpointUrl,
+          request_factory: {
+            request(): FakeRequest {
+              substitutedEndpointFactoryCalls += 1;
+              return new FakeRequest();
+            }
+          }
+        }),
+      { name: "sandbox_security_transport_invalid" }
+    );
+  }
+  assert.equal(substitutedEndpointFactoryCalls, 0);
+});
+
+test("REQ-SBX-GENERAL-002 Chat transport rejects Responses operation and posts only to its adapter-derived endpoint", async () => {
+  const controller = new AbortController();
+  const apiKey = "private-openai-key";
+  const body = jsonBytes({ model: "gpt-5.4-mini", stream: false });
+  const harness = createScriptedRequestFactory([
+    { chunks: [jsonBytes({ object: "chat.completion" })] }
+  ]);
+  const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
+    expected_ollama_digest: null,
+    judge_protocol_id: "openai_chat_completions_json_v1",
+    judge_api_key: apiKey,
+    judge_endpoint_url: "https://judge.example.test/v1/chat/completions",
+    request_factory: harness.factory
+  });
+
+  await assert.rejects(
+    transport.request(openAiResponsesRequest(controller.signal, body)),
+    { name: "sandbox_security_transport_invalid" }
+  );
+  assert.equal(harness.recorded.length, 0);
+
+  const response = await transport.request(
+    openAiChatCompletionsRequest(controller.signal, body)
+  );
+
+  assert.deepEqual(
+    harness.recorded.map((record) => ({
+      method: record.method,
+      origin: record.origin,
+      path: record.path,
+      authorization: record.authorization,
+      content_type: record.content_type,
+      signal: record.signal,
+      body: record.body === undefined ? undefined : Array.from(record.body)
+    })),
+    [
+      {
+        method: "POST",
+        origin: "https://judge.example.test",
+        path: "/v1/chat/completions",
+        authorization: `Bearer ${apiKey}`,
+        content_type: "application/json",
+        signal: controller.signal,
+        body: Array.from(body)
+      }
+    ]
+  );
+  assert.deepEqual(response, {
+    status: 200,
+    content_type: "application/json",
+    body: jsonBytes({ object: "chat.completion" })
+  });
+});
+
+test("REQ-SBX-GENERAL-002 transport caps every POST request body at 64 KiB before factory use", async () => {
+  const digest = `sha256:${"a".repeat(64)}`;
+  const exactBody = new Uint8Array(65536);
+  const oversizedBody = new Uint8Array(65537);
+  const scenarios = [
+    {
+      name: "Ollama chat",
+      createTransport(requestFactory: unknown) {
+        return transportModule.createSandboxSecurityDefaultHttpTransport({
+          expected_ollama_digest: digest,
+          judge_protocol_id: null,
+          judge_api_key: null,
+          judge_endpoint_url: null,
+          request_factory: requestFactory
+        });
+      },
+      createRequest(body: Uint8Array) {
+        return ollamaChatRequest(new AbortController().signal, body);
+      },
+      plans: [
+        {
+          chunks: [
+            jsonBytes({
+              models: [
+                {
+                  name: "qwen3:8b",
+                  model: "qwen3:8b",
+                  digest: "a".repeat(64)
+                }
+              ]
+            })
+          ]
+        },
+        { chunks: [jsonBytes({})] }
+      ],
+      expectedFactoryCalls: 2
+    },
+    {
+      name: "OpenAI Responses",
+      createTransport(requestFactory: unknown) {
+        return transportModule.createSandboxSecurityDefaultHttpTransport({
+          expected_ollama_digest: null,
+          judge_protocol_id: "openai_responses_v1",
+          judge_api_key: "private-openai-key",
+          judge_endpoint_url: "https://doro.lol/v1/responses",
+          request_factory: requestFactory
+        });
+      },
+      createRequest(body: Uint8Array) {
+        return openAiResponsesRequest(new AbortController().signal, body);
+      },
+      plans: [{ chunks: [jsonBytes({})] }],
+      expectedFactoryCalls: 1
+    },
+    {
+      name: "OpenAI Chat Completions",
+      createTransport(requestFactory: unknown) {
+        return transportModule.createSandboxSecurityDefaultHttpTransport({
+          expected_ollama_digest: null,
+          judge_protocol_id: "openai_chat_completions_json_v1",
+          judge_api_key: "private-openai-key",
+          judge_endpoint_url:
+            "https://judge.example.test/v1/chat/completions",
+          request_factory: requestFactory
+        });
+      },
+      createRequest(body: Uint8Array) {
+        return openAiChatCompletionsRequest(
+          new AbortController().signal,
+          body
+        );
+      },
+      plans: [{ chunks: [jsonBytes({})] }],
+      expectedFactoryCalls: 1
+    }
+  ] as const;
+
+  for (const scenario of scenarios) {
+    const rejectedHarness = createScriptedRequestFactory(scenario.plans);
+    const rejectedTransport = scenario.createTransport(rejectedHarness.factory);
+    let pendingRejection: Promise<unknown> | undefined;
+
+    assert.doesNotThrow(() => {
+      pendingRejection = rejectedTransport.request(
+        scenario.createRequest(oversizedBody)
+      );
+    }, `${scenario.name} preserves the async request API`);
+    assert.ok(pendingRejection !== undefined);
+    await assert.rejects(pendingRejection, {
+      name: "sandbox_security_transport_invalid",
+      message: "sandbox_security_transport_invalid"
+    });
+    assert.equal(
+      rejectedHarness.recorded.length,
+      0,
+      `${scenario.name} reached the request factory`
+    );
+
+    const acceptedHarness = createScriptedRequestFactory(scenario.plans);
+    const acceptedTransport = scenario.createTransport(acceptedHarness.factory);
+    await acceptedTransport.request(scenario.createRequest(exactBody));
+
+    assert.equal(
+      acceptedHarness.recorded.length,
+      scenario.expectedFactoryCalls,
+      `${scenario.name} rejected the exact limit`
+    );
+    assert.equal(
+      acceptedHarness.recorded.at(-1)?.body?.byteLength,
+      65536,
+      `${scenario.name} changed the exact-limit body length`
+    );
+  }
+});
+
+test("REQ-SBX-GENERAL-002 transport bounds native request body length before allocating its copy", () => {
+  const source = readFileSync(transportPath, "utf8");
+  const boundedCopy = source.indexOf(
+    "function copyUint8ArrayInternalBytesAtMost("
+  );
+  const nativeLengthRead = source.indexOf(
+    "const byteLength = Reflect.apply(",
+    boundedCopy
+  );
+  const limitCheck = source.indexOf(
+    "if (byteLength > maxByteLength)",
+    nativeLengthRead
+  );
+  const allocation = source.indexOf(
+    "const copy = new Uint8Array(byteLength);",
+    limitCheck
+  );
+  const normalizedRequestCopy = source.indexOf(
+    "const normalizedBody = copyUint8ArrayInternalBytesAtMost(",
+    allocation
+  );
+  const requestLimit = source.indexOf(
+    "MAX_REQUEST_BODY_BYTES",
+    normalizedRequestCopy
+  );
+
+  assert.ok(boundedCopy >= 0);
+  assert.ok(nativeLengthRead > boundedCopy);
+  assert.ok(limitCheck > nativeLengthRead);
+  assert.ok(allocation > limitCheck);
+  assert.ok(normalizedRequestCopy > allocation);
+  assert.ok(requestLimit > normalizedRequestCopy);
+  assert.equal(
+    source.includes(
+      "if (normalizedBody.byteLength > MAX_REQUEST_BODY_BYTES)"
+    ),
+    false
+  );
 });
 
 test("REQ-SBX-GENERAL-002 transport copies request bodies from Uint8Array internal bytes without hostile iterators", async () => {
   class HostileRequestBody extends Uint8Array {
+    override get byteLength(): number {
+      throw new Error("never-use-hostile-request-byte-length");
+    }
+
     override [Symbol.iterator](): ArrayIterator<number> {
       return new Uint8Array([9, 8])[Symbol.iterator]();
     }
@@ -959,8 +1307,9 @@ test("REQ-SBX-GENERAL-002 transport copies request bodies from Uint8Array intern
   ]);
   const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: null,
+    judge_protocol_id: "openai_responses_v1",
     judge_api_key: "private-openai-key",
-    judge_responses_url: "https://doro.lol/v1/responses",
+    judge_endpoint_url: "https://doro.lol/v1/responses",
     request_factory: harness.factory
   });
   const pending = transport.request(openAiResponsesRequest(controller.signal, body));
@@ -983,8 +1332,9 @@ test("REQ-SBX-GENERAL-002 transport copies request bodies from Uint8Array intern
   let factoryCalls = 0;
   const proxyTransport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: null,
+    judge_protocol_id: "openai_responses_v1",
     judge_api_key: "private-openai-key",
-    judge_responses_url: "https://doro.lol/v1/responses",
+    judge_endpoint_url: "https://doro.lol/v1/responses",
     request_factory: {
       request(): FakeRequest {
         factoryCalls += 1;
@@ -1060,8 +1410,9 @@ test("REQ-SBX-GENERAL-002 transport normalizes only exact plain closed-union req
     const harness = createScriptedRequestFactory([{ chunks: [jsonBytes({})] }]);
     const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
       expected_ollama_digest: null,
+      judge_protocol_id: null,
       judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
       request_factory: harness.factory
     });
 
@@ -1087,8 +1438,9 @@ test("REQ-SBX-GENERAL-002 transport rejects forged and proxy AbortSignals with f
     let factoryCalls = 0;
     const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
       expected_ollama_digest: null,
+      judge_protocol_id: null,
       judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
       request_factory: {
         request(): FakeRequest {
           factoryCalls += 1;
@@ -1112,40 +1464,59 @@ test("REQ-SBX-GENERAL-002 transport rejects forged and proxy AbortSignals with f
   }
 });
 
-test("REQ-SBX-GENERAL-002 transport fails closed without a safe OpenAI key and never leaks key or request bytes", async () => {
-  const bodySentinel = "never-leak-openai-request-body";
-  const body = jsonBytes({ input: bodySentinel });
-  const invalidKeys: readonly (string | null)[] = [
-    null,
-    "",
-    "   ",
-    "private-key\r\nx-forged: sentinel"
-  ];
+test("REQ-SBX-GENERAL-002 transport validates the 4096 UTF-8 byte Judge key boundary synchronously", () => {
+  const keyMarker = "never-leak-transport-key-boundary-";
+  const exactKey = `${keyMarker}${"k".repeat(4094 - keyMarker.length)}é`;
+  const oversizedKey = `${exactKey}k`;
+  let factoryCalls = 0;
+  const requestFactory = Object.freeze({
+    request(): FakeRequest {
+      factoryCalls += 1;
+      return new FakeRequest();
+    }
+  });
 
-  for (const apiKey of invalidKeys) {
-    const harness = createScriptedRequestFactory([]);
-    const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
+  assert.equal(new TextEncoder().encode(exactKey).byteLength, 4096);
+  assert.equal(new TextEncoder().encode(oversizedKey).byteLength, 4097);
+  assert.doesNotThrow(() =>
+    transportModule.createSandboxSecurityDefaultHttpTransport({
       expected_ollama_digest: null,
-      judge_api_key: apiKey,
-    judge_responses_url: "https://doro.lol/v1/responses",
-      request_factory: harness.factory
-    });
-    let failure: unknown;
-    try {
-      await transport.request(openAiResponsesRequest(new AbortController().signal, body));
-    } catch (error) {
-      failure = error;
-    }
+      judge_protocol_id: "openai_responses_v1",
+      judge_api_key: exactKey,
+      judge_endpoint_url: "https://doro.lol/v1/responses",
+      request_factory: requestFactory
+    })
+  );
 
-    assert.ok(failure instanceof Error);
-    assert.equal(failure.name, "sandbox_security_transport_invalid");
-    const exposed = `${failure.name}\n${failure.message}\n${failure.stack ?? ""}\n${JSON.stringify(failure)}`;
-    assert.equal(exposed.includes(bodySentinel), false);
-    if (apiKey !== null && apiKey.trim() !== "") {
-      assert.equal(exposed.includes(apiKey), false);
-    }
-    assert.equal(harness.recorded.length, 0);
+  for (const [scenario, apiKey] of [
+    ["over 4096 UTF-8 bytes", oversizedKey],
+    ["empty", ""],
+    ["untrimmed", " private-key"],
+    ["control character", "private-key\r\nx-forged: sentinel"]
+  ] as const) {
+    assert.throws(
+      () =>
+        transportModule.createSandboxSecurityDefaultHttpTransport({
+          expected_ollama_digest: null,
+          judge_protocol_id: "openai_responses_v1",
+          judge_api_key: apiKey,
+          judge_endpoint_url: "https://doro.lol/v1/responses",
+          request_factory: requestFactory
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.equal(error.name, "sandbox_security_transport_invalid");
+        assert.equal(error.message, "sandbox_security_transport_invalid");
+        assert.equal(
+          `${error.stack ?? ""}${JSON.stringify(error)}`.includes(keyMarker),
+          false
+        );
+        return true;
+      },
+      scenario
+    );
   }
+  assert.equal(factoryCalls, 0);
 });
 
 test("REQ-SBX-GENERAL-002 transport normalizes and requires a single application JSON response content type", async () => {
@@ -1157,8 +1528,9 @@ test("REQ-SBX-GENERAL-002 transport normalizes and requires a single application
   ]);
   const acceptedTransport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: null,
+    judge_protocol_id: null,
     judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
     request_factory: acceptedHarness.factory
   });
 
@@ -1185,8 +1557,9 @@ test("REQ-SBX-GENERAL-002 transport normalizes and requires a single application
     ]);
     const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
       expected_ollama_digest: null,
+      judge_protocol_id: null,
       judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
       request_factory: harness.factory
     });
     let failure: unknown;
@@ -1210,8 +1583,9 @@ test("REQ-SBX-GENERAL-002 transport exposes non-2xx status and body but rejects 
   ]);
   const errorTransport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: null,
+    judge_protocol_id: null,
     judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
     request_factory: errorHarness.factory
   });
   assert.deepEqual(
@@ -1234,8 +1608,9 @@ test("REQ-SBX-GENERAL-002 transport exposes non-2xx status and body but rejects 
   ]);
   const chatTransport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: digest,
+    judge_protocol_id: null,
     judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
     request_factory: chatHarness.factory
   });
   const chatResponse = await chatTransport.request(
@@ -1258,8 +1633,9 @@ test("REQ-SBX-GENERAL-002 transport exposes non-2xx status and body but rejects 
     ]);
     const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
       expected_ollama_digest: null,
+      judge_protocol_id: null,
       judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
       request_factory: harness.factory
     });
     let failure: unknown;
@@ -1306,8 +1682,9 @@ test("REQ-SBX-GENERAL-002 transport enforces the incremental 64 KiB cap and rele
   const successHarness = createScriptedRequestFactory([{ chunks: [exactChunk] }]);
   const successTransport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: null,
+    judge_protocol_id: null,
     judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
     request_factory: successHarness.factory
   });
   const successResponse = await successTransport.request(
@@ -1330,8 +1707,9 @@ test("REQ-SBX-GENERAL-002 transport enforces the incremental 64 KiB cap and rele
   ]);
   const oversizedTransport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: null,
+    judge_protocol_id: null,
     judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
     request_factory: oversizedHarness.factory
   });
   await assert.rejects(
@@ -1347,8 +1725,9 @@ test("REQ-SBX-GENERAL-002 transport enforces the incremental 64 KiB cap and rele
   ]);
   const invalidTransport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: null,
+    judge_protocol_id: null,
     judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
     request_factory: invalidHarness.factory
   });
   let failure: unknown;
@@ -1372,8 +1751,9 @@ test("REQ-SBX-GENERAL-002 transport enforces the incremental 64 KiB cap and rele
   const hostileResponse = new FakeResponse();
   const hostileTransport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: null,
+    judge_protocol_id: null,
     judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
     request_factory: hostileHarness.factory
   });
   const hostilePending = hostileTransport.request(
@@ -1421,8 +1801,9 @@ test("REQ-SBX-GENERAL-002 transport counts TypedArray internal bytes instead of 
   const response = new FakeResponse();
   const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: null,
+    judge_protocol_id: null,
     judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
     request_factory: harness.factory
   });
   const pending = transport.request(ollamaInventoryRequest(controller.signal));
@@ -1450,8 +1831,9 @@ test("REQ-SBX-GENERAL-002 transport safely closes request and response error or 
     const harness = createControlledRequestFactory();
     const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
       expected_ollama_digest: null,
+      judge_protocol_id: null,
       judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
       request_factory: harness.factory
     });
     const pending = transport.request(ollamaInventoryRequest(controller.signal));
@@ -1478,8 +1860,9 @@ test("REQ-SBX-GENERAL-002 transport safely closes request and response error or 
     const response = new FakeResponse();
     const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
       expected_ollama_digest: null,
+      judge_protocol_id: null,
       judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
       request_factory: harness.factory
     });
     const pending = transport.request(ollamaInventoryRequest(controller.signal));
@@ -1517,8 +1900,9 @@ test("REQ-SBX-GENERAL-002 transport safely closes request and response error or 
   });
   const cleanupTransport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: null,
+    judge_protocol_id: null,
     judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
     request_factory: cleanupHarness.factory
   });
   const cleanupPending = cleanupTransport.request(
@@ -1560,8 +1944,9 @@ test("REQ-SBX-GENERAL-002 transport settles abort error and close races once and
   preAbortedController.abort(new Error("never-leak-abort-reason"));
   const preAbortedTransport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: null,
+    judge_protocol_id: null,
     judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
     request_factory: {
       request(): FakeRequest {
         preAbortedFactoryCalls += 1;
@@ -1581,8 +1966,9 @@ test("REQ-SBX-GENERAL-002 transport settles abort error and close races once and
   const lateResponse = new FakeResponse();
   const abortTransport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: null,
+    judge_protocol_id: null,
     judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
     request_factory: abortHarness.factory
   });
   const abortSettlements: string[] = [];
@@ -1617,8 +2003,9 @@ test("REQ-SBX-GENERAL-002 transport settles abort error and close races once and
   const errorHarness = createControlledRequestFactory();
   const errorTransport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: null,
+    judge_protocol_id: null,
     judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
     request_factory: errorHarness.factory
   });
   const errorPending = errorTransport.request(ollamaInventoryRequest(errorController.signal));
@@ -1641,8 +2028,9 @@ test("REQ-SBX-GENERAL-002 transport rejects duplicate active responses and relea
   const duplicateResponse = new FakeResponse();
   const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: null,
+    judge_protocol_id: null,
     judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
     request_factory: harness.factory
   });
   const pending = transport.request(ollamaInventoryRequest(controller.signal));
@@ -1705,8 +2093,9 @@ test("REQ-SBX-GENERAL-002 transport rolls back getter and listener-registration 
     }
     const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
       expected_ollama_digest: null,
+      judge_protocol_id: null,
       judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
       request_factory: harness.factory
     });
     const settlements: string[] = [];
@@ -1743,8 +2132,9 @@ test("REQ-SBX-GENERAL-002 transport rolls back getter and listener-registration 
   });
   const responseTransport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: null,
+    judge_protocol_id: null,
     judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
     request_factory: responseHarness.factory
   });
   const responsePending = responseTransport.request(
@@ -1776,8 +2166,9 @@ test("REQ-SBX-GENERAL-002 transport rolls back getter and listener-registration 
   const requestBody = jsonBytes({ raw: "never-send-after-registration-abort" });
   const requestTransport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: null,
+    judge_protocol_id: "openai_responses_v1",
     judge_api_key: "private-openai-key",
-    judge_responses_url: "https://doro.lol/v1/responses",
+    judge_endpoint_url: "https://doro.lol/v1/responses",
     request_factory: requestHarness.factory
   });
   const requestSettlements: string[] = [];
@@ -1817,8 +2208,9 @@ test("REQ-SBX-GENERAL-002 transport destroys a shared cascading socket exactly o
   const controller = new AbortController();
   const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
     expected_ollama_digest: null,
+    judge_protocol_id: null,
     judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
     request_factory: harness.factory
   });
   const pending = transport.request(ollamaInventoryRequest(controller.signal));
@@ -1922,8 +2314,9 @@ test("REQ-SBX-GENERAL-002 transport rejects every invalid Ollama inventory befor
     const harness = createScriptedRequestFactory([{ chunks: invalidCase.chunks }]);
     const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
       expected_ollama_digest: invalidCase.expected_digest,
+      judge_protocol_id: null,
       judge_api_key: null,
-    judge_responses_url: null,
+    judge_endpoint_url: null,
       request_factory: harness.factory
     });
     let failure: unknown;

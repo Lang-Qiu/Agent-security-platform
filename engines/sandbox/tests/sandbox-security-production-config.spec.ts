@@ -50,14 +50,21 @@ type CreateProductionTransport = (
 
 const VALID_DIGEST = `sha256:${"a".repeat(64)}`;
 const PRIVATE_API_KEY = "private-judge-key-sentinel";
+const RESPONSES_PROTOCOL_ID = "openai_responses_v1";
+const CHAT_PROTOCOL_ID = "openai_chat_completions_json_v1";
 const DORO_BASE_URL = "https://doro.lol/v1";
-const DORO_RESPONSES_URL = "https://doro.lol/v1/responses";
+const DORO_ENDPOINT_URL = "https://doro.lol/v1/responses";
+const US_DORO_BASE_URL = "https://us.doro.lol/v1";
+const US_DORO_ENDPOINT_URL = "https://us.doro.lol/v1/responses";
+const CHAT_BASE_URL = "https://judge.example.test/openai/v1";
+const CHAT_ENDPOINT_URL =
+  "https://judge.example.test/openai/v1/chat/completions";
 const REQUESTED_MODEL = "gpt-5.4-mini";
-const DORO_PROVIDER_ID = "doro";
 
 function validJudgeEnv(): Record<string, string | undefined> {
   return {
     SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST: VALID_DIGEST,
+    SANDBOX_SECURITY_JUDGE_PROTOCOL: RESPONSES_PROTOCOL_ID,
     SANDBOX_SECURITY_JUDGE_BASE_URL: DORO_BASE_URL,
     SANDBOX_SECURITY_JUDGE_MODEL: REQUESTED_MODEL,
     SANDBOX_SECURITY_JUDGE_API_KEY: PRIVATE_API_KEY,
@@ -121,6 +128,7 @@ try {
 
 const ALLOWLISTED_ENVIRONMENT_NAMES = [
   "SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST",
+  "SANDBOX_SECURITY_JUDGE_PROTOCOL",
   "SANDBOX_SECURITY_JUDGE_BASE_URL",
   "SANDBOX_SECURITY_JUDGE_MODEL",
   "SANDBOX_SECURITY_JUDGE_API_KEY",
@@ -217,8 +225,18 @@ for (const [scenario, digest] of Object.entries(INVALID_DIGESTS)) {
   });
 }
 
-test("REQ-SBX-GENERAL-002 local_and_judge requires trimmed key exact enable allowlisted base and safe model", () => {
+test("REQ-SBX-GENERAL-002 local_and_judge requires trimmed key exact enable safe base and safe model", () => {
   const invalidEnvironments = [
+    { ...validJudgeEnv(), SANDBOX_SECURITY_JUDGE_PROTOCOL: undefined },
+    { ...validJudgeEnv(), SANDBOX_SECURITY_JUDGE_PROTOCOL: "" },
+    {
+      ...validJudgeEnv(),
+      SANDBOX_SECURITY_JUDGE_PROTOCOL: ` ${RESPONSES_PROTOCOL_ID} `
+    },
+    {
+      ...validJudgeEnv(),
+      SANDBOX_SECURITY_JUDGE_PROTOCOL: "provider_inferred_protocol"
+    },
     { ...validJudgeEnv(), SANDBOX_SECURITY_JUDGE_API_KEY: undefined },
     { ...validJudgeEnv(), SANDBOX_SECURITY_JUDGE_API_KEY: "" },
     { ...validJudgeEnv(), SANDBOX_SECURITY_JUDGE_API_KEY: " \t\n " },
@@ -238,14 +256,6 @@ test("REQ-SBX-GENERAL-002 local_and_judge requires trimmed key exact enable allo
     { ...validJudgeEnv(), SANDBOX_SECURITY_JUDGE_BASE_URL: "" },
     {
       ...validJudgeEnv(),
-      SANDBOX_SECURITY_JUDGE_BASE_URL: "https://api.openai.com/v1"
-    },
-    {
-      ...validJudgeEnv(),
-      SANDBOX_SECURITY_JUDGE_BASE_URL: "https://doro.lol/v1/"
-    },
-    {
-      ...validJudgeEnv(),
       SANDBOX_SECURITY_JUDGE_BASE_URL: "https://user:pass@doro.lol/v1"
     },
     {
@@ -255,6 +265,14 @@ test("REQ-SBX-GENERAL-002 local_and_judge requires trimmed key exact enable allo
     {
       ...validJudgeEnv(),
       SANDBOX_SECURITY_JUDGE_BASE_URL: "http://doro.lol/v1"
+    },
+    {
+      ...validJudgeEnv(),
+      SANDBOX_SECURITY_JUDGE_BASE_URL: "https://127.0.0.1/v1"
+    },
+    {
+      ...validJudgeEnv(),
+      SANDBOX_SECURITY_JUDGE_BASE_URL: "https://doro.lol:8443/v1"
     },
     { ...validJudgeEnv(), SANDBOX_SECURITY_JUDGE_MODEL: undefined },
     { ...validJudgeEnv(), SANDBOX_SECURITY_JUDGE_MODEL: "" },
@@ -286,12 +304,187 @@ test("REQ-SBX-GENERAL-002 local_and_judge requires trimmed key exact enable allo
     ollama_configured: true,
     judge_configured: true,
     ollama_digest: VALID_DIGEST,
-    judge_provider_id: DORO_PROVIDER_ID,
+    judge_protocol_id: RESPONSES_PROTOCOL_ID,
+    judge_endpoint_policy_id: "operator_https_fqdn_v1",
     judge_base_url: DORO_BASE_URL,
-    judge_responses_url: DORO_RESPONSES_URL,
+    judge_endpoint_url: DORO_ENDPOINT_URL,
     judge_requested_model: REQUESTED_MODEL
   });
   assert.equal(JSON.stringify(config).includes(PRIVATE_API_KEY), false);
+});
+
+test("REQ-SBX-GENERAL-002 local_and_judge caps Judge keys at 4096 UTF-8 bytes without disclosure", () => {
+  const keyMarker = "never-leak-config-key-boundary-";
+  const exactKey = `${keyMarker}${"k".repeat(4094 - keyMarker.length)}é`;
+  const oversizedKey = `${exactKey}k`;
+
+  assert.equal(new TextEncoder().encode(exactKey).byteLength, 4096);
+  assert.equal(new TextEncoder().encode(oversizedKey).byteLength, 4097);
+  const config = normalizeForTest(
+    {
+      ...validJudgeEnv(),
+      SANDBOX_SECURITY_JUDGE_API_KEY: exactKey
+    },
+    "local_and_judge"
+  );
+  assert.equal(config.summary.judge_configured, true);
+  assert.equal(JSON.stringify(config).includes(keyMarker), false);
+
+  assert.throws(
+    () =>
+      normalizeForTest(
+        {
+          ...validJudgeEnv(),
+          SANDBOX_SECURITY_JUDGE_API_KEY: oversizedKey
+        },
+        "local_and_judge"
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.name, "sandbox_security_production_config_invalid");
+      assert.equal(error.message, "sandbox_security_production_config_invalid");
+      assert.equal(
+        `${error.stack ?? ""}${JSON.stringify(error)}`.includes(keyMarker),
+        false
+      );
+      return true;
+    }
+  );
+});
+
+test("REQ-SBX-GENERAL-002 local_and_judge bounds the raw Judge key before whitespace canonicalization", () => {
+  const keyMarker = "never-leak-raw-key-boundary";
+  const exactRawKey = ` ${keyMarker}${" ".repeat(
+    4096 - keyMarker.length - 1
+  )}`;
+  const oversizedRawKey = `${exactRawKey} `;
+
+  assert.equal(exactRawKey.length, 4096);
+  assert.equal(oversizedRawKey.length, 4097);
+  const config = normalizeForTest(
+    {
+      ...validJudgeEnv(),
+      SANDBOX_SECURITY_JUDGE_API_KEY: exactRawKey
+    },
+    "local_and_judge"
+  );
+  assert.equal(config.summary.judge_configured, true);
+  assert.equal(JSON.stringify(config).includes(keyMarker), false);
+
+  assert.throws(
+    () =>
+      normalizeForTest(
+        {
+          ...validJudgeEnv(),
+          SANDBOX_SECURITY_JUDGE_API_KEY: oversizedRawKey
+        },
+        "local_and_judge"
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.equal(error.name, "sandbox_security_production_config_invalid");
+      assert.equal(error.message, "sandbox_security_production_config_invalid");
+      assert.equal(
+        `${error.stack ?? ""}${JSON.stringify(error)}`.includes(keyMarker),
+        false
+      );
+      return true;
+    }
+  );
+});
+
+test("REQ-SBX-GENERAL-002 production config checks raw Judge key length before trim", () => {
+  const source = readFileSync(PRODUCTION_CONFIG_PATH, "utf8");
+  const rawKeyRead = source.indexOf(
+    "const rawKey = readOwnEnvironmentValue(env, JUDGE_API_KEY_ENV);"
+  );
+  const rawKeyLimit = source.indexOf(
+    "rawKey.length > SANDBOX_SECURITY_JUDGE_API_KEY_MAX_UTF8_BYTES",
+    rawKeyRead
+  );
+  const keyTrim = source.indexOf(
+    "const normalizedKey = rawKey.trim();",
+    rawKeyLimit
+  );
+  const utf8Validation = source.indexOf(
+    "validateJudgeApiKey(normalizedKey)",
+    keyTrim
+  );
+
+  assert.ok(rawKeyRead >= 0);
+  assert.ok(rawKeyLimit > rawKeyRead);
+  assert.ok(keyTrim > rawKeyLimit);
+  assert.ok(utf8Validation > keyTrim);
+});
+
+test("REQ-SBX-GENERAL-002 local_and_judge canonicalizes a non-fixed Doro base through the independent protocol adapter", () => {
+  const config = normalizeForTest(
+    {
+      ...validJudgeEnv(),
+      SANDBOX_SECURITY_JUDGE_BASE_URL: ` ${US_DORO_BASE_URL}/ `
+    },
+    "local_and_judge"
+  );
+
+  assert.deepEqual(config.summary, {
+    ollama_configured: true,
+    judge_configured: true,
+    ollama_digest: VALID_DIGEST,
+    judge_protocol_id: RESPONSES_PROTOCOL_ID,
+    judge_endpoint_policy_id: "operator_https_fqdn_v1",
+    judge_base_url: US_DORO_BASE_URL,
+    judge_endpoint_url: US_DORO_ENDPOINT_URL,
+    judge_requested_model: REQUESTED_MODEL
+  });
+});
+
+for (const paddedEnableFlag of [" 1", "1 ", "1\n", "\t1"]) {
+  test(`REQ-SBX-GENERAL-002 local_and_judge rejects non-exact enable flag ${JSON.stringify(paddedEnableFlag)}`, () => {
+    assertInvalidConfig(() =>
+      normalizeForTest(
+        {
+          ...validJudgeEnv(),
+          SANDBOX_SECURITY_ENABLE_JUDGE: paddedEnableFlag
+        },
+        "local_and_judge"
+      )
+    );
+  });
+}
+
+test("REQ-SBX-GENERAL-002 local_and_judge exposes the explicit Chat binding without exposing its key", () => {
+  const config = normalizeForTest(
+    {
+      ...validJudgeEnv(),
+      SANDBOX_SECURITY_JUDGE_PROTOCOL: CHAT_PROTOCOL_ID,
+      SANDBOX_SECURITY_JUDGE_BASE_URL: `${CHAT_BASE_URL}/`
+    },
+    "local_and_judge"
+  );
+
+  assert.deepEqual(config.summary, {
+    ollama_configured: true,
+    judge_configured: true,
+    ollama_digest: VALID_DIGEST,
+    judge_protocol_id: CHAT_PROTOCOL_ID,
+    judge_endpoint_policy_id: "operator_https_fqdn_v1",
+    judge_base_url: CHAT_BASE_URL,
+    judge_endpoint_url: CHAT_ENDPOINT_URL,
+    judge_requested_model: REQUESTED_MODEL
+  });
+  assert.equal(JSON.stringify(config).includes(PRIVATE_API_KEY), false);
+});
+
+test("REQ-SBX-GENERAL-002 missing or unknown Judge protocol fails with no default inference or key disclosure", () => {
+  for (const protocol of [undefined, "unknown_protocol"] as const) {
+    const env = {
+      ...validJudgeEnv(),
+      SANDBOX_SECURITY_JUDGE_PROTOCOL: protocol,
+      SANDBOX_SECURITY_JUDGE_API_KEY: "protocol-private-key-sentinel"
+    };
+
+    assertInvalidConfig(() => normalizeForTest(env, "local_and_judge"));
+  }
 });
 
 test("REQ-SBX-GENERAL-002 invalid Judge errors never expose the private key", () => {
@@ -404,6 +597,7 @@ test("REQ-SBX-GENERAL-002 local does not read exact Judge environment keys", () 
     SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST: VALID_DIGEST
   } as Record<string, string | undefined>;
   for (const key of [
+    "SANDBOX_SECURITY_JUDGE_PROTOCOL",
     "SANDBOX_SECURITY_JUDGE_BASE_URL",
     "SANDBOX_SECURITY_JUDGE_MODEL",
     "SANDBOX_SECURITY_JUDGE_API_KEY",
@@ -472,6 +666,7 @@ test("REQ-SBX-GENERAL-002 production factory reads configuration for only the se
   const ruleOnly = withProcessEnvironment(
     {
       SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST: undefined,
+      SANDBOX_SECURITY_JUDGE_PROTOCOL: undefined,
       SANDBOX_SECURITY_JUDGE_BASE_URL: undefined,
       SANDBOX_SECURITY_JUDGE_MODEL: undefined,
       SANDBOX_SECURITY_JUDGE_API_KEY: undefined,
@@ -487,6 +682,7 @@ test("REQ-SBX-GENERAL-002 production factory reads configuration for only the se
   const local = withProcessEnvironment(
     {
       SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST: ` ${VALID_DIGEST} `,
+      SANDBOX_SECURITY_JUDGE_PROTOCOL: undefined,
       SANDBOX_SECURITY_JUDGE_BASE_URL: undefined,
       SANDBOX_SECURITY_JUDGE_MODEL: undefined,
       SANDBOX_SECURITY_JUDGE_API_KEY: undefined,
@@ -499,6 +695,7 @@ test("REQ-SBX-GENERAL-002 production factory reads configuration for only the se
   const judge = withProcessEnvironment(
     {
       SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST: VALID_DIGEST,
+      SANDBOX_SECURITY_JUDGE_PROTOCOL: RESPONSES_PROTOCOL_ID,
       SANDBOX_SECURITY_JUDGE_BASE_URL: ` ${DORO_BASE_URL} `,
       SANDBOX_SECURITY_JUDGE_MODEL: ` ${REQUESTED_MODEL} `,
       SANDBOX_SECURITY_JUDGE_API_KEY: ` ${PRIVATE_API_KEY} `,
@@ -507,9 +704,13 @@ test("REQ-SBX-GENERAL-002 production factory reads configuration for only the se
     () => createProductionConfig("local_and_judge")
   );
   assert.equal(judge.summary.judge_configured, true);
-  assert.equal(judge.summary.judge_provider_id, DORO_PROVIDER_ID);
+  assert.equal(judge.summary.judge_protocol_id, RESPONSES_PROTOCOL_ID);
+  assert.equal(
+    judge.summary.judge_endpoint_policy_id,
+    "operator_https_fqdn_v1"
+  );
   assert.equal(judge.summary.judge_base_url, DORO_BASE_URL);
-  assert.equal(judge.summary.judge_responses_url, DORO_RESPONSES_URL);
+  assert.equal(judge.summary.judge_endpoint_url, DORO_ENDPOINT_URL);
   assert.equal(judge.summary.judge_requested_model, REQUESTED_MODEL);
   assert.equal(JSON.stringify(judge).includes(PRIVATE_API_KEY), false);
 });
@@ -531,9 +732,10 @@ test("REQ-SBX-GENERAL-002 config views are fresh deeply frozen exact and credent
     "ollama_configured",
     "judge_configured",
     "ollama_digest",
-    "judge_provider_id",
+    "judge_protocol_id",
+    "judge_endpoint_policy_id",
     "judge_base_url",
-    "judge_responses_url",
+    "judge_endpoint_url",
     "judge_requested_model"
   ]);
   assert.deepEqual(JSON.parse(JSON.stringify(first)), {
@@ -542,9 +744,10 @@ test("REQ-SBX-GENERAL-002 config views are fresh deeply frozen exact and credent
       ollama_configured: true,
       judge_configured: true,
       ollama_digest: VALID_DIGEST,
-      judge_provider_id: DORO_PROVIDER_ID,
+      judge_protocol_id: RESPONSES_PROTOCOL_ID,
+      judge_endpoint_policy_id: "operator_https_fqdn_v1",
       judge_base_url: DORO_BASE_URL,
-      judge_responses_url: DORO_RESPONSES_URL,
+      judge_endpoint_url: DORO_ENDPOINT_URL,
       judge_requested_model: REQUESTED_MODEL
     }
   });
@@ -584,7 +787,7 @@ test("REQ-SBX-GENERAL-002 transport binding rejects non-identical views without 
   assertInvalidConfig(() => createProductionTransport(config));
 });
 
-test("REQ-SBX-GENERAL-002 production tree grants environment reads only to the three-key config module", () => {
+test("REQ-SBX-GENERAL-002 production tree grants six environment reads only to the config module", () => {
   const sources = productionTypeScriptFiles(PRODUCTION_ROOT).map((path) => ({
     path,
     source: readFileSync(path, "utf8")
@@ -603,6 +806,7 @@ test("REQ-SBX-GENERAL-002 production tree grants environment reads only to the t
   ].map((match) => match[1]);
   assert.deepEqual(uppercaseStringLiterals, [
     "SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST",
+    "SANDBOX_SECURITY_JUDGE_PROTOCOL",
     "SANDBOX_SECURITY_JUDGE_BASE_URL",
     "SANDBOX_SECURITY_JUDGE_MODEL",
     "SANDBOX_SECURITY_JUDGE_API_KEY",
@@ -632,16 +836,33 @@ test("REQ-SBX-GENERAL-002 source seals key transfer and clears config-owned refe
   const weakMapDeclaration = source.indexOf("new WeakMap<");
   const deleteBinding = source.indexOf("PRIVATE_CONFIG_STATES.delete(config);");
   const clearBoundKey = source.indexOf("privateState.judge_api_key = null;");
+  const bindPrivateProtocol = source.indexOf(
+    "judge_protocol_id: judgeProtocolId"
+  );
+  const clearBoundProtocol = source.indexOf(
+    "privateState.judge_protocol_id = null;"
+  );
+  const readBoundProtocol = source.indexOf(
+    "let judgeProtocolId = privateState.judge_protocol_id;"
+  );
   const createTransport = source.indexOf(
     "return createSandboxSecurityDefaultHttpTransport({"
+  );
+  const passPrivateProtocol = source.indexOf(
+    "judge_protocol_id: judgeProtocolId",
+    createTransport
   );
   const passPrivateKey = source.indexOf(
     "judge_api_key: judgeApiKey",
     createTransport
   );
-  const passResponsesUrl = source.indexOf(
-    "judge_responses_url: judgeResponsesUrl",
+  const passEndpointUrl = source.indexOf(
+    "judge_endpoint_url: judgeEndpointUrl",
     createTransport
+  );
+  const clearIntermediateProtocol = source.indexOf(
+    "judgeProtocolId = null;",
+    passPrivateProtocol
   );
   const clearIntermediateKey = source.indexOf(
     "judgeApiKey = null;",
@@ -651,9 +872,15 @@ test("REQ-SBX-GENERAL-002 source seals key transfer and clears config-owned refe
   assert.ok(weakMapDeclaration >= 0);
   assert.ok(deleteBinding > weakMapDeclaration);
   assert.ok(clearBoundKey > deleteBinding);
+  assert.ok(bindPrivateProtocol > weakMapDeclaration);
+  assert.ok(readBoundProtocol > deleteBinding);
+  assert.ok(clearBoundProtocol > deleteBinding);
   assert.ok(createTransport > clearBoundKey);
+  assert.ok(createTransport > clearBoundProtocol);
+  assert.ok(passPrivateProtocol > createTransport);
   assert.ok(passPrivateKey > createTransport);
-  assert.ok(passResponsesUrl > createTransport);
+  assert.ok(passEndpointUrl > createTransport);
+  assert.ok(clearIntermediateProtocol > passPrivateProtocol);
   assert.ok(clearIntermediateKey > passPrivateKey);
 });
 
@@ -667,7 +894,7 @@ test("REQ-SBX-GENERAL-002 local_and_judge summary never exposes credential or fo
   assert.match(serialized, /doro\.lol\/v1\/responses/);
 });
 
-test("REQ-SBX-GENERAL-002 transport binding consumes private key and resolved responses URL once", () => {
+test("REQ-SBX-GENERAL-002 transport binding consumes private protocol key and endpoint state once", () => {
   const config = normalizeForTest(validJudgeEnv(), "local_and_judge");
   const transport = createProductionTransport(config);
   assert.equal(typeof transport.request, "function");
@@ -675,3 +902,18 @@ test("REQ-SBX-GENERAL-002 transport binding consumes private key and resolved re
   assertInvalidConfig(() => createProductionTransport(config));
 });
 
+test("REQ-SBX-GENERAL-002 valid Chat config creates a protocol-bound transport exactly once", () => {
+  const config = normalizeForTest(
+    {
+      ...validJudgeEnv(),
+      SANDBOX_SECURITY_JUDGE_PROTOCOL: CHAT_PROTOCOL_ID,
+      SANDBOX_SECURITY_JUDGE_BASE_URL: CHAT_BASE_URL
+    },
+    "local_and_judge"
+  );
+
+  const transport = createProductionTransport(config);
+  assert.equal(typeof transport.request, "function");
+  assert.equal(Object.isFrozen(transport), true);
+  assertInvalidConfig(() => createProductionTransport(config));
+});
