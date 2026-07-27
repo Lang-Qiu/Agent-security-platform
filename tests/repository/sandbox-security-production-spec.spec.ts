@@ -52,6 +52,10 @@ function assertGeneral002SpecReviewCorrections(text: string): void {
   assert.match(compact, /public production composition constructs the default transport internally/);
   assert.match(compact, /authorization header is added only inside the default transport/);
   assert.match(compact, /`createSandboxSecurityProductionEngine` does not accept a transport/);
+  assert.match(compact, /six approved Judge\/Ollama environment variables/);
+  assert.doesNotMatch(compact, /five approved Judge\/Ollama environment variables/);
+  assert.match(text, /- `SANDBOX_SECURITY_JUDGE_PROTOCOL`/);
+  assert.doesNotMatch(text, /SANDBOX_SECURITY_JUDGE_PROTOCOL_ID/);
 
   assert.match(text, /`max_output_tokens: 4096`/);
   assert.match(text, /`text\.format` strict JSON Schema/);
@@ -196,8 +200,9 @@ test("REQ-SBX-GENERAL-002 Spec review gate rejects unsafe sanitizer keys", () =>
 });
 
 test("REQ-SBX-GENERAL-002 Spec review gate rejects truth-readable capture", () => {
-  const weakened = readText(SPEC_PATH).replace(
-    /`truth\/` is absent from every\s+granted read path/,
+  const weakened = replaceRequired(
+    readText(SPEC_PATH),
+    /`truth\/` is absent from every\s+granted\s+read\s+path/,
     "`truth/` is available but capture promises not to read it"
   );
   assert.throws(() => assertGeneral002SpecReviewCorrections(weakened));
@@ -291,11 +296,32 @@ test("REQ-SBX-GENERAL-002 owns active sprint state without freezing one transiti
   );
   assert.match(
     extractSection(sprint, "## Current Work"),
-    /Current execution node: Phase 1, P1-T1 boundary gate\./
+    /Current execution node: Phase [1-7], P[1-7]-T[1-9][^.]*\./
   );
   assert.match(
     extractSection(sprint, "## Status"),
     /^(?:SPEC_PENDING_REVIEW|SPEC_REVIEW_CHANGES_REQUIRED|SPEC_FIXED_PENDING_REVIEW|SPEC_REVIEWED_PENDING_USER_APPROVAL|SPEC_APPROVED_PLAN_IN_PROGRESS|PLAN_PENDING_REVIEW|PLAN_REVIEW_CHANGES_REQUIRED|PLAN_FIXED_PENDING_REVIEW|PLAN_REVIEWED_PENDING_USER_APPROVAL|IMPLEMENTATION_IN_PROGRESS|PHASE_[1-7]_IN_PROGRESS|P[1-7]-T[1-9]_IN_PROGRESS|COMPLETE_PENDING_REVIEW)$/
+  );
+});
+
+test("REQ-SBX-GENERAL-002 durable docs describe current production scope", () => {
+  const readme = readText("README.md");
+  const progress = readText("docs/progress.md");
+  const compactReadme = readme.replace(/\s+/g, " ");
+  const compactProgress = progress.replace(/^>\s*/gm, "").replace(/\s+/g, " ");
+  assert.match(
+    compactReadme,
+    /Sandbox Security Production currently adds production detector composition, deterministic sanitization, selected Judge protocol adapters, and sealed benchmark tooling/
+  );
+  assert.doesNotMatch(readme, /Sandbox Security Core 当前仍未包含:/);
+  assert.doesNotMatch(readme, /不开始 GENERAL-002/);
+  assert.match(
+    compactProgress,
+    /superseded by the 2026-07-23 explicit protocol selection and operator adapter amendments/i
+  );
+  assert.match(
+    compactProgress,
+    /superseded by the next section's P6 local hardware compatibility profile/i
   );
 });
 

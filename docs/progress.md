@@ -6642,6 +6642,11 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 
 ## 2026-07-22 - REQ-SBX-GENERAL-002 Dynamic Judge Provider amendment implementation (deterministic)
 
+> Supersession note: this entry's historical “five judge binding fields” wording
+> is superseded by the 2026-07-23 explicit protocol selection and operator
+> adapter amendments, which make the closed Judge/Ollama child environment and
+> persisted Judge binding six-field/six-variable contracts.
+
 - phase/task: Amendment to GENERAL-002 / Dynamic Judge Provider
 - status: DETERMINISTIC_GATES_IN_PROGRESS → GREEN for production + benchmark unit suites
 - amendment: `docs/superpowers/specs/2026-07-22-sandbox-security-dynamic-judge-provider-amendment.md`
@@ -6703,3 +6708,366 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
      - `SANDBOX_SECURITY_JUDGE_API_KEY=<accepted key>`
      - `SANDBOX_SECURITY_ENABLE_JUDGE=1`
   4. Re-run P6-T4: prepare-capture-bundle → evaluate → seal → live-evidence tests
+
+## 2026-07-22 - REQ-SBX-GENERAL-002 P6-T4 live capture BLOCKED on Ollama qualification budget
+
+- phase/task: Phase 6 / P6-T4
+- status: **BLOCKED**
+- HEAD ancestry: `2fdeec9` + uncommitted sealer/live-evidence scaffolding
+- completed in this continuation:
+  - Installed Ollama `0.6.8` and started loopback listener at `127.0.0.1:11434`
+  - Pulled digest-pinned `qwen3:8b` (`sha256:500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41`)
+  - Mapped Judge env to amendment names only:
+    - `SANDBOX_SECURITY_JUDGE_BASE_URL=https://doro.lol/v1`
+    - `SANDBOX_SECURITY_JUDGE_MODEL=grok-4.5` (Doro available model)
+    - `SANDBOX_SECURITY_ENABLE_JUDGE=1`
+    - `SANDBOX_SECURITY_JUDGE_API_KEY` set (length 51; value not recorded)
+  - Added truth-blind sealer + live-evidence tests (deterministic GREEN):
+    - `scripts/benchmark/sandbox-security/seal.ts`
+    - `tests/benchmark/sandbox-security-live-evidence.spec.ts`
+  - `prepare-capture-bundle.ts` parent now launches capture-live under Node `--permission`
+  - Raised benchmark canonical-hash node budget so 300-slot cassettes can hash
+- live qualification blocker (non-secret):
+  - production Ollama qualification budget is hard-coded to `1000ms`
+    (`engines/sandbox/src/security-production/composition.ts` `QUALIFICATION_TIMEOUT_MS`
+    and `ollama-local-detector.ts` `warmed_probe_latency_ms <= 1000`)
+  - measured production prewarm chat via real transport on this host:
+    warm load ~21s; steady prewarm ~3760–3840ms
+  - `qualifySandboxSecurityOllama` under 1000ms abort fails every attempt
+    (`sandbox_security_transport_aborted`)
+  - host tuning tried and insufficient: keep-alive warm, `OLLAMA_NUM_THREAD=16`,
+    flash attention, single parallel slot; runner remains CPU `qwen3:8b` Q4_K_M
+- intentionally not fabricated:
+  - accepted `samples/sandbox-security-benchmark/v1/capture.json`
+  - `samples/sandbox-security-benchmark/v1/replay/`
+  - `samples/sandbox-security-benchmark/v1/seal.json`
+- plan gate preserved:
+  - Phase 6 cannot pass while P6-T4 is BLOCKED
+  - Phase 7 must not start without accepted live seal
+- next operator actions:
+  1. Provide host where production prewarm probe completes in <1000ms (faster
+     CPU/GPU Ollama path) without changing frozen production budgets, **or**
+  2. Explicitly authorize a Spec/Plan amendment to the qualification latency
+     budget after independent review
+  3. Then re-run prepare-capture-bundle → evaluate → seal → live-evidence GREEN
+
+## 2026-07-22 - REQ-SBX-GENERAL-002 P6-T4 resumed after approved qualification adjustment
+
+- phase/task: Phase 6 / P6-T4
+- status: `DETERMINISTIC_GATES_IN_PROGRESS`
+- the preceding `1000ms` qualification blocker is historical only for P6 live
+  capture. The user explicitly approved `5000ms` for that live Ollama
+  qualification controller and warmed-prewarm ceiling; ordinary production
+  composition and hermetic replay remain `1000ms`. The independent Judge
+  readiness budget remains `4000ms`; GENERAL-001 policy budgets and detector
+  slot timeouts are unchanged.
+- completed in this continuation:
+  - candidate cassette hashing now validates and hashes each bounded replay unit
+    before hashing the ordered inventory, while generic canonical JSON hashing
+    retains its original bound
+  - the truth-blind sealer and accepted-evidence validator reject every
+    successful Judge replay whose resolved model differs from the capture
+    manifest `judge_resolved_model`
+  - focused P6 contract, capture, evaluator, isolation, corpus, source-admission,
+    and live-evidence tests: `131/131` passed
+  - benchmark and sandbox TypeScript checks passed
+- accepted live artifacts remain intentionally absent:
+  - `samples/sandbox-security-benchmark/v1/capture.json`
+  - `samples/sandbox-security-benchmark/v1/replay/`
+  - `samples/sandbox-security-benchmark/v1/seal.json`
+- next: complete deterministic repository/engine/build gates, then run the
+  permission-limited live capture. A failed live prerequisite or readiness gate
+  records P6-T4 as `BLOCKED`; Phase 7 remains prohibited without an accepted seal.
+
+## 2026-07-22 - REQ-SBX-GENERAL-002 P6-T4 BLOCKED on frozen Judge readiness
+
+- phase/task: Phase 6 / P6-T4
+- status: **BLOCKED**
+- deterministic fixes completed before the live attempt:
+  - capture-bundle mirrors `shared/constants` and launches only the mirrored
+    entrypoint; an offline permission-child regression reaches named missing
+    live configuration instead of `ERR_MODULE_NOT_FOUND`
+  - the child preserves write-only capture output: parent-owned bundle/output
+    validation remains outside the child, and decision-tree hashes are derived
+    from the exact in-memory serialized envelopes and verified against disk by
+    the permission smoke
+  - `seal.ts` and the Phase 6 command examples now use the actual
+    `capture-bundle/capture-output/candidate` layout
+- deterministic verification:
+  - focused P6 isolation, sink, live-capture, evaluator, and live-evidence
+    suites: `56/56` passing
+  - `npm run typecheck:benchmark:sandbox-security` passing
+  - corpus validator passing for the fixed 300-sample corpus
+  - `git diff --check` passing
+- controlled live qualification:
+  - all six approved environment values were present and validated without
+    printing their values
+  - `prepare-capture-bundle.ts` created the truth-blind permission bundle and
+    reached the non-benchmark strict-schema Judge readiness gate
+  - the child exited `1` with
+    `sandbox_security_capture_live_reject:judge_readiness_timeout`; the frozen
+    independent readiness limit is `4000ms`
+- evidence boundary preserved:
+  - no candidate package was written to the temporary capture output
+  - no `samples/sandbox-security-benchmark/v1/capture.json`, `replay/`, or
+    `seal.json` exists or was fabricated
+  - no credentials, request body, provider prose, raw input, or truth were
+    logged in this record
+- next: restore declared Judge readiness so its strict-schema response settles
+  within `4000ms`, then restart P6-T4 from the controlled live capture. Do not
+  retry through a fallback, relax the budget, or begin Phase 7 while blocked.
+
+## 2026-07-22 - REQ-SBX-GENERAL-002 P6-T4 candidate/replay binding review fix
+
+- phase/task: Phase 6 / P6-T4
+- status: deterministic review correction GREEN; live qualification remains
+  **BLOCKED** on the recorded frozen Judge readiness prerequisite
+- review finding: the evaluator and sealer independently hashed the decision
+  tree and candidate cassette, but did not verify that every decision
+  projection hash matched its same-ordinal cassette unit. A modified candidate
+  could therefore present evaluated decisions inconsistent with the replay
+  that would be sealed.
+- RED evidence: new evaluator and sealer regressions both failed with the
+  expected missing rejection before implementation.
+- fix: added one closed candidate-cassette normalizer and required both the
+  evaluator and truth-blind sealer to validate every fixture ID and canonical
+  decision-projection hash against the cassette before accepting a report or
+  publishing evidence.
+- GREEN evidence:
+  - focused evaluator + live-evidence regression suites: `29/29` passing
+  - benchmark contracts: `25/25` passing
+  - focused P6 sink/capture/contracts/evaluator/isolation/live-evidence suite:
+    `83/83` passing
+  - `npm run typecheck:benchmark:sandbox-security` passing
+- preserved boundary: no live retry, fallback, timeout change, candidate,
+  capture, replay, or seal artifact was created. Phase 7 remains unstarted.
+
+## 2026-07-22 - REQ-SBX-GENERAL-002 P6-T4 containment and candidate-layout review fix
+
+- phase/task: Phase 6 / P6-T4
+- status: deterministic review correction GREEN; live qualification remains
+  **BLOCKED** on the recorded frozen Judge readiness prerequisite
+- review findings:
+  - the direct live-capture entry accepted the bundle root itself as the output
+    root, which could grant candidate-write authority over the bundle namespace
+  - evaluator and sealer read only named candidate artifacts, allowing
+    undeclared root or decision-tree files to bypass the content-free candidate
+    package boundary
+- RED evidence:
+  - live-capture regression failed because a bundle-root output reached
+    `missing_live_config` instead of `capture_output_escape`
+  - contracts, evaluator, and sealer regressions failed because the shared
+    layout guard was absent and an `untracked-content.txt` artifact was accepted
+- fix:
+  - live capture now accepts only the materialized
+    `bundle_root/capture-output` write root
+  - one closed contracts guard rejects candidate-root and `decisions/` entries
+    outside the exact declared set, including symlinks and non-file entry types
+  - evaluator and truth-blind sealer invoke the same guard before accepting
+    candidate hashes or publishing evidence
+- GREEN evidence:
+  - live-capture suite: `15/15` passed
+  - benchmark contracts: `26/26` passed
+  - evaluator suite: `12/12` passed
+  - live-evidence suite: `19/19` passed
+- review capacity: four independent read-only reviewer requests were attempted
+  after the correction, but the subagent service reported `agent thread limit
+  reached`; no independent approval is claimed from those unavailable slots.
+- preserved boundary: no live retry, fallback, timeout change, candidate,
+  capture, replay, or seal artifact was created. Phase 7 remains unstarted.
+
+## 2026-07-22 - REQ-SBX-GENERAL-002 P6-T4 closed candidate/config review correction
+
+- phase/task: Phase 6 / P6-T4
+- status: deterministic review correction GREEN; live qualification remains
+  **BLOCKED** on the recorded frozen Judge readiness prerequisite
+- review findings:
+  - candidate package and decision-projection JSON admitted unknown benign
+    fields despite recomputed hashes
+  - `capture-live.ts` directly read dynamic Judge/Ollama environment variables
+    instead of obtaining the nonsecret binding from `production-config.ts`
+- RED evidence:
+  - evaluator regressions rejected neither an opaque package field nor a
+    hash-bound opaque projection field
+  - live-evidence regression rejected neither a non-sensitive opaque capture
+    manifest field
+  - capture child source gate found direct `process.env` reads
+- fix:
+  - added exact candidate package, cassette, and decision-projection
+    normalizers; evaluator and truth-blind sealer validate the closed package,
+    same-ordinal cassette binding, and exact candidate layout before use
+  - capture child obtains the nonsecret provider/model/digest binding from the
+    production-config summary; only `production-config.ts` reads the six
+    approved dynamic variables
+  - retained the one strict-schema Judge readiness request at exactly `4000ms`
+    with no retry, fallback, or timeout relaxation
+  - aligned the permission-child regression to the generic
+    `missing_live_config` rejection, because detailed environment validation is
+    now correctly owned by `production-config.ts`
+- GREEN evidence:
+  - candidate contract/evaluator/live-evidence suites: `60/60` passed
+  - capture-live suite: `16/16` passed
+  - targeted permission-child missing-config regression passed
+  - `npm run typecheck:benchmark:sandbox-security` passed
+  - `npm run test:engine:sandbox:production` passed in an isolated network
+    namespace (`295/295`), avoiding the existing loopback Ollama listener
+- preserved boundary: no live retry, fallback, timeout change, candidate,
+  capture, replay, or seal artifact was created. P6-T4 remains blocked and
+  Phase 7 remains unstarted.
+
+## 2026-07-23 - REQ-SBX-GENERAL-002 P6-only qualification boundary correction
+
+- phase/task: Phase 6 / P6-T4
+- status: deterministic correction GREEN; P6-T4 remains **BLOCKED** on the
+  external live configuration and frozen Judge-readiness gate.
+- RED evidence:
+  - the P6 special composition rejected the intended exact `{ runtime }` input
+    because it still required caller-selected `mode`; it also accepted a caller
+    supplied `mode: "local"`
+  - ordinary Ollama qualification accepted a caller-supplied `5000ms` numeric
+    argument, so the `1001..5000ms` interval was not provably P6-only
+  - benchmark composition had no P6-specific Ollama qualification adapter
+- fix:
+  - the special live-capture composition now accepts only exact `{ runtime }`,
+    fixes `mode: "local_and_judge"`, and owns the `5000ms` controller
+  - ordinary qualification exposes no policy parameter and is fixed at
+    `1000ms`; a source-only P6 adapter is fixed at `5000ms`
+  - benchmark live and replay ports use separate local-detector factories,
+    accepting only `5000ms` and `1000ms` respectively; source gates prove the
+    P6-only symbols have no other production importers
+- GREEN evidence:
+  - composition and Ollama focused suite: `39/39` passed
+  - isolated benchmark-composition suite: `16/16` passed
+  - Phase 6 capture/contracts/evaluator/isolation/repository aggregate suite:
+    `298/298` passed
+  - isolated production suite, frozen sandbox engine suite, and full repository
+    suite passed; sandbox and benchmark TypeScript checks, corpus validation,
+    frontend build, and `git diff --check` passed
+- external preflight:
+  - current shell has no value for any of the six approved live configuration
+    variables; no repository `.env` file is available to load
+  - loopback Ollama responds successfully, contains exactly one `qwen3:8b`
+    model entry, and reports a structurally valid digest, but it cannot replace
+    the external Judge configuration, credential, and strict-schema readiness
+    response
+- re-review status:
+  - independent specification and quality/security re-review requests were
+    issued after GREEN, but two constrained review sessions did not return and
+    a final independent quality/security request failed with upstream model
+    `503`; no independent APPROVED result is claimed
+  - no retry, fallback, timeout relaxation, synthetic candidate, capture,
+    replay, seal, or Phase 7 work was performed
+
+## 2026-07-23 - REQ-SBX-GENERAL-002 P6-T4 Doro Responses quota blocker
+
+- phase/task: Phase 6 / P6-T4
+- status: **BLOCKED** on externally provisioned Doro Responses capacity; no
+  production timeout or behavior was changed.
+- nonsecret configuration evidence:
+  - all six approved live variables normalized successfully as
+    `local_and_judge`; credentials and digest were not printed or recorded
+  - five post-warm P6 Ollama qualification samples passed within the approved
+    `5000ms` budget, ranging from `3.83s` to `4.15s`
+- Judge readiness evidence:
+  - an exact `capture-live.ts` readiness probe timed out at the frozen
+    `4000ms` budget (about `4003ms` elapsed)
+  - a separate non-persistent diagnostic of the same synthetic strict-schema
+    request later received Doro HTTP `403`, safely classified as
+    `insufficient_quota`; no provider body, request body, headers, or secrets
+    were recorded
+  - authenticated Doro `/v1/models` listed `gpt-5.4-mini` but not historical
+    `grok-4.5`; a temporary `grok-4.5` compatibility probe received HTTP `503`
+  - these diagnostics are not a capture retry, fallback, cassette, or
+    acceptance record; no alternate model was persisted or used for controlled
+    capture
+- decision:
+  - no successful strict-schema response exists from which to derive a stable
+    replacement for the approved `4000ms` Judge-readiness limit
+  - do not alter timeout/code, weaken thresholds, fabricate evidence, or start
+    Phase 7
+- preserved boundary:
+  - no accepted candidate package, `capture.json`, `replay/`, or `seal.json`
+    was created
+  - no credential, raw provider response, benchmark input, truth, or fixture
+    decision was written to this record
+- next external prerequisite: provision Doro Responses quota/access for a
+  currently listed model, then rerun controlled P6-T4 qualification unchanged.
+
+## 2026-07-26 - REQ-SBX-GENERAL-002 P6-T4 blocked on frozen local evaluation slot
+
+> Supersession note: this blocker is superseded by the next section's P6 local
+> hardware compatibility profile for controlled live capture only. Ordinary
+> production and P7 replay retain the frozen GENERAL-001 timing limits.
+
+- phase/task: Phase 6 / P6-T4
+- status: **BLOCKED** on local `qwen3:8b` inference performance; no production
+  policy, detector timeout, work budget, or acceptance rule was changed.
+- nonsecret preflight evidence:
+  - the mode-`600` local environment file supplied all six required variables
+    without printing their values
+  - an operator-only cold prewarm completed successfully in `23173ms`
+  - five subsequent P6 qualification probes all completed inside the approved
+    `5000ms` ceiling: `3474/3501/3712/4072/3909ms`
+- controlled live capture evidence:
+  - capture root:
+    `/Agent-security-platform/tmp/sandbox-security-capture-live-20260726014703`
+  - the permission parent prepared the fixed 300-input bundle with inputs tree
+    hash `5b95a264e3fd4fb393e313a0dbdd3ea099af6257e9ef3a6e75790e0f6c659407`
+  - the child passed readiness and qualification, then exited `1` with
+    `sandbox_security_capture_live_reject:provider_outcome_not_acceptance_capable`
+  - Ollama status logs showed evaluation chat requests being cancelled at the
+    inherited approximately `1000ms` local detector slot boundary
+- content-free latency diagnostics:
+  - two synthetic, non-corpus local detector requests completed successfully in
+    `6709ms` and `3632ms`
+  - the second request spent `160ms` on 196 prompt tokens and `3448ms` on 22
+    output tokens; model load was already warm (`11ms`)
+  - the host exposes no GPU device or Ollama GPU backend; the active runner is
+    CPU-only on a 16-logical-CPU Intel i7-1360P
+- frozen boundary preserved:
+  - the approved Spec limits the P6 `5000ms` exception to qualification,
+    warmed prewarm, and non-benchmark Judge readiness
+  - inherited rule/local/Judge evaluation slots remain `100/1000/4000ms`, with
+    a `5000ms` normal work budget; the Spec explicitly forbids extending the
+    per-evaluation local slot through P6 qualification
+  - invoked provider failures remain acceptance-blocking and were not rewritten
+    as `not_called` or synthetic responses
+- evidence boundary preserved:
+  - the candidate staging file remained empty
+  - no accepted `capture.json`, `replay/`, `seal.json`, or evaluation report was
+    created or fabricated
+  - no credential, request/response body, raw benchmark input, truth, header, or
+    per-fixture decision was logged
+- next prerequisite: run the pinned `qwen3:8b` on hardware that returns the
+  production local detector response inside `1000ms` and preserves the full
+  `5000ms` Engine work budget, then rerun capture -> evaluate -> seal. Any
+  timeout amendment instead requires an explicit new Spec/Plan decision and an
+  independent review before another controlled capture. Phase 7 remains gated.
+## 2026-07-26 - REQ-SBX-GENERAL-002 P6 local hardware compatibility profile
+
+- phase/task: Phase 6 / P6-T4 controlled live acceptance
+- status: IMPLEMENTATION_GREEN_LIVE_ACCEPTANCE_PENDING
+- user-approved P6-only profile:
+  `p6_local_hardware_compatibility_v1` uses `20000ms` for Judge readiness,
+  Ollama qualification, warmed prewarm, local detector slot, and Judge detector
+  slot, with a `40000ms` normal work budget for each Engine evaluation; the
+  300 evaluations do not share one budget
+- isolation: ordinary production composition and P7 hermetic replay retain the
+  GENERAL-001 `5000ms` normal work budget and `100/1000/4000ms`
+  rule/local/Judge slots; the P6 profile is source-controlled rather than
+  caller-, environment-, or CLI-selectable
+- TDD evidence: focused timing tests first failed on the former `5000/1000/4000`
+  limits, then passed after the minimal P6-only resolver and manifest binding
+  implementation
+- deterministic validation: focused production/live timing suite `96/96`,
+  production sandbox suite `415/415`, benchmark and sandbox TypeScript checks
+  passed; live-evidence tests remain intentionally RED until a real accepted
+  capture, 300 replay envelopes, and seal exist
+- next: rerun controlled live capture, truth-aware evaluation, truth-blind seal,
+  and live-evidence acceptance under the approved profile
+- supersession note: earlier P6 progress entries that describe `5000ms`
+  readiness/qualification or the `5000ms` normal Engine work budget, block on
+  the inherited `1000ms` local detector slot, or block on the inherited
+  `4000ms` Judge detector/readiness limit remain historical evidence only;
+  they are superseded for controlled P6 live capture by this profile, while
+  ordinary production and P7 timing remain unchanged

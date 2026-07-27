@@ -4339,6 +4339,28 @@ test("REQ-SBX-GENERAL-001 work budget starts at evaluate entry", async () => {
   assert.ok(track.mono >= 1);
 });
 
+test("REQ-SBX-GENERAL-002 P6 seam preserves the frozen public Engine dependency-bag behavior", async () => {
+  let injectedResolverCalls = 0;
+  const deps = {
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime: createRuntime().ports
+  };
+  Object.defineProperty(deps, "profileResolver", {
+    enumerable: true,
+    get() {
+      injectedResolverCalls += 1;
+      throw new Error("extra_dependency_getter_invoked");
+    }
+  });
+
+  const engine = createSandboxSecurityEngine(deps as never);
+
+  await assert.doesNotReject(() => engine.evaluate(makeEvalRequest() as never));
+  assert.equal(injectedResolverCalls, 0);
+});
+
 test("REQ-SBX-GENERAL-001 evaluate starts budget before internal request normalization", async () => {
   const monoCalls: number[] = [];
   const runtime = {
@@ -4905,6 +4927,32 @@ test("REQ-SBX-GENERAL-001 pre-ID budget exhaustion prevents detectors and return
   });
   await assert.rejects(() => engine.evaluate(makeEvalRequest() as never));
   assert.equal(counter.n, 0);
+});
+
+test("REQ-SBX-GENERAL-001 ordinary entry budget expires before profile resolution", async () => {
+  let monotonicCalls = 0;
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime: {
+      now: () => "2026-07-15T12:00:00.000Z",
+      nextDecisionId: () => DECISION,
+      monotonicNowMs: () => {
+        monotonicCalls += 1;
+        return monotonicCalls === 1 ? 0 : 6000;
+      },
+      scheduleTimeout: () => () => {}
+    }
+  });
+  await assert.rejects(
+    () => engine.evaluate(makeEvalRequest() as never),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.name === "sandbox_security_internal_invalid" &&
+      error.message === "pre_id_evaluation_budget_exhausted"
+  );
+  assert.equal(monotonicCalls, 2);
 });
 
 test("REQ-SBX-GENERAL-001 budget exhaustion after decision ID enters one fail-closed epilogue", async () => {

@@ -27,7 +27,9 @@ Completions endpoint established that:
 - the response is an OpenAI-compatible `chat.completion` JSON envelope;
 - its assistant content is a JSON object with the frozen Judge schema shape;
 - the response reports a resolved model and a terminal finish reason; and
-- the request settles inside the frozen `4000ms` readiness budget.
+- the request settles inside the then-current P6 readiness budget; controlled
+  live acceptance now uses the source-controlled
+  `p6_local_hardware_compatibility_v1` `20000ms` readiness budget.
 
 The diagnostics emitted only status, normalized media/envelope categories,
 elapsed time, and fixed classifications. They emitted no credential, request
@@ -126,7 +128,8 @@ configured protocol and posts only to that adapter-derived endpoint.
 
 Readiness uses the same selected request/parser pair as benchmark evaluation.
 It remains one synthetic request, has no retry or fallback, is not counted as
-a benchmark decision, and remains capped at exactly `4000ms`.
+a benchmark decision, and is capped at exactly `20000ms` for controlled P6
+live capture under `p6_local_hardware_compatibility_v1`.
 
 ## Capture, Replay, And Seal Binding
 

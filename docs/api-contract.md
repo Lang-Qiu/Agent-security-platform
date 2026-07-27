@@ -2049,6 +2049,12 @@ and sanitized Judge payloads are not public platform contracts.
 validates authority within that budget, and returns the versioned
 `sandbox-security-decision.v1` decision boundary.
 
+The GENERAL-002 controlled live benchmark uses a production-internal
+`p6_local_hardware_compatibility_v1` execution profile with a `40000ms` entry
+budget and `20000ms` local/Judge slots. This is not a public API profile or
+request field. Ordinary production and P7 replay retain the fixed GENERAL-001
+budget and slots.
+
 ### Compatibility adapters
 
 `createSandboxSecurityMonitorDecisionAdapter` creates the

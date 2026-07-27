@@ -33,15 +33,33 @@ const PRODUCTION_ROOT = resolve(
   "engines/sandbox/src/security-production"
 );
 const SECURITY_INDEX = join(SECURITY_ROOT, "index.ts");
+const SECURITY_ENGINE = join(SECURITY_ROOT, "engine.ts");
 const SANITIZED_BOUNDARY = join(SECURITY_ROOT, "sanitized-boundary.ts");
 const DETERMINISTIC_SANITIZER = join(
   PRODUCTION_ROOT,
   "deterministic-sanitizer.ts"
 );
+const PRODUCTION_COMPOSITION = join(PRODUCTION_ROOT, "composition.ts");
 const HTTP_TRANSPORT = join(PRODUCTION_ROOT, "http-transport.ts");
 const PRODUCTION_CONFIG = join(PRODUCTION_ROOT, "production-config.ts");
+const OPENAI_CHAT_JUDGE_CONTRACT = join(
+  PRODUCTION_ROOT,
+  "openai-chat-judge-contract.ts"
+);
+const BENCHMARK_COMPOSITION = join(
+  PRODUCTION_ROOT,
+  "benchmark-composition.ts"
+);
 const SANITIZER_HELPER =
   "deriveSandboxSecurityExternalTokenRegistry";
+const INTERNAL_ENGINE_FACTORY =
+  "createSandboxSecurityP6LiveCaptureEngine";
+const PRIVATE_P6_ENGINE_HELPER =
+  "createSandboxSecurityP6LiveCaptureProductionEngine";
+const P6_LIVE_COMPOSITION_FACTORY =
+  "createSandboxSecurityProductionLiveCaptureCompositionWithPorts";
+const BENCHMARK_LIVE_ENGINE_FACTORY =
+  "createSandboxSecurityLiveCaptureEngine";
 const SANITIZER_VERSION_EXPORT =
   "SANDBOX_SECURITY_DETERMINISTIC_SANITIZER_VERSION";
 const SANITIZER_FACTORY_EXPORT =
@@ -100,8 +118,10 @@ interface ScanRoots {
   readonly securityRoot: string;
   readonly productionRoot: string;
   readonly securityIndex: string;
+  readonly securityEngine: string;
   readonly sanitizedBoundary: string;
   readonly deterministicSanitizer: string;
+  readonly productionComposition: string;
   readonly httpTransport: string;
   readonly productionConfig: string;
 }
@@ -132,8 +152,10 @@ const ROOTS: ScanRoots = {
   securityRoot: SECURITY_ROOT,
   productionRoot: PRODUCTION_ROOT,
   securityIndex: SECURITY_INDEX,
+  securityEngine: SECURITY_ENGINE,
   sanitizedBoundary: SANITIZED_BOUNDARY,
   deterministicSanitizer: DETERMINISTIC_SANITIZER,
+  productionComposition: PRODUCTION_COMPOSITION,
   httpTransport: HTTP_TRANSPORT,
   productionConfig: PRODUCTION_CONFIG
 };
@@ -1597,6 +1619,23 @@ function analyzeSource(source: SourceRecord, roots: ScanRoots = ROOTS): SourceAn
       continue;
     }
     if (
+      source.path === roots.productionComposition &&
+      ts.isExportDeclaration(statement) &&
+      statement.moduleSpecifier === undefined &&
+      statement.exportClause !== undefined &&
+      ts.isNamedExports(statement.exportClause) &&
+      statement.exportClause.elements.some(
+        (element) =>
+          (element.propertyName?.text ?? element.name.text) ===
+          PRIVATE_P6_ENGINE_HELPER
+      )
+    ) {
+      violations.push(
+        `${displayPath(source.path, roots)}:${sourceFile.getLineAndCharacterOfPosition(statement.getStart(sourceFile)).line + 1}: private P6 helper export is forbidden`
+      );
+      continue;
+    }
+    if (
       ts.isImportEqualsDeclaration(statement) &&
       ts.isExternalModuleReference(statement.moduleReference)
     ) {
@@ -1611,6 +1650,245 @@ function analyzeSource(source: SourceRecord, roots: ScanRoots = ROOTS): SourceAn
     edge.importedNames.length === 1 &&
     edge.importedNames[0] === SANITIZER_HELPER &&
     !edge.hasImportAlias;
+
+  const isApprovedInternalEngineFactoryEdge = (edge: ImportEdge): boolean =>
+    source.path === roots.productionComposition &&
+    edge.kind === "static-import" &&
+    edge.resolvedPath === roots.securityEngine &&
+    edge.importedNames.length === 1 &&
+    edge.importedNames[0] === INTERNAL_ENGINE_FACTORY &&
+    !edge.hasImportAlias;
+
+  if (edges.some(isApprovedInternalEngineFactoryEdge)) {
+    let approvedCallCount = 0;
+    const inspectInternalEngineFactoryUse = (node: ts.Node): void => {
+      if (
+        ts.isIdentifier(node) &&
+        node.text === INTERNAL_ENGINE_FACTORY
+      ) {
+        const isImportBinding =
+          ts.isImportSpecifier(node.parent) &&
+          node.parent.name === node &&
+          node.parent.propertyName === undefined;
+        let owner: ts.Node | undefined = node.parent;
+        while (
+          owner !== undefined &&
+          !ts.isFunctionDeclaration(owner) &&
+          !ts.isSourceFile(owner)
+        ) {
+          owner = owner.parent;
+        }
+        const isPrivateP6Helper =
+          owner !== undefined &&
+          ts.isFunctionDeclaration(owner) &&
+          owner.name?.text === PRIVATE_P6_ENGINE_HELPER &&
+          !hasExportModifier(owner);
+        const soleHelperStatement =
+          isPrivateP6Helper && owner.body?.statements.length === 1
+            ? owner.body.statements[0]
+            : undefined;
+        const isDirectHelperReturn =
+          soleHelperStatement !== undefined &&
+          ts.isReturnStatement(soleHelperStatement) &&
+          soleHelperStatement.expression === node.parent;
+        const isApprovedCall =
+          ts.isCallExpression(node.parent) &&
+          node.parent.expression === node &&
+          isPrivateP6Helper &&
+          isDirectHelperReturn;
+        if (isApprovedCall) {
+          approvedCallCount += 1;
+        } else if (!isImportBinding) {
+          const reason =
+            ts.isCallExpression(node.parent) &&
+            node.parent.expression === node &&
+            isPrivateP6Helper
+              ? "private P6 helper must directly return the internal Engine factory call"
+              : "internal Engine factory use is forbidden outside the fixed private P6 helper call";
+          violations.push(
+            `${displayPath(source.path, roots)}:${sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1}: ${reason}`
+          );
+        }
+      }
+      ts.forEachChild(node, inspectInternalEngineFactoryUse);
+    };
+    inspectInternalEngineFactoryUse(sourceFile);
+    if (approvedCallCount !== 1) {
+      violations.push(
+        `${displayPath(source.path, roots)}: internal Engine factory use must contain exactly one fixed private P6 helper call`
+      );
+    }
+  }
+
+  if (source.path === roots.productionComposition) {
+    const taintedHelperBindings = new Set<string>([PRIVATE_P6_ENGINE_HELPER]);
+    let discoveredHelperBinding = true;
+    while (discoveredHelperBinding) {
+      discoveredHelperBinding = false;
+      for (const [name, initializer] of topLevelBindingInitializers) {
+        if (
+          !taintedHelperBindings.has(name) &&
+          expressionReferencesBinding(initializer, taintedHelperBindings)
+        ) {
+          taintedHelperBindings.add(name);
+          discoveredHelperBinding = true;
+        }
+      }
+    }
+
+    const reportPrivateP6HelperExport = (node: ts.Node): void => {
+      violations.push(
+        `${displayPath(source.path, roots)}:${sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1}: private P6 helper export is forbidden`
+      );
+    };
+    for (const statement of sourceFile.statements) {
+      if (
+        ts.isFunctionDeclaration(statement) &&
+        statement.name?.text === PRIVATE_P6_ENGINE_HELPER &&
+        hasExportModifier(statement)
+      ) {
+        reportPrivateP6HelperExport(statement);
+      } else if (
+        ts.isExportDeclaration(statement) &&
+        statement.moduleSpecifier === undefined &&
+        statement.exportClause !== undefined &&
+        ts.isNamedExports(statement.exportClause) &&
+        statement.exportClause.elements.some((specifier) =>
+          taintedHelperBindings.has(
+            (specifier.propertyName ?? specifier.name).text
+          )
+        )
+      ) {
+        reportPrivateP6HelperExport(statement);
+      } else if (
+        ts.isExportAssignment(statement) &&
+        expressionReferencesBinding(
+          statement.expression,
+          taintedHelperBindings
+        )
+      ) {
+        reportPrivateP6HelperExport(statement);
+      } else if (
+        ts.isVariableStatement(statement) &&
+        hasExportModifier(statement) &&
+        statement.declarationList.declarations.some(
+          (declaration) =>
+            declaration.initializer !== undefined &&
+            expressionReferencesBinding(
+              declaration.initializer,
+              taintedHelperBindings
+            )
+        )
+      ) {
+        reportPrivateP6HelperExport(statement);
+      }
+    }
+
+    let approvedHelperReferenceCount = 0;
+    const inspectPrivateP6HelperUse = (node: ts.Node): void => {
+      if (ts.isIdentifier(node) && node.text === PRIVATE_P6_ENGINE_HELPER) {
+        const isDeclaration =
+          ts.isFunctionDeclaration(node.parent) && node.parent.name === node;
+        const call = ts.isCallExpression(node.parent) ? node.parent : undefined;
+        let owner: ts.Node | undefined = node.parent;
+        while (
+          owner !== undefined &&
+          !ts.isFunctionDeclaration(owner) &&
+          !ts.isFunctionExpression(owner) &&
+          !ts.isArrowFunction(owner) &&
+          !ts.isMethodDeclaration(owner) &&
+          !ts.isSourceFile(owner)
+        ) {
+          owner = owner.parent;
+        }
+        const isApprovedReference =
+          call !== undefined &&
+          call.arguments[3] === node &&
+          ts.isIdentifier(call.expression) &&
+          call.expression.text ===
+            "createSandboxSecurityProductionCompositionWithQualificationTimeout" &&
+          owner !== undefined &&
+          ts.isFunctionDeclaration(owner) &&
+          owner.name?.text === P6_LIVE_COMPOSITION_FACTORY;
+        if (isApprovedReference) {
+          approvedHelperReferenceCount += 1;
+        } else if (!isDeclaration) {
+          violations.push(
+            `${displayPath(source.path, roots)}:${sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1}: private P6 helper use is forbidden outside the fixed live composition Engine-factory argument`
+          );
+        }
+      }
+      ts.forEachChild(node, inspectPrivateP6HelperUse);
+    };
+    inspectPrivateP6HelperUse(sourceFile);
+    if (approvedHelperReferenceCount !== 1) {
+      violations.push(
+        `${displayPath(source.path, roots)}: private P6 helper use is forbidden unless exactly one fixed live composition reference exists`
+      );
+    }
+  }
+
+  if (source.path === join(roots.productionRoot, "benchmark-composition.ts")) {
+    let approvedImportCount = 0;
+    let approvedCallCount = 0;
+    const inspectRawP6WrapperUse = (node: ts.Node): void => {
+      if (ts.isIdentifier(node) && node.text === P6_LIVE_COMPOSITION_FACTORY) {
+        const importSpecifier = ts.isImportSpecifier(node.parent)
+          ? node.parent
+          : undefined;
+        const importDeclaration =
+          importSpecifier?.parent.parent.parent;
+        const isApprovedImport =
+          importSpecifier !== undefined &&
+          importSpecifier.name === node &&
+          importSpecifier.propertyName === undefined &&
+          importDeclaration !== undefined &&
+          ts.isImportDeclaration(importDeclaration) &&
+          ts.isStringLiteralLike(importDeclaration.moduleSpecifier) &&
+          importDeclaration.moduleSpecifier.text === "./composition.ts";
+        if (isApprovedImport) {
+          approvedImportCount += 1;
+        } else {
+          let owner: ts.Node | undefined = node.parent;
+          while (
+            owner !== undefined &&
+            !ts.isFunctionDeclaration(owner) &&
+            !ts.isFunctionExpression(owner) &&
+            !ts.isArrowFunction(owner) &&
+            !ts.isMethodDeclaration(owner) &&
+            !ts.isSourceFile(owner)
+          ) {
+            owner = owner.parent;
+          }
+          const call =
+            ts.isCallExpression(node.parent) && node.parent.expression === node
+              ? node.parent
+              : undefined;
+          const isApprovedCall =
+            call !== undefined &&
+            owner !== undefined &&
+            ts.isFunctionDeclaration(owner) &&
+            owner.name?.text === BENCHMARK_LIVE_ENGINE_FACTORY &&
+            ts.isReturnStatement(call.parent) &&
+            call.parent.expression === call;
+          if (isApprovedCall) {
+            approvedCallCount += 1;
+          } else {
+            violations.push(
+              `${displayPath(source.path, roots)}:${sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1}: raw P6 wrapper use is forbidden outside its fixed benchmark import and direct live Engine return`
+            );
+          }
+        }
+      }
+      ts.forEachChild(node, inspectRawP6WrapperUse);
+    };
+    inspectRawP6WrapperUse(sourceFile);
+    if (approvedImportCount !== 1 || approvedCallCount !== 1) {
+      violations.push(
+        `${displayPath(source.path, roots)}: raw P6 wrapper use is forbidden unless it has exactly one fixed import and one direct live Engine return`
+      );
+    }
+  }
 
   if (source.path === roots.deterministicSanitizer) {
     const reportDeterministicSanitizerExport = (node: ts.Node): void => {
@@ -1976,15 +2254,19 @@ function analyzeSource(source: SourceRecord, roots: ScanRoots = ROOTS): SourceAn
     }
     if (!specifier.startsWith(".") && !specifier.startsWith("file:") &&
         !isAbsolute(specifier) && !WINDOWS_ABSOLUTE_PATH.test(specifier)) {
+      const approvedBenchmarkModule =
+        source.path === join(roots.productionRoot, "benchmark-composition.ts") &&
+        specifier === "node:crypto";
       if (
-        source.path !== roots.httpTransport ||
-        !ALLOWED_TRANSPORT_MODULES.has(specifier)
+        !approvedBenchmarkModule &&
+        (source.path !== roots.httpTransport ||
+          !ALLOWED_TRANSPORT_MODULES.has(specifier))
       ) {
         const capability = NETWORK_MODULES.has(specifier)
           ? "network module"
           : "module alias";
         violations.push(
-          `${edgeLabel(edge, roots)}: ${capability} ${specifier} is forbidden outside the closed http-transport.ts allowlist`
+          `${edgeLabel(edge, roots)}: ${capability} ${specifier} is forbidden outside the closed production module allowlist`
         );
       }
       continue;
@@ -1992,15 +2274,44 @@ function analyzeSource(source: SourceRecord, roots: ScanRoots = ROOTS): SourceAn
     if (edge.resolvedPath === null) {
       continue;
     }
+    if (
+      edge.resolvedPath ===
+        join(roots.productionRoot, "benchmark-composition.ts") &&
+      source.path !== join(roots.productionRoot, "benchmark-composition.ts")
+    ) {
+      violations.push(
+        `${edgeLabel(edge, roots)}: benchmark composition consumer is forbidden outside benchmark-composition.ts`
+      );
+    }
+    if (
+      edge.resolvedPath === roots.productionComposition &&
+      source.path !== join(roots.productionRoot, "benchmark-composition.ts") &&
+      (
+        edge.importedNames.includes(P6_LIVE_COMPOSITION_FACTORY) ||
+        edge.kind === "export-star" ||
+        edge.kind === "export-namespace" ||
+        edge.kind === "dynamic-import" ||
+        edge.kind === "require" ||
+        edge.kind === "import-equals" ||
+        (edge.kind === "static-import" && edge.importedNames.length === 0)
+      )
+    ) {
+      violations.push(
+        `${edgeLabel(edge, roots)}: P6 live composition consumer is forbidden outside benchmark-composition.ts`
+      );
+    }
     if (isWithin(roots.productionRoot, edge.resolvedPath)) {
       continue;
     }
     if (edge.resolvedPath === roots.securityIndex) {
       continue;
     }
-    if (!isApprovedSanitizerImportEdge(edge)) {
+    if (
+      !isApprovedSanitizerImportEdge(edge) &&
+      !isApprovedInternalEngineFactoryEdge(edge)
+    ) {
       violations.push(
-        `${edgeLabel(edge, roots)}: production may import the core only through security/index.ts; the sole deep-import exception is ${SANITIZER_HELPER} in deterministic-sanitizer.ts`
+        `${edgeLabel(edge, roots)}: production may import the core only through security/index.ts; the sanitizer sole deep-import exception is ${SANITIZER_HELPER} in deterministic-sanitizer.ts; the internal Engine factory exception is ${INTERNAL_ENGINE_FACTORY} in composition.ts`
       );
     }
   }
@@ -2161,6 +2472,35 @@ test("REQ-SBX-GENERAL-002 production boundary has an isolated source root", () =
 test("REQ-SBX-GENERAL-002 actual core and production trees satisfy the permanent boundary gate", () => {
   const violations = analyzeActualBoundary();
   assert.deepEqual(violations, [], violations.join("\n"));
+});
+
+test("REQ-SBX-GENERAL-002 Chat contract imports stay closed and benchmark capture uses it without new environment ownership", () => {
+  const chatSource = readFileSync(OPENAI_CHAT_JUDGE_CONTRACT, "utf8");
+  const chatAnalysis = analyzeSource({
+    path: OPENAI_CHAT_JUDGE_CONTRACT,
+    text: chatSource,
+    tree: "production"
+  });
+  assert.deepEqual(
+    chatAnalysis.edges
+      .filter((edge) => edge.kind === "static-import")
+      .map((edge) => edge.moduleSpecifier),
+    ["../security/index.ts", "./openai-judge-contract.ts"]
+  );
+  assert.deepEqual(chatAnalysis.violations, [], chatAnalysis.violations.join("\n"));
+
+  const benchmarkSource = readFileSync(BENCHMARK_COMPOSITION, "utf8");
+  assert.match(
+    benchmarkSource,
+    /from\s+"\.\/openai-chat-judge-contract\.ts"/u
+  );
+  assert.match(benchmarkSource, /resolveSandboxSecurityJudgeProtocol/u);
+
+  const environmentOwners = listTypeScriptSources(PRODUCTION_ROOT, "production")
+    .sources
+    .filter((source) => /\bprocess\s*\.\s*env\b/u.test(source.text))
+    .map((source) => source.path);
+  assert.deepEqual(environmentOwners, [PRODUCTION_CONFIG]);
 });
 
 for (const mutation of [
@@ -2694,6 +3034,212 @@ for (const mutation of [
   });
 }
 
+test("REQ-SBX-GENERAL-002 repository gate permits only the internal Engine factory in composition", () => {
+  const analysis = analyzeProductionMutation(
+    "composition.ts",
+    `import { ${INTERNAL_ENGINE_FACTORY} } from "../security/engine.ts";
+function createSandboxSecurityP6LiveCaptureProductionEngine(input: unknown) {
+  return ${INTERNAL_ENGINE_FACTORY}(input as never);
+}
+function ${P6_LIVE_COMPOSITION_FACTORY}(input: unknown) {
+  return createSandboxSecurityProductionCompositionWithQualificationTimeout(
+    input,
+    undefined,
+    20000,
+    createSandboxSecurityP6LiveCaptureProductionEngine
+  );
+}`
+  );
+  assert.deepEqual(analysis.violations, [], analysis.violations.join("\n"));
+});
+
+test("REQ-SBX-GENERAL-002 repository gate rejects exporting the private P6 Engine helper", () => {
+  const analysis = analyzeProductionMutation(
+    "composition.ts",
+    `import { ${INTERNAL_ENGINE_FACTORY} } from "../security/engine.ts";
+function createSandboxSecurityP6LiveCaptureProductionEngine(input: unknown) {
+  return ${INTERNAL_ENGINE_FACTORY}(input as never);
+}
+export { createSandboxSecurityP6LiveCaptureProductionEngine };`
+  );
+  assert.ok(
+    analysis.violations.some((violation) =>
+      violation.includes("private P6 helper export is forbidden")
+    ),
+    analysis.violations.join("\n")
+  );
+});
+
+for (const leak of [
+  {
+    name: "default-exporting the private P6 Engine helper",
+    suffix: "export default createSandboxSecurityP6LiveCaptureProductionEngine;"
+  },
+  {
+    name: "exporting an alias of the private P6 Engine helper",
+    suffix: `const leakedP6Engine = createSandboxSecurityP6LiveCaptureProductionEngine;
+export { leakedP6Engine };`
+  }
+] as const) {
+  test(`REQ-SBX-GENERAL-002 repository gate rejects ${leak.name}`, () => {
+    const analysis = analyzeProductionMutation(
+      "composition.ts",
+      `import { ${INTERNAL_ENGINE_FACTORY} } from "../security/engine.ts";
+function createSandboxSecurityP6LiveCaptureProductionEngine(input: unknown) {
+  return ${INTERNAL_ENGINE_FACTORY}(input as never);
+}
+${leak.suffix}`
+    );
+    assert.ok(
+      analysis.violations.some((violation) =>
+        violation.includes("private P6 helper export is forbidden")
+      ),
+      analysis.violations.join("\n")
+    );
+  });
+}
+
+test("REQ-SBX-GENERAL-002 repository gate rejects calling the private P6 Engine helper outside its fixed composition argument", () => {
+  const analysis = analyzeProductionMutation(
+    "composition.ts",
+    `import { ${INTERNAL_ENGINE_FACTORY} } from "../security/engine.ts";
+function createSandboxSecurityP6LiveCaptureProductionEngine(input: unknown) {
+  return ${INTERNAL_ENGINE_FACTORY}(input as never);
+}
+function createOrdinaryEngine(input: unknown) {
+  return createSandboxSecurityP6LiveCaptureProductionEngine(input);
+}`
+  );
+  assert.ok(
+    analysis.violations.some((violation) =>
+      violation.includes("private P6 helper use is forbidden")
+    ),
+    analysis.violations.join("\n")
+  );
+});
+
+test("REQ-SBX-GENERAL-002 repository gate rejects a private P6 helper that returns a closure", () => {
+  const analysis = analyzeProductionMutation(
+    "composition.ts",
+    `import { ${INTERNAL_ENGINE_FACTORY} } from "../security/engine.ts";
+function createSandboxSecurityP6LiveCaptureProductionEngine(input: unknown) {
+  return () => ${INTERNAL_ENGINE_FACTORY}(input as never);
+}`
+  );
+  assert.ok(
+    analysis.violations.some((violation) =>
+      violation.includes("private P6 helper must directly return the internal Engine factory call")
+    ),
+    analysis.violations.join("\n")
+  );
+});
+
+for (const mutation of [
+  {
+    name: "locally re-exported internal Engine factory",
+    source: `import { ${INTERNAL_ENGINE_FACTORY} } from "../security/engine.ts";
+export { ${INTERNAL_ENGINE_FACTORY} };`,
+    expected: "internal Engine factory use"
+  },
+  {
+    name: "locally aliased internal Engine factory",
+    source: `import { ${INTERNAL_ENGINE_FACTORY} } from "../security/engine.ts";
+const leakedFactory = ${INTERNAL_ENGINE_FACTORY};
+export { leakedFactory };`,
+    expected: "internal Engine factory use"
+  }
+] as const) {
+  test(`REQ-SBX-GENERAL-002 repository gate rejects ${mutation.name}`, () => {
+    const analysis = analyzeProductionMutation("composition.ts", mutation.source);
+    assert.ok(
+      analysis.violations.some((violation) =>
+        violation.includes(mutation.expected)
+      ),
+      analysis.violations.join("\n")
+    );
+  });
+}
+
+test("REQ-SBX-GENERAL-002 repository gate rejects another production consumer of the P6 live wrapper", () => {
+  const analysis = analyzeProductionMutation(
+    "live-wrapper-consumer.ts",
+    `import { createSandboxSecurityProductionLiveCaptureCompositionWithPorts } from "./composition.ts";
+void createSandboxSecurityProductionLiveCaptureCompositionWithPorts;`
+  );
+  assert.ok(
+    analysis.violations.some((violation) =>
+      violation.includes("P6 live composition consumer is forbidden")
+    ),
+    analysis.violations.join("\n")
+  );
+});
+
+test("REQ-SBX-GENERAL-002 repository gate rejects production imports of benchmark composition", () => {
+  const analysis = analyzeProductionMutation(
+    "live-benchmark-consumer.ts",
+    `import { createSandboxSecurityLiveCaptureEngine } from "./benchmark-composition.ts";
+void createSandboxSecurityLiveCaptureEngine;`
+  );
+  assert.ok(
+    analysis.violations.some((violation) =>
+      violation.includes("benchmark composition consumer is forbidden")
+    ),
+    analysis.violations.join("\n")
+  );
+});
+
+test("REQ-SBX-GENERAL-002 repository gate rejects forwarding an aliased raw P6 wrapper", () => {
+  const analysis = analyzeProductionMutation(
+    "benchmark-composition.ts",
+    `import {
+  ${P6_LIVE_COMPOSITION_FACTORY} as forwardedLiveComposition
+} from "./composition.ts";
+export { forwardedLiveComposition };`
+  );
+  assert.ok(
+    analysis.violations.some((violation) =>
+      violation.includes("raw P6 wrapper use is forbidden")
+    ),
+    analysis.violations.join("\n")
+  );
+});
+
+for (const mutation of [
+  {
+    name: "internal Engine factory from another production module",
+    relativePath: "mutation.ts",
+    source: `import { ${INTERNAL_ENGINE_FACTORY} } from "../security/engine.ts"; void ${INTERNAL_ENGINE_FACTORY};`
+  },
+  {
+    name: "aliased internal Engine factory",
+    relativePath: "composition.ts",
+    source: `import { ${INTERNAL_ENGINE_FACTORY} as createEngine } from "../security/engine.ts"; void createEngine;`
+  },
+  {
+    name: "internal Engine factory with another core symbol",
+    relativePath: "composition.ts",
+    source: `import { ${INTERNAL_ENGINE_FACTORY}, createSandboxSecurityEngine } from "../security/engine.ts"; void ${INTERNAL_ENGINE_FACTORY}; void createSandboxSecurityEngine;`
+  },
+  {
+    name: "re-exported internal Engine factory",
+    relativePath: "composition.ts",
+    source: `export { ${INTERNAL_ENGINE_FACTORY} } from "../security/engine.ts";`
+  }
+] as const) {
+  test(`REQ-SBX-GENERAL-002 repository gate rejects ${mutation.name}`, () => {
+    const analysis = analyzeProductionMutation(
+      mutation.relativePath,
+      mutation.source
+    );
+    assert.ok(
+      analysis.violations.some((violation) =>
+        violation.includes("internal Engine factory exception")
+      ),
+      analysis.violations.join("\n")
+    );
+  });
+}
+
 for (const oracleField of [
   "fixture_id",
   "verdict_class",
@@ -2749,8 +3295,10 @@ test("REQ-SBX-GENERAL-002 repository gate rejects relative symlink escape", () =
     productionRoot,
     securityRoot,
     securityIndex: join(securityRoot, "index.ts"),
+    securityEngine: join(securityRoot, "engine.ts"),
     sanitizedBoundary: join(securityRoot, "sanitized-boundary.ts"),
     deterministicSanitizer: join(productionRoot, "deterministic-sanitizer.ts"),
+    productionComposition: join(productionRoot, "composition.ts"),
     httpTransport: join(productionRoot, "http-transport.ts"),
     productionConfig: join(productionRoot, "production-config.ts")
   };
@@ -2792,8 +3340,10 @@ test("REQ-SBX-GENERAL-002 repository gate rejects a symbolic production source r
     productionRoot,
     securityRoot,
     securityIndex: join(securityRoot, "index.ts"),
+    securityEngine: join(securityRoot, "engine.ts"),
     sanitizedBoundary: join(securityRoot, "sanitized-boundary.ts"),
     deterministicSanitizer: join(productionRoot, "deterministic-sanitizer.ts"),
+    productionComposition: join(productionRoot, "composition.ts"),
     httpTransport: join(productionRoot, "http-transport.ts"),
     productionConfig: join(productionRoot, "production-config.ts")
   };
@@ -3562,7 +4112,13 @@ void timingSafeEqual; void httpRequest; void httpsRequest; void types;`
     ),
     analyzeProductionMutation(
       "benchmark-composition.ts",
-      'export interface ContentFreeReplayInterface { readonly source_type: "content-free replay outcome"; }'
+      `import { createHash } from "node:crypto";
+import { ${P6_LIVE_COMPOSITION_FACTORY} } from "./composition.ts";
+void createHash;
+export function ${BENCHMARK_LIVE_ENGINE_FACTORY}(input: never) {
+  return ${P6_LIVE_COMPOSITION_FACTORY}(input, input);
+}
+export interface ContentFreeReplayInterface { readonly source_type: "content-free replay outcome"; }`
     )
   ];
 

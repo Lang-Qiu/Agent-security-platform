@@ -631,9 +631,11 @@ Stop after the commit and report the evidence.
 **Goal / acceptance:** Materialize a capture input-only bundle and exact
 read/write allowlist, then define the sole parent launcher for the fixed
 capture-live.ts child. The child receives only inputs plus required
-production/shared/script code and one capture output directory. It cannot read
-truth, source lock, manifest labels, evaluator code, metric threshold, or an
-unexpected inherited descriptor.
+production/shared/script code and the capture-output root path plus binding
+metadata; write capability is limited to the precreated
+`capture-output/.candidate-package.json` staging file under that root. It
+cannot read truth, source lock, manifest labels, evaluator code, metric
+threshold, or an unexpected inherited descriptor.
 
 **Files:**
 
@@ -674,7 +676,8 @@ test("REQ-SBX-GENERAL-002 parent launches only the fixed capture-live entrypoint
 
 Run the real Node permission-model child with --permission and explicit
 --allow-fs-read entries for the bundle/code allowlist and --allow-fs-write only
-for a temporary capture directory. Test direct, relative, symlink, dynamic
+for `capture-output/.candidate-package.json`; no directory write or list
+capability is granted. Test direct, relative, symlink, dynamic
 import, and directory listing attempts; prove no child-process/worker
 permission is granted.
 

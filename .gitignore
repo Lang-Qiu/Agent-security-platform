@@ -35,6 +35,7 @@ temp/
 artifacts/
 reports/
 sandbox-data/
+/scripts/benchmark/sandbox-security/.p6-acceptance-private-key.pem
 
 # Test outputs
 playwright-report/

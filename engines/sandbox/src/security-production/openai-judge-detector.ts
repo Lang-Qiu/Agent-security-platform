@@ -15,6 +15,15 @@ import {
   parseSandboxSecurityOpenAiJudgeResponse,
   type SandboxSecurityParsedOpenAIResponse
 } from "./openai-judge-contract.ts";
+import {
+  createSandboxSecurityOpenAiChatJudgeRequest,
+  parseSandboxSecurityOpenAiChatJudgeResponse
+} from "./openai-chat-judge-contract.ts";
+import {
+  SANDBOX_SECURITY_OPENAI_CHAT_COMPLETIONS_JSON_PROTOCOL_ID,
+  SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID,
+  type SandboxSecurityJudgeProtocolId
+} from "./judge-protocol-adapter.ts";
 
 type RoutedObligation =
   SandboxSecuritySanitizedJudgePayload["routed_obligations"][number];
@@ -27,6 +36,23 @@ interface ObligationBinding {
   readonly subject_refs:
     readonly SandboxSecurityExternalCandidateSubjectRef[];
 }
+
+interface JudgeProtocolDispatch {
+  readonly operation: "responses" | "chat_completions";
+  readonly create_request: typeof createSandboxSecurityOpenAiJudgeRequest;
+  readonly parse_response: typeof parseSandboxSecurityOpenAiJudgeResponse;
+}
+
+const RESPONSES_DISPATCH: Readonly<JudgeProtocolDispatch> = Object.freeze({
+  operation: "responses",
+  create_request: createSandboxSecurityOpenAiJudgeRequest,
+  parse_response: parseSandboxSecurityOpenAiJudgeResponse
+});
+const CHAT_COMPLETIONS_DISPATCH: Readonly<JudgeProtocolDispatch> = Object.freeze({
+  operation: "chat_completions",
+  create_request: createSandboxSecurityOpenAiChatJudgeRequest,
+  parse_response: parseSandboxSecurityOpenAiChatJudgeResponse
+});
 
 const MAX_RESPONSE_BYTES = 65_536;
 const MAX_SUBJECT_REFS = 8;
@@ -51,6 +77,16 @@ const ABORT_SIGNAL_THROW_IF_ABORTED = AbortSignal.prototype.throwIfAborted;
 
 function detectorInvalid(): never {
   throw new TypeError("sandbox_security_openai_judge_detector_invalid");
+}
+
+function protocolDispatch(value: unknown): Readonly<JudgeProtocolDispatch> {
+  if (value === SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID) {
+    return RESPONSES_DISPATCH;
+  }
+  if (value === SANDBOX_SECURITY_OPENAI_CHAT_COMPLETIONS_JSON_PROTOCOL_ID) {
+    return CHAT_COMPLETIONS_DISPATCH;
+  }
+  return detectorInvalid();
 }
 
 function withDetectorValidation<T>(action: () => T): T {
@@ -394,6 +430,7 @@ async function requestTransport(
 async function detect(
   transport: SandboxSecurityHttpTransport,
   request: SandboxSecurityHttpTransport["request"],
+  dispatch: Readonly<JudgeProtocolDispatch>,
   payload: Readonly<SandboxSecuritySanitizedJudgePayload>,
   signal: AbortSignal,
   judgeRequestedModel: string
@@ -401,7 +438,7 @@ async function detect(
   assertNotAborted(signal);
   const prepared = withDetectorValidation(() => ({
     bindings: obligationBindings(payload),
-    body: createSandboxSecurityOpenAiJudgeRequest(payload, {
+    body: dispatch.create_request(payload, {
       judge_requested_model: judgeRequestedModel
     }).body
   }));
@@ -410,7 +447,7 @@ async function detect(
     request,
     Object.freeze({
       provider: "openai",
-      operation: "responses",
+      operation: dispatch.operation,
       body: prepared.body,
       signal,
       max_response_bytes: MAX_RESPONSE_BYTES
@@ -419,7 +456,7 @@ async function detect(
   assertNotAborted(signal);
   return withDetectorValidation(() => {
     const response = normalizedResponse(wire);
-    const parsed = parseSandboxSecurityOpenAiJudgeResponse(response.body, payload);
+    const parsed = dispatch.parse_response(response.body, payload);
     assertNotAborted(signal);
     return mapResult(parsed, prepared.bindings);
   });
@@ -427,14 +464,17 @@ async function detect(
 
 export function createSandboxSecurityOpenAiJudgeDetector(input: Readonly<{
   transport: SandboxSecurityHttpTransport;
+  judge_protocol_id: SandboxSecurityJudgeProtocolId;
   judge_requested_model: string;
 }>): SanitizedExternalDetector {
   return withDetectorValidation(() => {
     const inputValues = exactDataRecord(input, [
       "transport",
+      "judge_protocol_id",
       "judge_requested_model"
     ]);
     const transport = inputValues.get("transport") as SandboxSecurityHttpTransport;
+    const dispatch = protocolDispatch(inputValues.get("judge_protocol_id"));
     const judgeRequestedModel = inputValues.get("judge_requested_model");
     if (
       typeof judgeRequestedModel !== "string" ||
@@ -453,6 +493,7 @@ export function createSandboxSecurityOpenAiJudgeDetector(input: Readonly<{
         return detect(
           transport,
           request as SandboxSecurityHttpTransport["request"],
+          dispatch,
           payload,
           signal,
           judgeRequestedModel

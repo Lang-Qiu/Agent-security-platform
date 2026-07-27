@@ -36,6 +36,9 @@ import {
 import {
   SANDBOX_SECURITY_DETERMINISTIC_SANITIZER_VERSION
 } from "../src/security-production/deterministic-sanitizer.ts";
+import {
+  hashSandboxSecurityBenchmarkJudgeBinding
+} from "../../../scripts/benchmark/sandbox-security/contracts.ts";
 
 type CapturedProviderOutcome =
   | Readonly<{
@@ -57,7 +60,7 @@ type CapturedProviderOutcome =
   | Readonly<{
       capture_phase: "evaluation";
       provider: "openai";
-      operation: "responses";
+      operation: "responses" | "chat_completions";
       outcome: SandboxSecurityReplayTransportOutcome<
         SandboxSecurityReplayOpenAIResponse
       >;
@@ -79,11 +82,15 @@ interface ReplayTransport extends SandboxSecurityHttpTransport {
 interface SealedProviderConfig {
   ollama_model: "qwen3:8b";
   ollama_digest: string;
-  judge_provider_id: string;
+  judge_protocol_id:
+    | "openai_responses_v1"
+    | "openai_chat_completions_json_v1";
+  judge_endpoint_policy_id: "operator_https_fqdn_v1";
   judge_base_url: string;
-  judge_responses_url: string;
+  judge_endpoint_url: string;
   judge_requested_model: string;
   judge_resolved_model: string;
+  judge_binding_sha256: string;
   local_prompt_version: "sandbox-security-ollama-local-prompt.v1";
   local_schema_version: "sandbox-security-local-model.v1";
   judge_prompt_version: "sandbox-security-openai-judge-prompt.v1";
@@ -95,6 +102,13 @@ interface SealedProviderConfig {
 type CreateLiveCaptureEngine = (input: Readonly<{
   runtime: SandboxSecurityRuntimePorts;
   capture_sink: CaptureSink;
+  transport?: SandboxSecurityHttpTransport;
+  judge_protocol_id?: "openai_responses_v1" | "openai_chat_completions_json_v1";
+  ollama_digest?: string;
+  judge_endpoint_policy_id?: string;
+  judge_base_url?: string;
+  judge_endpoint_url?: string;
+  judge_requested_model?: string;
 }>) => Promise<SandboxSecurityEngine>;
 
 type CreateHermeticReplayEngine = (input: Readonly<{
@@ -102,6 +116,24 @@ type CreateHermeticReplayEngine = (input: Readonly<{
   replay_transport: ReplayTransport;
   sealed_config: Readonly<SealedProviderConfig>;
 }>) => Promise<SandboxSecurityEngine>;
+
+interface BenchmarkJudgeProtocolDispatch {
+  readonly operation: "responses" | "chat_completions";
+  create_request(
+    payload: unknown,
+    options: Readonly<{ judge_requested_model: string }>
+  ): Readonly<{ body: Uint8Array }>;
+  normalize_response(
+    requestBody: Uint8Array,
+    responseBody: Uint8Array
+  ): SandboxSecurityReplayOpenAIResponse;
+}
+
+type ResolveBenchmarkJudgeProtocolDispatch = (
+  protocolId:
+    | "openai_responses_v1"
+    | "openai_chat_completions_json_v1"
+) => Readonly<BenchmarkJudgeProtocolDispatch>;
 
 const BENCHMARK_MODULE_URL = new URL(
   "../src/security-production/benchmark-composition.ts",
@@ -116,6 +148,10 @@ const INERT_ENGINE = Object.freeze({
 let createLiveCaptureEngine: CreateLiveCaptureEngine = async () => INERT_ENGINE;
 let createHermeticReplayEngine: CreateHermeticReplayEngine = async () =>
   INERT_ENGINE;
+let resolveBenchmarkJudgeProtocolDispatch: ResolveBenchmarkJudgeProtocolDispatch =
+  () => {
+    throw new TypeError("benchmark_judge_protocol_dispatch_missing");
+  };
 
 if (existsSync(BENCHMARK_MODULE_URL)) {
   const candidate = await import(
@@ -131,6 +167,13 @@ if (existsSync(BENCHMARK_MODULE_URL)) {
     createHermeticReplayEngine =
       candidate.createSandboxSecurityHermeticReplayEngine as CreateHermeticReplayEngine;
   }
+  if (
+    typeof candidate.resolveSandboxSecurityBenchmarkJudgeProtocolDispatch ===
+    "function"
+  ) {
+    resolveBenchmarkJudgeProtocolDispatch =
+      candidate.resolveSandboxSecurityBenchmarkJudgeProtocolDispatch as ResolveBenchmarkJudgeProtocolDispatch;
+  }
 }
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
@@ -141,17 +184,36 @@ const PRODUCTION_ROOT = fileURLToPath(
 );
 const PRODUCTION_INDEX = join(PRODUCTION_ROOT, "index.ts");
 
+function judgeBinding(
+  protocolId:
+    | "openai_responses_v1"
+    | "openai_chat_completions_json_v1" = "openai_responses_v1"
+) {
+  const endpointSuffix = protocolId === "openai_responses_v1"
+    ? "responses"
+    : "chat/completions";
+  return {
+    judge_protocol_id: protocolId,
+    judge_endpoint_policy_id: "operator_https_fqdn_v1" as const,
+    judge_base_url: "https://us.doro.lol/v1",
+    judge_endpoint_url: `https://us.doro.lol/v1/${endpointSuffix}`,
+    judge_requested_model: "gpt-5.4-mini",
+    judge_resolved_model: "gpt-5.4-mini"
+  };
+}
+
 function sealedConfig(
-  overrides: Readonly<Record<string, unknown>> = {}
+  overrides: Readonly<Record<string, unknown>> = {},
+  protocolId:
+    | "openai_responses_v1"
+    | "openai_chat_completions_json_v1" = "openai_responses_v1"
 ): Readonly<SealedProviderConfig> {
+  const binding = judgeBinding(protocolId);
   return Object.freeze({
     ollama_model: "qwen3:8b",
     ollama_digest: DIGEST,
-    judge_provider_id: "doro",
-    judge_base_url: "https://doro.lol/v1",
-    judge_responses_url: "https://doro.lol/v1/responses",
-    judge_requested_model: "gpt-5.4-mini",
-    judge_resolved_model: "gpt-5.4-mini",
+    ...binding,
+    judge_binding_sha256: hashSandboxSecurityBenchmarkJudgeBinding(binding),
     local_prompt_version: "sandbox-security-ollama-local-prompt.v1",
     local_schema_version: "sandbox-security-local-model.v1",
     judge_prompt_version: "sandbox-security-openai-judge-prompt.v1",
@@ -161,6 +223,137 @@ function sealedConfig(
     ...overrides
   }) as Readonly<SealedProviderConfig>;
 }
+
+function sanitizedJudgePayload() {
+  return {
+    schema_version: "sandbox-security-sanitized-judge.v1",
+    request_token: "token://sandbox/security/request/0001",
+    stage: "user_input",
+    policy_profile_id: "sandbox-security-balanced.v1",
+    sources: [
+      {
+        source_token: "token://sandbox/security/source/0001",
+        source_type: "user_input",
+        media_type: "text/plain",
+        sanitized_value: "ordinary sanitized input"
+      }
+    ],
+    routed_obligations: [
+      {
+        obligation_id: "obligation://sandbox/security/prompt_injection/0001",
+        category: "prompt_injection",
+        subject_refs: [
+          {
+            kind: "content_source",
+            source_token: "token://sandbox/security/source/0001",
+            locator: { kind: "whole_source" }
+          }
+        ]
+      }
+    ]
+  };
+}
+
+function chatJudgeResponseBody(): Uint8Array {
+  return ENCODER.encode(JSON.stringify({
+    choices: [
+      {
+        finish_reason: "stop",
+        index: 0,
+        logprobs: null,
+        message: {
+          content: JSON.stringify({
+            schema_version: "sandbox-security-judge.v1",
+            obligation_results: [
+              {
+                obligation_id:
+                  "obligation://sandbox/security/prompt_injection/0001",
+                outcome: "clearance",
+                confidence: "probable",
+                severity: null
+              }
+            ]
+          }),
+          role: "assistant"
+        }
+      }
+    ],
+    created: 1,
+    id: "chatcmpl-test",
+    model: "gpt-5.4-mini",
+    object: "chat.completion",
+    system_fingerprint: null,
+    usage: {
+      prompt_tokens: 1,
+      completion_tokens: 1,
+      total_tokens: 2
+    }
+  }));
+}
+
+test("REQ-SBX-GENERAL-002 replay accepts a generic Judge binding and rejects tampering before transport", async () => {
+  const accepted = createConformingReplayTransport();
+  await assert.doesNotReject(() =>
+    createHermeticReplayEngine({
+      runtime: runtimeHarness().runtime,
+      replay_transport: accepted.transport,
+      sealed_config: sealedConfig()
+    })
+  );
+  assert.deepEqual(accepted.operations, ["ollama:model_inventory", "ollama:chat"]);
+
+  const tampered = createConformingReplayTransport();
+  await assert.rejects(() =>
+    createHermeticReplayEngine({
+      runtime: runtimeHarness().runtime,
+      replay_transport: tampered.transport,
+      sealed_config: sealedConfig({
+        judge_endpoint_url: "https://us.doro.lol/v1/not-responses"
+      })
+    })
+  );
+  assert.deepEqual(tampered.operations, []);
+});
+
+test("REQ-SBX-GENERAL-002 benchmark capture normalizes explicit Chat through the Chat parser and operation", () => {
+  const dispatch = resolveBenchmarkJudgeProtocolDispatch(
+    "openai_chat_completions_json_v1"
+  );
+  const request = dispatch.create_request(sanitizedJudgePayload(), {
+    judge_requested_model: "gpt-5.4-mini"
+  });
+
+  assert.equal(dispatch.operation, "chat_completions");
+  assert.deepEqual(
+    dispatch.normalize_response(request.body, chatJudgeResponseBody()),
+    openAiNormalized()
+  );
+});
+
+test("REQ-SBX-GENERAL-002 replay accepts Chat sealed config and rejects cross-protocol binding substitution before transport", async () => {
+  const accepted = createConformingReplayTransport();
+  await assert.doesNotReject(() =>
+    createHermeticReplayEngine({
+      runtime: runtimeHarness().runtime,
+      replay_transport: accepted.transport,
+      sealed_config: sealedConfig({}, "openai_chat_completions_json_v1")
+    })
+  );
+  assert.deepEqual(accepted.operations, ["ollama:model_inventory", "ollama:chat"]);
+
+  const substituted = createConformingReplayTransport();
+  await assert.rejects(() =>
+    createHermeticReplayEngine({
+      runtime: runtimeHarness().runtime,
+      replay_transport: substituted.transport,
+      sealed_config: sealedConfig({
+        judge_protocol_id: "openai_chat_completions_json_v1",
+        judge_endpoint_url: "https://us.doro.lol/v1/chat/completions"
+      })
+    })
+  );
+  assert.deepEqual(substituted.operations, []);
+});
 
 function runtimeHarness(options: Readonly<{
   fire_qualification_timeout?: boolean;
@@ -729,13 +922,7 @@ function createConformingReplayTransport(input: Readonly<{
 }
 
 async function listen(server: Server): Promise<void> {
-  await new Promise<void>((resolveListen, rejectListen) => {
-    server.once("error", rejectListen);
-    server.listen(11434, "127.0.0.1", () => {
-      server.removeListener("error", rejectListen);
-      resolveListen();
-    });
-  });
+  throw new Error("fixed_listener_forbidden");
 }
 
 async function close(server: Server): Promise<void> {
@@ -747,6 +934,7 @@ async function close(server: Server): Promise<void> {
 function withProductionEnvironment(action: () => Promise<void>): Promise<void> {
   const keys = [
     "SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST",
+    "SANDBOX_SECURITY_JUDGE_PROTOCOL",
     "SANDBOX_SECURITY_JUDGE_BASE_URL",
     "SANDBOX_SECURITY_JUDGE_MODEL",
     "SANDBOX_SECURITY_JUDGE_API_KEY",
@@ -754,6 +942,7 @@ function withProductionEnvironment(action: () => Promise<void>): Promise<void> {
   ] as const;
   const previous = new Map(keys.map((key) => [key, process.env[key]]));
   process.env.SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST = DIGEST;
+  process.env.SANDBOX_SECURITY_JUDGE_PROTOCOL = "openai_responses_v1";
   process.env.SANDBOX_SECURITY_JUDGE_BASE_URL = "https://doro.lol/v1";
   process.env.SANDBOX_SECURITY_JUDGE_MODEL = "gpt-5.4-mini";
   process.env.SANDBOX_SECURITY_JUDGE_API_KEY = "benchmark-test-key";
@@ -768,67 +957,80 @@ function withProductionEnvironment(action: () => Promise<void>): Promise<void> {
 }
 
 test("REQ-SBX-GENERAL-002 live composition captures qualification before return then anonymous evaluation slots", async () => {
-  const serverOperations: string[] = [];
-  const server = createServer((request, response) => {
-    serverOperations.push(`${request.method}:${request.url}`);
-    request.resume();
-    response.statusCode = 200;
-    response.setHeader("content-type", "application/json");
-    if (request.url === "/api/tags") {
-      response.end(JSON.stringify({
-        models: [
-          {
-            name: "qwen3:8b",
-            model: "qwen3:8b",
-            digest: DIGEST.slice("sha256:".length)
-          }
-        ]
-      }));
-      return;
-    }
-    response.end(JSON.stringify({
-      model: "qwen3:8b",
-      done: true,
-      done_reason: "stop",
-      message: {
-        role: "assistant",
-        content: JSON.stringify({
-          schema_version: "sandbox-security-local-model.v1",
-          status: "no_match",
-          candidates: []
-        })
+  const operations: string[] = [];
+  const transport = Object.freeze({
+    async request(input: Readonly<{
+      provider: "ollama" | "openai";
+      operation: string;
+    }>) {
+      operations.push(`${input.provider}:${input.operation}`);
+      if (input.provider === "ollama" && input.operation === "model_inventory") {
+        return Object.freeze({
+          status: 200,
+          content_type: "application/json",
+          body: new TextEncoder().encode(JSON.stringify({
+            models: [
+              {
+                name: "qwen3:8b",
+                model: "qwen3:8b",
+                digest: DIGEST.slice("sha256:".length)
+              }
+            ]
+          }))
+        });
       }
-    }));
+      if (input.provider === "ollama" && input.operation === "chat") {
+        return Object.freeze({
+          status: 200,
+          content_type: "application/json",
+          body: new TextEncoder().encode(JSON.stringify({
+            model: "qwen3:8b",
+            done: true,
+            done_reason: "stop",
+            message: {
+              role: "assistant",
+              content: JSON.stringify({
+                schema_version: "sandbox-security-local-model.v1",
+                status: "no_match",
+                candidates: []
+              })
+            }
+          })),
+          verified_ollama_digest: DIGEST
+        });
+      }
+      throw new Error("unexpected_provider_request");
+    }
   });
-  await listen(server);
   const runtime = runtimeHarness();
   const capture = createConformingCaptureSink();
-  try {
-    await withProductionEnvironment(async () => {
-      const engine = await createLiveCaptureEngine({
-        runtime: runtime.runtime,
-        capture_sink: capture.sink
-      });
+  const engine = await createLiveCaptureEngine({
+    runtime: runtime.runtime,
+    capture_sink: capture.sink,
+    transport: transport as SandboxSecurityHttpTransport,
+    judge_protocol_id: "openai_responses_v1",
+    ollama_digest: DIGEST,
+    judge_endpoint_policy_id: "operator_https_fqdn_v1",
+    judge_base_url: "https://unused.example.test/v1",
+    judge_endpoint_url: "https://unused.example.test/v1/responses",
+    judge_requested_model: "gpt-5.4-mini"
+  });
 
-      assert.deepEqual(
-        capture.events.map((event) => [
-          event.capture_phase,
-          event.provider,
-          event.operation
-        ]),
-        [
-          ["qualification", "ollama", "model_inventory"],
-          ["qualification", "ollama", "chat"]
-        ]
-      );
-      capture.sink.beginInput();
-      await engine.evaluate(evaluationRequest());
-      capture.sink.endInput();
-      capture.sink.assertDrained();
-    });
-  } finally {
-    await close(server);
-  }
+  assert.deepEqual(
+    capture.events.map((event) => [
+      event.capture_phase,
+      event.provider,
+      event.operation
+    ]),
+    [
+      ["qualification", "ollama", "model_inventory"],
+      ["qualification", "ollama", "chat"]
+    ]
+  );
+  capture.sink.beginInput();
+  await engine.evaluate(evaluationRequest());
+  capture.sink.endInput();
+  capture.sink.assertDrained();
 
   assert.deepEqual(
     capture.events.slice(2).map((event) => [
@@ -841,15 +1043,18 @@ test("REQ-SBX-GENERAL-002 live composition captures qualification before return 
       ["openai", "responses", "not_called"]
     ]
   );
-  assert.deepEqual(serverOperations, [
-    "GET:/api/tags",
-    "GET:/api/tags",
-    "POST:/api/chat",
-    "GET:/api/tags",
-    "POST:/api/chat"
+  assert.deepEqual(operations, [
+    "ollama:model_inventory",
+    "ollama:chat",
+    "ollama:chat"
   ]);
-  assert.deepEqual(runtime.delays, [1000, 100, 1000]);
+  assert.deepEqual(runtime.delays, [20000, 100, 20000]);
   assert.equal(runtime.cancellation_count, 3);
+});
+
+test("REQ-SBX-GENERAL-002 live composition tests do not bind a fixed 11434 listener", () => {
+  const source = readFileSync(new URL(import.meta.url), "utf8");
+  assert.doesNotMatch(source, /listen\(\s*11434\b/);
 });
 
 test("REQ-SBX-GENERAL-002 replay consumes inventory and prewarm before returning an Engine", async () => {
@@ -933,28 +1138,34 @@ test("REQ-SBX-GENERAL-002 replay routes matched local and Judge through one orig
 
 test("REQ-SBX-GENERAL-002 live malformed provider response records only content-free failure before semantic rejection", async () => {
   const rawSentinel = "RAW_PROVIDER_BODY_AND_PROSE_SENTINEL";
-  const server = createServer((request, response) => {
-    request.resume();
-    response.statusCode = 200;
-    response.setHeader("content-type", "application/json");
-    response.end(JSON.stringify({ provider_prose: rawSentinel }));
+  const transport: SandboxSecurityHttpTransport = Object.freeze({
+    async request(input: Readonly<SandboxSecurityHttpRequest>) {
+      if (input.provider === "ollama" && input.operation === "model_inventory") {
+        return Object.freeze({
+          status: 200,
+          content_type: "application/json",
+          body: new TextEncoder().encode(JSON.stringify({ provider_prose: rawSentinel }))
+        });
+      }
+      throw new Error("unexpected_provider_request");
+    }
   });
-  await listen(server);
   const capture = createConformingCaptureSink();
   let thrown: unknown;
   try {
-    await withProductionEnvironment(async () => {
-      try {
-        await createLiveCaptureEngine({
-          runtime: runtimeHarness().runtime,
-          capture_sink: capture.sink
-        });
-      } catch (error) {
-        thrown = error;
-      }
+    await createLiveCaptureEngine({
+      runtime: runtimeHarness().runtime,
+      capture_sink: capture.sink,
+      transport,
+      judge_protocol_id: "openai_responses_v1",
+      ollama_digest: DIGEST,
+      judge_endpoint_policy_id: "operator_https_fqdn_v1",
+      judge_base_url: "https://unused.example.test/v1",
+      judge_endpoint_url: "https://unused.example.test/v1/responses",
+      judge_requested_model: "gpt-5.4-mini"
     });
-  } finally {
-    await close(server);
+  } catch (error) {
+    thrown = error;
   }
 
   assert.ok(thrown instanceof TypeError);
@@ -974,19 +1185,32 @@ test("REQ-SBX-GENERAL-002 live malformed provider response records only content-
   assert.throws(() => capture.sink.assertDrained(), /capture_sink_invalid/);
 });
 
+
 test("REQ-SBX-GENERAL-002 live transport failure records content-free outcome and rethrows transport semantics", async () => {
   const capture = createConformingCaptureSink();
-  let thrown: unknown;
-  await withProductionEnvironment(async () => {
-    try {
-      await createLiveCaptureEngine({
-        runtime: runtimeHarness().runtime,
-        capture_sink: capture.sink
-      });
-    } catch (error) {
-      thrown = error;
+  const failure = new Error("sandbox_security_transport_connection_failed");
+  failure.name = "sandbox_security_transport_connection_failed";
+  const transport: SandboxSecurityHttpTransport = Object.freeze({
+    async request() {
+      throw failure;
     }
   });
+  let thrown: unknown;
+  try {
+    await createLiveCaptureEngine({
+      runtime: runtimeHarness().runtime,
+      capture_sink: capture.sink,
+      transport,
+      judge_protocol_id: "openai_responses_v1",
+      ollama_digest: DIGEST,
+      judge_endpoint_policy_id: "operator_https_fqdn_v1",
+      judge_base_url: "https://unused.example.test/v1",
+      judge_endpoint_url: "https://unused.example.test/v1/responses",
+      judge_requested_model: "gpt-5.4-mini"
+    });
+  } catch (error) {
+    thrown = error;
+  }
 
   assert.ok(thrown instanceof Error);
   assert.equal(thrown.name, "sandbox_security_transport_connection_failed");
@@ -1003,6 +1227,7 @@ test("REQ-SBX-GENERAL-002 live transport failure records content-free outcome an
   ]);
 });
 
+
 test("REQ-SBX-GENERAL-002 live transport failure survives a capture record failure", async () => {
   const recordSentinel = new Error("capture-record-sentinel");
   const sink: CaptureSink = Object.freeze({
@@ -1013,22 +1238,35 @@ test("REQ-SBX-GENERAL-002 live transport failure survives a capture record failu
     endInput() {},
     assertDrained() {}
   });
-  let thrown: unknown;
-  await withProductionEnvironment(async () => {
-    try {
-      await createLiveCaptureEngine({
-        runtime: runtimeHarness().runtime,
-        capture_sink: sink
-      });
-    } catch (error) {
-      thrown = error;
+  const failure = new Error("sandbox_security_transport_connection_failed");
+  failure.name = "sandbox_security_transport_connection_failed";
+  const transport: SandboxSecurityHttpTransport = Object.freeze({
+    async request() {
+      throw failure;
     }
   });
+  let thrown: unknown;
+  try {
+    await createLiveCaptureEngine({
+      runtime: runtimeHarness().runtime,
+      capture_sink: sink,
+      transport,
+      judge_protocol_id: "openai_responses_v1",
+      ollama_digest: DIGEST,
+      judge_endpoint_policy_id: "operator_https_fqdn_v1",
+      judge_base_url: "https://unused.example.test/v1",
+      judge_endpoint_url: "https://unused.example.test/v1/responses",
+      judge_requested_model: "gpt-5.4-mini"
+    });
+  } catch (error) {
+    thrown = error;
+  }
 
   assert.ok(thrown instanceof Error);
   assert.notEqual(thrown, recordSentinel);
   assert.equal(thrown.name, "sandbox_security_transport_connection_failed");
 });
+
 
 test("REQ-SBX-GENERAL-002 replay rejects qualification prefix digest drift before Engine return", async () => {
   const otherDigest = `sha256:${"b".repeat(64)}`;
@@ -1062,7 +1300,8 @@ test("REQ-SBX-GENERAL-002 benchmark entrypoints and types stay outside the publi
   );
   assert.deepEqual(Object.keys(benchmarkExports).sort(), [
     "createSandboxSecurityHermeticReplayEngine",
-    "createSandboxSecurityLiveCaptureEngine"
+    "createSandboxSecurityLiveCaptureEngine",
+    "resolveSandboxSecurityBenchmarkJudgeProtocolDispatch"
   ]);
   const publicExports = await import("../src/security-production/index.ts");
   assert.deepEqual(Object.keys(publicExports).sort(), [
@@ -1073,6 +1312,7 @@ test("REQ-SBX-GENERAL-002 benchmark entrypoints and types stay outside the publi
   for (const name of [
     "createSandboxSecurityLiveCaptureEngine",
     "createSandboxSecurityHermeticReplayEngine",
+    "resolveSandboxSecurityBenchmarkJudgeProtocolDispatch",
     "SandboxSecurityCaptureSink",
     "SandboxSecurityReplayTransport",
     "SandboxSecurityCapturedProviderOutcome",
@@ -1154,6 +1394,11 @@ test("REQ-SBX-GENERAL-002 replay rejects every sealed config mismatch before pro
     { ollama_model: "qwen3:latest" },
     { ollama_digest: `sha256:${"A".repeat(64)}` },
     { ollama_digest: `sha256:${"a".repeat(63)}` },
+    { judge_protocol_id: "unknown_protocol" },
+    { judge_endpoint_policy_id: "unknown_policy" },
+    { judge_base_url: "https://127.0.0.1/v1" },
+    { judge_endpoint_url: "https://us.doro.lol/v1/not-responses" },
+    { judge_binding_sha256: "a".repeat(64) },
     { judge_requested_model: "-bad" },
     { local_prompt_version: "sandbox-security-ollama-local-prompt.v2" },
     { local_schema_version: "sandbox-security-local-model.v2" },
@@ -1397,14 +1642,23 @@ test("REQ-SBX-GENERAL-002 benchmark source owns the sole approved WithPorts edge
     "./deterministic-sanitizer.ts",
     "./external-pipeline.ts",
     "./http-transport.ts",
+    "./judge-protocol-adapter.ts",
     "./ollama-contract.ts",
     "./ollama-local-detector.ts",
+    "./openai-chat-judge-contract.ts",
     "./openai-judge-contract.ts",
+    "./p6-live-capture-profile.ts",
     "./production-config.ts",
     "./provider-outcomes.ts",
-    "./rule-catalog.ts"
+    "./rule-catalog.ts",
+    "node:crypto"
   ]);
   assert.match(source, /createSandboxSecurityProductionCompositionWithPorts/u);
+  assert.match(
+    source,
+    /createSandboxSecurityProductionLiveCaptureCompositionWithPorts/u
+  );
+  assert.match(source, /qualifySandboxSecurityP6LiveCaptureOllama/u);
   assert.doesNotMatch(source, /\b(?:process|fetch|WebSocket|EventSource|require|eval)\b/u);
   assert.doesNotMatch(
     source,
@@ -1422,6 +1676,33 @@ test("REQ-SBX-GENERAL-002 benchmark source owns the sole approved WithPorts edge
     }
   }
   assert.deepEqual(importers, ["security-production/composition.ts"]);
+
+  const p6OnlySymbolImporters: Readonly<Record<string, readonly string[]>> = {
+    createSandboxSecurityProductionLiveCaptureCompositionWithPorts: [
+      "security-production/composition.ts"
+    ],
+    qualifySandboxSecurityP6LiveCaptureOllama: [
+      "security-production/ollama-local-detector.ts"
+    ],
+    resolveSandboxSecurityP6LiveCapturePolicyProfile: [],
+    SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING: [
+      "security-production/composition.ts",
+      "security-production/ollama-local-detector.ts",
+      "security-production/p6-live-capture-profile.ts"
+    ]
+  };
+  for (const [symbol, expectedImporters] of Object.entries(
+    p6OnlySymbolImporters
+  )) {
+    const p6Importers: string[] = [];
+    for (const path of listTypeScriptFiles(resolve(PRODUCTION_ROOT, ".."))) {
+      const text = readFileSync(path, "utf8");
+      if (path !== sourcePath && text.includes(symbol)) {
+        p6Importers.push(relative(resolve(PRODUCTION_ROOT, ".."), path));
+      }
+    }
+    assert.deepEqual(p6Importers, expectedImporters);
+  }
   assert.equal(dirname(sourcePath), PRODUCTION_ROOT);
 });
 
@@ -1429,11 +1710,13 @@ test("REQ-SBX-GENERAL-002 sealed config field inventory and constants are exact"
   assert.deepEqual(Object.keys(sealedConfig()), [
     "ollama_model",
     "ollama_digest",
-    "judge_provider_id",
+    "judge_protocol_id",
+    "judge_endpoint_policy_id",
     "judge_base_url",
-    "judge_responses_url",
+    "judge_endpoint_url",
     "judge_requested_model",
     "judge_resolved_model",
+    "judge_binding_sha256",
     "local_prompt_version",
     "local_schema_version",
     "judge_prompt_version",

@@ -15,15 +15,16 @@
 > review loops below; stop only after the full GENERAL-002 plan set is closed
 > or a real external blocker is recorded.
 
-**Goal:** Add production rule, Ollama, sanitizer, and OpenAI Judge adapters to
+**Goal:** Add production rule, Ollama, sanitizer, and explicitly selected Judge protocol adapters to
 the frozen GENERAL-001 sandbox security core, then curate and seal a fixed
 300-input public benchmark with truth-blind live capture and mandatory hermetic
 replay.
 
 **Architecture:** GENERAL-002 lives under the sibling
 `engines/sandbox/src/security-production/` tree and depends only on the final
-GENERAL-001 security index, except for the sanitizer's single approved token
-registry helper deep import. Provider traffic is closed behind one default Node
+GENERAL-001 security index, except for the sanitizer's approved token-registry
+helper and the P6-only private Engine factory authorized by the local-hardware
+compatibility amendment. Provider traffic is closed behind one default Node
 HTTP transport; public composition accepts runtime ports and a mode only.
 Benchmark code remains outside production, separates input/capture/truth
 capabilities by process, and replays anonymous content-free provider outcomes
@@ -45,6 +46,26 @@ JSON Schema data, no new production dependency.
   `docs/superpowers/specs/2026-07-16-sandbox-security-production-detectors-spec.md`
 - Depends on frozen GENERAL-001 at HEAD ancestry including `4ef08de`
 - Implementation authorization: approved by the user on `2026-07-17`
+- Dynamic Judge Provider amendment:
+  `docs/superpowers/specs/2026-07-22-sandbox-security-dynamic-judge-provider-amendment.md`
+- Operator Judge Protocol Adapter amendment:
+  `docs/superpowers/specs/2026-07-23-sandbox-security-operator-judge-protocol-adapter-amendment.md`
+- Explicit Judge Protocol Selection amendment:
+  `docs/superpowers/specs/2026-07-23-sandbox-security-explicit-judge-protocol-selection-amendment.md`
+- P6 timing amendment: the source-controlled
+  `p6_local_hardware_compatibility_v1` profile gives controlled P6 live capture
+  `20000ms` Judge readiness, Ollama qualification, warmed prewarm, local slot,
+  and Judge slot limits plus a `40000ms` normal work budget; ordinary production
+  composition and P7 hermetic replay retain the inherited GENERAL-001
+  `5000ms` normal budget and `100/1000/4000ms` detector slots
+- P6 local-hardware compatibility architecture amendment:
+  `docs/superpowers/specs/2026-07-26-sandbox-security-p6-local-hardware-compatibility-amendment.md`
+
+The amendments replace fixed Judge vendor/configuration and single-protocol
+assumptions in this plan. OpenAI-named transport operations and internal types
+refer only to supported wire formats; the operator selects one protocol, safe
+HTTPS FQDN base URL, requested model, credential, and enable flag at process
+startup. There is no host/model inference, retry, or fallback.
 
 ## Plan Review Record
 
@@ -76,15 +97,16 @@ Expected: Node `>=22.19.0`, `unshare` available, current branch known, existing
 user/agent changes preserved. Do not install dependencies, alter lockfiles,
 switch branches, reset, clean, or change global Git/line-ending configuration.
 
-The current planning environment does not have an Ollama listener at
-`127.0.0.1:11434`, an installed `ollama` CLI, or the two required local-model
-environment values. That does not block plan approval, but Phase 6 live
+At plan approval, the planning environment had no Ollama listener at
+`127.0.0.1:11434`, installed `ollama` CLI, or the six required live
+configuration values. That did not block plan approval, but Phase 6 live
 qualification cannot become `VERIFIED` until the operator supplies:
 
 ```text
 SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST=sha256:<64 lowercase hex>
-SANDBOX_SECURITY_JUDGE_BASE_URL=https://doro.lol/v1
-SANDBOX_SECURITY_JUDGE_MODEL=gpt-5.4-mini
+SANDBOX_SECURITY_JUDGE_PROTOCOL=<openai_responses_v1|openai_chat_completions_json_v1>
+SANDBOX_SECURITY_JUDGE_BASE_URL=<canonical safe HTTPS FQDN base URL>
+SANDBOX_SECURITY_JUDGE_MODEL=<runtime-selected model>
 SANDBOX_SECURITY_JUDGE_API_KEY=<nonempty secret>
 SANDBOX_SECURITY_ENABLE_JUDGE=1
 ```
@@ -107,7 +129,11 @@ CI/environment blocker, not a reason to weaken the no-network gate.
 - `docs/superpowers/specs/2026-07-16-sandbox-security-production-detectors-spec.md`
 - `docs/superpowers/specs/2026-07-22-sandbox-security-dynamic-judge-provider-amendment.md`
 - `docs/superpowers/plans/2026-07-22-sandbox-security-dynamic-judge-provider.md`
+- `docs/superpowers/specs/2026-07-23-sandbox-security-operator-judge-protocol-adapter-amendment.md`
+- `docs/superpowers/specs/2026-07-23-sandbox-security-explicit-judge-protocol-selection-amendment.md`
+- `docs/superpowers/plans/2026-07-23-sandbox-security-explicit-judge-protocol-selection.md`
 - `docs/superpowers/specs/2026-07-21-sandbox-security-benchmark-review-ledger-amendment.md`
+- `docs/superpowers/specs/2026-07-26-sandbox-security-p6-local-hardware-compatibility-amendment.md`
 - `docs/superpowers/plans/2026-07-11-sandbox-security-core-001-master.md`
 - `engines/sandbox/src/security/index.ts`
 - `engines/sandbox/src/security/detector-contract.ts`
@@ -115,8 +141,9 @@ CI/environment blocker, not a reason to weaken the no-network gate.
 - `tests/repository/sandbox-security-core.spec.ts`
 
 When this plan conflicts with the approved GENERAL-002 Spec or a frozen
-GENERAL-001 contract/profile/reducer/state machine, the Spec/core wins. Stop and
-return to the owning plan document; do not patch the core to fit an adapter.
+GENERAL-001 contract/profile/reducer/state machine, the Spec/core wins. The
+2026-07-26 amendment authorizes only its exact private P6 Engine factory and
+composition import edge; do not patch any other core surface to fit an adapter.
 
 ## P5-T1 Corrective Governance Ownership
 
@@ -421,7 +448,7 @@ Phase review/fix/re-review is approved, and its status record is committed.
 | HTTP transport and production config | P2-T2, P2-T3 |
 | Ollama adapter | P2-T4, P2-T5 |
 | deterministic sanitizer | P3-T1 |
-| OpenAI Judge adapter | P3-T2, P3-T3 |
+| explicitly selected Judge protocol adapters | P3-T2, P3-T3 plus approved amendments |
 | production composition | P4-T1, P4-T2 |
 | source lock and corpus contracts | P5-T1, P5-T2 |
 | source lock, corpus, review, and pre-label request-ID contracts | P5-T1, P5-T2 |
@@ -440,12 +467,12 @@ Phase review/fix/re-review is approved, and its status record is committed.
 | deterministic matching and subject mapping | P1-T3 |
 | TypeScript inclusion and no core change | P1-T4 |
 | content-free provider outcome schemas | P2-T1 |
-| fixed endpoint transport, cleanup, digest side channel | P2-T2 |
-| three-variable private config | P2-T3 |
+| allowlisted endpoint transport, cleanup, digest side channel | P2-T2 |
+| six-variable dynamic Judge/Ollama private config | P2-T3 plus approved amendments |
 | exact Ollama prompt/body/envelope/schema mapping | P2-T4 |
 | digest qualification, WeakMap proof, prewarm, adapter | P2-T5 |
 | NFKC structured sanitizer and sole deep import | P3-T1 |
-| exact Responses request/strict response parser | P3-T2 |
+| exact Responses and Chat request/response parsers | P3-T2 plus approved amendments |
 | obligation-bound external detector | P3-T3 |
 | sanitizer failure zero Judge and Engine integration | P3-T4 |
 | mode composition and no fallback policy | P4-T1 |
@@ -457,7 +484,7 @@ Phase review/fix/re-review is approved, and its status record is committed.
 | 300 input/truth/review/request-ID matrix and provenance | P5-T3 |
 | truth-blind permission bundle | P5-T4 |
 | anonymous capture lifecycle and not_called slots | P6-T1 |
-| Ollama/OpenAI readiness and live runner | P6-T2 |
+| Ollama/Judge readiness and live runner | P6-T2 |
 | frozen metrics and evaluator process | P6-T3 |
 | accepted credentialed capture and seal | P6-T4 |
 | qualification/input replay state machine | P7-T1 |
@@ -470,7 +497,8 @@ Phase review/fix/re-review is approved, and its status record is committed.
 - Phase 1 freezes production ownership and deterministic rule result behavior.
 - Phase 2 freezes provider outcome, transport, config, Ollama request/response,
   qualification, and prewarm contracts.
-- Phase 3 freezes sanitizer and OpenAI Judge mapping.
+- Phase 3 plus the approved amendments freeze sanitizer and both selected Judge
+  protocol mappings.
 - Phase 4 freezes the three public factories and benchmark composition seams.
 - Phase 5 freezes source lock, corpus schemas, exact 300-input matrix, and input
   bundle hashes before providers see any benchmark input.
@@ -486,7 +514,7 @@ Phase review/fix/re-review is approved, and its status record is committed.
   "test:repo:sandbox-security-production": "node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/sandbox-security-production.spec.ts tests/repository/sandbox-security-benchmark.spec.ts",
   "typecheck:benchmark:sandbox-security": "node ./frontend/node_modules/typescript/bin/tsc --noEmit -p scripts/benchmark/sandbox-security/tsconfig.json",
   "benchmark:sandbox-security:validate": "node --experimental-strip-types scripts/benchmark/sandbox-security/validate-corpus.ts",
-  "benchmark:sandbox-security:replay": "env -u OPENAI_API_KEY -u SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST -u SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE unshare --net node --experimental-strip-types scripts/benchmark/sandbox-security/replay-hermetic.ts",
+  "benchmark:sandbox-security:replay": "env -u SANDBOX_SECURITY_JUDGE_PROTOCOL -u SANDBOX_SECURITY_JUDGE_API_KEY -u SANDBOX_SECURITY_JUDGE_BASE_URL -u SANDBOX_SECURITY_JUDGE_MODEL -u SANDBOX_SECURITY_ENABLE_JUDGE -u SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST unshare --net node --experimental-strip-types scripts/benchmark/sandbox-security/replay-hermetic.ts",
   "benchmark:sandbox-security:qualify:live": "node --experimental-strip-types scripts/benchmark/sandbox-security/prepare-capture-bundle.ts"
 }
 ```
@@ -500,7 +528,8 @@ command.
 - [ ] All 29 tasks have exact files, failing test, RED command, implementation
       boundary, GREEN/broader/build gates, independent review, fix, re-review,
       status update, exact git add, and commit.
-- [ ] No task changes a GENERAL-001 production file.
+- [ ] No task changes a GENERAL-001 production file except the exact private
+      P6 Engine factory authorized by the 2026-07-26 amendment.
 - [ ] No public factory accepts transport, environment, credential, endpoint,
       prompt, schema, model, or benchmark metadata.
 - [ ] Rule/local/Judge modules cannot import benchmark or Track 1 data.
@@ -546,7 +575,7 @@ git diff --summary
 git status --short
 ```
 
-Then verify accepted live evidence matches current model digest, OpenAI model,
-prompt/schema/catalog/sanitizer versions, corpus revision, capture hashes, and
-seal. Final global review must be `APPROVED`; update requirement status to
+Then verify accepted live evidence matches current model digest, Judge protocol,
+base URL, protocol-derived endpoint URL, requested/resolved model, prompt/schema/catalog/sanitizer
+versions, corpus revision, capture hashes, and seal. Final global review must be `APPROVED`; update requirement status to
 `COMPLETE_PENDING_REVIEW`; stop before GENERAL-003.

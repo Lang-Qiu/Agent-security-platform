@@ -235,12 +235,12 @@ function normalizeCapturedOutcome(
   if (
     capture_phase === "evaluation" &&
     provider === "openai" &&
-    operation === "responses"
+    (operation === "responses" || operation === "chat_completions")
   ) {
     return deepFreeze({
       capture_phase: "evaluation",
       provider: "openai",
-      operation: "responses",
+      operation,
       outcome
     }) as Readonly<SandboxSecurityCapturedProviderOutcome>;
   }
@@ -369,7 +369,10 @@ export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
 
       if (
         outcome.provider === "openai" &&
-        outcome.operation === "responses"
+        (
+          outcome.operation === "responses" ||
+          outcome.operation === "chat_completions"
+        )
       ) {
         if (open.judge !== null) {
           markFailed("sandbox_security_capture_sink_reject:duplicate_judge");

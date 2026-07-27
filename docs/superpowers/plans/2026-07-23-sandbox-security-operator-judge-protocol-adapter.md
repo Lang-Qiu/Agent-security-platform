@@ -12,10 +12,10 @@ preserving strict Judge wire behavior and sealed benchmark reproducibility.
 
 **Architecture:** `judge-protocol-adapter.ts` is the sole owner of Judge URL
 canonicalization and `/responses` endpoint derivation. `production-config.ts`
-reads the existing five values, stores only adapter-derived private transport
-state, and exposes nonsecret provenance. Benchmark code validates the same six
-sealed protocol/policy/endpoint/model fields and their canonical binding hash
-before evaluation or sealing.
+reads the explicit protocol-selection amendment's six values, stores only
+adapter-derived private transport state, and exposes nonsecret provenance.
+Benchmark code validates the same six sealed protocol/policy/endpoint/model
+fields and their canonical binding hash before evaluation or sealing.
 
 **Canonical amendment:**
 `docs/superpowers/specs/2026-07-23-sandbox-security-operator-judge-protocol-adapter-amendment.md`
@@ -95,8 +95,9 @@ only the permission-handoff assertions that require the new nonsecret binding.
    and rejects a tampered protocol, base, or endpoint with no seal publication.
 2. Confirm RED in the focused capture/evaluation/live-evidence suite.
 3. Propagate the summary's nonsecret protocol ID through candidate construction
-   and exact normalizers. Preserve the existing closed five-variable child
-   environment and the `4000ms` readiness limit.
+   and exact normalizers. Preserve the existing closed six-variable child
+   environment and the P6-only `p6_local_hardware_compatibility_v1`
+   `20000ms` readiness limit.
 4. Run all P6 deterministic tests, benchmark typecheck, sandbox TypeScript,
    corpus validator, frontend build, and `git diff --check`.
 

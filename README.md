@@ -313,12 +313,13 @@ npm.cmd run dev -- --host 127.0.0.1 --port 5173
 - `backend` 最小任务中枢与内存级 API
 - `frontend` 最小后台壳子、路由骨架和 `Overview` 页面
 - `sandbox` 的 GENERAL-001 通用安全核心、策略归约和兼容适配器
+- `sandbox` 的 GENERAL-002 生产 detector 组合、确定性 sanitizer、显式 Judge 协议适配器和 sealed benchmark 工具链
 
-Sandbox Security Core 当前仍未包含：
-
-- 生产级通用 detector、sanitizer 和 external Judge
-- 面向该核心的新 backend REST 路由或 frontend DTO
-- GENERAL-002 及后续 benchmark、持久化审计和部署能力
+Sandbox Security Production currently adds production detector composition,
+deterministic sanitization, selected Judge protocol adapters, and sealed
+benchmark tooling. It remains engine-owned: no new backend REST route,
+frontend DTO, persistent audit store, or deployment surface is opened by
+GENERAL-002.
 
 ## Sandbox Security Core
 
@@ -332,8 +333,12 @@ Sandbox Security Core 的实际引擎入口是
 当前核心边界包含 authoritative source、balanced/strict policy profile、
 Monitor 与 Track1 兼容适配器，以及 fail-closed 的 finding qualification
 与 policy reduction。
-该入口用于 REQ-SBX-GENERAL-001 的核心联调与测试，不代表已开放新的后端
-REST 路由，也不开始 GENERAL-002。
+该入口用于 REQ-SBX-GENERAL-001 的核心联调与测试；GENERAL-002 生产能力位于
+`engines/sandbox/src/security-production/`，不代表已开放新的后端 REST 路由。
+
+Sandbox Security Core 当前仍未包含生产级通用 detector、sanitizer 和 external Judge；
+这些 GENERAL-002 能力由相邻的 `security-production/` 模块
+组合，冻结 Core 仅通过既有契约被调用。
 # Track 1 OpenClaw Evidence Workflow
 
 The Track 1 path uses Node.js `>=22.19.0`, `pnpm@10.0.0`, OpenClaw

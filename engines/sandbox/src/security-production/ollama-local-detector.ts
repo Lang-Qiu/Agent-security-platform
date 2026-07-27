@@ -20,6 +20,9 @@ import {
   normalizeSandboxSecurityReplayOllamaInventoryResponse,
   type SandboxSecurityReplayOllamaResponse
 } from "./provider-outcomes.ts";
+import {
+  SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING
+} from "./p6-live-capture-profile.ts";
 
 export interface SandboxSecurityOllamaQualification {
   readonly summary: Readonly<{
@@ -41,6 +44,9 @@ type ParsedLocalSubjectRef = ParsedLocalCandidate["subject_refs"][number];
 const NORMALIZED_DIGEST = /^sha256:[a-f0-9]{64}$/;
 const WIRE_DIGEST = /^[a-f0-9]{64}$/;
 const MAX_RESPONSE_BYTES = 65536;
+const ORDINARY_WARMED_PROBE_LATENCY_MS = 1000;
+const LIVE_CAPTURE_WARMED_PROBE_LATENCY_MS =
+  SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.qualification_timeout_ms;
 const DECODER = new TextDecoder("utf-8", { fatal: true });
 const TYPED_ARRAY_BYTE_LENGTH_GETTER = Object.getOwnPropertyDescriptor(
   Object.getPrototypeOf(Uint8Array.prototype) as object,
@@ -326,11 +332,14 @@ async function requestTransport(
   >;
 }
 
-export async function qualifySandboxSecurityOllama(input: Readonly<{
-  transport: SandboxSecurityHttpTransport;
-  expected_digest: string;
-  signal: AbortSignal;
-}>): Promise<Readonly<SandboxSecurityOllamaQualification>> {
+async function qualifySandboxSecurityOllamaWithWarmedProbeLatencyLimit(
+  input: Readonly<{
+    transport: SandboxSecurityHttpTransport;
+    expected_digest: string;
+    signal: AbortSignal;
+  }>,
+  warmedProbeLatencyLimit: 1000 | 20000
+): Promise<Readonly<SandboxSecurityOllamaQualification>> {
   const normalized = qualificationInput(input);
   assertNotAborted(normalized.signal);
   const inventoryWire = await requestTransport(
@@ -387,7 +396,7 @@ export async function qualifySandboxSecurityOllama(input: Readonly<{
     if (
       !Number.isFinite(warmedProbeLatency) ||
       warmedProbeLatency < 0 ||
-      warmedProbeLatency > 1000
+      warmedProbeLatency > warmedProbeLatencyLimit
     ) {
       return qualificationInvalid();
     }
@@ -407,6 +416,32 @@ export async function qualifySandboxSecurityOllama(input: Readonly<{
   });
   assertNotAborted(normalized.signal);
   return qualification;
+}
+
+export async function qualifySandboxSecurityOllama(
+  input: Readonly<{
+    transport: SandboxSecurityHttpTransport;
+    expected_digest: string;
+    signal: AbortSignal;
+  }>
+): Promise<Readonly<SandboxSecurityOllamaQualification>> {
+  return qualifySandboxSecurityOllamaWithWarmedProbeLatencyLimit(
+    input,
+    ORDINARY_WARMED_PROBE_LATENCY_MS
+  );
+}
+
+export async function qualifySandboxSecurityP6LiveCaptureOllama(
+  input: Readonly<{
+    transport: SandboxSecurityHttpTransport;
+    expected_digest: string;
+    signal: AbortSignal;
+  }>
+): Promise<Readonly<SandboxSecurityOllamaQualification>> {
+  return qualifySandboxSecurityOllamaWithWarmedProbeLatencyLimit(
+    input,
+    LIVE_CAPTURE_WARMED_PROBE_LATENCY_MS
+  );
 }
 
 function deepFreeze<T>(value: T, seen: WeakSet<object> = new WeakSet()): T {

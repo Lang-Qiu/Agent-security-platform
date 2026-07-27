@@ -52,11 +52,15 @@ import {
   type SandboxSecuritySealedProviderConfig
 } from "../src/security-production/benchmark-composition.ts";
 import {
+  hashSandboxSecurityBenchmarkJudgeBinding
+} from "../../../scripts/benchmark/sandbox-security/contracts.ts";
+import {
   APPROVED_TRACK1_ACTION_MAP,
   runTrack1SecurityCompatibilityHarness
 } from "./helpers/track1-security-regression-harness.ts";
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
+const RESPONSES_PROTOCOL_ID = "openai_responses_v1" as const;
 const ENCODER = new TextEncoder();
 const DECODER = new TextDecoder("utf-8", { fatal: true });
 const BENCHMARK_IDENTITY_SENTINEL = "benchmark-identity-sentinel-never-echo";
@@ -264,9 +268,10 @@ function deterministicPorts(input: Readonly<{
           ...(mode === "rule_only" ? {} : { ollama_digest: DIGEST }),
           ...(mode === "local_and_judge"
             ? {
-                judge_provider_id: "doro",
+                judge_protocol_id: RESPONSES_PROTOCOL_ID,
+                judge_endpoint_policy_id: "operator_https_fqdn_v1",
                 judge_base_url: "https://doro.lol/v1",
-                judge_responses_url: "https://doro.lol/v1/responses",
+                judge_endpoint_url: "https://doro.lol/v1/responses",
                 judge_requested_model: "gpt-5.4-mini"
               }
             : {})
@@ -279,7 +284,17 @@ function deterministicPorts(input: Readonly<{
     async create_local_detector() {
       return input.local ?? noMatchLocal();
     },
-    create_external_pipeline() {
+    create_external_pipeline(
+      pipelineInput: Parameters<
+        SandboxSecurityProductionCompositionPorts["create_external_pipeline"]
+      >[0]
+    ) {
+      assert.equal(pipelineInput.transport, transport);
+      assert.equal(
+        pipelineInput.judge_protocol_id,
+        RESPONSES_PROTOCOL_ID
+      );
+      assert.equal(pipelineInput.judge_requested_model, "gpt-5.4-mini");
       return Object.freeze({
         sanitizer: input.sanitizer ?? createSandboxSecurityDeterministicSanitizer(),
         judge: input.judge ?? matchingJudge()
@@ -364,6 +379,7 @@ async function waitForCall(calls: () => number): Promise<void> {
 async function withoutProductionEnvironment<T>(action: () => Promise<T>): Promise<T> {
   const keys = [
     "SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST",
+    "SANDBOX_SECURITY_JUDGE_PROTOCOL",
     "SANDBOX_SECURITY_JUDGE_BASE_URL",
     "SANDBOX_SECURITY_JUDGE_MODEL",
     "SANDBOX_SECURITY_JUDGE_API_KEY",
@@ -383,14 +399,19 @@ async function withoutProductionEnvironment<T>(action: () => Promise<T>): Promis
 }
 
 function sealedConfig(): Readonly<SandboxSecuritySealedProviderConfig> {
+  const judgeBinding = {
+    judge_protocol_id: "openai_responses_v1" as const,
+    judge_endpoint_policy_id: "operator_https_fqdn_v1" as const,
+    judge_base_url: "https://us.doro.lol/v1",
+    judge_endpoint_url: "https://us.doro.lol/v1/responses",
+    judge_requested_model: "gpt-5.4-mini",
+    judge_resolved_model: "gpt-5.4-mini"
+  };
   return Object.freeze({
     ollama_model: "qwen3:8b",
     ollama_digest: DIGEST,
-    judge_provider_id: "doro",
-    judge_base_url: "https://doro.lol/v1",
-    judge_responses_url: "https://doro.lol/v1/responses",
-    judge_requested_model: "gpt-5.4-mini",
-    judge_resolved_model: "gpt-5.4-mini",
+    ...judgeBinding,
+    judge_binding_sha256: hashSandboxSecurityBenchmarkJudgeBinding(judgeBinding),
     local_prompt_version: SANDBOX_SECURITY_OLLAMA_LOCAL_PROMPT_VERSION,
     local_schema_version: "sandbox-security-local-model.v1",
     judge_prompt_version: SANDBOX_SECURITY_OPENAI_JUDGE_PROMPT_VERSION,
@@ -569,6 +590,45 @@ test("REQ-SBX-GENERAL-002 production modes retain decision and detector-run cont
       mode === "local_and_judge" ? "risk_detected" : "no_detected_risk"
     );
   }
+});
+
+test("REQ-SBX-GENERAL-002 evaluation requests cannot supply or override the configured Judge protocol", async () => {
+  let judgeCalls = 0;
+  const engine = await engineForMode(
+    "local_and_judge",
+    runtimeHarness().runtime,
+    deterministicPorts({
+      local: routedLocal(),
+      judge: matchingJudge(() => {
+        judgeCalls += 1;
+      })
+    })
+  );
+  const request = evaluationRequest();
+  const injectedRequests = [
+    {
+      ...request,
+      judge_protocol_id: "openai_chat_completions_json_v1"
+    },
+    {
+      ...request,
+      submission: {
+        ...request.submission,
+        judge_protocol_id: "openai_chat_completions_json_v1"
+      }
+    }
+  ];
+
+  for (const injected of injectedRequests) {
+    await assert.rejects(
+      engine.evaluate(injected as never),
+      (error: unknown) =>
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "sandbox_security_request_invalid"
+    );
+  }
+  assert.equal(judgeCalls, 0);
 });
 
 test("REQ-SBX-GENERAL-002 rule short circuit skips local and Judge", async () => {

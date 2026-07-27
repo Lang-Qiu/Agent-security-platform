@@ -947,7 +947,7 @@ test("REQ-SBX-GENERAL-002 ordinary qualification rejects a validated prewarm lat
   }
 });
 
-test("REQ-SBX-GENERAL-002 only the P6 live-capture adapter admits the approved 1001..5000 ms prewarm interval", { concurrency: false }, async () => {
+test("REQ-SBX-GENERAL-002 only the P6 live-capture adapter admits the approved 1001..20000 ms prewarm interval", { concurrency: false }, async () => {
   const performanceObject = globalThis.performance;
   const originalNow = Object.getOwnPropertyDescriptor(performanceObject, "now");
   let warmedProbeLatency = 1001;
@@ -977,7 +977,7 @@ test("REQ-SBX-GENERAL-002 only the P6 live-capture adapter admits the approved 1
           expected_digest: DIGEST,
           signal: new AbortController().signal
         },
-        5000
+        20000
       )
     );
 
@@ -993,7 +993,7 @@ test("REQ-SBX-GENERAL-002 only the P6 live-capture adapter admits the approved 1
     assert.equal(live.summary.warmed_probe_latency_ms, 1001);
 
     nowReads = 0;
-    warmedProbeLatency = 5001;
+    warmedProbeLatency = 20001;
     await assertQualificationInvalid(() =>
       qualifySandboxSecurityP6LiveCaptureOllama({
         transport: successfulQualificationTransport().transport,

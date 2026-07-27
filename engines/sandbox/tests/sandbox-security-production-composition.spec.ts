@@ -17,9 +17,15 @@ import {
 } from "../src/security-production/deterministic-sanitizer.ts";
 import type { SandboxSecurityHttpTransport } from "../src/security-production/http-transport.ts";
 import type {
+  SandboxSecurityJudgeProtocolId
+} from "../src/security-production/judge-protocol-adapter.ts";
+import type {
   SandboxSecurityProductionConfig,
   SandboxSecurityProductionMode
 } from "../src/security-production/production-config.ts";
+import {
+  SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING
+} from "../src/security-production/p6-live-capture-profile.ts";
 
 interface CompositionPorts {
   create_config(
@@ -32,9 +38,11 @@ interface CompositionPorts {
     transport: SandboxSecurityHttpTransport;
     expected_digest: string;
     signal: AbortSignal;
+    qualification_timeout_ms: 1000 | 20000;
   }>): Promise<RawLocalDetector>;
   create_external_pipeline(input: Readonly<{
     transport: SandboxSecurityHttpTransport;
+    judge_protocol_id: SandboxSecurityJudgeProtocolId;
     judge_requested_model: string;
   }>): Readonly<{
     sanitizer: SandboxSecuritySanitizer;
@@ -57,12 +65,20 @@ type CreateComposition = (
   }>
 ) => Promise<SandboxSecurityEngine>;
 
+type CreateLiveCaptureWithPorts = (
+  input: Readonly<{
+    runtime: SandboxSecurityRuntimePorts;
+  }>,
+  ports: Readonly<CompositionPorts>
+) => Promise<SandboxSecurityEngine>;
+
 let createWithPorts: CreateWithPorts = async () => {
   throw new Error("guarded-composition-placeholder");
 };
 let createComposition: CreateComposition = async () => {
   throw new Error("guarded-composition-placeholder");
 };
+let createLiveCaptureWithPorts: CreateLiveCaptureWithPorts | undefined;
 
 try {
   const candidate = await import(
@@ -81,6 +97,13 @@ try {
     createComposition =
       candidate.createSandboxSecurityProductionComposition as CreateComposition;
   }
+  if (
+    typeof candidate.createSandboxSecurityProductionLiveCaptureCompositionWithPorts ===
+    "function"
+  ) {
+    createLiveCaptureWithPorts =
+      candidate.createSandboxSecurityProductionLiveCaptureCompositionWithPorts as CreateLiveCaptureWithPorts;
+  }
 } catch (error: unknown) {
   if (
     !(error instanceof Error) ||
@@ -92,6 +115,7 @@ try {
 }
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
+const RESPONSES_PROTOCOL_ID = "openai_responses_v1" as const;
 const TRANSPORT: SandboxSecurityHttpTransport = Object.freeze({
   async request() {
     throw new Error("transport-must-not-run");
@@ -129,9 +153,10 @@ function config(mode: SandboxSecurityProductionMode) {
       ...(mode === "rule_only" ? {} : { ollama_digest: DIGEST }),
       ...(mode === "local_and_judge"
         ? {
-            judge_provider_id: "doro",
+            judge_protocol_id: RESPONSES_PROTOCOL_ID,
+            judge_endpoint_policy_id: "operator_https_fqdn_v1",
             judge_base_url: "https://doro.lol/v1",
-            judge_responses_url: "https://doro.lol/v1/responses",
+            judge_endpoint_url: "https://doro.lol/v1/responses",
             judge_requested_model: "gpt-5.4-mini"
           }
         : {})
@@ -176,9 +201,12 @@ function portsHarness() {
         transport: SandboxSecurityHttpTransport;
         expected_digest: string;
         signal: AbortSignal;
+        qualification_timeout_ms: 1000 | 20000;
       }>
     | undefined;
   let pipelineTransport: SandboxSecurityHttpTransport | undefined;
+  let pipelineProtocolId: SandboxSecurityJudgeProtocolId | undefined;
+  let pipelineRequestedModel: string | undefined;
   const ports: CompositionPorts = {
     create_config(mode) {
       calls.push(`config:${mode}`);
@@ -196,6 +224,11 @@ function portsHarness() {
     create_external_pipeline(input) {
       calls.push("pipeline");
       pipelineTransport = input.transport;
+      pipelineProtocolId = input.judge_protocol_id;
+      pipelineRequestedModel = input.judge_requested_model;
+      if (input.judge_protocol_id !== RESPONSES_PROTOCOL_ID) {
+        throw new Error("unexpected-judge-protocol-id");
+      }
       if (input.judge_requested_model !== "gpt-5.4-mini") {
         throw new Error("unexpected-judge-requested-model");
       }
@@ -210,6 +243,12 @@ function portsHarness() {
     },
     get pipeline_transport() {
       return pipelineTransport;
+    },
+    get pipeline_protocol_id() {
+      return pipelineProtocolId;
+    },
+    get pipeline_requested_model() {
+      return pipelineRequestedModel;
     }
   };
 }
@@ -284,14 +323,274 @@ for (const mode of ["local", "local_and_judge"] as const) {
     assert.equal(runtime.cancellation_count, 1);
     assert.equal(harness.local_input?.transport, TRANSPORT);
     assert.equal(harness.local_input?.expected_digest, DIGEST);
+    assert.equal(harness.local_input?.qualification_timeout_ms, 1000);
     assert.equal(harness.local_input?.signal instanceof AbortSignal, true);
     assert.equal(harness.local_input?.signal.aborted, false);
     assert.equal(
       harness.pipeline_transport,
       mode === "local_and_judge" ? TRANSPORT : undefined
     );
+    assert.equal(
+      harness.pipeline_protocol_id,
+      mode === "local_and_judge" ? RESPONSES_PROTOCOL_ID : undefined
+    );
+    assert.equal(
+      harness.pipeline_requested_model,
+      mode === "local_and_judge" ? "gpt-5.4-mini" : undefined
+    );
   });
 }
+
+async function assertJudgeConfigRejectedBeforeProviderSetup(
+  scenario: Readonly<{
+    name: string;
+    key: "judge_protocol_id" | "judge_requested_model";
+    value: string | undefined;
+  }>
+): Promise<void> {
+  const runtime = runtimeHarness();
+  const harness = portsHarness();
+  harness.ports.create_config = (mode) => {
+    harness.calls.push(`config:${mode}`);
+    const summary = {
+      ...config("local_and_judge").summary
+    } as Record<string, unknown>;
+    if (scenario.value === undefined) delete summary[scenario.key];
+    else summary[scenario.key] = scenario.value;
+    return Object.freeze({
+      mode: "local_and_judge" as const,
+      summary: Object.freeze(summary)
+    }) as Readonly<SandboxSecurityProductionConfig>;
+  };
+
+  await assert.rejects(
+    createWithPorts(
+      { runtime: runtime.runtime, mode: "local_and_judge" },
+      harness.ports
+    ),
+    { name: "sandbox_security_production_composition_invalid" },
+    scenario.name
+  );
+  assert.deepEqual(harness.calls, ["config:local_and_judge"], scenario.name);
+  assert.deepEqual(runtime.delays, [], scenario.name);
+}
+
+test("REQ-SBX-GENERAL-002 local_and_judge requires config-selected protocol and model before provider setup", async () => {
+  for (const scenario of [
+    { name: "missing protocol", key: "judge_protocol_id", value: undefined },
+    { name: "unknown protocol", key: "judge_protocol_id", value: "openai_auto" },
+    { name: "missing model", key: "judge_requested_model", value: undefined }
+  ] as const) {
+    await assertJudgeConfigRejectedBeforeProviderSetup(scenario);
+  }
+});
+
+for (const scenario of [
+  { name: "leading-whitespace", value: " gpt-5.4-mini" },
+  { name: "overlength", value: "a".repeat(129) }
+] as const) {
+  test(`REQ-SBX-GENERAL-002 local_and_judge rejects ${scenario.name} Judge model before provider setup`, async () => {
+    await assertJudgeConfigRejectedBeforeProviderSetup({
+      name: `${scenario.name} model`,
+      key: "judge_requested_model",
+      value: scenario.value
+    });
+  });
+}
+
+test("REQ-SBX-GENERAL-002 P6 live capture isolates the approved 20000 ms Ollama qualification policy", async () => {
+  if (createLiveCaptureWithPorts === undefined) {
+    assert.fail("missing P6-only live capture composition entrypoint");
+  }
+  const runtime = runtimeHarness();
+  const harness = portsHarness();
+
+  const engine = await createLiveCaptureWithPorts(
+    { runtime: runtime.runtime },
+    harness.ports
+  );
+
+  assert.equal(typeof engine.evaluate, "function");
+  assert.deepEqual(runtime.delays, [
+    SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.qualification_timeout_ms
+  ]);
+  assert.equal(
+    harness.local_input?.qualification_timeout_ms,
+    SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.qualification_timeout_ms
+  );
+  assert.deepEqual(harness.calls, [
+    "config:local_and_judge",
+    "transport:local_and_judge",
+    "local",
+    "pipeline"
+  ]);
+
+  await engine.evaluate(evaluationRequest());
+  assert.deepEqual(runtime.delays, [
+    SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.qualification_timeout_ms,
+    100,
+    SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.local_detector_slot_timeout_ms
+  ]);
+  assert.equal(runtime.cancellation_count, 3);
+});
+
+test("REQ-SBX-GENERAL-002 P6 live capture uses 40000 ms work budget and 20000 ms Judge slot only in live path", async () => {
+  if (createLiveCaptureWithPorts === undefined) {
+    assert.fail("missing P6-only live capture composition entrypoint");
+  }
+  const delays: number[] = [];
+  let cancellationCount = 0;
+  let monotonic = 0;
+  const runtime: SandboxSecurityRuntimePorts = {
+    now: () => "2026-07-20T00:00:00.000Z",
+    nextDecisionId: () => "decision-composition-p6-budget",
+    monotonicNowMs: () => monotonic,
+    scheduleTimeout(delayMs, _callback) {
+      delays.push(delayMs);
+      if (delayMs === 100) monotonic = 6000;
+      let cancelled = false;
+      return () => {
+        if (!cancelled) {
+          cancelled = true;
+          cancellationCount += 1;
+        }
+      };
+    }
+  };
+  const harness = portsHarness();
+  let localEvaluations = 0;
+  let judgeEvaluations = 0;
+  harness.ports.create_local_detector = async () =>
+    Object.freeze({
+      async detect(
+        snapshot: Readonly<SandboxSecurityRawDetectorSnapshot>
+      ): Promise<SandboxSecurityRawDetectorResult> {
+        localEvaluations += 1;
+        const source = snapshot.contents[0]!;
+        return {
+          candidates: [
+            {
+              category: "prompt_injection",
+              severity: "medium",
+              confidence: 0.6,
+              reason_code: "sandbox_security_prompt_injection",
+              subject_refs: [
+                {
+                  kind: "content_source",
+                  source_handle: source.source_handle,
+                  locator: { kind: "whole_source" }
+                }
+              ]
+            }
+          ],
+          clearances: []
+        };
+      }
+    });
+  harness.ports.create_external_pipeline = () =>
+    Object.freeze({
+      sanitizer: createSandboxSecurityDeterministicSanitizer(),
+      judge: Object.freeze({
+        async detect() {
+          judgeEvaluations += 1;
+          return { candidates: [], clearances: [] };
+        }
+      })
+    });
+
+  const engine = await createLiveCaptureWithPorts(
+    { runtime },
+    harness.ports
+  );
+  await engine.evaluate(evaluationRequest());
+
+  assert.equal(localEvaluations, 1);
+  assert.equal(judgeEvaluations, 1);
+  assert.deepEqual(delays, [
+    SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.qualification_timeout_ms,
+    100,
+    SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.local_detector_slot_timeout_ms,
+    SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.judge_detector_slot_timeout_ms
+  ]);
+  assert.equal(cancellationCount, 4);
+});
+
+test("REQ-SBX-GENERAL-002 P6 work budget remains available one millisecond below the approved boundary", async () => {
+  if (createLiveCaptureWithPorts === undefined) {
+    assert.fail("missing P6-only live capture composition entrypoint");
+  }
+  let monotonicCalls = 0;
+  let localEvaluations = 0;
+  const runtime: SandboxSecurityRuntimePorts = {
+    now: () => "2026-07-20T00:00:00.000Z",
+    nextDecisionId: () => "decision-composition-p6-entry-budget",
+    monotonicNowMs: () => {
+      monotonicCalls += 1;
+      return monotonicCalls === 1
+        ? 0
+        : SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.normal_work_budget_ms - 1;
+    },
+    scheduleTimeout: () => () => {}
+  };
+  const harness = portsHarness();
+  harness.ports.create_local_detector = async () =>
+    Object.freeze({
+      async detect(): Promise<SandboxSecurityRawDetectorResult> {
+        localEvaluations += 1;
+        return { candidates: [], clearances: [] };
+      }
+    });
+
+  const engine = await createLiveCaptureWithPorts({ runtime }, harness.ports);
+  await assert.doesNotReject(() => engine.evaluate(evaluationRequest()));
+  assert.equal(localEvaluations, 1);
+});
+
+test("REQ-SBX-GENERAL-002 P6 work budget expires immediately above the approved boundary", async () => {
+  if (createLiveCaptureWithPorts === undefined) {
+    assert.fail("missing P6-only live capture composition entrypoint");
+  }
+  let monotonicCalls = 0;
+  const runtime: SandboxSecurityRuntimePorts = {
+    now: () => "2026-07-20T00:00:00.000Z",
+    nextDecisionId: () => "decision-composition-p6-budget-boundary",
+    monotonicNowMs: () => {
+      monotonicCalls += 1;
+      return monotonicCalls === 1
+        ? 0
+        : SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.normal_work_budget_ms + 1;
+    },
+    scheduleTimeout: () => () => {}
+  };
+  const harness = portsHarness();
+  const engine = await createLiveCaptureWithPorts({ runtime }, harness.ports);
+
+  await assert.rejects(
+    () => engine.evaluate(evaluationRequest()),
+    (error: unknown) =>
+      error instanceof Error &&
+      error.name === "sandbox_security_internal_invalid" &&
+      error.message === "pre_id_evaluation_budget_exhausted"
+  );
+});
+
+test("REQ-SBX-GENERAL-002 P6 live capture rejects caller-selected composition modes", async () => {
+  if (createLiveCaptureWithPorts === undefined) {
+    assert.fail("missing P6-only live capture composition entrypoint");
+  }
+  const runtime = runtimeHarness();
+  const harness = portsHarness();
+
+  await assert.rejects(
+    createLiveCaptureWithPorts(
+      { runtime: runtime.runtime, mode: "local" } as never,
+      harness.ports
+    ),
+    { name: "sandbox_security_production_composition_invalid" }
+  );
+  assert.deepEqual(harness.calls, []);
+  assert.deepEqual(runtime.delays, []);
+});
 
 test("REQ-SBX-GENERAL-002 composed engines preserve selected slots and caller cancellation", async () => {
   for (const mode of ["rule_only", "local", "local_and_judge"] as const) {
@@ -329,7 +628,12 @@ test("REQ-SBX-GENERAL-002 composed engines preserve selected slots and caller ca
       });
       return detector;
     };
-    harness.ports.create_external_pipeline = ({ transport, judge_requested_model }) => {
+    harness.ports.create_external_pipeline = ({
+      transport,
+      judge_protocol_id,
+      judge_requested_model
+    }) => {
+      assert.equal(judge_protocol_id, RESPONSES_PROTOCOL_ID);
       assert.equal(judge_requested_model, "gpt-5.4-mini");
       assert.equal(transport, TRANSPORT);
       return Object.freeze({
@@ -468,6 +772,7 @@ test("REQ-SBX-GENERAL-002 public local composition surfaces missing production c
   const runtime = runtimeHarness();
   const keys = [
     "SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST",
+    "SANDBOX_SECURITY_JUDGE_PROTOCOL",
     "SANDBOX_SECURITY_JUDGE_BASE_URL",
     "SANDBOX_SECURITY_JUDGE_MODEL",
     "SANDBOX_SECURITY_JUDGE_API_KEY",
@@ -492,6 +797,7 @@ test("REQ-SBX-GENERAL-002 public local composition surfaces missing production c
 test("REQ-SBX-GENERAL-002 public local_and_judge rejects missing key and disabled Judge before transport", async () => {
   const keys = [
     "SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST",
+    "SANDBOX_SECURITY_JUDGE_PROTOCOL",
     "SANDBOX_SECURITY_JUDGE_BASE_URL",
     "SANDBOX_SECURITY_JUDGE_MODEL",
     "SANDBOX_SECURITY_JUDGE_API_KEY",
@@ -508,6 +814,7 @@ test("REQ-SBX-GENERAL-002 public local_and_judge rejects missing key and disable
   try {
     for (const invalid of invalidJudgeValues) {
       process.env.SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST = DIGEST;
+      process.env.SANDBOX_SECURITY_JUDGE_PROTOCOL = RESPONSES_PROTOCOL_ID;
       process.env.SANDBOX_SECURITY_JUDGE_BASE_URL = "https://doro.lol/v1";
       process.env.SANDBOX_SECURITY_JUDGE_MODEL = "gpt-5.4-mini";
       if (invalid.key === undefined) delete process.env.SANDBOX_SECURITY_JUDGE_API_KEY;
@@ -690,7 +997,17 @@ test("REQ-SBX-GENERAL-002 composition rejects invalid modes inputs and port bags
     { runtime: runtimeHarness().runtime, mode: "rule_only", transport: TRANSPORT },
     { runtime: runtimeHarness().runtime, mode: "rule_only", endpoint: "sentinel" },
     { runtime: runtimeHarness().runtime, mode: "rule_only", environment: {} },
-    { runtime: runtimeHarness().runtime, mode: "rule_only", credential: "sentinel" }
+    { runtime: runtimeHarness().runtime, mode: "rule_only", credential: "sentinel" },
+    {
+      runtime: runtimeHarness().runtime,
+      mode: "local_and_judge",
+      judge_protocol_id: "openai_chat_completions_json_v1"
+    },
+    {
+      runtime: runtimeHarness().runtime,
+      mode: "local_and_judge",
+      judge_requested_model: "gpt-5.4-mini"
+    }
   ];
   for (const input of invalidInputs) {
     const harness = portsHarness();
@@ -734,9 +1051,33 @@ test("REQ-SBX-GENERAL-002 composition contains no provider override or duplicate
   const wrapperStart = source.indexOf("async function createDefaultLocalDetector");
   const wrapperEnd = source.indexOf("const DEFAULT_PORTS", wrapperStart);
   const wrapper = source.slice(wrapperStart, wrapperEnd);
-  const qualify = wrapper.indexOf("await qualifySandboxSecurityOllama(input)");
+  const qualify = wrapper.indexOf("await qualifySandboxSecurityOllama(");
   const consume = wrapper.indexOf("createSandboxSecurityOllamaLocalDetector");
   assert.ok(wrapperStart > 0 && wrapperEnd > wrapperStart);
   assert.ok(qualify > 0 && consume > qualify);
   assert.match(wrapper, /transport:\s*input\.transport,\s*qualification/);
+  assert.match(wrapper, /input\.qualification_timeout_ms/);
+});
+
+test("REQ-SBX-GENERAL-002 P6 composition uses a dedicated Engine factory path", () => {
+  const source = readFileSync(
+    fileURLToPath(
+      new URL("../src/security-production/composition.ts", import.meta.url)
+    ),
+    "utf8"
+  );
+
+  assert.doesNotMatch(source, /profileResolver\?:/u);
+  assert.match(
+    source,
+    /createSandboxSecurityP6LiveCaptureEngine\(\{[\s\S]*?runtime:\s*input\.runtime/u
+  );
+  assert.doesNotMatch(
+    source,
+    /createSandboxSecurityEngineWithPolicyProfileResolver|profileResolver:/u
+  );
+  assert.match(
+    source,
+    /function createSandboxSecurityOrdinaryProductionEngine/u
+  );
 });

@@ -895,6 +895,13 @@ normal evaluation budget. Trusted adapters construct authoritative requests;
 caller-provided claims cannot select the source authority, stage, profile, or
 tool observations.
 
+GENERAL-002 controlled P6 live capture composes the same core through a
+production-only `p6_local_hardware_compatibility_v1` execution profile. Its
+entry budget is `40000ms`, and its local/Judge slots are `20000ms`; the rule
+slot remains `100ms`. The profile is not exported by the frozen core index and
+is not selectable through request data, environment, CLI, ordinary production,
+or P7 hermetic replay.
+
 The balanced profile is versioned as `sandbox-security-balanced.v1`. Local
 detectors produce evidence, and the policy reducer owns the final action. The
 external Judge runs only for nonempty routed obligations and receives only the

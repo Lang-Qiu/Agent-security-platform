@@ -1512,6 +1512,11 @@ test("REQ-SBX-GENERAL-002 CLI reports a schema-invalid sources lock precisely", 
     join(root, "shared"),
     { recursive: true }
   );
+  cpSync(
+    new URL("../../engines/sandbox/src/", import.meta.url),
+    join(root, "engines", "sandbox", "src"),
+    { recursive: true }
+  );
   writeJson(join(corpusRoot, "sources.lock.json"), {});
   const result = spawnSync(
     process.execPath,

@@ -21,6 +21,31 @@ qualification is absent from ordinary CI.
 launcher, TypeScript ESM, node:test, P4 benchmark composition, P5 input
 bundle/corpus. The P6 child has no child-process or worker permission.
 
+## Approved Amendments and P6 Timing
+
+The Operator Judge Protocol Adapter and Explicit Judge Protocol Selection
+amendments control live Judge configuration. The six-variable environment
+selects one source-controlled protocol, canonical safe HTTPS FQDN base URL,
+requested model, credential, enable flag, and pinned Ollama digest at process
+startup. Any OpenAI-named operation below is a wire-format label, not a fixed
+vendor requirement. See
+`2026-07-23-sandbox-security-explicit-judge-protocol-selection-amendment.md`.
+
+For controlled P6 live capture only, the user approved the source-controlled
+`p6_local_hardware_compatibility_v1` profile. Judge readiness, Ollama
+qualification, warmed prewarm, the local detector slot, and the Judge detector
+slot each use `20000ms`; the normal work budget uses `40000ms`. The profile is
+not selected through caller input, environment, or CLI. Ordinary production
+composition and P7 replay retain the inherited GENERAL-001 `5000ms` normal
+budget and `100/1000/4000ms` rule/local/Judge slots.
+
+The implementation boundary is governed by
+`../specs/2026-07-26-sandbox-security-p6-local-hardware-compatibility-amendment.md`.
+It permits one non-index private Engine factory and one exact import edge because
+runtime virtualization cannot preserve elapsed time and timeout classification.
+The public Engine factory, public index, ordinary production, and P7 replay must
+retain their GENERAL-001 behavior.
+
 ---
 
 ## Phase Ownership
@@ -30,7 +55,7 @@ bundle/corpus. The P6 child has no child-process or worker permission.
 | P6-T1 | capture-sink.ts and lifecycle tests |
 | P6-T2 | capture-live.ts and live-runner tests |
 | P6-T3 | evaluator script and metric tests |
-| P6-T4 | truth-blind seal script, accepted capture/replay/seal, live evidence test |
+| P6-T4 | P6 timing amendment/profile/factory correction, single-process truth-blind acceptance and seal, accepted capture/replay/seal, live evidence test |
 
 Capture code cannot read truth. Evaluator cannot import or invoke production
 detectors, HTTP transport, production config, or network. No P6 artifact stores
@@ -47,8 +72,9 @@ or a per-fixture decision.
 ~~~text
 SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST=sha256:<64 lowercase hex>
 SANDBOX_SECURITY_JUDGE_API_KEY=<nonempty secret supplied only by environment or ignored .env>
-SANDBOX_SECURITY_JUDGE_BASE_URL=https://doro.lol/v1
-SANDBOX_SECURITY_JUDGE_MODEL=gpt-5.4-mini
+SANDBOX_SECURITY_JUDGE_PROTOCOL=<openai_responses_v1|openai_chat_completions_json_v1>
+SANDBOX_SECURITY_JUDGE_BASE_URL=<canonical safe HTTPS FQDN base URL>
+SANDBOX_SECURITY_JUDGE_MODEL=<runtime-selected model>
 SANDBOX_SECURITY_ENABLE_JUDGE=1
 Ollama qwen3:8b listener bound only at 127.0.0.1:11434
 ~~~
@@ -214,10 +240,12 @@ Stop after the commit and report the evidence.
 ### P6-T2: Permission-Limited Live Capture Runner
 
 **Goal / acceptance:** Implement the permission-limited capture-live child. It
-runs OpenAI strict-schema readiness before benchmark evaluation, uses live
-benchmark composition, processes 300 inputs serially with beginInput/endInput
-in finally, and writes only a candidate content-free capture package. It never
-reads truth, spawns a process/worker, or seals an unaccepted result.
+runs allowlisted Judge strict-schema readiness before benchmark evaluation,
+uses live benchmark composition, processes 300 inputs serially with
+beginInput/endInput in finally, and writes only one content-free staging
+envelope. The parent validates and materializes the candidate package after the
+child exits successfully. The child never reads truth, spawns a process/worker,
+or seals an unaccepted result.
 
 **Files:**
 
@@ -248,8 +276,9 @@ test("REQ-SBX-GENERAL-002 capture child rejects truth arguments and unexpected d
 });
 ~~~
 
-Cover readiness budget exactly 4000 ms with no retry, readiness not counted as a
-benchmark decision, immutable input order, caller abort/no seal, sink drain
+Cover the `p6_local_hardware_compatibility_v1` readiness budget exactly
+`20000ms` with no retry, readiness not counted as a benchmark decision,
+immutable input order, caller abort/no seal, sink drain
 before output, failed qualification, missing config, unexpected fd,
 permission arguments, output containment, cleanup, and no per-fixture
 diagnostic output.
@@ -274,13 +303,17 @@ export async function runSandboxSecurityLiveCapture(
 export async function main(): Promise<void>;
 ~~~
 
-Accept only P5's already-materialized input bundle and output directory, issue
-one strict-schema readiness request before input zero under a separate 4000 ms
-timeout, then use createSandboxSecurityLiveCaptureEngine. Call beginInput
-immediately before evaluate and endInput in finally. Write no seal/replay in
-this task. Read live configuration only inside this permission child. Reject
-truth/evaluator/metric paths, unexpected descriptors, child-process/worker
-requests, and any bundle/hash mismatch before readiness.
+Accept only P5's already-materialized input bundle, capture-output root, and
+staging-file binding, issue one strict-schema readiness request before input
+zero under the profile's separate `20000ms` timeout, then use
+createSandboxSecurityLiveCaptureEngine. Call beginInput immediately before
+evaluate and endInput in finally. The permission child writes only the
+content-free candidate staging envelope to the precreated file; the parent
+materializes the candidate package/tree after successful child exit, hash
+validation, and binding validation. Write no seal/replay in this task. Read
+live configuration only inside this permission child. Reject truth/evaluator/
+metric paths, unexpected descriptors, child-process/worker requests, and any
+bundle/hash mismatch before readiness.
 
 - [ ] **Step 4: Run the focused GREEN command**
 
@@ -531,17 +564,32 @@ failure. Do not make this green with placeholders or mocked records.
 
 - [ ] **Step 3: Execute controlled live qualification**
 
-Check presence without printing secrets:
+Load the mode-`600` local env file and check only presence through Node's parser;
+never print values:
 
 ~~~bash
-test -n "$SANDBOX_SECURITY_JUDGE_API_KEY"
-test "$SANDBOX_SECURITY_JUDGE_BASE_URL" = "https://doro.lol/v1"
-test -n "$SANDBOX_SECURITY_JUDGE_MODEL"
-test "$SANDBOX_SECURITY_ENABLE_JUDGE" = "1"
-test -n "$SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST"
-node --experimental-strip-types scripts/benchmark/sandbox-security/prepare-capture-bundle.ts
-node --experimental-strip-types scripts/benchmark/sandbox-security/evaluate.ts --report
-node --experimental-strip-types scripts/benchmark/sandbox-security/seal.ts
+test "$(stat -c '%a' .env.sandbox-security.local)" = "600"
+node --env-file=.env.sandbox-security.local -e '
+  const keys = [
+    "SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST",
+    "SANDBOX_SECURITY_JUDGE_PROTOCOL",
+    "SANDBOX_SECURITY_JUDGE_BASE_URL",
+    "SANDBOX_SECURITY_JUDGE_MODEL",
+    "SANDBOX_SECURITY_JUDGE_API_KEY",
+    "SANDBOX_SECURITY_ENABLE_JUDGE"
+  ];
+  process.exitCode = keys.every((key) => process.env[key]?.length) ? 0 : 1;
+'
+CAPTURE_ROOT="/Agent-security-platform/tmp/sandbox-security-capture-live-$(date +%Y%m%d-%H%M%S)"
+node --env-file=.env.sandbox-security.local --experimental-strip-types \
+  scripts/benchmark/sandbox-security/prepare-capture-bundle.ts \
+  --output-root "${CAPTURE_ROOT}"
+node --experimental-strip-types scripts/benchmark/sandbox-security/evaluate.ts \
+  "--capture-root=${CAPTURE_ROOT}/capture-bundle/capture-output/candidate" \
+  "--report=${CAPTURE_ROOT}/capture-bundle/capture-output/evaluation-report.json"
+node --experimental-strip-types scripts/benchmark/sandbox-security/seal.ts \
+  "--candidate-root=${CAPTURE_ROOT}/capture-bundle/capture-output/candidate" \
+  "--report=${CAPTURE_ROOT}/capture-bundle/capture-output/evaluation-report.json"
 ~~~
 
 Require successful inventory, prewarm, 300 serialized evaluations, sink drain,
@@ -562,7 +610,9 @@ thresholds, skip live, create a fake seal, or advance P7.
 ~~~bash
 node --experimental-strip-types --experimental-test-isolation=none --test \
   tests/benchmark/sandbox-security-live-evidence.spec.ts
-node --experimental-strip-types scripts/benchmark/sandbox-security/evaluate.ts
+node --experimental-strip-types scripts/benchmark/sandbox-security/evaluate.ts \
+  --capture-root=tmp/sandbox-security-capture-bundle/capture-bundle/capture-output/candidate \
+  --report=tmp/sandbox-security-capture-bundle/capture-bundle/capture-output/evaluation-report.json
 ~~~
 
 Expected: accepted hashes, qualification, matrix metrics, and content-free
@@ -574,11 +624,24 @@ evidence validate.
 node --experimental-strip-types --experimental-test-isolation=none --test \
   tests/benchmark/sandbox-security-capture-sink.spec.ts \
   tests/benchmark/sandbox-security-capture-live.spec.ts \
+  tests/benchmark/sandbox-security-contracts.spec.ts \
   tests/benchmark/sandbox-security-evaluate.spec.ts \
   tests/benchmark/sandbox-security-live-evidence.spec.ts \
+  tests/benchmark/sandbox-security-isolation.spec.ts \
   tests/repository/sandbox-security-production.spec.ts
 node --experimental-strip-types scripts/benchmark/sandbox-security/validate-corpus.ts
 npm run test:engine:sandbox
+unshare --net -- bash -ceu '
+  ip link set lo up
+  exec env \
+    -u SANDBOX_SECURITY_JUDGE_PROTOCOL \
+    -u SANDBOX_SECURITY_JUDGE_API_KEY \
+    -u SANDBOX_SECURITY_JUDGE_BASE_URL \
+    -u SANDBOX_SECURITY_JUDGE_MODEL \
+    -u SANDBOX_SECURITY_ENABLE_JUDGE \
+    -u SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST \
+    npm run test:engine:sandbox:production
+'
 node ./frontend/node_modules/typescript/bin/tsc --noEmit -p engines/sandbox/tsconfig.json
 npm run typecheck:benchmark:sandbox-security
 npm run build --prefix frontend
@@ -635,12 +698,27 @@ Run this commit only for VERIFIED evidence. Stop after reporting it.
 node --experimental-strip-types --experimental-test-isolation=none --test \
   tests/benchmark/sandbox-security-capture-sink.spec.ts \
   tests/benchmark/sandbox-security-capture-live.spec.ts \
+  tests/benchmark/sandbox-security-contracts.spec.ts \
   tests/benchmark/sandbox-security-evaluate.spec.ts \
-  tests/benchmark/sandbox-security-live-evidence.spec.ts
+  tests/benchmark/sandbox-security-live-evidence.spec.ts \
+  tests/benchmark/sandbox-security-isolation.spec.ts
 node --experimental-strip-types scripts/benchmark/sandbox-security/validate-corpus.ts
-node --experimental-strip-types scripts/benchmark/sandbox-security/evaluate.ts
+node --experimental-strip-types scripts/benchmark/sandbox-security/evaluate.ts \
+  --capture-root=tmp/sandbox-security-capture-bundle/capture-bundle/capture-output/candidate \
+  --report=tmp/sandbox-security-capture-bundle/capture-bundle/capture-output/evaluation-report.json
 npm run test:repo
 npm run test:engine:sandbox
+unshare --net -- bash -ceu '
+  ip link set lo up
+  exec env \
+    -u SANDBOX_SECURITY_JUDGE_PROTOCOL \
+    -u SANDBOX_SECURITY_JUDGE_API_KEY \
+    -u SANDBOX_SECURITY_JUDGE_BASE_URL \
+    -u SANDBOX_SECURITY_JUDGE_MODEL \
+    -u SANDBOX_SECURITY_ENABLE_JUDGE \
+    -u SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST \
+    npm run test:engine:sandbox:production
+'
 node ./frontend/node_modules/typescript/bin/tsc --noEmit -p engines/sandbox/tsconfig.json
 npm run typecheck:benchmark:sandbox-security
 npm run build --prefix frontend

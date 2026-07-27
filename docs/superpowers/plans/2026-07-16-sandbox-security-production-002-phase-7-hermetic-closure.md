@@ -21,6 +21,21 @@ added to test:all.
 **Tech Stack:** Node.js permission model, Linux unshare --net, TypeScript ESM,
 node:test, Node http/https capability inventory, SHA-256 trees, frontend build.
 
+## Approved Amendment
+
+The Operator Judge Protocol Adapter and Explicit Judge Protocol Selection
+amendments are already frozen into any permitted P6 seal. P7 reads no Judge
+environment variable and makes no network request. It must validate the sealed
+protocol ID, endpoint policy, base URL, protocol-derived endpoint URL,
+requested model, and resolved model; every successful replay Judge response
+must retain the same resolved model. OpenAI-named operations below are
+wire-format labels only.
+
+P7 validates the sealed P6 execution-profile provenance but does not inherit
+the live-only `p6_local_hardware_compatibility_v1` limits. Hermetic replay uses
+the ordinary production composition with the inherited GENERAL-001 `5000ms`
+normal work budget and `100/1000/4000ms` rule/local/Judge detector slots.
+
 ---
 
 ## Phase Ownership
@@ -321,7 +336,7 @@ unshare namespace, and the production graph never sees fixture ID or truth.
 ~~~bash
 node --experimental-strip-types --experimental-test-isolation=none --test \
   tests/benchmark/sandbox-security-replay-hermetic.spec.ts
-env -u SANDBOX_SECURITY_JUDGE_API_KEY -u SANDBOX_SECURITY_JUDGE_BASE_URL -u SANDBOX_SECURITY_JUDGE_MODEL -u SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST \
+env -u SANDBOX_SECURITY_JUDGE_PROTOCOL -u SANDBOX_SECURITY_JUDGE_API_KEY -u SANDBOX_SECURITY_JUDGE_BASE_URL -u SANDBOX_SECURITY_JUDGE_MODEL -u SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST \
   -u SANDBOX_SECURITY_ENABLE_JUDGE unshare --net \
   node --experimental-strip-types scripts/benchmark/sandbox-security/replay-hermetic.ts
 ~~~
@@ -442,8 +457,8 @@ Master-required benchmark/repository scripts:
 {
   "test:repo:sandbox-security-production": "node --experimental-strip-types --experimental-test-isolation=none --test tests/repository/sandbox-security-production.spec.ts tests/repository/sandbox-security-benchmark.spec.ts",
   "benchmark:sandbox-security:validate": "node --experimental-strip-types scripts/benchmark/sandbox-security/validate-corpus.ts",
-  "benchmark:sandbox-security:replay": "env -u SANDBOX_SECURITY_JUDGE_API_KEY -u SANDBOX_SECURITY_JUDGE_BASE_URL -u SANDBOX_SECURITY_JUDGE_MODEL -u SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST -u SANDBOX_SECURITY_ENABLE_JUDGE unshare --net node --experimental-strip-types scripts/benchmark/sandbox-security/replay-hermetic.ts",
-  "benchmark:sandbox-security:qualify:live": "node --experimental-strip-types scripts/benchmark/sandbox-security/prepare-capture-bundle.ts"
+  "benchmark:sandbox-security:replay": "env -u SANDBOX_SECURITY_JUDGE_PROTOCOL -u SANDBOX_SECURITY_JUDGE_API_KEY -u SANDBOX_SECURITY_JUDGE_BASE_URL -u SANDBOX_SECURITY_JUDGE_MODEL -u SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST -u SANDBOX_SECURITY_ENABLE_JUDGE unshare --net node --experimental-strip-types scripts/benchmark/sandbox-security/replay-hermetic.ts",
+  "benchmark:sandbox-security:qualify:live": "node --env-file=.env.sandbox-security.local --experimental-strip-types scripts/benchmark/sandbox-security/prepare-capture-bundle.ts"
 }
 ~~~
 

@@ -79,7 +79,7 @@ function assertSemanticPlanContracts(input: Readonly<{
   assert.match(phase6!, /truth-blind sealer/);
   assert.doesNotMatch(
     phase6!,
-    /prepare-capture-bundle\.ts\s*\nnode .*capture-live\.ts/,
+    /^node [^\n]*scripts\/benchmark\/sandbox-security\/capture-live\.ts/m,
     "live capture must run only through the permission parent"
   );
 
@@ -181,10 +181,7 @@ test("REQ-SBX-GENERAL-002 semantic plan gate rejects weakened review and isolati
       label: "direct unpermissioned live child",
       phases: phases.map((phase, index) =>
         index === 5
-          ? phase.replace(
-              "node --experimental-strip-types scripts/benchmark/sandbox-security/prepare-capture-bundle.ts",
-              "node --experimental-strip-types scripts/benchmark/sandbox-security/prepare-capture-bundle.ts\nnode --experimental-strip-types scripts/benchmark/sandbox-security/capture-live.ts"
-            )
+          ? `${phase}\nnode --experimental-strip-types scripts/benchmark/sandbox-security/capture-live.ts\n`
           : phase
       )
     }
@@ -209,7 +206,7 @@ test("REQ-SBX-GENERAL-002 Master separates every minimum Spec workstream", () =>
     "HTTP transport and production config",
     "Ollama adapter",
     "deterministic sanitizer",
-    "OpenAI Judge adapter",
+    "explicitly selected Judge protocol adapters",
     "production composition",
     "source lock and corpus contracts",
     "sealed input and truth curation",

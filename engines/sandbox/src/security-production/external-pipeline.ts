@@ -11,6 +11,11 @@ import type {
 import {
   createSandboxSecurityOpenAiJudgeDetector
 } from "./openai-judge-detector.ts";
+import {
+  SANDBOX_SECURITY_OPENAI_CHAT_COMPLETIONS_JSON_PROTOCOL_ID,
+  SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID,
+  type SandboxSecurityJudgeProtocolId
+} from "./judge-protocol-adapter.ts";
 
 function pipelineInvalid(): never {
   throw new TypeError("sandbox_security_external_pipeline_invalid");
@@ -18,6 +23,7 @@ function pipelineInvalid(): never {
 
 function inputPipelineOptions(value: unknown): Readonly<{
   transport: SandboxSecurityHttpTransport;
+  judge_protocol_id: SandboxSecurityJudgeProtocolId;
   judge_requested_model: string;
 }> {
   try {
@@ -31,13 +37,18 @@ function inputPipelineOptions(value: unknown): Readonly<{
     }
     const keys = Reflect.ownKeys(value);
     if (
-      keys.length !== 2 ||
+      keys.length !== 3 ||
       !keys.includes("transport") ||
+      !keys.includes("judge_protocol_id") ||
       !keys.includes("judge_requested_model")
     ) {
       return pipelineInvalid();
     }
     const transportDescriptor = Object.getOwnPropertyDescriptor(value, "transport");
+    const protocolDescriptor = Object.getOwnPropertyDescriptor(
+      value,
+      "judge_protocol_id"
+    );
     const modelDescriptor = Object.getOwnPropertyDescriptor(
       value,
       "judge_requested_model"
@@ -46,6 +57,13 @@ function inputPipelineOptions(value: unknown): Readonly<{
       transportDescriptor === undefined ||
       !("value" in transportDescriptor) ||
       transportDescriptor.enumerable !== true ||
+      protocolDescriptor === undefined ||
+      !("value" in protocolDescriptor) ||
+      protocolDescriptor.enumerable !== true ||
+      (protocolDescriptor.value !==
+        SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID &&
+        protocolDescriptor.value !==
+          SANDBOX_SECURITY_OPENAI_CHAT_COMPLETIONS_JSON_PROTOCOL_ID) ||
       modelDescriptor === undefined ||
       !("value" in modelDescriptor) ||
       modelDescriptor.enumerable !== true ||
@@ -56,6 +74,8 @@ function inputPipelineOptions(value: unknown): Readonly<{
     }
     return Object.freeze({
       transport: transportDescriptor.value as SandboxSecurityHttpTransport,
+      judge_protocol_id:
+        protocolDescriptor.value as SandboxSecurityJudgeProtocolId,
       judge_requested_model: modelDescriptor.value
     });
   } catch {
@@ -65,6 +85,7 @@ function inputPipelineOptions(value: unknown): Readonly<{
 
 export function createSandboxSecurityExternalPipeline(input: Readonly<{
   transport: SandboxSecurityHttpTransport;
+  judge_protocol_id: SandboxSecurityJudgeProtocolId;
   judge_requested_model: string;
 }>): Readonly<{
   sanitizer: SandboxSecuritySanitizer;
@@ -76,6 +97,7 @@ export function createSandboxSecurityExternalPipeline(input: Readonly<{
       sanitizer: createSandboxSecurityDeterministicSanitizer(),
       judge: createSandboxSecurityOpenAiJudgeDetector({
         transport: options.transport,
+        judge_protocol_id: options.judge_protocol_id,
         judge_requested_model: options.judge_requested_model
       })
     });

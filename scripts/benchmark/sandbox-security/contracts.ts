@@ -4,9 +4,20 @@ import {
   opendirSync,
   readFileSync
 } from "node:fs";
-import { relative, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { types as utilTypes } from "node:util";
 
+import {
+  SANDBOX_SECURITY_P6_LIVE_CAPTURE_EXECUTION_PROFILE_ID,
+  SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING
+} from "../../../engines/sandbox/src/security-production/p6-live-capture-profile.ts";
+import {
+  SANDBOX_SECURITY_OPENAI_CHAT_COMPLETIONS_JSON_PROTOCOL_ID,
+  SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID,
+  SANDBOX_SECURITY_OPERATOR_HTTPS_FQDN_ENDPOINT_POLICY_ID,
+  resolveSandboxSecurityJudgeProtocol,
+  type SandboxSecurityJudgeProtocolId
+} from "../../../engines/sandbox/src/security-production/judge-protocol-adapter.ts";
 import {
   SANDBOX_SECURITY_MAX_CONTENT_ITEMS,
   SANDBOX_SECURITY_MAX_JSON_DEPTH,
@@ -37,6 +48,8 @@ export const SANDBOX_SECURITY_BENCHMARK_CAPTURE_SCHEMA_VERSION =
   "sandbox-security-benchmark-capture.v1" as const;
 export const SANDBOX_SECURITY_BENCHMARK_SEAL_SCHEMA_VERSION =
   "sandbox-security-benchmark-seal.v1" as const;
+export const SANDBOX_SECURITY_BENCHMARK_ACCEPTED_METRICS_SCHEMA_VERSION =
+  "sandbox-security-benchmark-accepted-metrics.v1" as const;
 
 export type SandboxSecurityBenchmarkSha256 = string;
 export type SandboxSecurityBenchmarkDigest = `sha256:${string}`;
@@ -301,6 +314,126 @@ export interface SandboxSecurityBenchmarkReplayEnvelope {
   readonly ollama: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse>;
   readonly judge: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOpenAIResponse>;
   readonly decision_projection_sha256: SandboxSecurityBenchmarkSha256;
+  readonly judge_binding_sha256: SandboxSecurityBenchmarkSha256;
+}
+
+export interface SandboxSecurityBenchmarkJudgeBinding {
+  readonly judge_protocol_id: SandboxSecurityJudgeProtocolId;
+  readonly judge_endpoint_policy_id: typeof SANDBOX_SECURITY_OPERATOR_HTTPS_FQDN_ENDPOINT_POLICY_ID;
+  readonly judge_base_url: string;
+  readonly judge_endpoint_url: string;
+  readonly judge_requested_model: string;
+  readonly judge_resolved_model: string;
+}
+
+export interface SandboxSecurityBenchmarkCandidateCassette {
+  readonly schema_version: "sandbox-security-benchmark-candidate-cassette.v1";
+  readonly judge_binding_sha256: SandboxSecurityBenchmarkSha256;
+  readonly inputs: readonly Readonly<{
+    readonly fixture_id: string;
+    readonly ollama: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse>;
+    readonly judge: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOpenAIResponse>;
+    readonly decision_projection_sha256: SandboxSecurityBenchmarkSha256;
+    readonly judge_binding_sha256: SandboxSecurityBenchmarkSha256;
+  }>[];
+}
+
+export type SandboxSecurityBenchmarkCandidateProvenance =
+  | "production_permissioned_v1"
+  | "test_injected_v1";
+
+export interface SandboxSecurityBenchmarkCandidatePackage {
+  readonly schema_version: "sandbox-security-benchmark-candidate-package.v1";
+  readonly fixture_count: number;
+  readonly provenance: SandboxSecurityBenchmarkCandidateProvenance;
+  readonly inputs_tree_sha256: SandboxSecurityBenchmarkSha256;
+  readonly decisions_tree_sha256: SandboxSecurityBenchmarkSha256;
+  readonly cassette_tree_sha256: SandboxSecurityBenchmarkSha256;
+  readonly capture_manifest_sha256: SandboxSecurityBenchmarkSha256;
+}
+
+export interface SandboxSecurityBenchmarkCandidateCaptureManifest {
+  readonly schema_version: typeof SANDBOX_SECURITY_BENCHMARK_CAPTURE_SCHEMA_VERSION;
+  readonly inputs_tree_sha256: SandboxSecurityBenchmarkSha256;
+  readonly fixture_count: number;
+  readonly execution_profile_id: typeof SANDBOX_SECURITY_P6_LIVE_CAPTURE_EXECUTION_PROFILE_ID;
+  readonly readiness_timeout_ms: 20000;
+  readonly qualification_timeout_ms: 20000;
+  readonly local_detector_slot_timeout_ms: 20000;
+  readonly judge_detector_slot_timeout_ms: 20000;
+  readonly normal_work_budget_ms: 40000;
+  readonly ollama_model: "qwen3:8b";
+  readonly ollama_digest: SandboxSecurityBenchmarkDigest;
+  readonly ollama_qualification: Readonly<{
+    readonly inventory: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaInventoryResponse>;
+    readonly prewarm: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse>;
+  }>;
+  readonly judge_protocol_id: SandboxSecurityJudgeProtocolId;
+  readonly judge_endpoint_policy_id: typeof SANDBOX_SECURITY_OPERATOR_HTTPS_FQDN_ENDPOINT_POLICY_ID;
+  readonly judge_base_url: string;
+  readonly judge_endpoint_url: string;
+  readonly judge_requested_model: string;
+  readonly judge_resolved_model: string;
+  readonly judge_binding_sha256: SandboxSecurityBenchmarkSha256;
+  readonly local_prompt_version: "sandbox-security-ollama-local-prompt.v1";
+  readonly judge_prompt_version: "sandbox-security-openai-judge-prompt.v1";
+  readonly local_schema_version: "sandbox-security-local-model.v1";
+  readonly judge_schema_version: "sandbox-security-judge.v1";
+  readonly rule_catalog_version: string;
+  readonly sanitizer_version: string;
+}
+
+export interface SandboxSecurityBenchmarkCandidateDecisionProjection {
+  readonly schema_version: "sandbox-security-decision.v1";
+  readonly verdict: "risk_detected" | "no_detected_risk" | "indeterminate";
+  readonly action: "allow" | "block";
+  readonly risk_level:
+    | "none"
+    | "info"
+    | SandboxSecurityBenchmarkSeverity;
+  readonly finding_count: number;
+  readonly detector_run_count: number;
+  readonly evidence_ref_count: number;
+}
+
+export interface SandboxSecurityBenchmarkCandidateDecisionEnvelope {
+  readonly schema_version:
+    "sandbox-security-benchmark-decision-projection.v1";
+  readonly fixture_id: string;
+  readonly decision_projection_sha256: SandboxSecurityBenchmarkSha256;
+  readonly projection: Readonly<SandboxSecurityBenchmarkCandidateDecisionProjection>;
+}
+
+export interface SandboxSecurityBenchmarkAcceptedMetrics {
+  readonly schema_version: typeof SANDBOX_SECURITY_BENCHMARK_ACCEPTED_METRICS_SCHEMA_VERSION;
+  readonly denominators: Readonly<{
+    readonly unsafe: 180;
+    readonly safe: 120;
+    readonly coverage: 300;
+    readonly category: 20;
+    readonly high_critical: 60;
+    readonly transformed: 54;
+  }>;
+  readonly numerators: Readonly<{
+    readonly unsafe_detected: number;
+    readonly high_critical_detected: number;
+    readonly safe_false_positives: number;
+    readonly transformed_detected: number;
+    readonly decided: number;
+    readonly category_detected: Readonly<Record<string, number>>;
+  }>;
+  readonly rates: Readonly<{
+    readonly unsafe_recall: number;
+    readonly high_critical_recall: number;
+    readonly safe_false_positive_rate: number;
+    readonly transformed_recall: number;
+    readonly decision_coverage: number;
+    readonly category_recall: Readonly<Record<string, number>>;
+  }>;
+  readonly accepted: boolean;
+  readonly truth_tree_sha256: SandboxSecurityBenchmarkSha256;
+  readonly decisions_tree_sha256: SandboxSecurityBenchmarkSha256;
+  readonly cassette_tree_sha256: SandboxSecurityBenchmarkSha256;
 }
 
 export interface SandboxSecurityReplayInputUnit {
@@ -315,17 +448,25 @@ export interface SandboxSecurityBenchmarkCaptureManifest {
   readonly inputs_tree_sha256: SandboxSecurityBenchmarkSha256;
   readonly decisions_tree_sha256: SandboxSecurityBenchmarkSha256;
   readonly cassette_tree_sha256: SandboxSecurityBenchmarkSha256;
+  readonly execution_profile_id: typeof SANDBOX_SECURITY_P6_LIVE_CAPTURE_EXECUTION_PROFILE_ID;
+  readonly readiness_timeout_ms: 20000;
+  readonly qualification_timeout_ms: 20000;
+  readonly local_detector_slot_timeout_ms: 20000;
+  readonly judge_detector_slot_timeout_ms: 20000;
+  readonly normal_work_budget_ms: 40000;
   readonly ollama_model: "qwen3:8b";
   readonly ollama_digest: SandboxSecurityBenchmarkDigest;
   readonly ollama_qualification: Readonly<{
     readonly inventory: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaInventoryResponse>;
     readonly prewarm: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse>;
   }>;
-  readonly judge_provider_id: string;
+  readonly judge_protocol_id: SandboxSecurityJudgeProtocolId;
+  readonly judge_endpoint_policy_id: typeof SANDBOX_SECURITY_OPERATOR_HTTPS_FQDN_ENDPOINT_POLICY_ID;
   readonly judge_base_url: string;
-  readonly judge_responses_url: string;
+  readonly judge_endpoint_url: string;
   readonly judge_requested_model: string;
   readonly judge_resolved_model: string;
+  readonly judge_binding_sha256: SandboxSecurityBenchmarkSha256;
   readonly local_prompt_version: "sandbox-security-ollama-local-prompt.v1";
   readonly judge_prompt_version: "sandbox-security-openai-judge-prompt.v1";
   readonly local_schema_version: "sandbox-security-local-model.v1";
@@ -340,6 +481,7 @@ export interface SandboxSecurityBenchmarkSeal {
   readonly truth_tree_sha256: SandboxSecurityBenchmarkSha256;
   readonly replay_tree_sha256: SandboxSecurityBenchmarkSha256;
   readonly accepted_metrics_sha256: SandboxSecurityBenchmarkSha256;
+  readonly accepted_metrics: SandboxSecurityBenchmarkAcceptedMetrics;
 }
 
 const LICENSES = [
@@ -372,6 +514,16 @@ const MAX_SOURCES = 32;
 const MAX_RECORDS = 2048;
 const MAX_FIXTURES = 300;
 const MAX_OUTCOMES = 32;
+const CANDIDATE_PACKAGE_SCHEMA_VERSION =
+  "sandbox-security-benchmark-candidate-package.v1" as const;
+const CANDIDATE_CASSETTE_SCHEMA_VERSION =
+  "sandbox-security-benchmark-candidate-cassette.v1" as const;
+const CANDIDATE_CASSETTE_HASH_SCHEMA_VERSION =
+  "sandbox-security-benchmark-candidate-cassette-hash.v1" as const;
+const CANDIDATE_DECISION_ENVELOPE_SCHEMA_VERSION =
+  "sandbox-security-benchmark-decision-projection.v1" as const;
+const CANDIDATE_DECISION_SCHEMA_VERSION =
+  "sandbox-security-decision.v1" as const;
 const MAX_SOURCE_ORDINAL = SANDBOX_SECURITY_MAX_CONTENT_ITEMS;
 const MAX_OBLIGATION_ORDINAL = 32;
 const MAX_TREE_DEPTH = SANDBOX_SECURITY_MAX_JSON_DEPTH;
@@ -383,6 +535,16 @@ const JUDGE_PROMPT_VERSION = "sandbox-security-openai-judge-prompt.v1" as const;
 const LOCAL_SCHEMA_VERSION = "sandbox-security-local-model.v1" as const;
 const JUDGE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
 const JUDGE_SCHEMA_VERSION = "sandbox-security-judge.v1" as const;
+const RULE_CATALOG_VERSION = "sandbox-security-rule-catalog.v1" as const;
+const SANITIZER_VERSION = "sandbox-security-deterministic-sanitizer.v1" as const;
+const LIVE_EXECUTION_PROFILE_KEYS = [
+  "execution_profile_id",
+  "readiness_timeout_ms",
+  "qualification_timeout_ms",
+  "local_detector_slot_timeout_ms",
+  "judge_detector_slot_timeout_ms",
+  "normal_work_budget_ms"
+] as const;
 
 function invalid(): never {
   throw new TypeError("benchmark_contract_invalid");
@@ -498,6 +660,33 @@ function sha(value: unknown): string {
   const result = stringValue(value, 64);
   if (!SHA256.test(result)) return invalid();
   return result;
+}
+
+function nonnegativeInteger(
+  value: unknown,
+  maximum = Number.MAX_SAFE_INTEGER
+): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    value > maximum
+  ) {
+    return invalid();
+  }
+  return value;
+}
+
+function unitRate(value: unknown): number {
+  if (
+    typeof value !== "number" ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > 1
+  ) {
+    return invalid();
+  }
+  return value;
 }
 
 function digest(value: unknown): SandboxSecurityBenchmarkDigest {
@@ -1197,14 +1386,555 @@ function normalizeOutcome<T>(value: unknown, response: (value: unknown) => T): S
 
 export function normalizeSandboxSecurityBenchmarkReplayEnvelope(value: unknown): Readonly<SandboxSecurityBenchmarkReplayEnvelope> {
   return safeCall(() => {
-    const root = exact(value, ["schema_version", "fixture_id", "ollama", "judge", "decision_projection_sha256"]);
+    const root = exact(value, [
+      "schema_version",
+      "fixture_id",
+      "ollama",
+      "judge",
+      "decision_projection_sha256",
+      "judge_binding_sha256"
+    ]);
     if (root.schema_version !== SANDBOX_SECURITY_BENCHMARK_REPLAY_SCHEMA_VERSION) return invalid();
     return deepFreeze({
       schema_version: SANDBOX_SECURITY_BENCHMARK_REPLAY_SCHEMA_VERSION,
       fixture_id: fixtureId(root.fixture_id),
       ollama: normalizeOutcome(root.ollama, normalizeLocal),
       judge: normalizeOutcome(root.judge, normalizeJudge),
-      decision_projection_sha256: sha(root.decision_projection_sha256)
+      decision_projection_sha256: sha(root.decision_projection_sha256),
+      judge_binding_sha256: sha(root.judge_binding_sha256)
+    });
+  });
+}
+
+export function normalizeSandboxSecurityBenchmarkCandidateCassette(
+  value: unknown
+): Readonly<SandboxSecurityBenchmarkCandidateCassette> {
+  return safeCall(() => {
+    const root = exact(value, ["schema_version", "judge_binding_sha256", "inputs"]);
+    if (root.schema_version !== CANDIDATE_CASSETTE_SCHEMA_VERSION) return invalid();
+    const judge_binding_sha256 = sha(root.judge_binding_sha256);
+    const inputs = denseArray(root.inputs, 1, MAX_FIXTURES);
+    const fixtureIds = new Set<string>();
+    const normalizedInputs = inputs.map((input) => {
+      const unit = exact(input, [
+        "fixture_id",
+        "ollama",
+        "judge",
+        "decision_projection_sha256",
+        "judge_binding_sha256"
+      ]);
+      const replay = normalizeSandboxSecurityBenchmarkReplayEnvelope({
+        schema_version: SANDBOX_SECURITY_BENCHMARK_REPLAY_SCHEMA_VERSION,
+        fixture_id: unit.fixture_id,
+        ollama: unit.ollama,
+        judge: unit.judge,
+        decision_projection_sha256: unit.decision_projection_sha256,
+        judge_binding_sha256: unit.judge_binding_sha256
+      });
+      if (replay.judge_binding_sha256 !== judge_binding_sha256) return invalid();
+      if (fixtureIds.has(replay.fixture_id)) return invalid();
+      fixtureIds.add(replay.fixture_id);
+      return deepFreeze({
+        fixture_id: replay.fixture_id,
+        ollama: replay.ollama,
+        judge: replay.judge,
+        decision_projection_sha256: replay.decision_projection_sha256,
+        judge_binding_sha256: replay.judge_binding_sha256
+      });
+    });
+    return deepFreeze({
+      schema_version: CANDIDATE_CASSETTE_SCHEMA_VERSION,
+      judge_binding_sha256,
+      inputs: normalizedInputs
+    });
+  });
+}
+
+
+export function assertSandboxSecurityBenchmarkAcceptedProviderOutcomes(
+  cassette: Readonly<SandboxSecurityBenchmarkCandidateCassette>
+): void {
+  const normalized = normalizeSandboxSecurityBenchmarkCandidateCassette(cassette);
+  for (const unit of normalized.inputs) {
+    // Qualification already forces inventory/prewarm success in capture-manifest.
+    // Evaluation slots: any invoked failure outcome is acceptance-blocking.
+    if (unit.ollama.status !== "response" && unit.ollama.status !== "not_called") {
+      invalid();
+    }
+    if (unit.judge.status !== "response" && unit.judge.status !== "not_called") {
+      invalid();
+    }
+    // A Judge response requires a successful local response first in live capture
+    // semantics; allow not_called/not_called and response/* patterns only.
+    if (unit.judge.status === "response" && unit.ollama.status === "not_called") {
+      invalid();
+    }
+  }
+}
+
+export function normalizeSandboxSecurityBenchmarkCandidatePackage(
+  value: unknown
+): Readonly<SandboxSecurityBenchmarkCandidatePackage> {
+  return safeCall(() => {
+    const root = exact(value, [
+      "schema_version",
+      "fixture_count",
+      "provenance",
+      "inputs_tree_sha256",
+      "decisions_tree_sha256",
+      "cassette_tree_sha256",
+      "capture_manifest_sha256"
+    ]);
+    if (root.schema_version !== CANDIDATE_PACKAGE_SCHEMA_VERSION) return invalid();
+    if (
+      root.provenance !== "production_permissioned_v1" &&
+      root.provenance !== "test_injected_v1"
+    ) {
+      return invalid();
+    }
+    const fixture_count = nonnegativeInteger(root.fixture_count, MAX_FIXTURES);
+    return deepFreeze({
+      schema_version: CANDIDATE_PACKAGE_SCHEMA_VERSION,
+      fixture_count,
+      provenance: root.provenance,
+      inputs_tree_sha256: sha(root.inputs_tree_sha256),
+      decisions_tree_sha256: sha(root.decisions_tree_sha256),
+      cassette_tree_sha256: sha(root.cassette_tree_sha256),
+      capture_manifest_sha256: sha(root.capture_manifest_sha256)
+    });
+  });
+}
+
+function normalizeOllamaQualification(
+  value: unknown,
+  ollamaDigest: SandboxSecurityBenchmarkDigest
+): Readonly<{
+  readonly inventory: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaInventoryResponse>;
+  readonly prewarm: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse>;
+}> {
+  const qualification = exact(value, ["inventory", "prewarm"]);
+  const inventory = normalizeOutcome(qualification.inventory, normalizeInventory);
+  const prewarm = normalizeOutcome(qualification.prewarm, normalizeLocal);
+  if (
+    inventory.status !== "response" ||
+    prewarm.status !== "response" ||
+    inventory.normalized_response.digest !== ollamaDigest ||
+    prewarm.normalized_response.verified_ollama_digest !== ollamaDigest
+  ) {
+    return invalid();
+  }
+  return deepFreeze({ inventory, prewarm });
+}
+
+function normalizeLiveExecutionProfile(
+  root: Readonly<Record<string, unknown>>
+): Readonly<{
+  execution_profile_id: typeof SANDBOX_SECURITY_P6_LIVE_CAPTURE_EXECUTION_PROFILE_ID;
+  readiness_timeout_ms: 20000;
+  qualification_timeout_ms: 20000;
+  local_detector_slot_timeout_ms: 20000;
+  judge_detector_slot_timeout_ms: 20000;
+  normal_work_budget_ms: 40000;
+}> {
+  if (
+    root.execution_profile_id !==
+      SANDBOX_SECURITY_P6_LIVE_CAPTURE_EXECUTION_PROFILE_ID ||
+    root.readiness_timeout_ms !==
+      SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.readiness_timeout_ms ||
+    root.qualification_timeout_ms !==
+      SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.qualification_timeout_ms ||
+    root.local_detector_slot_timeout_ms !==
+      SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.local_detector_slot_timeout_ms ||
+    root.judge_detector_slot_timeout_ms !==
+      SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.judge_detector_slot_timeout_ms ||
+    root.normal_work_budget_ms !==
+      SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.normal_work_budget_ms
+  ) {
+    return invalid();
+  }
+  return deepFreeze({
+    execution_profile_id:
+      SANDBOX_SECURITY_P6_LIVE_CAPTURE_EXECUTION_PROFILE_ID,
+    readiness_timeout_ms:
+      SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.readiness_timeout_ms,
+    qualification_timeout_ms:
+      SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.qualification_timeout_ms,
+    local_detector_slot_timeout_ms:
+      SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.local_detector_slot_timeout_ms,
+    judge_detector_slot_timeout_ms:
+      SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.judge_detector_slot_timeout_ms,
+    normal_work_budget_ms:
+      SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.normal_work_budget_ms
+  });
+}
+
+export function normalizeSandboxSecurityBenchmarkJudgeBinding(
+  value: unknown
+): Readonly<SandboxSecurityBenchmarkJudgeBinding> {
+  return safeCall(() => {
+    const root = exact(value, [
+      "judge_protocol_id",
+      "judge_endpoint_policy_id",
+      "judge_base_url",
+      "judge_endpoint_url",
+      "judge_requested_model",
+      "judge_resolved_model"
+    ]);
+    const protocolId = root.judge_protocol_id;
+    if (
+      (
+        protocolId !== SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID &&
+        protocolId !==
+          SANDBOX_SECURITY_OPENAI_CHAT_COMPLETIONS_JSON_PROTOCOL_ID
+      ) ||
+      root.judge_endpoint_policy_id !==
+        SANDBOX_SECURITY_OPERATOR_HTTPS_FQDN_ENDPOINT_POLICY_ID ||
+      typeof root.judge_base_url !== "string" ||
+      typeof root.judge_endpoint_url !== "string" ||
+      typeof root.judge_requested_model !== "string" ||
+      !JUDGE_MODEL.test(root.judge_requested_model) ||
+      typeof root.judge_resolved_model !== "string" ||
+      !JUDGE_MODEL.test(root.judge_resolved_model)
+    ) {
+      return invalid();
+    }
+    const protocol = resolveSandboxSecurityJudgeProtocol(
+      protocolId,
+      root.judge_base_url
+    );
+    if (
+      protocol.base_url !== root.judge_base_url ||
+      protocol.endpoint_url !== root.judge_endpoint_url
+    ) {
+      return invalid();
+    }
+    return deepFreeze({
+      judge_protocol_id: protocol.protocol_id,
+      judge_endpoint_policy_id:
+        SANDBOX_SECURITY_OPERATOR_HTTPS_FQDN_ENDPOINT_POLICY_ID,
+      judge_base_url: protocol.base_url,
+      judge_endpoint_url: protocol.endpoint_url,
+      judge_requested_model: root.judge_requested_model,
+      judge_resolved_model: root.judge_resolved_model
+    });
+  });
+}
+
+export function hashSandboxSecurityBenchmarkJudgeBinding(
+  value: unknown
+): SandboxSecurityBenchmarkSha256 {
+  return safeCall(() =>
+    hashValue(normalizeSandboxSecurityBenchmarkJudgeBinding(value))
+  );
+}
+
+export function normalizeSandboxSecurityBenchmarkCandidateCaptureManifest(
+  value: unknown
+): Readonly<SandboxSecurityBenchmarkCandidateCaptureManifest> {
+  return safeCall(() => {
+    const root = exact(value, [
+      "schema_version",
+      "inputs_tree_sha256",
+      "fixture_count",
+      ...LIVE_EXECUTION_PROFILE_KEYS,
+      "ollama_model",
+      "ollama_digest",
+      "ollama_qualification",
+      "judge_protocol_id",
+      "judge_endpoint_policy_id",
+      "judge_base_url",
+      "judge_endpoint_url",
+      "judge_requested_model",
+      "judge_resolved_model",
+      "judge_binding_sha256",
+      "local_prompt_version",
+      "judge_prompt_version",
+      "local_schema_version",
+      "judge_schema_version",
+      "rule_catalog_version",
+      "sanitizer_version"
+    ]);
+    if (
+      root.schema_version !== SANDBOX_SECURITY_BENCHMARK_CAPTURE_SCHEMA_VERSION ||
+      root.ollama_model !== "qwen3:8b"
+    ) {
+      return invalid();
+    }
+    const judgeBinding = normalizeSandboxSecurityBenchmarkJudgeBinding({
+      judge_protocol_id: root.judge_protocol_id,
+      judge_endpoint_policy_id: root.judge_endpoint_policy_id,
+      judge_base_url: root.judge_base_url,
+      judge_endpoint_url: root.judge_endpoint_url,
+      judge_requested_model: root.judge_requested_model,
+      judge_resolved_model: root.judge_resolved_model
+    });
+    const judge_binding_sha256 = sha(root.judge_binding_sha256);
+    if (
+      judge_binding_sha256 !==
+      hashSandboxSecurityBenchmarkJudgeBinding(judgeBinding)
+    ) {
+      return invalid();
+    }
+    if (
+      root.local_prompt_version !== LOCAL_PROMPT_VERSION ||
+      root.judge_prompt_version !== JUDGE_PROMPT_VERSION ||
+      root.local_schema_version !== LOCAL_SCHEMA_VERSION ||
+      root.judge_schema_version !== JUDGE_SCHEMA_VERSION ||
+      root.rule_catalog_version !== RULE_CATALOG_VERSION ||
+      root.sanitizer_version !== SANITIZER_VERSION
+    ) {
+      return invalid();
+    }
+    const ollama_digest = digest(root.ollama_digest);
+    const ollama_qualification = normalizeOllamaQualification(
+      root.ollama_qualification,
+      ollama_digest
+    );
+    const executionProfile = normalizeLiveExecutionProfile(root);
+    return deepFreeze({
+      schema_version: SANDBOX_SECURITY_BENCHMARK_CAPTURE_SCHEMA_VERSION,
+      inputs_tree_sha256: sha(root.inputs_tree_sha256),
+      fixture_count: nonnegativeInteger(root.fixture_count, MAX_FIXTURES),
+      ...executionProfile,
+      ollama_model: "qwen3:8b" as const,
+      ollama_digest,
+      ollama_qualification,
+      ...judgeBinding,
+      judge_binding_sha256,
+      local_prompt_version: LOCAL_PROMPT_VERSION,
+      judge_prompt_version: JUDGE_PROMPT_VERSION,
+      local_schema_version: LOCAL_SCHEMA_VERSION,
+      judge_schema_version: JUDGE_SCHEMA_VERSION,
+      rule_catalog_version: RULE_CATALOG_VERSION,
+      sanitizer_version: SANITIZER_VERSION
+    });
+  });
+}
+
+export function normalizeSandboxSecurityBenchmarkAcceptedMetrics(
+  value: unknown
+): Readonly<SandboxSecurityBenchmarkAcceptedMetrics> {
+  return safeCall(() => {
+    const root = exact(value, [
+      "schema_version",
+      "denominators",
+      "numerators",
+      "rates",
+      "accepted",
+      "truth_tree_sha256",
+      "decisions_tree_sha256",
+      "cassette_tree_sha256"
+    ]);
+    if (
+      root.schema_version !== SANDBOX_SECURITY_BENCHMARK_ACCEPTED_METRICS_SCHEMA_VERSION ||
+      (root.accepted !== true && root.accepted !== false)
+    ) {
+      return invalid();
+    }
+
+    const denominators = exact(root.denominators, [
+      "unsafe",
+      "safe",
+      "coverage",
+      "category",
+      "high_critical",
+      "transformed"
+    ]);
+    if (
+      denominators.unsafe !== 180 ||
+      denominators.safe !== 120 ||
+      denominators.coverage !== 300 ||
+      denominators.category !== 20 ||
+      denominators.high_critical !== 60 ||
+      denominators.transformed !== 54
+    ) {
+      return invalid();
+    }
+
+    const numerators = exact(root.numerators, [
+      "unsafe_detected",
+      "high_critical_detected",
+      "safe_false_positives",
+      "transformed_detected",
+      "decided",
+      "category_detected"
+    ]);
+    const unsafe_detected = nonnegativeInteger(numerators.unsafe_detected, 180);
+    const high_critical_detected = nonnegativeInteger(
+      numerators.high_critical_detected,
+      60
+    );
+    const safe_false_positives = nonnegativeInteger(
+      numerators.safe_false_positives,
+      120
+    );
+    const transformed_detected = nonnegativeInteger(
+      numerators.transformed_detected,
+      54
+    );
+    const decided = nonnegativeInteger(numerators.decided, 300);
+    const categoryDetectedRaw = exact(numerators.category_detected, CATEGORIES);
+    const category_detected: Record<string, number> = {};
+    for (const category of CATEGORIES) {
+      category_detected[category] = nonnegativeInteger(
+        categoryDetectedRaw[category],
+        20
+      );
+    }
+
+    const rates = exact(root.rates, [
+      "unsafe_recall",
+      "high_critical_recall",
+      "safe_false_positive_rate",
+      "transformed_recall",
+      "decision_coverage",
+      "category_recall"
+    ]);
+    const unsafe_recall = unitRate(rates.unsafe_recall);
+    const high_critical_recall = unitRate(rates.high_critical_recall);
+    const safe_false_positive_rate = unitRate(rates.safe_false_positive_rate);
+    const transformed_recall = unitRate(rates.transformed_recall);
+    const decision_coverage = unitRate(rates.decision_coverage);
+    const categoryRecallRaw = exact(rates.category_recall, CATEGORIES);
+    const category_recall: Record<string, number> = {};
+    for (const category of CATEGORIES) {
+      category_recall[category] = unitRate(categoryRecallRaw[category]);
+      if (category_recall[category] !== category_detected[category] / 20) {
+        return invalid();
+      }
+    }
+
+    if (
+      unsafe_recall !== unsafe_detected / 180 ||
+      high_critical_recall !== high_critical_detected / 60 ||
+      safe_false_positive_rate !== safe_false_positives / 120 ||
+      transformed_recall !== transformed_detected / 54 ||
+      decision_coverage !== decided / 300
+    ) {
+      return invalid();
+    }
+
+    return deepFreeze({
+      schema_version: SANDBOX_SECURITY_BENCHMARK_ACCEPTED_METRICS_SCHEMA_VERSION,
+      denominators: {
+        unsafe: 180 as const,
+        safe: 120 as const,
+        coverage: 300 as const,
+        category: 20 as const,
+        high_critical: 60 as const,
+        transformed: 54 as const
+      },
+      numerators: {
+        unsafe_detected,
+        high_critical_detected,
+        safe_false_positives,
+        transformed_detected,
+        decided,
+        category_detected
+      },
+      rates: {
+        unsafe_recall,
+        high_critical_recall,
+        safe_false_positive_rate,
+        transformed_recall,
+        decision_coverage,
+        category_recall
+      },
+      accepted: root.accepted,
+      truth_tree_sha256: sha(root.truth_tree_sha256),
+      decisions_tree_sha256: sha(root.decisions_tree_sha256),
+      cassette_tree_sha256: sha(root.cassette_tree_sha256)
+    });
+  });
+}
+
+export function hashSandboxSecurityBenchmarkAcceptedMetrics(
+  value: unknown
+): SandboxSecurityBenchmarkSha256 {
+  return safeCall(() =>
+    hashValue(normalizeSandboxSecurityBenchmarkAcceptedMetrics(value))
+  );
+}
+
+export function normalizeSandboxSecurityBenchmarkCandidateDecisionEnvelope(
+  value: unknown
+): Readonly<SandboxSecurityBenchmarkCandidateDecisionEnvelope> {
+  return safeCall(() => {
+    const root = exact(value, [
+      "schema_version",
+      "fixture_id",
+      "decision_projection_sha256",
+      "projection"
+    ]);
+    if (root.schema_version !== CANDIDATE_DECISION_ENVELOPE_SCHEMA_VERSION) {
+      return invalid();
+    }
+    const projection = exact(root.projection, [
+      "schema_version",
+      "verdict",
+      "action",
+      "risk_level",
+      "finding_count",
+      "detector_run_count",
+      "evidence_ref_count"
+    ]);
+    if (projection.schema_version !== CANDIDATE_DECISION_SCHEMA_VERSION) {
+      return invalid();
+    }
+    const finding_count = nonnegativeInteger(projection.finding_count);
+    const detector_run_count = nonnegativeInteger(projection.detector_run_count);
+    const evidence_ref_count = nonnegativeInteger(projection.evidence_ref_count);
+    return deepFreeze({
+      schema_version: CANDIDATE_DECISION_ENVELOPE_SCHEMA_VERSION,
+      fixture_id: fixtureId(root.fixture_id),
+      decision_projection_sha256: sha(root.decision_projection_sha256),
+      projection: {
+        schema_version: CANDIDATE_DECISION_SCHEMA_VERSION,
+        verdict: enumValue(projection.verdict, [
+          "risk_detected",
+          "no_detected_risk",
+          "indeterminate"
+        ] as const),
+        action: enumValue(projection.action, ["allow", "block"] as const),
+        risk_level: enumValue(projection.risk_level, [
+          "none",
+          "info",
+          "low",
+          "medium",
+          "high",
+          "critical"
+        ] as const),
+        finding_count,
+        detector_run_count,
+        evidence_ref_count
+      }
+    });
+  });
+}
+
+export function hashSandboxSecurityBenchmarkCandidateCassette(
+  value: unknown
+): SandboxSecurityBenchmarkSha256 {
+  return safeCall(() => {
+    const cassette = normalizeSandboxSecurityBenchmarkCandidateCassette(value);
+    const inventory = cassette.inputs.map((input) => {
+      const replay = normalizeSandboxSecurityBenchmarkReplayEnvelope({
+        schema_version: SANDBOX_SECURITY_BENCHMARK_REPLAY_SCHEMA_VERSION,
+        fixture_id: input.fixture_id,
+        ollama: input.ollama,
+        judge: input.judge,
+        decision_projection_sha256: input.decision_projection_sha256,
+        judge_binding_sha256: input.judge_binding_sha256
+      });
+      return deepFreeze({
+        fixture_id: replay.fixture_id,
+        replay_sha256: hashValue(replay)
+      });
+    });
+    return hashValue({
+      schema_version: CANDIDATE_CASSETTE_HASH_SCHEMA_VERSION,
+      judge_binding_sha256: cassette.judge_binding_sha256,
+      inputs: inventory
     });
   });
 }
@@ -1221,21 +1951,30 @@ export function normalizeSandboxSecurityBenchmarkManifest(value: unknown): Reado
 
 export function normalizeSandboxSecurityBenchmarkCaptureManifest(value: unknown): Readonly<SandboxSecurityBenchmarkCaptureManifest> {
   return safeCall(() => {
-    const root = exact(value, ["schema_version", "benchmark_manifest_sha256", "sources_lock_sha256", "inputs_tree_sha256", "decisions_tree_sha256", "cassette_tree_sha256", "ollama_model", "ollama_digest", "ollama_qualification", "judge_provider_id", "judge_base_url", "judge_responses_url", "judge_requested_model", "judge_resolved_model", "local_prompt_version", "judge_prompt_version", "local_schema_version", "judge_schema_version", "rule_catalog_version", "sanitizer_version"]);
+    const root = exact(value, ["schema_version", "benchmark_manifest_sha256", "sources_lock_sha256", "inputs_tree_sha256", "decisions_tree_sha256", "cassette_tree_sha256", ...LIVE_EXECUTION_PROFILE_KEYS, "ollama_model", "ollama_digest", "ollama_qualification", "judge_protocol_id", "judge_endpoint_policy_id", "judge_base_url", "judge_endpoint_url", "judge_requested_model", "judge_resolved_model", "judge_binding_sha256", "local_prompt_version", "judge_prompt_version", "local_schema_version", "judge_schema_version", "rule_catalog_version", "sanitizer_version"]);
     if (root.schema_version !== SANDBOX_SECURITY_BENCHMARK_CAPTURE_SCHEMA_VERSION || root.ollama_model !== "qwen3:8b") return invalid();
-    if (root.judge_provider_id !== "doro" || root.judge_base_url !== "https://doro.lol/v1" || root.judge_responses_url !== "https://doro.lol/v1/responses") return invalid();
-    if (typeof root.judge_requested_model !== "string" || !JUDGE_MODEL.test(root.judge_requested_model)) return invalid();
-    if (typeof root.judge_resolved_model !== "string" || !JUDGE_MODEL.test(root.judge_resolved_model)) return invalid();
+    const judgeBinding = normalizeSandboxSecurityBenchmarkJudgeBinding({
+      judge_protocol_id: root.judge_protocol_id,
+      judge_endpoint_policy_id: root.judge_endpoint_policy_id,
+      judge_base_url: root.judge_base_url,
+      judge_endpoint_url: root.judge_endpoint_url,
+      judge_requested_model: root.judge_requested_model,
+      judge_resolved_model: root.judge_resolved_model
+    });
+    const judge_binding_sha256 = sha(root.judge_binding_sha256);
+    if (judge_binding_sha256 !== hashSandboxSecurityBenchmarkJudgeBinding(judgeBinding)) return invalid();
     if (root.local_prompt_version !== LOCAL_PROMPT_VERSION ||
       root.judge_prompt_version !== JUDGE_PROMPT_VERSION ||
       root.local_schema_version !== LOCAL_SCHEMA_VERSION ||
-      root.judge_schema_version !== JUDGE_SCHEMA_VERSION) return invalid();
-    const qualification = exact(root.ollama_qualification, ["inventory", "prewarm"]);
+      root.judge_schema_version !== JUDGE_SCHEMA_VERSION ||
+      root.rule_catalog_version !== RULE_CATALOG_VERSION ||
+      root.sanitizer_version !== SANITIZER_VERSION) return invalid();
     const ollama_digest = digest(root.ollama_digest);
-    const inventory = normalizeOutcome(qualification.inventory, normalizeInventory);
-    const prewarm = normalizeOutcome(qualification.prewarm, normalizeLocal);
-    if (inventory.status === "response" && inventory.normalized_response.digest !== ollama_digest) return invalid();
-    if (prewarm.status === "response" && prewarm.normalized_response.verified_ollama_digest !== ollama_digest) return invalid();
+    const ollama_qualification = normalizeOllamaQualification(
+      root.ollama_qualification,
+      ollama_digest
+    );
+    const executionProfile = normalizeLiveExecutionProfile(root);
     return deepFreeze({
       schema_version: SANDBOX_SECURITY_BENCHMARK_CAPTURE_SCHEMA_VERSION,
       benchmark_manifest_sha256: sha(root.benchmark_manifest_sha256),
@@ -1243,32 +1982,51 @@ export function normalizeSandboxSecurityBenchmarkCaptureManifest(value: unknown)
       inputs_tree_sha256: sha(root.inputs_tree_sha256),
       decisions_tree_sha256: sha(root.decisions_tree_sha256),
       cassette_tree_sha256: sha(root.cassette_tree_sha256),
+      ...executionProfile,
       ollama_model: "qwen3:8b" as const,
       ollama_digest,
-      ollama_qualification: {
-        inventory,
-        prewarm
-      },
-      judge_provider_id: "doro",
-      judge_base_url: "https://doro.lol/v1",
-      judge_responses_url: "https://doro.lol/v1/responses",
-      judge_requested_model: root.judge_requested_model,
-      judge_resolved_model: root.judge_resolved_model,
+      ollama_qualification,
+      ...judgeBinding,
+      judge_binding_sha256,
       local_prompt_version: LOCAL_PROMPT_VERSION,
       judge_prompt_version: JUDGE_PROMPT_VERSION,
       local_schema_version: LOCAL_SCHEMA_VERSION,
       judge_schema_version: JUDGE_SCHEMA_VERSION,
-      rule_catalog_version: stringValue(root.rule_catalog_version, 128),
-      sanitizer_version: stringValue(root.sanitizer_version, 128)
+      rule_catalog_version: RULE_CATALOG_VERSION,
+      sanitizer_version: SANITIZER_VERSION
     });
   });
 }
 
 export function normalizeSandboxSecurityBenchmarkSeal(value: unknown): Readonly<SandboxSecurityBenchmarkSeal> {
   return safeCall(() => {
-    const root = exact(value, ["schema_version", "capture_manifest_sha256", "truth_tree_sha256", "replay_tree_sha256", "accepted_metrics_sha256"]);
+    const root = exact(value, [
+      "schema_version",
+      "capture_manifest_sha256",
+      "truth_tree_sha256",
+      "replay_tree_sha256",
+      "accepted_metrics_sha256",
+      "accepted_metrics"
+    ]);
     if (root.schema_version !== SANDBOX_SECURITY_BENCHMARK_SEAL_SCHEMA_VERSION) return invalid();
-    return deepFreeze({ schema_version: SANDBOX_SECURITY_BENCHMARK_SEAL_SCHEMA_VERSION, capture_manifest_sha256: sha(root.capture_manifest_sha256), truth_tree_sha256: sha(root.truth_tree_sha256), replay_tree_sha256: sha(root.replay_tree_sha256), accepted_metrics_sha256: sha(root.accepted_metrics_sha256) });
+    const accepted_metrics = normalizeSandboxSecurityBenchmarkAcceptedMetrics(
+      root.accepted_metrics
+    );
+    const accepted_metrics_sha256 = sha(root.accepted_metrics_sha256);
+    if (
+      accepted_metrics_sha256 !==
+      hashSandboxSecurityBenchmarkAcceptedMetrics(accepted_metrics)
+    ) {
+      return invalid();
+    }
+    return deepFreeze({
+      schema_version: SANDBOX_SECURITY_BENCHMARK_SEAL_SCHEMA_VERSION,
+      capture_manifest_sha256: sha(root.capture_manifest_sha256),
+      truth_tree_sha256: sha(root.truth_tree_sha256),
+      replay_tree_sha256: sha(root.replay_tree_sha256),
+      accepted_metrics_sha256,
+      accepted_metrics
+    });
   });
 }
 
@@ -1298,6 +2056,59 @@ function directoryNames(
     directory.closeSync();
   }
   return names.sort((left, right) => left < right ? -1 : left > right ? 1 : 0);
+}
+
+function assertExactDirectoryEntries(
+  directory: string,
+  expected: readonly string[]
+): void {
+  const actual = directoryNames(directory, { entries: 0 });
+  const expectedNames = [...expected].sort((left, right) =>
+    left < right ? -1 : left > right ? 1 : 0
+  );
+  if (
+    actual.length !== expectedNames.length ||
+    actual.some((name, index) => name !== expectedNames[index])
+  ) {
+    return invalid();
+  }
+}
+
+export function assertSandboxSecurityBenchmarkCandidatePackageLayout(
+  root: string,
+  fixtureIds: readonly string[]
+): void {
+  return safeCall(() => {
+    const resolvedRoot = resolve(stringValue(root, 4096));
+    const rootStat = lstatSync(resolvedRoot);
+    if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) return invalid();
+
+    const ids = denseArray(fixtureIds, 1, MAX_FIXTURES).map(fixtureId);
+    if (new Set(ids).size !== ids.length) return invalid();
+
+    const decisionsRoot = join(resolvedRoot, "decisions");
+    assertExactDirectoryEntries(resolvedRoot, [
+      "capture-manifest.json",
+      "cassette.json",
+      "decisions",
+      "package.json"
+    ]);
+    for (const name of ["capture-manifest.json", "cassette.json", "package.json"]) {
+      const stat = lstatSync(join(resolvedRoot, name));
+      if (stat.isSymbolicLink() || !stat.isFile()) return invalid();
+    }
+
+    const decisionsStat = lstatSync(decisionsRoot);
+    if (decisionsStat.isSymbolicLink() || !decisionsStat.isDirectory()) {
+      return invalid();
+    }
+    const decisionFiles = ids.map((fixtureId) => `${fixtureId}.json`);
+    assertExactDirectoryEntries(decisionsRoot, decisionFiles);
+    for (const name of decisionFiles) {
+      const stat = lstatSync(join(decisionsRoot, name));
+      if (stat.isSymbolicLink() || !stat.isFile()) return invalid();
+    }
+  });
 }
 
 function collectTreeFiles(

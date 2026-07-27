@@ -3,15 +3,14 @@
 ## Document Status
 
 - Requirement: `REQ-SBX-GENERAL-002`
-- Status: `SPEC_APPROVED_PLAN_IN_PROGRESS`
+- Status: `SPEC_APPROVED_IMPLEMENTATION_IN_PROGRESS`
 - Date: `2026-07-16`
 - Depends on: `REQ-SBX-GENERAL-001` at commit `4ef08de`
 - Scope: production detectors, sanitizer, provider adapters, composition, and
   the sealed `sandbox-security-benchmark.v1`
 
-Implementation is not authorized by this draft. The specification must be
-reviewed and approved, then a separate RED-first Master Plan must be reviewed
-and approved before production code or benchmark fixtures are added.
+The specification and separate RED-first Master Plan were independently
+reviewed and explicitly approved before implementation began.
 
 ## Normative Authority
 
@@ -25,6 +24,30 @@ This specification narrows the GENERAL-002 scope already assigned by:
 When this specification conflicts with a frozen GENERAL-001 contract, profile,
 limit, state transition, or export boundary, GENERAL-001 wins. GENERAL-002 must
 adapt to the existing core rather than change it.
+
+## Approved Amendments
+
+The Dynamic Judge Provider amendment at
+`docs/superpowers/specs/2026-07-22-sandbox-security-dynamic-judge-provider-amendment.md`
+supersedes every fixed Judge vendor, endpoint, model, credential, enable-flag,
+and persisted `openai_model` statement in this specification. OpenAI-named
+internal types and the `openai` transport operation remain Responses wire
+protocol labels only; they do not identify the live provider.
+
+The P6 Local Hardware Compatibility amendment at
+`docs/superpowers/specs/2026-07-26-sandbox-security-p6-local-hardware-compatibility-amendment.md`
+supersedes only the frozen-core and production deep-import rules needed for the
+fixed P6 execution overlay. It does not change the public core index, ordinary
+production, P7 replay, or any policy contract.
+
+For P6 controlled live capture only, the user approved the source-controlled
+`p6_local_hardware_compatibility_v1` execution profile: Judge readiness,
+Ollama qualification, warmed prewarm, the local detector slot, and the Judge
+detector slot each use `20000ms`, while the normal work budget uses `40000ms`.
+The profile is not caller-, environment-, or CLI-selectable. Ordinary
+production composition and P7 hermetic replay continue to use the inherited
+GENERAL-001 `5000ms` normal work budget and `100/1000/4000ms`
+rule/local/Judge detector slot limits.
 
 ## Goal
 
@@ -52,7 +75,7 @@ compatibility guarantees:
 - Ollama request construction, digest qualification, bounded response parsing,
   and exact detector-result mapping.
 - Deterministic source/tool redaction and Engine-token derivation.
-- OpenAI Responses API request construction, strict structured response
+- Responses-protocol Judge request construction, strict structured response
   parsing, obligation binding, and exact external-result mapping.
 - Production environment validation and composition.
 - Public-dataset source governance, attribution, normalized fixtures, truth
@@ -69,7 +92,9 @@ compatibility guarantees:
 - Frontend evaluation or audit views.
 - Changes to shared GENERAL-001 DTOs or constants.
 - Changes to GENERAL-001 profiles, thresholds, timeouts, state machines,
-  qualification, reduction, semantic validation, or public export allowlists.
+  qualification, reduction, semantic validation, or public export allowlists,
+  except the exact private P6 Engine factory authorized by the 2026-07-26
+  amendment.
 - Automatic model pulls, model training, fine-tuning, online learning, or
   dynamic rule updates.
 - Provider retry, fallback providers, endpoint failover, queues, workers,
@@ -81,7 +106,10 @@ compatibility guarantees:
 
 ## Frozen Inherited Constraints
 
-GENERAL-002 must preserve these GENERAL-001 decisions exactly:
+GENERAL-002 preserves these GENERAL-001 decisions exactly for ordinary
+production composition and P7 hermetic replay. Controlled P6 live capture uses
+only the source-controlled `p6_local_hardware_compatibility_v1` timing profile
+defined above:
 
 - detector order is rule, local, Judge;
 - normal work budget is 5000 ms;
@@ -110,9 +138,9 @@ The user approved the following GENERAL-002 choices on `2026-07-16`:
 | Local model | `qwen3:8b`, with an expected immutable Ollama digest |
 | Rule catalog | Versioned TypeScript data, fixed operators, exact validation, recursively frozen |
 | Sanitizer | Deterministic NFKC-based structured redaction; fail closed when uncertain |
-| Judge vendor | OpenAI |
-| Judge protocol | OpenAI Responses wire protocol at an allowlisted HTTPS Responses URL (initial `https://doro.lol/v1/responses`) |
-| Judge model | Runtime-selected safe identifier (initial live may use `gpt-5.4-mini`), `reasoning.effort: low`, `store: false` |
+| Judge provider | Source-controlled allowlist (initial `doro`) |
+| Judge protocol | Responses wire protocol at the allowlisted Doro base URL `https://doro.lol/v1` and resolved endpoint `https://doro.lol/v1/responses` |
+| Judge model | Runtime-selected safe identifier from the allowlisted provider at process startup, `reasoning.effort: low`, `store: false` |
 | Benchmark sources | Multiple public datasets with locked provenance |
 | Derived Chinese data | Allowed only after human review |
 | Transformed attacks | Independently authored derivatives with provenance and review |
@@ -144,7 +172,7 @@ security-production -> security public index -> shared contracts
 The GENERAL-001 core must never import `security-production`. Network, model,
 credential, and provider code therefore cannot enter the core capability graph.
 
-### Sole Deep-Import Exception
+### Deep-Import Exceptions
 
 The production sanitizer may import exactly one non-index symbol:
 
@@ -156,6 +184,13 @@ No other production module may use that exception. The sanitizer must not
 import the registry type, payload validator, external-result normalizer, bounds
 assertion, or any other core internal. The helper remains absent from the public
 security index.
+
+The 2026-07-26 amendment additionally permits
+`security-production/composition.ts` to import exactly
+`createSandboxSecurityP6LiveCaptureEngine` from `security/engine.ts` for the
+P6-only live composition. The symbol is absent from the public index, accepts no
+caller-selected timing/profile input, and cannot be imported by another
+production module or combined with another core deep import.
 
 ### Planned Production Modules
 
@@ -201,7 +236,7 @@ export function createSandboxSecurityProductionEngine(input: Readonly<{
 `createSandboxSecurityProductionEngine` does not accept a transport,
 credential, endpoint, model, or environment object. The public production
 composition constructs the default transport internally after the production
-config module has read and normalized the three allowlisted environment
+config module has read and normalized the six approved Judge/Ollama environment
 variables.
 
 Provider adapter modules expose their factories only to sibling production
@@ -405,8 +440,10 @@ For modes containing local detection, the asynchronous composition factory
 qualifies and prewarms the model before constructing the detector. In addition,
 every chat operation re-runs GET `/api/tags` inside the default transport
 immediately before `POST /api/chat`. Digest revalidation and chat share the
-Engine-provided signal and the single inherited local-model lease; revalidation
-does not extend the 1000 ms budget. Any inventory failure or digest drift aborts
+Engine-provided signal and the active execution profile's single local-model
+lease; revalidation never creates or extends a second lease. Controlled P6 uses
+the profile's `20000ms` local slot, while ordinary production and P7 retain the
+inherited `1000ms` local slot. Any inventory failure or digest drift aborts
 before sending raw snapshot content to chat.
 
 Qualification returns a frozen data view backed by a module-private `WeakMap`.
@@ -662,8 +699,8 @@ The prewarm response must pass the same exact chat-envelope and local-schema
 validation as an evaluation response, including `verified_ollama_digest`; its
 classification is not a benchmark decision. Model loading is never performed
 inside a detector lease. Qualification evidence records the warmed probe latency
-and rejects a runtime that cannot settle the fixed probe within the inherited
-1000 ms slot timeout.
+and rejects a runtime that cannot settle the fixed probe within the approved
+`20000ms` P6 qualification ceiling.
 Every benchmark and production chat uses the same keep-alive value and requires
 the outer response `model` to equal `qwen3:8b`. The per-chat digest
 revalidation, not an operator promise, detects a restart or tag drift before
@@ -832,11 +869,15 @@ The primary proof remains exact construction, bounded recursion, a closed
 placeholder catalog, no persistence, provider contract tests, and independent
 review.
 
-## OpenAI Judge Adapter
+## Responses-Protocol Judge Adapter
 
-### Fixed Provider Configuration
+### Allowlisted Provider Configuration
 
-- Endpoint: allowlisted Responses URL selected via `SANDBOX_SECURITY_JUDGE_BASE_URL` (initial `https://doro.lol/v1/responses`)
+- Provider: source-controlled `doro` profile with canonical base URL
+  `https://doro.lol/v1` and resolved Responses URL
+  `https://doro.lol/v1/responses`
+- Endpoint selection: `SANDBOX_SECURITY_JUDGE_BASE_URL` must exactly match an
+  allowlisted canonical base URL; it cannot introduce a network destination
 - Model: runtime `SANDBOX_SECURITY_JUDGE_MODEL` (safe regex; not a source constant)
 - Reasoning effort: `low`
 - Storage: `false`
@@ -952,11 +993,12 @@ literal object above; tools, metadata, previous response IDs, streaming, prompt
 caching identifiers, and caller-provided messages are absent.
 
 The live gate performs a non-benchmark strict-schema readiness request before
-capture and rejects an environment that cannot settle it within an independent
-4000 ms readiness budget. Readiness occurs before benchmark evaluation, does
-not consume or extend an Engine lease, create a retry, or count as a benchmark
-decision. Every real Judge call still uses only the Engine-provided signal and
-the remaining inherited 4000 ms slot lease.
+capture and rejects an environment that cannot settle it within the independent
+`20000ms` P6 readiness budget. Readiness occurs before benchmark evaluation,
+does not consume or extend an Engine lease, create a retry, or count as a
+benchmark decision. Every real Judge call still uses only the Engine-provided
+signal and the remaining `20000ms` P6 Judge slot lease. Ordinary production
+composition and P7 hermetic replay retain the inherited `4000ms` Judge slot.
 
 ### Judge Response
 
@@ -998,7 +1040,7 @@ The transport must:
 - propagate the exact Engine-provided `AbortSignal`;
 - read response bodies with an incremental byte cap;
 - reject redirects, userinfo, fragments, and unexpected content types;
-- permit only the exact Ollama and OpenAI origins/paths above;
+- permit only the exact Ollama and allowlisted Judge origins/paths above;
 - expose only status, normalized content type, and bounded body bytes;
 - on abort, redirect, content-type rejection, oversize, stream error, or any
   terminal race, destroy the active request, response, and socket, remove abort
@@ -1016,16 +1058,17 @@ must not call `fetch`, `process.getBuiltinModule`, dynamic import, `eval`, or
 The environment normalizer reads only:
 
 - `SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST`
+- `SANDBOX_SECURITY_JUDGE_PROTOCOL`
 - `SANDBOX_SECURITY_JUDGE_API_KEY`
 - `SANDBOX_SECURITY_JUDGE_BASE_URL`
 - `SANDBOX_SECURITY_JUDGE_MODEL`
 - `SANDBOX_SECURITY_ENABLE_JUDGE`
-- `SANDBOX_SECURITY_ENABLE_OPENAI_JUDGE`, which must equal `1`
 
-No endpoint or model environment override exists. Values are exact-key checked,
-trimmed without being logged, and copied into private closure state. Returned
-configuration summaries contain booleans and model/digest identifiers only,
-never credentials.
+The allowlisted base URL and safe requested model are process-startup choices;
+they cannot introduce an arbitrary endpoint or mutate an existing process.
+Values are exact-key checked, trimmed without being logged, and copied into
+private closure state. Returned configuration summaries contain nonsecret
+provider and model/digest identifiers only, never credentials.
 
 Only `production-config.ts` reads `process.env`. `rule_only` requires none of
 the variables; `local` requires a valid digest; `local_and_judge` requires the
@@ -1035,8 +1078,10 @@ then clears its intermediate key reference. No config summary, adapter input,
 transport request value, error, or qualification evidence contains that key.
 
 Composition creates the selected production adapters and sealed default
-transport, then delegates registry and Engine creation to the final GENERAL-001
-public factories. It does not resolve profiles, qualify evidence, reduce
+transport. Ordinary production and P7 replay delegate Engine creation to the
+final GENERAL-001 public factory; controlled P6 live capture uses only the
+private factory authorized by the 2026-07-26 amendment. Composition does not
+resolve profiles, qualify evidence, reduce
 decisions, catch evaluation errors, or add a fallback decision. The internal
 replay seam follows the same composition path but accepts only a statically
 network-free replay transport and an already normalized credential-free config.
@@ -1149,10 +1194,13 @@ Truth blindness is a runtime capability boundary, not only an import scan.
 allowlist of capture/production/shared source files. It then starts the live
 capture child with the Node.js permission model (`--permission`), explicit
 `--allow-fs-read` entries for only that code and input bundle, and one
-`--allow-fs-write` capture-output directory. `truth/` is absent from every
-granted read path. Child-process and worker permissions are not granted. The
-capture child rejects unexpected inherited file descriptors and receives no
-truth path, truth hash, fixture label, evaluator module, or metric threshold.
+`--allow-fs-write` target: the parent-precreated
+`capture-output/.candidate-package.json` staging file. `capture-output/`
+is passed only as the output root argument and binding context for parent-owned
+post-child candidate materialization. `truth/` is absent from every granted
+read path. Child-process and worker permissions are not granted. The capture
+child rejects unexpected inherited file descriptors and receives no truth path,
+truth hash, fixture label, evaluator module, or metric threshold.
 
 Capture and evaluator run in separate processes. The evaluator process receives
 the immutable capture outputs and `truth/`, receives no provider credentials,
@@ -1299,7 +1347,7 @@ interface SandboxSecurityReplayLocalCandidate {
 }
 
 interface SandboxSecurityReplayOpenAIResponse {
-  model: "gpt-5.6-terra";
+  model: string;
   status: "completed";
   parsed: {
     schema_version: "sandbox-security-judge.v1";
@@ -1350,6 +1398,7 @@ interface SandboxSecurityBenchmarkSeal {
   truth_tree_sha256: string;
   replay_tree_sha256: string;
   accepted_metrics_sha256: string;
+  accepted_metrics: SandboxSecurityBenchmarkAcceptedMetrics;
 }
 ```
 
@@ -1497,8 +1546,9 @@ cassette and requires:
 
 The hermetic gate is mandatory in repository CI. Live qualification is
 explicit and credentialed; it is mandatory before GENERAL-002 acceptance and
-again when the model digest, OpenAI model, prompt version, schema version, rule
-catalog version, sanitizer version, or benchmark revision changes.
+again when the model digest, Judge provider/base URL/Responses URL/requested or
+resolved model, prompt version, schema version, rule catalog version, sanitizer
+version, or benchmark revision changes.
 
 ## Anti-Oracle and Isolation Gates
 
@@ -1517,14 +1567,16 @@ Repository tests must reject:
 - network capability outside the default production transport;
 - environment access outside production config; and
 - any production-to-core deep import other than the sanitizer's
-  `deriveSandboxSecurityExternalTokenRegistry` helper; and
+  `deriveSandboxSecurityExternalTokenRegistry` helper and the exact P6-only
+  `composition.ts` import authorized by the 2026-07-26 amendment; and
 - any benchmark-to-production deep import other than
   `benchmark-composition.ts#createSandboxSecurityLiveCaptureEngine` from
   `capture-live.ts`,
   `benchmark-composition.ts#createSandboxSecurityHermeticReplayEngine` from
   `replay-hermetic.ts`, and the matching repository tests.
 
-The production-to-core deep-import rule remains limited to the sanitizer helper.
+The production-to-core deep-import rule remains limited to the sanitizer helper
+and the exact P6-only private Engine factory edge.
 The two benchmark entry points are a separate reverse-direction allowlist and
 do not authorize production code to import benchmark files or any other core
 internal.
@@ -1544,8 +1596,8 @@ Provider adapters do not catch failures and synthesize safe results.
 | Ollama digest mismatch | fail qualification or per-chat revalidation before raw content reaches chat |
 | Local malformed/oversize output | throw; Engine normalizes detector failure/invalid result |
 | Sanitizer failure/overflow | zero Judge calls; `external_redaction_failed` path |
-| OpenAI unavailable/non-2xx | throw; routed obligations remain unresolved |
-| OpenAI timeout/abort | terminate through existing deadline semantics |
+| Judge provider unavailable/non-2xx | throw; routed obligations remain unresolved |
+| Judge provider timeout/abort | terminate through existing deadline semantics |
 | Judge malformed/oversize output | reject entire response; never partial salvage |
 | Unknown/duplicate obligation | reject entire response |
 | Missing returned obligation | legal omission; remains unresolved |
@@ -1586,7 +1638,7 @@ separate:
 3. HTTP transport/config;
 4. Ollama adapter;
 5. deterministic sanitizer;
-6. OpenAI Judge adapter;
+6. Responses-protocol Judge adapter;
 7. production composition;
 8. source-lock and corpus schema;
 9. sealed input/truth curation;
@@ -1610,7 +1662,7 @@ git diff --check
 It must add permanent GENERAL-002 scripts for production-focused tests,
 hermetic benchmark replay, source/fixture validation, and explicit live
 qualification. Ordinary repository tests must not require network, Ollama, or
-OpenAI credentials.
+Judge credentials.
 
 ## Documentation Requirements
 
@@ -1641,7 +1693,7 @@ GENERAL-002 is accepted only when all of the following are true:
 3. local output is exact, bounded, ordinal-mapped, and clearance-free;
 4. sanitizer construction is deterministic, bounded, frozen, and its failure
    causes zero Judge calls;
-5. OpenAI Judge receives only validated sanitized payloads with obligations;
+5. Judge receives only validated sanitized payloads with obligations;
 6. Judge output is strict, bounded, omission-only for partial coverage, and
    cannot widen scope or invent categories;
 7. provider endpoints, model IDs, storage, retries, redirects, and credentials

@@ -31,6 +31,12 @@ import type {
   SandboxSecurityTrustClass,
   SandboxSecurityTrustRule
 } from "../../src/security/index.ts";
+import {
+  createSandboxSecurityEngine
+} from "../../src/security/index.ts";
+import {
+  createSandboxSecurityP6LiveCaptureEngine
+} from "../../src/security/engine.ts";
 
 // @ts-expect-error internal normalized request is not a public engine export
 import type { NormalizedSandboxSecurityEvaluationRequest } from "../../src/security/index.ts";
@@ -55,6 +61,12 @@ declare const raw: RawLocalDetector;
 declare const evaluationRequest: SandboxSecurityEvaluationRequest;
 declare const publicSubject: SandboxSecurityFindingSubjectRef;
 declare const privateSubject: SandboxSecurityCandidateSubjectRef;
+declare const registry: SandboxSecurityDetectorRegistry;
+declare const runtimePorts: SandboxSecurityRuntimePorts;
+declare const profile: SandboxSecurityPolicyProfileManifest;
+declare const profileResolver: (
+  profileId: string
+) => Readonly<SandboxSecurityPolicyProfileManifest>;
 type MasterDExportProbe = readonly [
   SandboxSecurityEvaluationRequest,
   SandboxSecurityAuthoritativeEvaluationContext,
@@ -116,6 +128,46 @@ const badCandidate: SandboxSecurityRiskCandidate = {
 // @ts-expect-error raw candidate subject is not external subject ref
 const badExternal: SandboxSecurityExternalCandidateSubjectRef = privateSubject;
 
+const publicDepsWithProfileResolver = {
+  registry,
+  runtime: runtimePorts,
+  profileResolver
+};
+createSandboxSecurityEngine(publicDepsWithProfileResolver);
+
+const publicDepsWithEntryBudget = {
+  registry,
+  runtime: runtimePorts,
+  entryNormalWorkBudgetMs: 40000
+};
+createSandboxSecurityEngine(publicDepsWithEntryBudget);
+
+const internalDepsWithEntryBudget = {
+  registry,
+  runtime: runtimePorts,
+  entryNormalWorkBudgetMs: 40000
+};
+createSandboxSecurityP6LiveCaptureEngine(
+  // @ts-expect-error internal P6 Engine owns its entry budget
+  internalDepsWithEntryBudget
+);
+
+const internalDepsWithProfileResolver = {
+  registry,
+  runtime: runtimePorts,
+  profileResolver
+};
+createSandboxSecurityP6LiveCaptureEngine(
+  // @ts-expect-error internal P6 Engine owns its fixed profile resolver
+  internalDepsWithProfileResolver
+);
+
+const badNormalWorkBudgetProfile: SandboxSecurityPolicyProfileManifest = {
+  ...profile,
+  // @ts-expect-error core policy manifests retain the GENERAL-001 budget
+  normal_work_budget_ms: 40000
+};
+
 // prove approved evaluation request is not the internal branded type:
 // do NOT import NormalizedSandboxSecurityEvaluationRequest from public index
 // repository scan (runtime test) asserts that symbol is absent from exports
@@ -125,4 +177,5 @@ void badJudge;
 void badSubject;
 void badCandidate;
 void badExternal;
+void badNormalWorkBudgetProfile;
 void masterDExports;

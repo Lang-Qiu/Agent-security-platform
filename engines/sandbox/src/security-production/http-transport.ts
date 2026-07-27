@@ -143,6 +143,72 @@ function validJudgeApiKey(value: string): boolean {
   );
 }
 
+function containsExactByteSequence(
+  haystack: Uint8Array,
+  needle: Uint8Array
+): boolean {
+  if (needle.length === 0 || needle.length > haystack.length) {
+    return false;
+  }
+  outer: for (let index = 0; index <= haystack.length - needle.length; index += 1) {
+    for (let offset = 0; offset < needle.length; offset += 1) {
+      if (haystack[index + offset] !== needle[offset]) {
+        continue outer;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
+function containsDecodedJsonByteSequence(
+  body: Uint8Array,
+  needle: Uint8Array
+): boolean {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(body)
+    ) as unknown;
+  } catch {
+    return false;
+  }
+
+  const pending: unknown[] = [parsed];
+  while (pending.length > 0) {
+    const value = pending.pop();
+    if (typeof value === "string") {
+      if (containsExactByteSequence(new TextEncoder().encode(value), needle)) {
+        return true;
+      }
+      continue;
+    }
+    if (value === null || typeof value !== "object") continue;
+    if (Array.isArray(value)) {
+      pending.push(...value);
+      continue;
+    }
+    for (const [key, child] of Object.entries(value)) {
+      if (containsExactByteSequence(new TextEncoder().encode(key), needle)) {
+        return true;
+      }
+      pending.push(child);
+    }
+  }
+  return false;
+}
+
+function containsCredentialReflection(
+  body: Uint8Array,
+  credential: Uint8Array
+): boolean {
+  return (
+    containsExactByteSequence(body, credential) ||
+    containsDecodedJsonByteSequence(body, credential)
+  );
+}
+
+
 function copyUint8ArrayInternalBytesAtMost(
   value: unknown,
   maxByteLength: number
@@ -234,6 +300,7 @@ function requestWire(
     headers: Readonly<Record<string, string>>;
     body?: Uint8Array;
     signal: AbortSignal;
+    credential_bytes?: Uint8Array | null;
   }>
 ): Promise<Readonly<SandboxSecurityHttpResponse>> {
   const { signal } = input;
@@ -453,7 +520,10 @@ function requestWire(
             rollbackAfterTerminal();
             return;
           }
-          if (contentType !== "application/json") {
+          if (
+            contentType !== "application/json" &&
+            (input.credential_bytes === undefined || input.credential_bytes === null)
+          ) {
             finish("reject", namedTransportError("sandbox_security_transport_invalid"));
             return;
           }
@@ -495,12 +565,34 @@ function requestWire(
           };
           onResponseEnd = (): void => {
             try {
+              const bodyBytes = Uint8Array.from(body);
+              const credentialBytes = input.credential_bytes;
+              if (
+                credentialBytes !== undefined &&
+                credentialBytes !== null &&
+                containsCredentialReflection(bodyBytes, credentialBytes)
+              ) {
+                finish(
+                  "reject",
+                  namedTransportError(
+                    "sandbox_security_transport_credential_reflection"
+                  )
+                );
+                return;
+              }
+              if (contentType !== "application/json") {
+                finish(
+                  "reject",
+                  namedTransportError("sandbox_security_transport_invalid")
+                );
+                return;
+              }
               finish(
                 "resolve",
                 Object.freeze({
                   status,
                   content_type: contentType,
-                  body: Uint8Array.from(body)
+                  body: bodyBytes
                 })
               );
             } catch {
@@ -810,9 +902,16 @@ export function createSandboxSecurityDefaultHttpTransport(input: Readonly<{
     factory,
     expected_ollama_digest: expectedOllamaDigest,
     judge_protocol_id: judgeProtocolId,
-    judge_api_key: judgeApiKey,
+    judge_api_key: configuredJudgeApiKey,
     judge_endpoint_url: judgeEndpointUrl
   } = normalizeTransportConfiguration(input);
+
+  let judgeCredentialBytes: Uint8Array | null = null;
+  let judgeAuthorization: string | null = null;
+  if (typeof configuredJudgeApiKey === "string") {
+    judgeCredentialBytes = new TextEncoder().encode(configuredJudgeApiKey);
+    judgeAuthorization = `Bearer ${configuredJudgeApiKey}`;
+  }
 
   return Object.freeze({
     async request(
@@ -855,8 +954,8 @@ export function createSandboxSecurityDefaultHttpTransport(input: Readonly<{
       }
       if (normalizedRequest.provider === "openai") {
         if (
-          judgeApiKey === null ||
-          !validJudgeApiKey(judgeApiKey) ||
+          judgeCredentialBytes === null ||
+          judgeAuthorization === null ||
           judgeProtocolId === null ||
           typeof judgeEndpointUrl !== "string" ||
           normalizedRequest.operation !==
@@ -873,10 +972,11 @@ export function createSandboxSecurityDefaultHttpTransport(input: Readonly<{
           method: "POST",
           headers: Object.freeze({
             "content-type": "application/json",
-            authorization: `Bearer ${judgeApiKey}`
+            authorization: judgeAuthorization
           }),
           body: copyUint8ArrayInternalBytes(normalizedRequest.body),
-          signal: normalizedRequest.signal
+          signal: normalizedRequest.signal,
+          credential_bytes: judgeCredentialBytes
         });
       }
       return invalid();

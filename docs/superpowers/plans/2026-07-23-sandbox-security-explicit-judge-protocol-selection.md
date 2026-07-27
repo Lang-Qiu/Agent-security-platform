@@ -267,7 +267,7 @@ Quality/Security re-reviews both returned `APPROVED`.
 - Modify: `engines/sandbox/tests/sandbox-security-production-composition.spec.ts`
 - Modify: `engines/sandbox/tests/sandbox-security-production-integration.spec.ts`
 
-- [ ] **Step 1: Write failing dispatch tests**
+- [x] **Step 1: Write failing dispatch tests**
 
 Prove the chat config issues exactly `{ provider: "openai", operation:
 "chat_completions" }`, uses the Chat body/parser, and maps valid structured
@@ -283,7 +283,7 @@ Add composition/integration tests requiring both `judge_protocol_id` and
 `judge_requested_model` in `local_and_judge`, with no protocol input accepted
 from an evaluation request.
 
-- [ ] **Step 2: Run RED production tests**
+- [x] **Step 2: Run RED production tests**
 
 ```bash
 node --experimental-strip-types --experimental-test-isolation=none --test \
@@ -296,7 +296,7 @@ node --experimental-strip-types --experimental-test-isolation=none --test \
 
 Expected: FAIL on missing chat operation and protocol dispatch.
 
-- [ ] **Step 3: Implement minimal protocol dispatch**
+- [x] **Step 3: Implement minimal protocol dispatch**
 
 Extend the HTTP request union with the exact Chat operation. Store the selected
 protocol in private transport state and accept only its corresponding
@@ -308,7 +308,7 @@ existing Judge detector input with the protocol ID and choose one fixed
 request/parser pair before evaluation. Keep candidate mapping, signal checks,
 response cap, no redirects, no retry, and no fallback unchanged.
 
-- [ ] **Step 4: Run focused GREEN and isolated production gates**
+- [x] **Step 4: Run focused GREEN and isolated production gates**
 
 Run Step 2, then:
 
@@ -330,11 +330,22 @@ git diff --check
 
 Expected: all focused and isolated production tests pass.
 
-- [ ] **Step 5: Independent reviews and re-review**
+- [x] **Step 5: Independent reviews and re-review**
 
 Review operation confusion, credential routing, endpoint revalidation,
 configuration consumption, fallback absence, and abort cleanup. Add RED tests
 for every accepted finding, rerun Step 4, and obtain both approvals.
+
+Task 3 closed on `2026-07-23`: focused dispatch tests `82/82`, sandbox
+TypeScript, and `git diff --check` passed. The isolated production suite is
+`400/404`; its four remaining RED cases are the planned Task 4 benchmark
+fixtures that do not yet provide the explicit protocol. Specification review
+returned `APPROVED`. Code Quality/Security review found one P3 early-validation
+gap, which was fixed RED-first and re-reviewed `APPROVED` with no open P0-P3.
+The atomic commit is deferred through Task 4: an index-only verification proved
+that excluding the Task 4-owned sealed-config seam leaves exactly two hermetic
+integration RED cases, so Task 3 will not publish a standalone red commit or
+absorb unrelated pre-existing P6 hunks.
 
 ### Task 4: Protocol-Bound Readiness, Capture, And Evidence
 
@@ -354,7 +365,8 @@ for every accepted finding, rerun Step 4, and obtain both approvals.
 - [ ] **Step 1: Write failing readiness and capture tests**
 
 Add tests proving Chat readiness creates/parses one Chat request before input
-zero, returns the resolved model, remains exactly `4000ms`, and never tries
+zero, returns the resolved model, uses the exact
+`p6_local_hardware_compatibility_v1` `20000ms` readiness limit, and never tries
 Responses after any Chat failure.
 
 Add benchmark composition tests that Chat requests are normalized into the
@@ -381,7 +393,8 @@ node --experimental-strip-types --experimental-test-isolation=none --test \
 ```
 
 Expected: FAIL because readiness, capture normalization, contracts, and child
-environment still assume only Responses and five variables.
+environment do not yet implement protocol selection or the amended six-variable
+boundary.
 
 - [ ] **Step 3: Implement selected-protocol readiness and capture**
 
@@ -631,11 +644,14 @@ node --env-file=.env.sandbox-security.local --experimental-strip-types \
   --output-root "${CAPTURE_ROOT}"
 ```
 
-Expected: readiness succeeds inside `4000ms`, Ollama inventory/prewarm passes
-inside the P6-only `5000ms` boundary, 300 ordered evaluations complete, sink
-drains, and one exact candidate package exists. On any failure, preserve no
-accepted artifact and return to the owning deterministic task; do not retry via
-another protocol/model or weaken a threshold.
+Expected: readiness and Ollama inventory/prewarm succeed inside their
+`p6_local_hardware_compatibility_v1` `20000ms` limits, every local and Judge
+detector slot stays inside `20000ms`, and each of the 300 ordered Engine
+evaluations receives its own `40000ms` normal work budget rather than sharing
+one budget across the run. The sink drains and one exact candidate package
+exists. On any failure, preserve no accepted artifact and return to the owning
+deterministic task; do not retry via another protocol/model or weaken a
+threshold.
 
 - [ ] **Step 5: Evaluate and truth-blind seal**
 

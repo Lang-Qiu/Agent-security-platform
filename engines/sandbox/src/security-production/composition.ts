@@ -8,11 +8,22 @@ import {
   type SanitizedExternalDetector
 } from "../security/index.ts";
 import {
+  createSandboxSecurityP6LiveCaptureEngine
+} from "../security/engine.ts";
+import {
+  SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING
+} from "./p6-live-capture-profile.ts";
+import {
   createSandboxSecurityExternalPipeline
 } from "./external-pipeline.ts";
 import type {
   SandboxSecurityHttpTransport
 } from "./http-transport.ts";
+import {
+  SANDBOX_SECURITY_OPENAI_CHAT_COMPLETIONS_JSON_PROTOCOL_ID,
+  SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID,
+  type SandboxSecurityJudgeProtocolId
+} from "./judge-protocol-adapter.ts";
 import {
   createSandboxSecurityOllamaLocalDetector,
   qualifySandboxSecurityOllama
@@ -40,9 +51,11 @@ export interface SandboxSecurityProductionCompositionPorts {
     transport: SandboxSecurityHttpTransport;
     expected_digest: string;
     signal: AbortSignal;
+    qualification_timeout_ms: 1000 | 20000;
   }>): Promise<RawLocalDetector>;
   create_external_pipeline(input: Readonly<{
     transport: SandboxSecurityHttpTransport;
+    judge_protocol_id: SandboxSecurityJudgeProtocolId;
     judge_requested_model: string;
   }>): Readonly<{
     sanitizer: SandboxSecuritySanitizer;
@@ -55,8 +68,26 @@ interface NormalizedCompositionInput {
   readonly mode: SandboxSecurityProductionMode;
 }
 
+interface NormalizedLiveCaptureCompositionInput {
+  readonly runtime: SandboxSecurityRuntimePorts;
+}
+
+interface SandboxSecurityCompositionEngineInput {
+  readonly registry: ReturnType<
+    typeof createSandboxSecurityDetectorRegistry
+  >;
+  readonly sanitizer?: SandboxSecuritySanitizer;
+  readonly runtime: SandboxSecurityRuntimePorts;
+}
+
+type SandboxSecurityCompositionEngineFactory = (
+  input: Readonly<SandboxSecurityCompositionEngineInput>
+) => SandboxSecurityEngine;
+
 const INVALID_COMPOSITION = "sandbox_security_production_composition_invalid";
-const QUALIFICATION_TIMEOUT_MS = 1000;
+const ORDINARY_QUALIFICATION_TIMEOUT_MS = 1000;
+const LIVE_CAPTURE_QUALIFICATION_TIMEOUT_MS =
+  SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.qualification_timeout_ms;
 const MODES: readonly SandboxSecurityProductionMode[] = [
   "rule_only",
   "local",
@@ -79,6 +110,18 @@ function compositionInvalid(): never {
   const error = new TypeError(INVALID_COMPOSITION);
   error.name = INVALID_COMPOSITION;
   throw error;
+}
+
+function normalizedJudgeProtocolId(
+  value: unknown
+): SandboxSecurityJudgeProtocolId {
+  if (
+    value !== SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID &&
+    value !== SANDBOX_SECURITY_OPENAI_CHAT_COMPLETIONS_JSON_PROTOCOL_ID
+  ) {
+    return compositionInvalid();
+  }
+  return value;
 }
 
 function cancelTimerBestEffort(cancel: () => void): void {
@@ -165,6 +208,15 @@ function normalizedInput(value: unknown): NormalizedCompositionInput {
   });
 }
 
+function normalizedLiveCaptureInput(
+  value: unknown
+): NormalizedLiveCaptureCompositionInput {
+  const values = exactDataRecord(value, ["runtime"]);
+  return Object.freeze({
+    runtime: normalizedRuntime(values.get("runtime"))
+  });
+}
+
 function normalizedPorts(
   value: unknown
 ): Readonly<SandboxSecurityProductionCompositionPorts> {
@@ -186,8 +238,16 @@ async function createDefaultLocalDetector(input: Readonly<{
   transport: SandboxSecurityHttpTransport;
   expected_digest: string;
   signal: AbortSignal;
+  qualification_timeout_ms: 1000 | 20000;
 }>): Promise<RawLocalDetector> {
-  const qualification = await qualifySandboxSecurityOllama(input);
+  if (input.qualification_timeout_ms !== ORDINARY_QUALIFICATION_TIMEOUT_MS) {
+    return compositionInvalid();
+  }
+  const qualification = await qualifySandboxSecurityOllama({
+    transport: input.transport,
+    expected_digest: input.expected_digest,
+    signal: input.signal
+  });
   return createSandboxSecurityOllamaLocalDetector({
     transport: input.transport,
     qualification
@@ -201,6 +261,26 @@ const DEFAULT_PORTS: Readonly<SandboxSecurityProductionCompositionPorts> =
     create_local_detector: createDefaultLocalDetector,
     create_external_pipeline: createSandboxSecurityExternalPipeline
   });
+
+function createSandboxSecurityOrdinaryProductionEngine(
+  input: Readonly<SandboxSecurityCompositionEngineInput>
+): SandboxSecurityEngine {
+  return createSandboxSecurityEngine({
+    registry: input.registry,
+    ...(input.sanitizer ? { sanitizer: input.sanitizer } : {}),
+    runtime: input.runtime
+  });
+}
+
+function createSandboxSecurityP6LiveCaptureProductionEngine(
+  input: Readonly<SandboxSecurityCompositionEngineInput>
+): SandboxSecurityEngine {
+  return createSandboxSecurityP6LiveCaptureEngine({
+    registry: input.registry,
+    ...(input.sanitizer ? { sanitizer: input.sanitizer } : {}),
+    runtime: input.runtime
+  });
+}
 
 export async function createSandboxSecurityProductionComposition(
   input: Readonly<{
@@ -221,12 +301,47 @@ export async function createSandboxSecurityProductionCompositionWithPorts(
   }>,
   ports: Readonly<SandboxSecurityProductionCompositionPorts>
 ): Promise<SandboxSecurityEngine> {
+  return createSandboxSecurityProductionCompositionWithQualificationTimeout(
+    input,
+    ports,
+    ORDINARY_QUALIFICATION_TIMEOUT_MS,
+    createSandboxSecurityOrdinaryProductionEngine
+  );
+}
+
+export async function createSandboxSecurityProductionLiveCaptureCompositionWithPorts(
+  input: Readonly<{
+    runtime: SandboxSecurityRuntimePorts;
+  }>,
+  ports: Readonly<SandboxSecurityProductionCompositionPorts>
+): Promise<SandboxSecurityEngine> {
+  const normalized = normalizedLiveCaptureInput(input);
+  return createSandboxSecurityProductionCompositionWithQualificationTimeout(
+    Object.freeze({
+      runtime: normalized.runtime,
+      mode: "local_and_judge"
+    }),
+    ports,
+    LIVE_CAPTURE_QUALIFICATION_TIMEOUT_MS,
+    createSandboxSecurityP6LiveCaptureProductionEngine
+  );
+}
+
+async function createSandboxSecurityProductionCompositionWithQualificationTimeout(
+  input: Readonly<{
+    runtime: SandboxSecurityRuntimePorts;
+    mode: SandboxSecurityProductionMode;
+  }>,
+  ports: Readonly<SandboxSecurityProductionCompositionPorts>,
+  qualificationTimeoutMs: 1000 | 20000,
+  createEngine: SandboxSecurityCompositionEngineFactory
+): Promise<SandboxSecurityEngine> {
   const normalized = normalizedInput(input);
   const factories = normalizedPorts(ports);
   const rule = createSandboxSecurityProductionRuleDetector();
 
   if (normalized.mode === "rule_only") {
-    return createSandboxSecurityEngine({
+    return createEngine({
       registry: createSandboxSecurityDetectorRegistry({ rule }),
       runtime: normalized.runtime
     });
@@ -237,10 +352,27 @@ export async function createSandboxSecurityProductionCompositionWithPorts(
   if (typeof expectedDigest !== "string") {
     return compositionInvalid();
   }
+  const judgeConfig = normalized.mode === "local_and_judge"
+    ? (() => {
+        const judgeRequestedModel = config.summary.judge_requested_model;
+        if (
+          typeof judgeRequestedModel !== "string" ||
+          !/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(judgeRequestedModel)
+        ) {
+          return compositionInvalid();
+        }
+        return Object.freeze({
+          judge_protocol_id: normalizedJudgeProtocolId(
+            config.summary.judge_protocol_id
+          ),
+          judge_requested_model: judgeRequestedModel
+        });
+      })()
+    : null;
   const transport = factories.create_transport(config);
   const qualificationController = new AbortController();
   const cancelQualificationTimer = normalized.runtime.scheduleTimeout(
-    QUALIFICATION_TIMEOUT_MS,
+    qualificationTimeoutMs,
     () => qualificationController.abort()
   );
   if (typeof cancelQualificationTimer !== "function") {
@@ -252,28 +384,29 @@ export async function createSandboxSecurityProductionCompositionWithPorts(
     local = await factories.create_local_detector(Object.freeze({
       transport,
       expected_digest: expectedDigest,
-      signal: qualificationController.signal
+      signal: qualificationController.signal,
+      qualification_timeout_ms: qualificationTimeoutMs
     }));
   } finally {
     cancelTimerBestEffort(cancelQualificationTimer);
   }
 
   if (normalized.mode === "local") {
-    return createSandboxSecurityEngine({
+    return createEngine({
       registry: createSandboxSecurityDetectorRegistry({ rule, local }),
       runtime: normalized.runtime
     });
   }
 
-  const judgeRequestedModel = config.summary.judge_requested_model;
-  if (typeof judgeRequestedModel !== "string") {
+  if (judgeConfig === null) {
     return compositionInvalid();
   }
   const pipeline = factories.create_external_pipeline({
     transport,
-    judge_requested_model: judgeRequestedModel
+    judge_protocol_id: judgeConfig.judge_protocol_id,
+    judge_requested_model: judgeConfig.judge_requested_model
   });
-  return createSandboxSecurityEngine({
+  return createEngine({
     registry: createSandboxSecurityDetectorRegistry({
       rule,
       local,

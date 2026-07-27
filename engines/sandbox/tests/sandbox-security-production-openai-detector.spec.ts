@@ -10,11 +10,17 @@ import type {
 import {
   createSandboxSecurityOpenAiJudgeRequest
 } from "../src/security-production/openai-judge-contract.ts";
+import {
+  createSandboxSecurityOpenAiChatJudgeRequest
+} from "../src/security-production/openai-chat-judge-contract.ts";
 import type {
   SandboxSecurityHttpRequest,
   SandboxSecurityHttpResponse,
   SandboxSecurityHttpTransport
 } from "../src/security-production/http-transport.ts";
+import type {
+  SandboxSecurityJudgeProtocolId
+} from "../src/security-production/judge-protocol-adapter.ts";
 
 const detectorPath = new URL(
   "../src/security-production/openai-judge-detector.ts",
@@ -24,6 +30,7 @@ const detectorPath = new URL(
 interface DetectorModule {
   createSandboxSecurityOpenAiJudgeDetector(input: Readonly<{
     transport: SandboxSecurityHttpTransport;
+    judge_protocol_id: SandboxSecurityJudgeProtocolId;
     judge_requested_model: string;
   }>): SanitizedExternalDetector;
 }
@@ -48,6 +55,9 @@ const ENCODER = new TextEncoder();
 const NONCE = "a".repeat(32);
 const RAW_PROVIDER_SENTINEL = "RAW_PROVIDER_PROSE_MUST_NOT_LEAK";
 const SANITIZED_PAYLOAD_SENTINEL = "SANITIZED_PAYLOAD_MUST_NOT_BE_RETAINED";
+const JUDGE_REQUESTED_MODEL = "gpt-5.4-mini";
+const RESPONSES_PROTOCOL_ID = "openai_responses_v1" as const;
+const CHAT_PROTOCOL_ID = "openai_chat_completions_json_v1" as const;
 
 function sourceToken(ordinal: number): string {
   return `etok:src:${NONCE}:${String(ordinal).padStart(4, "0")}`;
@@ -166,6 +176,39 @@ function responseBody(
   }));
 }
 
+function chatResponseBody(
+  results: readonly Readonly<Record<string, unknown>>[],
+  providerSentinel = false
+): Uint8Array {
+  return ENCODER.encode(JSON.stringify({
+    choices: [{
+      finish_reason: "stop",
+      index: 0,
+      logprobs: null,
+      message: {
+        content: JSON.stringify({
+          schema_version: "sandbox-security-judge.v1",
+          obligation_results: results
+        }),
+        role: "assistant",
+        ...(providerSentinel
+          ? { reasoning_content: RAW_PROVIDER_SENTINEL }
+          : {})
+      }
+    }],
+    created: 1,
+    id: providerSentinel ? RAW_PROVIDER_SENTINEL : "chatcmpl-test",
+    model: JUDGE_REQUESTED_MODEL,
+    object: "chat.completion",
+    system_fingerprint: null,
+    usage: {
+      prompt_tokens: 1,
+      completion_tokens: 1,
+      total_tokens: 2
+    }
+  }));
+}
+
 function jsonResponse(body: Uint8Array): Readonly<SandboxSecurityHttpResponse> {
   return Object.freeze({
     status: 200,
@@ -192,6 +235,16 @@ function transportHarness(
   return Object.freeze({ transport, calls });
 }
 
+function createResponsesJudgeDetector(
+  transport: SandboxSecurityHttpTransport
+): SanitizedExternalDetector {
+  return createSandboxSecurityOpenAiJudgeDetector({
+    transport,
+    judge_protocol_id: RESPONSES_PROTOCOL_ID,
+    judge_requested_model: JUDGE_REQUESTED_MODEL
+  });
+}
+
 function assertDeepFrozen(value: unknown, seen = new Set<object>()): void {
   if (value === null || typeof value !== "object" || seen.has(value)) return;
   seen.add(value);
@@ -215,36 +268,14 @@ async function assertDetectorInvalid(
   });
 }
 
-test("REQ-SBX-GENERAL-002 Judge detector maps risks and clearances through exact current obligations", async () => {
+test("REQ-SBX-GENERAL-002 Judge detector selects one exact protocol pair without changing candidate mapping", async () => {
   const current = payload();
   const results = [
     judgeResult(current.routed_obligations[0]!.obligation_id, "risk", "uncertain", "low"),
     judgeResult(current.routed_obligations[1]!.obligation_id, "clearance", "probable", null),
     judgeResult(current.routed_obligations[2]!.obligation_id, "risk", "confident", "critical")
   ];
-  const harness = transportHarness(() => jsonResponse(responseBody(results)));
-  const detector = createSandboxSecurityOpenAiJudgeDetector({ transport: harness.transport , judge_requested_model: "gpt-5.4-mini" });
-  const signal = new AbortController().signal;
-
-  const result = await detector.detect(current, signal);
-
-  assert.equal(harness.calls.length, 1);
-  assert.deepEqual(Object.keys(harness.calls[0]!), [
-    "provider",
-    "operation",
-    "body",
-    "signal",
-    "max_response_bytes"
-  ]);
-  assert.equal(harness.calls[0]!.provider, "openai");
-  assert.equal(harness.calls[0]!.operation, "responses");
-  assert.equal(harness.calls[0]!.signal, signal);
-  assert.equal(harness.calls[0]!.max_response_bytes, 65_536);
-  assert.deepEqual(
-    "body" in harness.calls[0]! ? harness.calls[0]!.body : undefined,
-    createSandboxSecurityOpenAiJudgeRequest(current, { judge_requested_model: "gpt-5.4-mini" }).body
-  );
-  assert.deepEqual(result, {
+  const expected = {
     candidates: [
       {
         obligation_id: results[0]!.obligation_id,
@@ -271,8 +302,56 @@ test("REQ-SBX-GENERAL-002 Judge detector maps risks and clearances through exact
         subject_refs: current.routed_obligations[1]!.subject_refs
       }
     ]
-  });
-  assertDeepFrozen(result);
+  };
+  const scenarios = [
+    {
+      protocol_id: RESPONSES_PROTOCOL_ID,
+      operation: "responses" as const,
+      request_body: createSandboxSecurityOpenAiJudgeRequest(current, {
+        judge_requested_model: JUDGE_REQUESTED_MODEL
+      }).body,
+      response_body: responseBody(results)
+    },
+    {
+      protocol_id: CHAT_PROTOCOL_ID,
+      operation: "chat_completions" as const,
+      request_body: createSandboxSecurityOpenAiChatJudgeRequest(current, {
+        judge_requested_model: JUDGE_REQUESTED_MODEL
+      }).body,
+      response_body: chatResponseBody(results)
+    }
+  ] as const;
+
+  for (const scenario of scenarios) {
+    const harness = transportHarness(() => jsonResponse(scenario.response_body));
+    const detector = createSandboxSecurityOpenAiJudgeDetector({
+      transport: harness.transport,
+      judge_protocol_id: scenario.protocol_id,
+      judge_requested_model: JUDGE_REQUESTED_MODEL
+    });
+    const signal = new AbortController().signal;
+
+    const result = await detector.detect(current, signal);
+
+    assert.equal(harness.calls.length, 1);
+    assert.deepEqual(Object.keys(harness.calls[0]!), [
+      "provider",
+      "operation",
+      "body",
+      "signal",
+      "max_response_bytes"
+    ]);
+    assert.equal(harness.calls[0]!.provider, "openai");
+    assert.equal(harness.calls[0]!.operation, scenario.operation);
+    assert.equal(harness.calls[0]!.signal, signal);
+    assert.equal(harness.calls[0]!.max_response_bytes, 65_536);
+    assert.deepEqual(
+      "body" in harness.calls[0]! ? harness.calls[0]!.body : undefined,
+      scenario.request_body
+    );
+    assert.deepEqual(result, expected);
+    assertDeepFrozen(result);
+  }
 });
 
 test("REQ-SBX-GENERAL-002 Judge omission is partial coverage only", async () => {
@@ -283,7 +362,7 @@ test("REQ-SBX-GENERAL-002 Judge omission is partial coverage only", async () => 
       judgeResult(second.obligation_id, "clearance", "uncertain", null)
     ]))
   );
-  const detector = createSandboxSecurityOpenAiJudgeDetector({ transport: harness.transport , judge_requested_model: "gpt-5.4-mini" });
+  const detector = createResponsesJudgeDetector(harness.transport);
 
   const partial = await detector.detect(current, new AbortController().signal);
   assert.deepEqual(partial.candidates, []);
@@ -292,8 +371,8 @@ test("REQ-SBX-GENERAL-002 Judge omission is partial coverage only", async () => 
   ]);
 
   const emptyHarness = transportHarness(() => jsonResponse(responseBody([])));
-  const empty = await createSandboxSecurityOpenAiJudgeDetector({ transport: emptyHarness.transport
-  , judge_requested_model: "gpt-5.4-mini" }).detect(current, new AbortController().signal);
+  const empty = await createResponsesJudgeDetector(emptyHarness.transport)
+    .detect(current, new AbortController().signal);
   assert.deepEqual(empty, { candidates: [], clearances: [] });
 });
 
@@ -321,7 +400,7 @@ test("REQ-SBX-GENERAL-002 Judge detector enforces the inherited 64 KiB request c
   );
 
   const harness = transportHarness(() => jsonResponse(responseBody([])));
-  const detector = createSandboxSecurityOpenAiJudgeDetector({ transport: harness.transport , judge_requested_model: "gpt-5.4-mini" });
+  const detector = createResponsesJudgeDetector(harness.transport);
   await detector.detect(accepted, new AbortController().signal);
   await assertDetectorInvalid(() => detector.detect(rejected, new AbortController().signal));
   assert.equal(harness.calls.length, 1);
@@ -341,7 +420,7 @@ test("REQ-SBX-GENERAL-002 Judge detector rejects the whole malformed or cross-ev
 
   for (const items of invalidResults) {
     const harness = transportHarness(() => jsonResponse(responseBody(items)));
-    const detector = createSandboxSecurityOpenAiJudgeDetector({ transport: harness.transport , judge_requested_model: "gpt-5.4-mini" });
+    const detector = createResponsesJudgeDetector(harness.transport);
     await assertDetectorInvalid(
       () => detector.detect(current, new AbortController().signal),
       [RAW_PROVIDER_SENTINEL]
@@ -358,7 +437,7 @@ test("REQ-SBX-GENERAL-002 Judge detector requires exact HTTP 200 JSON and respon
   boundary.set(base);
   const accepted = transportHarness(() => jsonResponse(boundary));
   assert.deepEqual(
-    await createSandboxSecurityOpenAiJudgeDetector({ transport: accepted.transport , judge_requested_model: "gpt-5.4-mini" })
+    await createResponsesJudgeDetector(accepted.transport)
       .detect(current, new AbortController().signal),
     { candidates: [], clearances: [] }
   );
@@ -372,7 +451,7 @@ test("REQ-SBX-GENERAL-002 Judge detector requires exact HTTP 200 JSON and respon
   ] as const) {
     const harness = transportHarness(() => response);
     await assertDetectorInvalid(() =>
-      createSandboxSecurityOpenAiJudgeDetector({ transport: harness.transport , judge_requested_model: "gpt-5.4-mini" })
+      createResponsesJudgeDetector(harness.transport)
         .detect(current, new AbortController().signal)
     );
   }
@@ -403,7 +482,7 @@ test("REQ-SBX-GENERAL-002 Judge detector rejects missing unknown inherited and a
   ]) {
     const harness = transportHarness(() => response as never);
     await assertDetectorInvalid(
-      () => createSandboxSecurityOpenAiJudgeDetector({ transport: harness.transport , judge_requested_model: "gpt-5.4-mini" })
+      () => createResponsesJudgeDetector(harness.transport)
         .detect(current, new AbortController().signal),
       [RAW_PROVIDER_SENTINEL]
     );
@@ -411,7 +490,7 @@ test("REQ-SBX-GENERAL-002 Judge detector rejects missing unknown inherited and a
   assert.equal(getterCalls, 0);
 });
 
-test("REQ-SBX-GENERAL-002 Judge detector construction rejects missing unknown inherited and accessor injection", () => {
+test("REQ-SBX-GENERAL-002 Judge detector requires one exact protocol and rejects open construction input", () => {
   const harness = transportHarness(() => jsonResponse(responseBody([])));
   let getterCalls = 0;
   const accessorInput = {} as Record<string, unknown>;
@@ -433,6 +512,25 @@ test("REQ-SBX-GENERAL-002 Judge detector construction rejects missing unknown in
 
   for (const input of [
     {},
+    {
+      transport: harness.transport,
+      judge_requested_model: JUDGE_REQUESTED_MODEL
+    },
+    {
+      transport: harness.transport,
+      judge_protocol_id: RESPONSES_PROTOCOL_ID
+    },
+    {
+      transport: harness.transport,
+      judge_protocol_id: "openai_auto",
+      judge_requested_model: JUDGE_REQUESTED_MODEL
+    },
+    {
+      transport: harness.transport,
+      judge_protocol_id: RESPONSES_PROTOCOL_ID,
+      judge_requested_model: JUDGE_REQUESTED_MODEL,
+      unknown: true
+    },
     { transport: harness.transport, unknown: true },
     Object.create({ transport: harness.transport }),
     accessorInput,
@@ -465,7 +563,7 @@ test("REQ-SBX-GENERAL-002 Judge detector propagates transport abort error and te
       throw failure;
     });
     await assert.rejects(
-      () => createSandboxSecurityOpenAiJudgeDetector({ transport: harness.transport , judge_requested_model: "gpt-5.4-mini" })
+      () => createResponsesJudgeDetector(harness.transport)
         .detect(current, new AbortController().signal),
       (error: unknown) => error === failure
     );
@@ -480,7 +578,7 @@ test("REQ-SBX-GENERAL-002 Judge detector preserves the exact signal and abort ra
   preAbort.abort(preAbortReason);
   const preHarness = transportHarness(() => jsonResponse(responseBody([])));
   await assert.rejects(
-    () => createSandboxSecurityOpenAiJudgeDetector({ transport: preHarness.transport , judge_requested_model: "gpt-5.4-mini" })
+    () => createResponsesJudgeDetector(preHarness.transport)
       .detect(current, preAbort.signal),
     (error: unknown) => error === preAbortReason
   );
@@ -494,7 +592,7 @@ test("REQ-SBX-GENERAL-002 Judge detector preserves the exact signal and abort ra
     return jsonResponse(responseBody([]));
   });
   await assert.rejects(
-    () => createSandboxSecurityOpenAiJudgeDetector({ transport: raceHarness.transport , judge_requested_model: "gpt-5.4-mini" })
+    () => createResponsesJudgeDetector(raceHarness.transport)
       .detect(current, race.signal),
     (error: unknown) => error === raceReason
   );
@@ -509,7 +607,7 @@ test("REQ-SBX-GENERAL-002 Judge detector returns fresh copies without payload or
       judgeResult(firstObligation.obligation_id)
     ], true))
   );
-  const detector = createSandboxSecurityOpenAiJudgeDetector({ transport: harness.transport , judge_requested_model: "gpt-5.4-mini" });
+  const detector = createResponsesJudgeDetector(harness.transport);
   const first = await detector.detect(current, new AbortController().signal);
   const second = await detector.detect(current, new AbortController().signal);
 

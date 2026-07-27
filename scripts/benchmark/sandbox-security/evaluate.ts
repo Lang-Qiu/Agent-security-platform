@@ -8,6 +8,7 @@
 
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -17,10 +18,20 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  assertSandboxSecurityBenchmarkCandidatePackageLayout,
+  hashSandboxSecurityBenchmarkAcceptedMetrics,
+  hashSandboxSecurityBenchmarkCandidateCassette,
   hashSandboxSecurityBenchmarkCanonicalJson,
   hashSandboxSecurityBenchmarkTree,
+  assertSandboxSecurityBenchmarkAcceptedProviderOutcomes,
+  normalizeSandboxSecurityBenchmarkCandidateCassette,
+  normalizeSandboxSecurityBenchmarkCandidateCaptureManifest,
+  normalizeSandboxSecurityBenchmarkCandidateDecisionEnvelope,
+  normalizeSandboxSecurityBenchmarkCandidatePackage,
   normalizeSandboxSecurityBenchmarkManifest,
   normalizeSandboxSecurityBenchmarkTruthEnvelope,
+  type SandboxSecurityBenchmarkCandidateCaptureManifest,
+  type SandboxSecurityBenchmarkCandidatePackage,
   type SandboxSecurityBenchmarkSha256,
   type SandboxSecurityBenchmarkTruthEnvelope
 } from "./contracts.ts";
@@ -78,6 +89,7 @@ export interface SandboxSecurityBenchmarkEvaluationReport {
   readonly category_recall: Readonly<Record<(typeof CATEGORIES)[number], number>>;
   readonly accepted: boolean;
   readonly accepted_metrics_sha256: SandboxSecurityBenchmarkSha256;
+  readonly accepted_metrics: Readonly<Record<string, unknown>>;
   readonly truth_tree_sha256: SandboxSecurityBenchmarkSha256;
   readonly decisions_tree_sha256: SandboxSecurityBenchmarkSha256;
   readonly cassette_tree_sha256: SandboxSecurityBenchmarkSha256;
@@ -89,6 +101,14 @@ export interface SandboxSecurityBenchmarkEvaluationReport {
 
 function fail(code: string): never {
   throw new Error(`${INVALID}:${code}`);
+}
+
+function safeCliErrorCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  return message.length <= 160 &&
+    /^sandbox_security_evaluate_reject:[a-z0-9_]+(?::[a-z0-9_]+){0,2}$/u.test(message)
+    ? message
+    : `${INVALID}:internal`;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -130,8 +150,8 @@ function readJsonFile(path: string): unknown {
 function assertDirectory(path: string, code: string): string {
   const resolved = resolve(path);
   try {
-    const entries = readdirSync(resolved);
-    void entries;
+    const stat = lstatSync(resolved);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) fail(code);
   } catch {
     fail(code);
   }
@@ -142,6 +162,7 @@ function loadCorpus(corpusRoot: string): Readonly<{
   fixtureIds: readonly string[];
   truths: readonly SandboxSecurityBenchmarkTruthEnvelope[];
   truthTreeSha256: SandboxSecurityBenchmarkSha256;
+  inputsTreeSha256: SandboxSecurityBenchmarkSha256;
 }> {
   const root = assertDirectory(corpusRoot, "corpus_root_missing");
   const manifestPath = join(root, "manifest.json");
@@ -214,48 +235,102 @@ function loadCorpus(corpusRoot: string): Readonly<{
   return deepFreeze({
     fixtureIds: manifest.fixture_ids,
     truths,
-    truthTreeSha256
+    truthTreeSha256,
+    inputsTreeSha256: manifest.inputs_tree_sha256
   });
 }
 
-function parseDecisionVerdict(value: unknown): DecisionVerdict {
-  if (!isPlainObject(value)) fail("decision_envelope_invalid");
-  if (
-    value.schema_version !== "sandbox-security-benchmark-decision-projection.v1"
-  ) {
-    fail("decision_schema_invalid");
+function parseDecisionProjection(value: unknown): Readonly<{
+  fixture_id: string;
+  verdict: DecisionVerdict;
+  decision_projection_sha256: SandboxSecurityBenchmarkSha256;
+}> {
+  let envelope;
+  try {
+    envelope = normalizeSandboxSecurityBenchmarkCandidateDecisionEnvelope(value);
+  } catch {
+    fail("decision_projection_invalid");
   }
-  if (typeof value.fixture_id !== "string") fail("decision_fixture_id_invalid");
-  if (!isPlainObject(value.projection)) fail("decision_projection_invalid");
-  const verdict = value.projection.verdict;
-  if (
-    verdict !== "risk_detected" &&
-    verdict !== "no_detected_risk" &&
-    verdict !== "indeterminate"
-  ) {
-    fail("decision_verdict_invalid");
+  const decisionProjectionSha256 = hashSandboxSecurityBenchmarkCanonicalJson(
+    envelope.projection
+  );
+  if (envelope.decision_projection_sha256 !== decisionProjectionSha256) {
+    fail("decision_projection_hash_mismatch");
   }
-  return verdict;
+  return deepFreeze({
+    fixture_id: envelope.fixture_id,
+    verdict: envelope.projection.verdict,
+    decision_projection_sha256: decisionProjectionSha256
+  });
 }
 
 function loadCapture(input: Readonly<{
   captureRoot: string;
   fixtureIds: readonly string[];
+  inputsTreeSha256: SandboxSecurityBenchmarkSha256;
 }>): Readonly<{
   verdicts: readonly DecisionVerdict[];
   decisionsTreeSha256: SandboxSecurityBenchmarkSha256;
   cassetteTreeSha256: SandboxSecurityBenchmarkSha256;
   capturePackageSha256: SandboxSecurityBenchmarkSha256;
-  packageJson: Readonly<Record<string, unknown>>;
+  packageJson: Readonly<SandboxSecurityBenchmarkCandidatePackage>;
 }> {
   const root = assertDirectory(input.captureRoot, "capture_root_missing");
+  try {
+    assertSandboxSecurityBenchmarkCandidatePackageLayout(root, input.fixtureIds);
+  } catch {
+    fail("candidate_layout_invalid");
+  }
+
   const packagePath = join(root, "package.json");
   if (!existsSync(packagePath)) fail("package_missing");
   const packageJsonRaw = readJsonFile(packagePath);
-  if (!isPlainObject(packageJsonRaw)) fail("package_invalid");
+  let packageJson: Readonly<SandboxSecurityBenchmarkCandidatePackage>;
+  try {
+    packageJson = normalizeSandboxSecurityBenchmarkCandidatePackage(packageJsonRaw);
+  } catch {
+    fail("package_invalid");
+  }
 
-  if (packageJsonRaw.fixture_count !== FIXTURE_COUNT) {
+  const candidateManifestPath = join(root, "capture-manifest.json");
+  if (!existsSync(candidateManifestPath)) fail("candidate_manifest_missing");
+  let candidateManifest: Readonly<SandboxSecurityBenchmarkCandidateCaptureManifest>;
+  try {
+    candidateManifest = normalizeSandboxSecurityBenchmarkCandidateCaptureManifest(
+      readJsonFile(candidateManifestPath)
+    );
+  } catch {
+    fail("candidate_manifest_invalid");
+  }
+  let candidateManifestSha256: SandboxSecurityBenchmarkSha256;
+  try {
+    candidateManifestSha256 = hashSandboxSecurityBenchmarkCanonicalJson(
+      candidateManifest
+    );
+  } catch {
+    fail("candidate_manifest_hash_failed");
+  }
+  if (packageJson.capture_manifest_sha256 !== candidateManifestSha256) {
+    fail("candidate_manifest_hash_mismatch");
+  }
+
+  if (packageJson.fixture_count !== FIXTURE_COUNT) {
     fail("package_fixture_count_mismatch");
+  }
+  if (packageJson.provenance !== "production_permissioned_v1") {
+    fail("candidate_provenance_not_production");
+  }
+  if (candidateManifest.fixture_count !== packageJson.fixture_count) {
+    fail("candidate_manifest_fixture_count_mismatch");
+  }
+  if (candidateManifest.inputs_tree_sha256 !== packageJson.inputs_tree_sha256) {
+    fail("candidate_manifest_inputs_tree_hash_mismatch");
+  }
+  if (packageJson.inputs_tree_sha256 !== input.inputsTreeSha256) {
+    fail("inputs_tree_hash_mismatch");
+  }
+  if (candidateManifest.inputs_tree_sha256 !== input.inputsTreeSha256) {
+    fail("candidate_manifest_inputs_tree_hash_mismatch");
   }
   if (input.fixtureIds.length !== FIXTURE_COUNT) {
     fail("fixture_count_mismatch");
@@ -264,17 +339,52 @@ function loadCapture(input: Readonly<{
   const decisionsRoot = join(root, "decisions");
   assertDirectory(decisionsRoot, "decisions_root_missing");
 
+  const cassettePath = join(root, "cassette.json");
+  if (!existsSync(cassettePath)) fail("cassette_missing");
+  let cassette;
+  try {
+    cassette = normalizeSandboxSecurityBenchmarkCandidateCassette(
+      readJsonFile(cassettePath)
+    );
+  } catch {
+    fail("cassette_invalid");
+  }
+  try {
+    assertSandboxSecurityBenchmarkAcceptedProviderOutcomes(cassette);
+  } catch {
+    fail("provider_outcome_not_acceptance_capable");
+  }
+  if (cassette.inputs.length !== input.fixtureIds.length) {
+    fail("cassette_count_mismatch");
+  }
+  if (
+    cassette.judge_binding_sha256 !==
+    candidateManifest.judge_binding_sha256
+  ) {
+    fail("judge_binding_mismatch");
+  }
+
   const verdicts: DecisionVerdict[] = [];
-  for (const fixtureId of input.fixtureIds) {
+  for (const [index, fixtureId] of input.fixtureIds.entries()) {
     const decisionPath = join(decisionsRoot, `${fixtureId}.json`);
     if (!existsSync(decisionPath)) fail(`decision_missing:${fixtureId}`);
     const envelope = readJsonFile(decisionPath);
-    if (!isPlainObject(envelope)) fail(`decision_invalid:${fixtureId}`);
-    if (envelope.fixture_id !== fixtureId) {
-      fail(`decision_fixture_mismatch:${fixtureId}`);
-    }
     try {
-      verdicts.push(parseDecisionVerdict(envelope));
+      const decision = parseDecisionProjection(envelope);
+      if (decision.fixture_id !== fixtureId) {
+        fail(`decision_fixture_mismatch:${fixtureId}`);
+      }
+      const cassetteUnit = cassette.inputs[index];
+      if (cassetteUnit === undefined || cassetteUnit.fixture_id !== fixtureId) {
+        fail(`cassette_fixture_mismatch:${fixtureId}`);
+      }
+      if (
+        cassetteUnit.decision_projection_sha256 !==
+        decision.decision_projection_sha256
+      ) {
+        fail(`decision_projection_cassette_mismatch:${fixtureId}`);
+      }
+      verdicts.push(decision.verdict);
     } catch (error) {
       if (
         error instanceof Error &&
@@ -305,24 +415,15 @@ function loadCapture(input: Readonly<{
     fail("decisions_tree_hash_failed");
   }
 
-  const cassettePath = join(root, "cassette.json");
-  if (!existsSync(cassettePath)) fail("cassette_missing");
-  const cassette = readJsonFile(cassettePath);
   let cassetteTreeSha256: SandboxSecurityBenchmarkSha256;
   try {
-    cassetteTreeSha256 = hashSandboxSecurityBenchmarkCanonicalJson(cassette);
+    cassetteTreeSha256 = hashSandboxSecurityBenchmarkCandidateCassette(cassette);
   } catch {
     fail("cassette_hash_failed");
   }
 
-  const packageDecisionsHash = packageJsonRaw.decisions_tree_sha256;
-  const packageCassetteHash = packageJsonRaw.cassette_tree_sha256;
-  if (typeof packageDecisionsHash !== "string") {
-    fail("package_decisions_hash_missing");
-  }
-  if (typeof packageCassetteHash !== "string") {
-    fail("package_cassette_hash_missing");
-  }
+  const packageDecisionsHash = packageJson.decisions_tree_sha256;
+  const packageCassetteHash = packageJson.cassette_tree_sha256;
   if (packageDecisionsHash !== decisionsTreeSha256) {
     fail("decisions_tree_hash_mismatch");
   }
@@ -333,7 +434,7 @@ function loadCapture(input: Readonly<{
   let capturePackageSha256: SandboxSecurityBenchmarkSha256;
   try {
     capturePackageSha256 =
-      hashSandboxSecurityBenchmarkCanonicalJson(packageJsonRaw);
+      hashSandboxSecurityBenchmarkCanonicalJson(packageJson);
   } catch {
     fail("package_hash_failed");
   }
@@ -343,7 +444,7 @@ function loadCapture(input: Readonly<{
     decisionsTreeSha256,
     cassetteTreeSha256,
     capturePackageSha256,
-    packageJson: packageJsonRaw
+    packageJson
   });
 }
 
@@ -428,7 +529,7 @@ function computeMetrics(input: Readonly<{
       (category) => categoryRecall[category] >= THRESHOLDS.category_recall_min
     );
 
-  const metricsPayload = deepFreeze({
+  const metricsPayload = {
     schema_version: "sandbox-security-benchmark-accepted-metrics.v1",
     denominators: {
       unsafe: UNSAFE_DENOMINATOR,
@@ -458,10 +559,10 @@ function computeMetrics(input: Readonly<{
     truth_tree_sha256: input.truthTreeSha256,
     decisions_tree_sha256: input.decisionsTreeSha256,
     cassette_tree_sha256: input.cassetteTreeSha256
-  });
+  };
 
   const acceptedMetricsSha256 =
-    hashSandboxSecurityBenchmarkCanonicalJson(metricsPayload);
+    hashSandboxSecurityBenchmarkAcceptedMetrics(metricsPayload);
 
   return deepFreeze({
     schema_version: "sandbox-security-benchmark-evaluation-report.v1",
@@ -487,6 +588,7 @@ function computeMetrics(input: Readonly<{
     category_recall: categoryRecall,
     accepted,
     accepted_metrics_sha256: acceptedMetricsSha256,
+    accepted_metrics: metricsPayload,
     truth_tree_sha256: input.truthTreeSha256,
     decisions_tree_sha256: input.decisionsTreeSha256,
     cassette_tree_sha256: input.cassetteTreeSha256,
@@ -508,7 +610,8 @@ export function evaluateSandboxSecurityCapture(input: Readonly<{
   const corpus = loadCorpus(input.corpus_root);
   const capture = loadCapture({
     captureRoot: input.capture_root,
-    fixtureIds: corpus.fixtureIds
+    fixtureIds: corpus.fixtureIds,
+    inputsTreeSha256: corpus.inputsTreeSha256
   });
 
   return computeMetrics({
@@ -594,6 +697,7 @@ export async function writeSandboxSecurityEvaluationReport(input: Readonly<{
     category_recall: report.category_recall,
     accepted: report.accepted,
     accepted_metrics_sha256: report.accepted_metrics_sha256,
+    accepted_metrics: report.accepted_metrics,
     truth_tree_sha256: report.truth_tree_sha256,
     decisions_tree_sha256: report.decisions_tree_sha256,
     cassette_tree_sha256: report.cassette_tree_sha256,
@@ -610,7 +714,7 @@ export async function writeSandboxSecurityEvaluationReport(input: Readonly<{
   });
 }
 
-async function main(argv: readonly string[]): Promise<void> {
+export async function main(argv: readonly string[]): Promise<void> {
   let corpusRoot = resolve("samples/sandbox-security-benchmark/v1");
   let captureRoot = "";
   let reportPath = "";
@@ -631,7 +735,7 @@ async function main(argv: readonly string[]): Promise<void> {
       );
       return;
     } else {
-      fail(`unknown_arg:${arg}`);
+      fail("unknown_argument");
     }
   }
 
@@ -656,6 +760,7 @@ async function main(argv: readonly string[]): Promise<void> {
         transformed_recall: report.transformed_recall,
         decision_coverage: report.decision_coverage,
         accepted_metrics_sha256: report.accepted_metrics_sha256,
+    accepted_metrics: report.accepted_metrics,
         report_path: reportPath
       },
       null,
@@ -669,5 +774,12 @@ async function main(argv: readonly string[]): Promise<void> {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  await main(process.argv.slice(2));
+  try {
+    await main(process.argv.slice(2));
+  } catch (error) {
+    process.stderr.write(
+      `${JSON.stringify({ error_code: safeCliErrorCode(error) })}\n`
+    );
+    process.exitCode = 1;
+  }
 }

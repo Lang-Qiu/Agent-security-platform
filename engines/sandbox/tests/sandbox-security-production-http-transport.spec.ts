@@ -1134,6 +1134,245 @@ test("REQ-SBX-GENERAL-002 Chat transport rejects Responses operation and posts o
   });
 });
 
+test("REQ-SBX-GENERAL-002 Judge transport rejects exact credential reflection in successful responses", async () => {
+  const credential = "ctrlfree-judge-secret-token-zz9";
+  const scenarios = [
+    {
+      name: "responses_model",
+      protocol_id: "openai_responses_v1" as const,
+      endpoint_url: "https://us.doro.lol/v1/responses",
+      request: (signal: AbortSignal) =>
+        openAiResponsesRequest(signal, jsonBytes({ model: "gpt-5.4-mini", store: false })),
+      chunks: [jsonBytes({ model: credential, status: "completed" })]
+    },
+    {
+      name: "chat_assistant_content",
+      protocol_id: "openai_chat_completions_json_v1" as const,
+      endpoint_url: "https://judge.example.test/v1/chat/completions",
+      request: (signal: AbortSignal) =>
+        openAiChatCompletionsRequest(
+          signal,
+          jsonBytes({ model: "gpt-5.4-mini", stream: false })
+        ),
+      chunks: [
+        jsonBytes({
+          object: "chat.completion",
+          choices: [{ message: { role: "assistant", content: credential } }]
+        })
+      ]
+    },
+    {
+      name: "responses_metadata_split_chunks",
+      protocol_id: "openai_responses_v1" as const,
+      endpoint_url: "https://us.doro.lol/v1/responses",
+      request: (signal: AbortSignal) =>
+        openAiResponsesRequest(signal, jsonBytes({ model: "gpt-5.4-mini", store: false })),
+      chunks: (() => {
+        const body = jsonBytes({
+          status: "completed",
+          metadata: { trace: credential }
+        });
+        const splitAt = Math.max(1, Math.floor(body.length / 2));
+        return [body.slice(0, splitAt), body.slice(splitAt)];
+      })()
+    }
+  ] as const;
+
+  for (const scenario of scenarios) {
+    const controller = new AbortController();
+    const harness = createScriptedRequestFactory([
+      { status: 200, chunks: scenario.chunks }
+    ]);
+    const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
+      expected_ollama_digest: null,
+      judge_protocol_id: scenario.protocol_id,
+      judge_api_key: credential,
+      judge_endpoint_url: scenario.endpoint_url,
+      request_factory: harness.factory
+    });
+
+    let failure: unknown;
+    try {
+      await transport.request(scenario.request(controller.signal));
+    } catch (error) {
+      failure = error;
+    }
+
+    assert.ok(failure instanceof Error, scenario.name);
+    assert.equal(failure.name, "sandbox_security_transport_credential_reflection");
+    assert.equal(
+      failure.message,
+      "sandbox_security_transport_credential_reflection"
+    );
+    assert.equal(harness.recorded.length, 1, scenario.name);
+    assert.equal(harness.responses[0]?.destroy_calls, 1, scenario.name);
+    assert.equal(harness.requests[0]?.destroy_calls, 1, scenario.name);
+    assert.equal(harness.responses[0]?.socket.destroy_calls, 1, scenario.name);
+    const exposed = `${failure.name}${failure.message}${failure.stack ?? ""}${JSON.stringify(failure)}`;
+    assert.equal(exposed.includes(credential), false, scenario.name);
+  }
+});
+
+test("REQ-SBX-GENERAL-002 Judge transport rejects JSON Unicode-escaped credential reflection", async () => {
+  const credential = "ctrlfree-judge-secret-token-zz9";
+  const escapedCredential = Array.from(credential, (character) =>
+    `\\u${character.codePointAt(0)!.toString(16).padStart(4, "0")}`
+  ).join("");
+  const body = new TextEncoder().encode(
+    `{"model":"${escapedCredential}","status":"completed"}`
+  );
+  assert.equal(new TextDecoder().decode(body).includes(credential), false);
+  const harness = createScriptedRequestFactory([
+    { status: 200, chunks: [body] }
+  ]);
+  const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
+    expected_ollama_digest: null,
+    judge_protocol_id: "openai_responses_v1",
+    judge_api_key: credential,
+    judge_endpoint_url: "https://us.doro.lol/v1/responses",
+    request_factory: harness.factory
+  });
+
+  let failure: unknown;
+  try {
+    await transport.request(
+      openAiResponsesRequest(
+        new AbortController().signal,
+        jsonBytes({ model: "gpt-5.4-mini", store: false })
+      )
+    );
+  } catch (error) {
+    failure = error;
+  }
+
+  assert.ok(failure instanceof Error);
+  assert.equal(failure.name, "sandbox_security_transport_credential_reflection");
+  assert.equal(
+    failure.message,
+    "sandbox_security_transport_credential_reflection"
+  );
+  assert.equal(harness.responses[0]?.destroy_calls, 1);
+  assert.equal(harness.requests[0]?.destroy_calls, 1);
+  const exposed = `${failure.name}${failure.message}${failure.stack ?? ""}${JSON.stringify(failure)}`;
+  assert.equal(exposed.includes(credential), false);
+});
+
+test("REQ-SBX-GENERAL-002 Judge transport rejects credential reflection in HTTP error responses", async () => {
+  const credential = "ctrlfree-judge-secret-token-zz9";
+  for (const status of [401, 500] as const) {
+    const controller = new AbortController();
+    const body = jsonBytes({ error: { message: credential } });
+    const harness = createScriptedRequestFactory([
+      { status, chunks: [body] }
+    ]);
+    const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
+      expected_ollama_digest: null,
+      judge_protocol_id: "openai_responses_v1",
+      judge_api_key: credential,
+      judge_endpoint_url: "https://us.doro.lol/v1/responses",
+      request_factory: harness.factory
+    });
+
+    let failure: unknown;
+    try {
+      await transport.request(
+        openAiResponsesRequest(
+          controller.signal,
+          jsonBytes({ model: "gpt-5.4-mini", store: false })
+        )
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    assert.ok(failure instanceof Error, `status_${status}`);
+    assert.equal(failure.name, "sandbox_security_transport_credential_reflection");
+    assert.equal(
+      failure.message,
+      "sandbox_security_transport_credential_reflection"
+    );
+    assert.equal(harness.responses[0]?.destroy_calls, 1, `status_${status}`);
+    assert.equal(harness.requests[0]?.destroy_calls, 1, `status_${status}`);
+    const exposed = `${failure.name}${failure.message}${failure.stack ?? ""}${JSON.stringify(failure)}`;
+    assert.equal(exposed.includes(credential), false, `status_${status}`);
+  }
+});
+
+test("REQ-SBX-GENERAL-002 Judge transport scans a non-JSON error body before media-type rejection", async () => {
+  const credential = "ctrlfree-judge-secret-token-zz9";
+  const body = new TextEncoder().encode(`provider error: ${credential}`);
+  const harness = createScriptedRequestFactory([
+    {
+      status: 500,
+      content_type: "text/plain",
+      chunks: [body]
+    }
+  ]);
+  const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
+    expected_ollama_digest: null,
+    judge_protocol_id: "openai_responses_v1",
+    judge_api_key: credential,
+    judge_endpoint_url: "https://us.doro.lol/v1/responses",
+    request_factory: harness.factory
+  });
+
+  let failure: unknown;
+  try {
+    await transport.request(
+      openAiResponsesRequest(
+        new AbortController().signal,
+        jsonBytes({ model: "gpt-5.4-mini", store: false })
+      )
+    );
+  } catch (error) {
+    failure = error;
+  }
+
+  assert.ok(failure instanceof Error);
+  assert.equal(failure.name, "sandbox_security_transport_credential_reflection");
+  assert.equal(
+    failure.message,
+    "sandbox_security_transport_credential_reflection"
+  );
+  assert.equal(harness.responses[0]?.destroy_calls, 1);
+  assert.equal(harness.requests[0]?.destroy_calls, 1);
+  const exposed = `${failure.name}${failure.message}${failure.stack ?? ""}${JSON.stringify(failure)}`;
+  assert.equal(exposed.includes(credential), false);
+});
+
+test("REQ-SBX-GENERAL-002 Judge transport accepts a full-size body without credential reflection", async () => {
+  const credential = "ctrlfree-judge-secret-token-zz9";
+  const controller = new AbortController();
+  const safeBody = new Uint8Array(65536);
+  safeBody.fill(0x61); // 'a'
+  // Ensure the credential sequence is absent.
+  const harness = createScriptedRequestFactory([
+    { status: 200, chunks: [safeBody] }
+  ]);
+  const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
+    expected_ollama_digest: null,
+    judge_protocol_id: "openai_responses_v1",
+    judge_api_key: credential,
+    judge_endpoint_url: "https://us.doro.lol/v1/responses",
+    request_factory: harness.factory
+  });
+
+  const response = await transport.request(
+    openAiResponsesRequest(
+      controller.signal,
+      jsonBytes({ model: "gpt-5.4-mini", store: false })
+    )
+  );
+
+  assert.deepEqual(response, {
+    status: 200,
+    content_type: "application/json",
+    body: safeBody
+  });
+  assert.equal(harness.recorded.length, 1);
+});
+
+
 test("REQ-SBX-GENERAL-002 transport caps every POST request body at 64 KiB before factory use", async () => {
   const digest = `sha256:${"a".repeat(64)}`;
   const exactBody = new Uint8Array(65536);

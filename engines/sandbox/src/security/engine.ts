@@ -84,6 +84,15 @@ export interface SandboxSecurityEngine {
   ): Promise<Readonly<SandboxSecurityDecision>>;
 }
 
+type SandboxSecurityPolicyProfileResolver = (
+  profileId: string
+) => Readonly<SandboxSecurityPolicyProfileManifest>;
+
+const DEFAULT_NORMAL_WORK_BUDGET_MS = 5000;
+const P6_LIVE_CAPTURE_NORMAL_WORK_BUDGET_MS = 40000;
+const P6_LIVE_CAPTURE_LOCAL_SLOT_TIMEOUT_MS = 20000;
+const P6_LIVE_CAPTURE_JUDGE_SLOT_TIMEOUT_MS = 20000;
+
 const INTERNAL = "sandbox_security_internal_invalid";
 const CANCELLED = "sandbox_security_cancelled";
 const DECISION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
@@ -94,6 +103,15 @@ const SEVERITY_RANK: Record<SandboxSecuritySeverity, number> = {
   high: 3,
   critical: 4
 };
+
+type ExactSandboxSecurityP6EngineDeps<T extends {
+  registry: SandboxSecurityDetectorRegistry;
+  sanitizer?: SandboxSecuritySanitizer;
+  runtime: SandboxSecurityRuntimePorts;
+}> = T & Record<
+  Exclude<keyof T, "registry" | "sanitizer" | "runtime">,
+  never
+>;
 
 function throwNamed(name: string, message = name): never {
   const error = new Error(message);
@@ -216,7 +234,73 @@ export function createSandboxSecurityEngine(deps: {
   runtime: SandboxSecurityRuntimePorts;
 }): SandboxSecurityEngine {
   const { registry, sanitizer, runtime } = deps;
-  if (!registry || !runtime) {
+  return createSandboxSecurityEngineInternal({
+    registry,
+    ...(sanitizer ? { sanitizer } : {}),
+    runtime,
+    entryNormalWorkBudgetMs: DEFAULT_NORMAL_WORK_BUDGET_MS,
+    profileResolver: resolveSandboxSecurityProfile
+  });
+}
+
+function resolveSandboxSecurityP6LiveCaptureProfile(
+  profileId: string
+): Readonly<SandboxSecurityPolicyProfileManifest> {
+  const profile = resolveSandboxSecurityProfile(profileId);
+  return deepFreeze({
+    ...profile,
+    detector_slots: profile.detector_slots.map((slot) => ({
+      ...slot,
+      timeout_ms: slot.detector_kind === "local_model"
+        ? P6_LIVE_CAPTURE_LOCAL_SLOT_TIMEOUT_MS
+        : slot.detector_kind === "external_judge"
+          ? P6_LIVE_CAPTURE_JUDGE_SLOT_TIMEOUT_MS
+          : slot.timeout_ms
+    }))
+  });
+}
+
+export function createSandboxSecurityP6LiveCaptureEngine<T extends {
+  registry: SandboxSecurityDetectorRegistry;
+  sanitizer?: SandboxSecuritySanitizer;
+  runtime: SandboxSecurityRuntimePorts;
+}>(
+  deps: ExactSandboxSecurityP6EngineDeps<T>
+): SandboxSecurityEngine {
+  const keys = Reflect.ownKeys(deps);
+  if (
+    !keys.includes("registry") ||
+    !keys.includes("runtime") ||
+    keys.some(
+      (key) =>
+        typeof key !== "string" ||
+        !["registry", "runtime", "sanitizer"].includes(key)
+    )
+  ) {
+    throwNamed(INTERNAL);
+  }
+  return createSandboxSecurityEngineInternal({
+    ...deps,
+    entryNormalWorkBudgetMs: P6_LIVE_CAPTURE_NORMAL_WORK_BUDGET_MS,
+    profileResolver: resolveSandboxSecurityP6LiveCaptureProfile
+  });
+}
+
+function createSandboxSecurityEngineInternal(deps: {
+  registry: SandboxSecurityDetectorRegistry;
+  profileResolver: SandboxSecurityPolicyProfileResolver;
+  sanitizer?: SandboxSecuritySanitizer;
+  runtime: SandboxSecurityRuntimePorts;
+  entryNormalWorkBudgetMs: 5000 | 40000;
+}): SandboxSecurityEngine {
+  const {
+    registry,
+    profileResolver,
+    sanitizer,
+    runtime,
+    entryNormalWorkBudgetMs
+  } = deps;
+  if (!registry || !runtime || typeof profileResolver !== "function") {
     throwNamed(INTERNAL);
   }
 
@@ -234,7 +318,7 @@ export function createSandboxSecurityEngine(deps: {
       // Budget starts immediately at evaluate entry.
       let deadline = createSandboxSecurityDeadlineController({
         runtime,
-        normalWorkBudgetMs: 5000,
+        normalWorkBudgetMs: entryNormalWorkBudgetMs,
         startedAtMs
       });
 
@@ -264,11 +348,10 @@ export function createSandboxSecurityEngine(deps: {
         throwNamed(INTERNAL, "pre_id_evaluation_budget_exhausted");
       }
 
-      const profile = resolveSandboxSecurityProfile(prepared.policy_profile_id);
-      // recreate deadline with profile budget (always 5000)
+      const profile = profileResolver(prepared.policy_profile_id);
       deadline = createSandboxSecurityDeadlineController({
         runtime,
-        normalWorkBudgetMs: profile.normal_work_budget_ms,
+        normalWorkBudgetMs: entryNormalWorkBudgetMs,
         startedAtMs
       });
 

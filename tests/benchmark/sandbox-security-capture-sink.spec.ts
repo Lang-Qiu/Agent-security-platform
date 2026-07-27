@@ -110,11 +110,13 @@ function evaluationOllama(
   });
 }
 
-function evaluationJudge(): SandboxSecurityCapturedProviderOutcome {
+function evaluationJudge(
+  operation: "responses" | "chat_completions" = "responses"
+): SandboxSecurityCapturedProviderOutcome {
   return Object.freeze({
     capture_phase: "evaluation",
     provider: "openai",
-    operation: "responses",
+    operation,
     outcome: Object.freeze({
       status: "response",
       http_status: 200,
@@ -181,6 +183,27 @@ test("REQ-SBX-GENERAL-002 sink records evaluation slots once while open", () => 
   const unit = sink.snapshot().inputs[0]!;
   assert.equal(unit.ollama.status, "response");
   assert.equal(unit.judge.status, "response");
+});
+
+test("REQ-SBX-GENERAL-002 ready sink accepts Chat completions Judge outcome and stores the closed Judge slot", () => {
+  const sink = readySink();
+  const judge = evaluationJudge("chat_completions");
+  sink.beginInput();
+  sink.record(judge);
+  sink.endInput();
+
+  assert.deepEqual(sink.snapshot().inputs[0]?.judge, judge.outcome);
+});
+
+test("REQ-SBX-GENERAL-002 sink rejects cross-protocol duplicate Judge outcomes", () => {
+  const sink = readySink();
+  sink.beginInput();
+  sink.record(evaluationJudge("chat_completions"));
+
+  assert.throws(
+    () => sink.record(evaluationJudge("responses")),
+    /sandbox_security_capture_sink_reject:duplicate_judge/u
+  );
 });
 
 test("REQ-SBX-GENERAL-002 sink rejects duplicate wrong-phase and boundary records", () => {

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   type RawLocalDetector,
   type SandboxSecurityEngine,
@@ -5,6 +7,7 @@ import {
   type SandboxSecuritySanitizedJudgePayload
 } from "../security/index.ts";
 import {
+  createSandboxSecurityProductionLiveCaptureCompositionWithPorts,
   createSandboxSecurityProductionCompositionWithPorts,
   type SandboxSecurityProductionCompositionPorts
 } from "./composition.ts";
@@ -25,17 +28,30 @@ import {
 } from "./ollama-contract.ts";
 import {
   createSandboxSecurityOllamaLocalDetector,
-  qualifySandboxSecurityOllama
+  qualifySandboxSecurityOllama,
+  qualifySandboxSecurityP6LiveCaptureOllama
 } from "./ollama-local-detector.ts";
 import {
   SANDBOX_SECURITY_OPENAI_JUDGE_PROMPT_VERSION,
+  createSandboxSecurityOpenAiJudgeRequest,
   parseSandboxSecurityOpenAiJudgeResponse
 } from "./openai-judge-contract.ts";
+import {
+  createSandboxSecurityOpenAiChatJudgeRequest,
+  parseSandboxSecurityOpenAiChatJudgeResponse
+} from "./openai-chat-judge-contract.ts";
 import {
   createSandboxSecurityProductionConfig,
   createSandboxSecurityProductionTransport,
   type SandboxSecurityProductionConfig
 } from "./production-config.ts";
+import {
+  SANDBOX_SECURITY_OPENAI_CHAT_COMPLETIONS_JSON_PROTOCOL_ID,
+  SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID,
+  SANDBOX_SECURITY_OPERATOR_HTTPS_FQDN_ENDPOINT_POLICY_ID,
+  resolveSandboxSecurityJudgeProtocol,
+  type SandboxSecurityJudgeProtocolId
+} from "./judge-protocol-adapter.ts";
 import {
   normalizeSandboxSecurityReplayOllamaInventoryResponse,
   normalizeSandboxSecurityReplayOllamaResponse,
@@ -46,6 +62,9 @@ import {
   type SandboxSecurityReplayOpenAIResponse,
   type SandboxSecurityReplayTransportOutcome
 } from "./provider-outcomes.ts";
+import {
+  SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING
+} from "./p6-live-capture-profile.ts";
 import {
   SANDBOX_SECURITY_PRODUCTION_RULE_CATALOG_VERSION
 } from "./rule-catalog.ts";
@@ -86,7 +105,7 @@ export type SandboxSecurityCapturedProviderOutcome =
   | {
       capture_phase: "evaluation";
       provider: "openai";
-      operation: "responses";
+      operation: "responses" | "chat_completions";
       outcome: SandboxSecurityReplayTransportOutcome<
         SandboxSecurityReplayOpenAIResponse
       >;
@@ -95,11 +114,13 @@ export type SandboxSecurityCapturedProviderOutcome =
 export interface SandboxSecuritySealedProviderConfig {
   ollama_model: "qwen3:8b";
   ollama_digest: string;
-  judge_provider_id: string;
+  judge_protocol_id: SandboxSecurityJudgeProtocolId;
+  judge_endpoint_policy_id: typeof SANDBOX_SECURITY_OPERATOR_HTTPS_FQDN_ENDPOINT_POLICY_ID;
   judge_base_url: string;
-  judge_responses_url: string;
+  judge_endpoint_url: string;
   judge_requested_model: string;
   judge_resolved_model: string;
+  judge_binding_sha256: string;
   local_prompt_version: "sandbox-security-ollama-local-prompt.v1";
   local_schema_version: "sandbox-security-local-model.v1";
   judge_prompt_version: "sandbox-security-openai-judge-prompt.v1";
@@ -122,17 +143,25 @@ interface NormalizedReplayTransport {
   readonly request: SandboxSecurityReplayTransport["request"];
 }
 
+export interface SandboxSecurityBenchmarkJudgeProtocolDispatch {
+  readonly protocol_id: SandboxSecurityJudgeProtocolId;
+  readonly operation: "responses" | "chat_completions";
+  create_request:
+    typeof createSandboxSecurityOpenAiJudgeRequest;
+  parse_response:
+    typeof parseSandboxSecurityOpenAiJudgeResponse;
+  normalize_response(
+    requestBody: Uint8Array,
+    responseBody: Uint8Array
+  ): SandboxSecurityReplayOpenAIResponse;
+}
+
 const INVALID = "sandbox_security_benchmark_composition_invalid";
 const NORMALIZED_DIGEST = /^sha256:[a-f0-9]{64}$/;
 const LOCAL_SCHEMA_VERSION = "sandbox-security-local-model.v1";
 const JUDGE_SCHEMA_VERSION = "sandbox-security-judge.v1";
 const JUDGE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
-const JUDGE_PROVIDER_ALLOWLIST = Object.freeze({
-  doro: Object.freeze({
-    base_url: "https://doro.lol/v1",
-    responses_url: "https://doro.lol/v1/responses"
-  })
-});
+const SHA256 = /^[a-f0-9]{64}$/;
 const RUNTIME_METHODS = [
   "now",
   "nextDecisionId",
@@ -252,11 +281,13 @@ function normalizedSealedConfig(
   const values = exactDataRecord(value, [
     "ollama_model",
     "ollama_digest",
-    "judge_provider_id",
+    "judge_protocol_id",
+    "judge_endpoint_policy_id",
     "judge_base_url",
-    "judge_responses_url",
+    "judge_endpoint_url",
     "judge_requested_model",
     "judge_resolved_model",
+    "judge_binding_sha256",
     "local_prompt_version",
     "local_schema_version",
     "judge_prompt_version",
@@ -265,27 +296,58 @@ function normalizedSealedConfig(
     "sanitizer_version"
   ]);
   const digest = values.get("ollama_digest");
-  const providerId = values.get("judge_provider_id");
+  const protocolId = values.get("judge_protocol_id");
+  const endpointPolicyId = values.get("judge_endpoint_policy_id");
   const baseUrl = values.get("judge_base_url");
-  const responsesUrl = values.get("judge_responses_url");
+  const endpointUrl = values.get("judge_endpoint_url");
   const requestedModel = values.get("judge_requested_model");
   const resolvedModel = values.get("judge_resolved_model");
-  const allowlisted =
-    typeof providerId === "string" &&
-    Object.prototype.hasOwnProperty.call(JUDGE_PROVIDER_ALLOWLIST, providerId)
-      ? JUDGE_PROVIDER_ALLOWLIST[providerId as keyof typeof JUDGE_PROVIDER_ALLOWLIST]
+  const bindingSha256 = values.get("judge_binding_sha256");
+  const supportedProtocolId =
+    protocolId === SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID ||
+    protocolId ===
+      SANDBOX_SECURITY_OPENAI_CHAT_COMPLETIONS_JSON_PROTOCOL_ID;
+  let protocol: ReturnType<typeof resolveSandboxSecurityJudgeProtocol> | null =
+    null;
+  if (supportedProtocolId && typeof baseUrl === "string") {
+    try {
+      protocol = resolveSandboxSecurityJudgeProtocol(protocolId, baseUrl);
+    } catch {
+      protocol = null;
+    }
+  }
+  const expectedBindingSha256 =
+    protocol !== null &&
+    typeof requestedModel === "string" &&
+    typeof resolvedModel === "string"
+      ? createHash("sha256")
+        .update(JSON.stringify({
+          judge_base_url: protocol.base_url,
+          judge_endpoint_policy_id:
+            SANDBOX_SECURITY_OPERATOR_HTTPS_FQDN_ENDPOINT_POLICY_ID,
+          judge_endpoint_url: protocol.endpoint_url,
+          judge_protocol_id: protocol.protocol_id,
+          judge_requested_model: requestedModel,
+          judge_resolved_model: resolvedModel
+        }), "utf8")
+        .digest("hex")
       : null;
   if (
     values.get("ollama_model") !== "qwen3:8b" ||
     typeof digest !== "string" ||
     !NORMALIZED_DIGEST.test(digest) ||
-    allowlisted === null ||
-    baseUrl !== allowlisted.base_url ||
-    responsesUrl !== allowlisted.responses_url ||
+    !supportedProtocolId ||
+    endpointPolicyId !== SANDBOX_SECURITY_OPERATOR_HTTPS_FQDN_ENDPOINT_POLICY_ID ||
+    protocol === null ||
+    baseUrl !== protocol.base_url ||
+    endpointUrl !== protocol.endpoint_url ||
     typeof requestedModel !== "string" ||
     !JUDGE_MODEL.test(requestedModel) ||
     typeof resolvedModel !== "string" ||
     !JUDGE_MODEL.test(resolvedModel) ||
+    typeof bindingSha256 !== "string" ||
+    !SHA256.test(bindingSha256) ||
+    bindingSha256 !== expectedBindingSha256 ||
     values.get("local_prompt_version") !==
       SANDBOX_SECURITY_OLLAMA_LOCAL_PROMPT_VERSION ||
     values.get("local_schema_version") !== LOCAL_SCHEMA_VERSION ||
@@ -302,11 +364,14 @@ function normalizedSealedConfig(
   return Object.freeze({
     ollama_model: "qwen3:8b",
     ollama_digest: digest,
-    judge_provider_id: providerId as string,
-    judge_base_url: allowlisted.base_url,
-    judge_responses_url: allowlisted.responses_url,
+    judge_protocol_id: protocol.protocol_id,
+    judge_endpoint_policy_id:
+      SANDBOX_SECURITY_OPERATOR_HTTPS_FQDN_ENDPOINT_POLICY_ID,
+    judge_base_url: protocol.base_url,
+    judge_endpoint_url: protocol.endpoint_url,
     judge_requested_model: requestedModel,
     judge_resolved_model: resolvedModel,
+    judge_binding_sha256: bindingSha256,
     local_prompt_version: SANDBOX_SECURITY_OLLAMA_LOCAL_PROMPT_VERSION,
     local_schema_version: LOCAL_SCHEMA_VERSION,
     judge_prompt_version: SANDBOX_SECURITY_OPENAI_JUDGE_PROMPT_VERSION,
@@ -319,12 +384,61 @@ function normalizedSealedConfig(
 function normalizedLiveInput(value: unknown): Readonly<{
   runtime: SandboxSecurityRuntimePorts;
   capture_sink: NormalizedCaptureSink;
+  transport?: SandboxSecurityHttpTransport;
 }> {
-  const values = exactDataRecord(value, ["runtime", "capture_sink"]);
-  return Object.freeze({
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return invalid();
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  const allowed = new Set([
+    "runtime",
+    "capture_sink",
+    "transport",
+    "judge_protocol_id",
+    "ollama_digest",
+    "judge_endpoint_policy_id",
+    "judge_base_url",
+    "judge_endpoint_url",
+    "judge_requested_model"
+  ]);
+  if (!keys.includes("runtime") || !keys.includes("capture_sink")) {
+    return invalid();
+  }
+  for (const key of keys) {
+    if (!allowed.has(key)) return invalid();
+  }
+  const values = exactDataRecord(
+    Object.freeze({
+      runtime: record.runtime,
+      capture_sink: record.capture_sink,
+      ...(Object.prototype.hasOwnProperty.call(record, "transport")
+        ? { transport: record.transport }
+        : {})
+    }),
+    Object.prototype.hasOwnProperty.call(record, "transport")
+      ? ["runtime", "capture_sink", "transport"]
+      : ["runtime", "capture_sink"]
+  );
+  const result: {
+    runtime: SandboxSecurityRuntimePorts;
+    capture_sink: NormalizedCaptureSink;
+    transport?: SandboxSecurityHttpTransport;
+  } = {
     runtime: normalizedRuntime(values.get("runtime")),
     capture_sink: normalizedCaptureSink(values.get("capture_sink"))
-  });
+  };
+  if (Object.prototype.hasOwnProperty.call(record, "transport")) {
+    const transport = values.get("transport");
+    if (
+      transport === null ||
+      (typeof transport !== "object" && typeof transport !== "function")
+    ) {
+      return invalid();
+    }
+    result.transport = transport as SandboxSecurityHttpTransport;
+  }
+  return Object.freeze(result);
 }
 
 function normalizedReplayInput(value: unknown): Readonly<{
@@ -437,53 +551,59 @@ function inventoryResponse(
   });
 }
 
-function openAiObligationIds(body: Uint8Array): readonly string[] {
-  const envelope = JSON.parse(DECODER.decode(body)) as {
-    input?: readonly {
+function judgeRequestSanitizedPayload(
+  body: Uint8Array,
+  protocolId: SandboxSecurityJudgeProtocolId
+): Readonly<SandboxSecuritySanitizedJudgePayload> {
+  const envelope = JSON.parse(DECODER.decode(body)) as Record<string, unknown>;
+  let text: unknown;
+  if (protocolId === SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID) {
+    const input = envelope.input as readonly {
       role?: unknown;
       content?: readonly { type?: unknown; text?: unknown }[];
-    }[];
-  };
-  const user = envelope.input?.[1];
-  const text = user?.content?.[0]?.text;
-  if (
-    user?.role !== "user" ||
-    user.content?.[0]?.type !== "input_text" ||
-    typeof text !== "string"
-  ) {
-    return invalid();
-  }
-  const start = "BEGIN_SANITIZED_PAYLOAD\n";
-  const end = "\nEND_SANITIZED_PAYLOAD";
-  if (!text.startsWith(start) || !text.endsWith(end)) return invalid();
-  const payload = JSON.parse(text.slice(start.length, -end.length)) as {
-    routed_obligations?: readonly { obligation_id?: unknown }[];
-  };
-  if (!Array.isArray(payload.routed_obligations)) return invalid();
-  return payload.routed_obligations.map((obligation) => {
+    }[] | undefined;
+    const user = input?.[1];
     if (
-      typeof obligation !== "object" ||
-      obligation === null ||
-      typeof obligation.obligation_id !== "string"
+      user?.role !== "user" ||
+      user.content?.[0]?.type !== "input_text"
     ) {
       return invalid();
     }
-    return obligation.obligation_id;
-  });
+    text = user.content[0].text;
+  } else if (
+    protocolId ===
+    SANDBOX_SECURITY_OPENAI_CHAT_COMPLETIONS_JSON_PROTOCOL_ID
+  ) {
+    const messages = envelope.messages as readonly {
+      role?: unknown;
+      content?: unknown;
+    }[] | undefined;
+    const user = messages?.[1];
+    if (user?.role !== "user") return invalid();
+    text = user.content;
+  } else {
+    return invalid();
+  }
+  if (typeof text !== "string") return invalid();
+  const start = "BEGIN_SANITIZED_PAYLOAD\n";
+  const end = "\nEND_SANITIZED_PAYLOAD";
+  if (!text.startsWith(start) || !text.endsWith(end)) return invalid();
+  return JSON.parse(
+    text.slice(start.length, -end.length)
+  ) as Readonly<SandboxSecuritySanitizedJudgePayload>;
 }
 
 function normalizedOpenAiResponse(
   body: Uint8Array,
-  obligationIds: readonly string[]
+  payload: Readonly<SandboxSecuritySanitizedJudgePayload>,
+  parseResponse: typeof parseSandboxSecurityOpenAiJudgeResponse
 ): SandboxSecurityReplayOpenAIResponse {
-  const payload = {
-    routed_obligations: obligationIds.map((obligation_id) => ({
-      obligation_id
-    }))
-  } as unknown as Readonly<SandboxSecuritySanitizedJudgePayload>;
-  const parsed = parseSandboxSecurityOpenAiJudgeResponse(body, payload);
+  const parsed = parseResponse(body, payload);
   const ordinalById = new Map(
-    obligationIds.map((obligationId, index) => [obligationId, index + 1])
+    payload.routed_obligations.map((obligation, index) => [
+      obligation.obligation_id,
+      index + 1
+    ])
   );
   return normalizeSandboxSecurityReplayOpenAIResponse({
     model: parsed.model,
@@ -504,6 +624,55 @@ function normalizedOpenAiResponse(
   });
 }
 
+function createJudgeProtocolDispatch(
+  protocolId: SandboxSecurityJudgeProtocolId,
+  operation: "responses" | "chat_completions",
+  createRequest: typeof createSandboxSecurityOpenAiJudgeRequest,
+  parseResponse: typeof parseSandboxSecurityOpenAiJudgeResponse
+): Readonly<SandboxSecurityBenchmarkJudgeProtocolDispatch> {
+  return Object.freeze({
+    protocol_id: protocolId,
+    operation,
+    create_request: createRequest,
+    parse_response: parseResponse,
+    normalize_response(requestBody: Uint8Array, responseBody: Uint8Array) {
+      return normalizedOpenAiResponse(
+        responseBody,
+        judgeRequestSanitizedPayload(requestBody, protocolId),
+        parseResponse
+      );
+    }
+  });
+}
+
+const RESPONSES_JUDGE_DISPATCH = createJudgeProtocolDispatch(
+  SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID,
+  "responses",
+  createSandboxSecurityOpenAiJudgeRequest,
+  parseSandboxSecurityOpenAiJudgeResponse
+);
+const CHAT_COMPLETIONS_JUDGE_DISPATCH = createJudgeProtocolDispatch(
+  SANDBOX_SECURITY_OPENAI_CHAT_COMPLETIONS_JSON_PROTOCOL_ID,
+  "chat_completions",
+  createSandboxSecurityOpenAiChatJudgeRequest,
+  parseSandboxSecurityOpenAiChatJudgeResponse
+);
+
+export function resolveSandboxSecurityBenchmarkJudgeProtocolDispatch(
+  protocolId: unknown
+): Readonly<SandboxSecurityBenchmarkJudgeProtocolDispatch> {
+  if (protocolId === SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID) {
+    return RESPONSES_JUDGE_DISPATCH;
+  }
+  if (
+    protocolId ===
+    SANDBOX_SECURITY_OPENAI_CHAT_COMPLETIONS_JSON_PROTOCOL_ID
+  ) {
+    return CHAT_COMPLETIONS_JUDGE_DISPATCH;
+  }
+  return invalid();
+}
+
 function outcomeNormalizer(
   request: Readonly<SandboxSecurityHttpRequest>
 ): (value: unknown) =>
@@ -522,7 +691,7 @@ function outcomeNormalizer(
 function responseOutcome(
   request: Readonly<SandboxSecurityHttpRequest>,
   response: unknown,
-  obligationIds: readonly string[] | undefined
+  judgeDispatch: Readonly<SandboxSecurityBenchmarkJudgeProtocolDispatch>
 ): SandboxSecurityReplayTransportOutcome<
   | SandboxSecurityReplayOllamaInventoryResponse
   | SandboxSecurityReplayOllamaResponse
@@ -565,10 +734,15 @@ function responseOutcome(
         digest
       );
     } else {
-      if (obligationIds === undefined) return invalid();
-      normalizedResponse = normalizedOpenAiResponse(
-        values.get("body") as Uint8Array,
-        obligationIds
+      if (
+        request.provider !== "openai" ||
+        request.operation !== judgeDispatch.operation
+      ) {
+        return invalid();
+      }
+      normalizedResponse = judgeDispatch.normalize_response(
+        request.body,
+        values.get("body") as Uint8Array
       );
     }
     return normalizeSandboxSecurityReplayOutcome(
@@ -659,7 +833,8 @@ function failureOutcome(
 
 function capturePhase(
   state: "qualification_inventory" | "qualification_prewarm" | "evaluation",
-  request: Readonly<SandboxSecurityHttpRequest>
+  request: Readonly<SandboxSecurityHttpRequest>,
+  judgeDispatch: Readonly<SandboxSecurityBenchmarkJudgeProtocolDispatch>
 ): "qualification" | "evaluation" {
   if (state === "qualification_inventory") {
     if (request.provider !== "ollama" || request.operation !== "model_inventory") {
@@ -675,7 +850,10 @@ function capturePhase(
   }
   if (
     (request.provider === "ollama" && request.operation === "chat") ||
-    (request.provider === "openai" && request.operation === "responses")
+    (
+      request.provider === "openai" &&
+      request.operation === judgeDispatch.operation
+    )
   ) {
     return "evaluation";
   }
@@ -712,7 +890,7 @@ function capturedRecord(
   return Object.freeze({
     capture_phase: phase,
     provider: "openai",
-    operation: "responses",
+    operation: request.operation,
     outcome: outcome as SandboxSecurityReplayTransportOutcome<
       SandboxSecurityReplayOpenAIResponse
     >
@@ -721,7 +899,8 @@ function capturedRecord(
 
 function createCaptureTransport(
   transport: SandboxSecurityHttpTransport,
-  sink: NormalizedCaptureSink
+  sink: NormalizedCaptureSink,
+  judgeDispatch: Readonly<SandboxSecurityBenchmarkJudgeProtocolDispatch>
 ): SandboxSecurityHttpTransport {
   const requestDescriptor = Object.getOwnPropertyDescriptor(transport, "request");
   if (
@@ -738,15 +917,7 @@ function createCaptureTransport(
     | "evaluation" = "qualification_inventory";
   return Object.freeze({
     async request(input: Readonly<SandboxSecurityHttpRequest>) {
-      const phase = capturePhase(state, input);
-      let obligationIds: readonly string[] | undefined;
-      if (input.provider === "openai" && input.operation === "responses") {
-        try {
-          obligationIds = openAiObligationIds(input.body);
-        } catch {
-          obligationIds = undefined;
-        }
-      }
+      const phase = capturePhase(state, input, judgeDispatch);
       let response: Readonly<SandboxSecurityHttpResponse>;
       try {
         response = await Reflect.apply(request, transport, [input]) as Readonly<
@@ -765,7 +936,7 @@ function createCaptureTransport(
         }
         throw error;
       }
-      const outcome = responseOutcome(input, response, obligationIds);
+      const outcome = responseOutcome(input, response, judgeDispatch);
       Reflect.apply(sink.record, sink.value, [
         capturedRecord(phase, input, outcome)
       ]);
@@ -779,12 +950,41 @@ function createCaptureTransport(
   });
 }
 
-async function createLocalDetector(input: Readonly<{
+async function createLiveCaptureLocalDetector(input: Readonly<{
   transport: SandboxSecurityHttpTransport;
   expected_digest: string;
   signal: AbortSignal;
+  qualification_timeout_ms: 1000 | 20000;
 }>): Promise<RawLocalDetector> {
-  const qualification = await qualifySandboxSecurityOllama(input);
+  if (
+    input.qualification_timeout_ms !==
+    SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.qualification_timeout_ms
+  ) {
+    return invalid();
+  }
+  const qualification = await qualifySandboxSecurityP6LiveCaptureOllama({
+    transport: input.transport,
+    expected_digest: input.expected_digest,
+    signal: input.signal
+  });
+  return createSandboxSecurityOllamaLocalDetector({
+    transport: input.transport,
+    qualification
+  });
+}
+
+async function createReplayLocalDetector(input: Readonly<{
+  transport: SandboxSecurityHttpTransport;
+  expected_digest: string;
+  signal: AbortSignal;
+  qualification_timeout_ms: 1000 | 20000;
+}>): Promise<RawLocalDetector> {
+  if (input.qualification_timeout_ms !== 1000) return invalid();
+  const qualification = await qualifySandboxSecurityOllama({
+    transport: input.transport,
+    expected_digest: input.expected_digest,
+    signal: input.signal
+  });
   return createSandboxSecurityOllamaLocalDetector({
     transport: input.transport,
     qualification
@@ -792,23 +992,70 @@ async function createLocalDetector(input: Readonly<{
 }
 
 function livePorts(
-  sink: NormalizedCaptureSink
+  sink: NormalizedCaptureSink,
+  shared: Readonly<{
+    transport: SandboxSecurityHttpTransport;
+    judge_protocol_id: SandboxSecurityJudgeProtocolId;
+    ollama_digest: string;
+    judge_endpoint_policy_id: string;
+    judge_base_url: string;
+    judge_endpoint_url: string;
+    judge_requested_model: string;
+  }> | null
 ): Readonly<SandboxSecurityProductionCompositionPorts> {
   let transportCreated = false;
+  let configCreated = false;
+  let pinnedConfig: Readonly<SandboxSecurityProductionConfig> | null = null;
   return Object.freeze({
     create_config(mode: "rule_only" | "local" | "local_and_judge") {
       if (mode !== "local_and_judge") return invalid();
-      return createSandboxSecurityProductionConfig(mode);
+      if (configCreated) {
+        if (pinnedConfig === null) return invalid();
+        return pinnedConfig;
+      }
+      configCreated = true;
+      if (shared !== null) {
+        pinnedConfig = Object.freeze({
+          mode: "local_and_judge",
+          summary: Object.freeze({
+            ollama_configured: true,
+            judge_configured: true,
+            ollama_digest: shared.ollama_digest,
+            judge_protocol_id: shared.judge_protocol_id,
+            judge_endpoint_policy_id: shared.judge_endpoint_policy_id,
+            judge_base_url: shared.judge_base_url,
+            judge_endpoint_url: shared.judge_endpoint_url,
+            judge_requested_model: shared.judge_requested_model
+          })
+        }) as Readonly<SandboxSecurityProductionConfig>;
+        return pinnedConfig;
+      }
+      pinnedConfig = createSandboxSecurityProductionConfig(mode);
+      return pinnedConfig;
     },
     create_transport(config: Readonly<SandboxSecurityProductionConfig>) {
       if (transportCreated) return invalid();
       transportCreated = true;
+      if (shared !== null) {
+        if (pinnedConfig !== null && config !== pinnedConfig) return invalid();
+        return createCaptureTransport(
+          shared.transport,
+          sink,
+          resolveSandboxSecurityBenchmarkJudgeProtocolDispatch(
+            shared.judge_protocol_id
+          )
+        );
+      }
+      if (pinnedConfig !== null && config !== pinnedConfig) return invalid();
       return createCaptureTransport(
         createSandboxSecurityProductionTransport(config),
-        sink
+        sink,
+        resolveSandboxSecurityBenchmarkJudgeProtocolDispatch(
+          config.summary.judge_protocol_id
+        )
       );
     },
-    create_local_detector: createLocalDetector,
+    create_local_detector: createLiveCaptureLocalDetector,
     create_external_pipeline: createSandboxSecurityExternalPipeline
   });
 }
@@ -823,9 +1070,10 @@ function replayPorts(
       ollama_configured: true,
       judge_configured: true,
       ollama_digest: sealedConfig.ollama_digest,
-      judge_provider_id: sealedConfig.judge_provider_id,
+      judge_protocol_id: sealedConfig.judge_protocol_id,
+      judge_endpoint_policy_id: sealedConfig.judge_endpoint_policy_id,
       judge_base_url: sealedConfig.judge_base_url,
-      judge_responses_url: sealedConfig.judge_responses_url,
+      judge_endpoint_url: sealedConfig.judge_endpoint_url,
       judge_requested_model: sealedConfig.judge_requested_model
     })
   });
@@ -847,7 +1095,7 @@ function replayPorts(
       transportCreated = true;
       return facade;
     },
-    create_local_detector: createLocalDetector,
+    create_local_detector: createReplayLocalDetector,
     create_external_pipeline: createSandboxSecurityExternalPipeline
   });
 }
@@ -855,14 +1103,38 @@ function replayPorts(
 export async function createSandboxSecurityLiveCaptureEngine(input: Readonly<{
   runtime: SandboxSecurityRuntimePorts;
   capture_sink: SandboxSecurityCaptureSink;
+  transport?: SandboxSecurityHttpTransport;
+  judge_protocol_id?: SandboxSecurityJudgeProtocolId;
+  ollama_digest?: string;
+  judge_endpoint_policy_id?: string;
+  judge_base_url?: string;
+  judge_endpoint_url?: string;
+  judge_requested_model?: string;
 }>): Promise<SandboxSecurityEngine> {
   const normalized = normalizedLiveInput(input);
-  return createSandboxSecurityProductionCompositionWithPorts(
+  const shared =
+    normalized.transport === undefined
+      ? null
+      : Object.freeze({
+          transport: normalized.transport,
+          judge_protocol_id: (input as { judge_protocol_id?: SandboxSecurityJudgeProtocolId }).judge_protocol_id
+            ?? "openai_responses_v1",
+          ollama_digest: (input as { ollama_digest?: string }).ollama_digest
+            ?? `sha256:${"0".repeat(64)}`,
+          judge_endpoint_policy_id: (input as { judge_endpoint_policy_id?: string }).judge_endpoint_policy_id
+            ?? "operator_https_fqdn_v1",
+          judge_base_url: (input as { judge_base_url?: string }).judge_base_url
+            ?? "https://unused.example.test/v1",
+          judge_endpoint_url: (input as { judge_endpoint_url?: string }).judge_endpoint_url
+            ?? "https://unused.example.test/v1/responses",
+          judge_requested_model: (input as { judge_requested_model?: string }).judge_requested_model
+            ?? "unused-model"
+        });
+  return createSandboxSecurityProductionLiveCaptureCompositionWithPorts(
     Object.freeze({
-      runtime: normalized.runtime,
-      mode: "local_and_judge"
+      runtime: normalized.runtime
     }),
-    livePorts(normalized.capture_sink)
+    livePorts(normalized.capture_sink, shared)
   );
 }
 

@@ -8,6 +8,13 @@ supersedes only the exact-host Judge allowlist in
 user explicitly requested that the Judge base URL not be restricted to one
 canonical Doro host and requested an independent protocol adapter.
 
+The later approved
+`2026-07-23-sandbox-security-explicit-judge-protocol-selection-amendment.md`
+supersedes this document's single-protocol and five-variable statements. This
+document remains authoritative for the operator-controlled HTTPS FQDN base-URL
+policy; the later amendment is authoritative for the two protocol IDs,
+operation-specific endpoint derivation, and six-variable environment.
+
 No accepted P6 capture, replay tree, or seal exists. The corpus revision,
 truth isolation, metric thresholds, GENERAL-001 behavior, Judge prompt/schema,
 and no-network P7 requirement remain unchanged.
@@ -15,9 +22,9 @@ and no-network P7 requirement remain unchanged.
 ## Goal
 
 Allow an operator to select a canonical HTTPS Judge base URL at process
-startup, while keeping outbound Judge traffic behind one independent,
-source-controlled `openai_responses_v1` protocol adapter. The adapter derives
-the only permitted endpoint from that base URL and records its protocol and
+startup, while keeping outbound Judge traffic behind an explicitly selected,
+source-controlled Judge protocol adapter. The selected adapter derives the
+only permitted endpoint from that base URL and records its protocol and
 canonical endpoint values in live evidence.
 
 This is not an unrestricted per-request URL override and does not add a
@@ -29,13 +36,14 @@ Only `production-config.ts` reads these existing environment variables:
 
 | Variable | Validation |
 | --- | --- |
+| `SANDBOX_SECURITY_JUDGE_PROTOCOL` | exact supported protocol ID from the explicit-selection amendment |
 | `SANDBOX_SECURITY_JUDGE_BASE_URL` | Canonicalizable safe HTTPS base URL for the installed adapter |
 | `SANDBOX_SECURITY_JUDGE_MODEL` | `^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$` |
 | `SANDBOX_SECURITY_JUDGE_API_KEY` | nonempty after trim; no ASCII control character |
 | `SANDBOX_SECURITY_ENABLE_JUDGE` | exact `1` |
 | `SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST` | existing SHA-256 pin |
 
-The environment surface remains five values. The former OpenAI-named
+The environment surface is six values. The former OpenAI-named
 variables remain invalid Judge configuration sources.
 
 `SANDBOX_SECURITY_JUDGE_BASE_URL` is no longer compared against a fixed host
@@ -47,8 +55,10 @@ allowlist. The installed adapter accepts only a URL that:
 - is not `localhost` or a `.localhost` name; and
 - is no longer than the bounded adapter input limit.
 
-The adapter canonicalizes case/default port/trailing slash and derives the
-Responses endpoint by appending exactly one `responses` path segment. For
+The adapter canonicalizes case/default port/trailing slash. The explicitly
+selected protocol derives either the Responses endpoint by appending exactly
+one `responses` path segment or the Chat Completions endpoint by appending
+exactly `chat/completions`. For
 example, `https://us.doro.lol/v1/` becomes base
 `https://us.doro.lol/v1` and endpoint
 `https://us.doro.lol/v1/responses`. A deployment may use another compliant
@@ -65,14 +75,14 @@ body, abort, and cleanup behavior.
 
 ## Independent Adapter Contract
 
-Add a production-private `judge-protocol-adapter.ts` module with the fixed
-adapter ID `openai_responses_v1`. It owns URL normalization and endpoint
-derivation. The existing `openai-*` request/parser names continue to describe
-the OpenAI Responses wire format only; they do not identify a provider.
+Add a production-private `judge-protocol-adapter.ts` module. It owns URL
+normalization and protocol-specific endpoint derivation. Supported protocol
+IDs and their exact operations are frozen by the explicit-selection amendment;
+OpenAI-named request/parser names describe wire formats, not providers.
 
 For every valid configuration, the nonsecret summary exposes:
 
-- `judge_protocol_id: "openai_responses_v1"`;
+- an explicitly selected supported `judge_protocol_id`;
 - `judge_endpoint_policy_id: "operator_https_fqdn_v1"`;
 - canonical `judge_base_url`;
 - adapter-derived `judge_endpoint_url`; and
@@ -103,7 +113,7 @@ The candidate package must also hash its exact capture manifest, and cassette
 and replay units must carry the same binding hash. This prevents a post-
 evaluation replacement of endpoint/model evidence before sealing.
 
-`prepare-capture-bundle.ts` keeps its closed five-variable child environment.
+`prepare-capture-bundle.ts` keeps its closed six-variable child environment.
 The child receives no adapter override or network destination other than the
 already selected base URL. P7 reads no Judge environment and does no network
 I/O.
@@ -117,14 +127,15 @@ failure may not produce an accepted candidate, capture, replay tree, or seal.
 
 P6-T4 remains blocked until deterministic gates are green and a real
 credentialed strict-schema readiness request plus the full controlled capture
-succeeds. This amendment does not relax the separately frozen `4000ms` Judge
-readiness gate; any later timing change requires measured evidence and a
-separate explicit amendment.
+succeeds. Under `p6_local_hardware_compatibility_v1`, Judge readiness and the
+P6 Judge detector slot are each `20000ms` within a `40000ms` normal work
+budget; ordinary production and P7 Judge slots remain bound by the inherited
+`4000ms` limit.
 
 ## Required RED Coverage
 
 1. The adapter canonicalizes a non-fixed Doro-style HTTPS base URL and derives
-   only its Responses endpoint.
+   only the endpoint for the explicitly selected protocol.
 2. The adapter rejects HTTP, literals/loopback hostnames, credentials,
    query/fragment, non-default ports, and ambiguous path encodings.
 3. Production config accepts a compliant non-Doro hostname, exposes only
@@ -134,5 +145,5 @@ separate explicit amendment.
    forged or inconsistent endpoint before any request factory call.
 5. Capture contracts, benchmark composition, evaluator, and sealer preserve
    the complete binding hash and reject protocol/base/endpoint/model tampering.
-6. The permission child still receives only the closed five-variable
+6. The permission child still receives only the closed six-variable
    environment and cannot serialize credentials or raw provider traffic.

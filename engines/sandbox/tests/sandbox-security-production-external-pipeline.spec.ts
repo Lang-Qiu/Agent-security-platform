@@ -23,6 +23,9 @@ import type {
   SandboxSecurityHttpResponse,
   SandboxSecurityHttpTransport
 } from "../src/security-production/http-transport.ts";
+import type {
+  SandboxSecurityJudgeProtocolId
+} from "../src/security-production/judge-protocol-adapter.ts";
 
 const pipelinePath = new URL(
   "../src/security-production/external-pipeline.ts",
@@ -32,6 +35,8 @@ const pipelinePath = new URL(
 interface ExternalPipelineModule {
   createSandboxSecurityExternalPipeline(input: Readonly<{
     transport: SandboxSecurityHttpTransport;
+    judge_protocol_id: SandboxSecurityJudgeProtocolId;
+    judge_requested_model: string;
   }>): Readonly<{
     sanitizer: SandboxSecuritySanitizer;
     judge: SanitizedExternalDetector;
@@ -60,6 +65,9 @@ const { createSandboxSecurityExternalPipeline } = pipelineModule;
 const DECISION_ID = "dec-production-pipeline-1";
 const PROVIDER_SENTINEL = "RAW_PROVIDER_PIPELINE_PROSE_MUST_NOT_LEAK";
 const PAYLOAD_SENTINEL = "SANITIZED_PIPELINE_CONTENT_MUST_NOT_LEAK";
+const RESPONSES_PROTOCOL_ID = "openai_responses_v1" as const;
+const CHAT_PROTOCOL_ID = "openai_chat_completions_json_v1" as const;
+const JUDGE_REQUESTED_MODEL = "gpt-5.4-mini";
 const ENCODER = new TextEncoder();
 const DECODER = new TextDecoder("utf-8", { fatal: true });
 
@@ -217,6 +225,27 @@ function judgePayloadFromRequest(
   ) as ParsedJudgePayload;
 }
 
+function judgePayloadFromChatRequest(
+  input: Readonly<SandboxSecurityHttpRequest>
+): ParsedJudgePayload {
+  assert.equal(input.provider, "openai");
+  assert.equal(input.operation, "chat_completions");
+  if (!("body" in input)) throw new Error("missing_body");
+  const request = JSON.parse(DECODER.decode(input.body)) as {
+    messages: Array<{ role: string; content: string }>;
+  };
+  assert.equal(request.messages[1]?.role, "user");
+  const userText = request.messages[1]?.content;
+  assert.equal(typeof userText, "string");
+  const prefix = "BEGIN_SANITIZED_PAYLOAD\n";
+  const suffix = "\nEND_SANITIZED_PAYLOAD";
+  assert.equal(userText!.startsWith(prefix), true);
+  assert.equal(userText!.endsWith(suffix), true);
+  return JSON.parse(
+    userText!.slice(prefix.length, -suffix.length)
+  ) as ParsedJudgePayload;
+}
+
 function judgeResponse(
   results: readonly Readonly<Record<string, unknown>>[],
   includeSentinel = false
@@ -253,6 +282,39 @@ function judgeResponse(
   });
 }
 
+function chatJudgeResponse(
+  results: readonly Readonly<Record<string, unknown>>[]
+): Readonly<SandboxSecurityHttpResponse> {
+  return Object.freeze({
+    status: 200,
+    content_type: "application/json",
+    body: ENCODER.encode(JSON.stringify({
+      choices: [{
+        finish_reason: "stop",
+        index: 0,
+        logprobs: null,
+        message: {
+          content: JSON.stringify({
+            schema_version: "sandbox-security-judge.v1",
+            obligation_results: results
+          }),
+          role: "assistant"
+        }
+      }],
+      created: 1,
+      id: "chatcmpl-pipeline-test",
+      model: JUDGE_REQUESTED_MODEL,
+      object: "chat.completion",
+      system_fingerprint: null,
+      usage: {
+        prompt_tokens: 1,
+        completion_tokens: 1,
+        total_tokens: 2
+      }
+    }))
+  });
+}
+
 function transportHarness(
   handler: (
     input: Readonly<SandboxSecurityHttpRequest>
@@ -280,9 +342,13 @@ function engineWithPipeline(input: Readonly<{
   transport: SandboxSecurityHttpTransport;
   rule?: RawLocalDetector;
   runtime?: SandboxSecurityRuntimePorts;
+  judge_protocol_id?: SandboxSecurityJudgeProtocolId;
 }>) {
-  const pipeline = createSandboxSecurityExternalPipeline({ transport: input.transport
-  , judge_requested_model: "gpt-5.4-mini" });
+  const pipeline = createSandboxSecurityExternalPipeline({
+    transport: input.transport,
+    judge_protocol_id: input.judge_protocol_id ?? RESPONSES_PROTOCOL_ID,
+    judge_requested_model: JUDGE_REQUESTED_MODEL
+  });
   const engine = createSandboxSecurityEngine({
     registry: createSandboxSecurityDetectorRegistry({
       rule: input.rule ?? ruleDetector(),
@@ -354,6 +420,30 @@ test("REQ-SBX-GENERAL-002 external pipeline pairs real sanitizer and Judge throu
   assert.notStrictEqual(nextDecision, decision);
 });
 
+test("REQ-SBX-GENERAL-002 external pipeline forwards the fixed Chat protocol without fallback", async () => {
+  const operations: string[] = [];
+  const harness = transportHarness((request) => {
+    operations.push(`${request.provider}:${request.operation}`);
+    const payload = judgePayloadFromChatRequest(request);
+    return chatJudgeResponse([{
+      obligation_id: payload.routed_obligations[0]!.obligation_id,
+      outcome: "risk",
+      confidence: "confident",
+      severity: "high"
+    }]);
+  });
+  const { engine } = engineWithPipeline({
+    transport: harness.transport,
+    judge_protocol_id: CHAT_PROTOCOL_ID
+  });
+
+  const decision = await engine.evaluate(evaluationRequest("ordinary content"));
+
+  assert.deepEqual(operations, ["openai:chat_completions"]);
+  assert.equal(judgeRun(decision).status, "matched");
+  assert.equal(decision.verdict, "risk_detected");
+});
+
 test("REQ-SBX-GENERAL-002 external pipeline preserves partial Judge coverage", async () => {
   const harness = transportHarness((request) => {
     const payload = judgePayloadFromRequest(request);
@@ -400,8 +490,11 @@ test("REQ-SBX-GENERAL-002 real sanitizer unsafe URL failure makes zero Judge cal
 
 test("REQ-SBX-GENERAL-002 frozen core rejects malformed sanitizer output before Judge", async () => {
   const harness = transportHarness(() => judgeResponse([]));
-  const pipeline = createSandboxSecurityExternalPipeline({ transport: harness.transport
-  , judge_requested_model: "gpt-5.4-mini" });
+  const pipeline = createSandboxSecurityExternalPipeline({
+    transport: harness.transport,
+    judge_protocol_id: RESPONSES_PROTOCOL_ID,
+    judge_requested_model: JUDGE_REQUESTED_MODEL
+  });
   const engine = createSandboxSecurityEngine({
     registry: createSandboxSecurityDetectorRegistry({
       rule: ruleDetector(),
@@ -567,8 +660,11 @@ test("REQ-SBX-GENERAL-002 local timeout cleans its lease before Judge pipeline r
       }
     ]);
   });
-  const pipeline = createSandboxSecurityExternalPipeline({ transport: harness.transport
-  , judge_requested_model: "gpt-5.4-mini" });
+  const pipeline = createSandboxSecurityExternalPipeline({
+    transport: harness.transport,
+    judge_protocol_id: RESPONSES_PROTOCOL_ID,
+    judge_requested_model: JUDGE_REQUESTED_MODEL
+  });
   const engine = createSandboxSecurityEngine({
     registry: createSandboxSecurityDetectorRegistry({
       rule: ruleDetector(),
@@ -659,6 +755,25 @@ test("REQ-SBX-GENERAL-002 external pipeline rejects open injection and direct ca
     [],
     {},
     Object.create(null),
+    {
+      transport: harness.transport,
+      judge_requested_model: JUDGE_REQUESTED_MODEL
+    },
+    {
+      transport: harness.transport,
+      judge_protocol_id: RESPONSES_PROTOCOL_ID
+    },
+    {
+      transport: harness.transport,
+      judge_protocol_id: "openai_auto",
+      judge_requested_model: JUDGE_REQUESTED_MODEL
+    },
+    {
+      transport: harness.transport,
+      judge_protocol_id: RESPONSES_PROTOCOL_ID,
+      judge_requested_model: JUDGE_REQUESTED_MODEL,
+      unknown: true
+    },
     { transport: harness.transport, unknown: true },
     Object.create({ transport: harness.transport }),
     accessor,

@@ -7,6 +7,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   copyFileSync,
   cpSync,
@@ -16,7 +17,7 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
-  rmSync,
+  rmdirSync,
   writeFileSync
 } from "node:fs";
 import {
@@ -31,21 +32,33 @@ import {
 import { fileURLToPath } from "node:url";
 
 import {
+  hashSandboxSecurityBenchmarkCanonicalJson,
   hashSandboxSecurityBenchmarkTree,
+  normalizeSandboxSecurityBenchmarkCandidatePackage,
   normalizeSandboxSecurityBenchmarkManifest,
   normalizeSandboxSecurityBenchmarkSourcesLock,
   type SandboxSecurityBenchmarkSha256
 } from "./contracts.ts";
 import { validateSandboxSecurityBenchmarkCorpus } from "./validate-corpus.ts";
+import { materializeSandboxSecurityCandidatePackage } from "./capture-candidate.ts";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(SCRIPT_DIR, "../../..");
 const FIXED_CAPTURE_LIVE_RELATIVE =
   "scripts/benchmark/sandbox-security/capture-live.ts";
-const FIXED_CAPTURE_LIVE_PATH = resolve(
-  REPOSITORY_ROOT,
-  FIXED_CAPTURE_LIVE_RELATIVE
-);
+const CAPTURE_CHILD_ENVIRONMENT_KEYS = [
+  "SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST",
+  "SANDBOX_SECURITY_JUDGE_PROTOCOL",
+  "SANDBOX_SECURITY_JUDGE_BASE_URL",
+  "SANDBOX_SECURITY_JUDGE_MODEL",
+  "SANDBOX_SECURITY_JUDGE_API_KEY",
+  "SANDBOX_SECURITY_ENABLE_JUDGE"
+] as const;
+const CANDIDATE_STAGING_FILENAME = ".candidate-package.json" as const;
+const CAPTURE_LAUNCH_LOCK_NAME = ".capture-launch-lock" as const;
+const CAPTURE_OUTPUT_BINDING = /^(?:0|[1-9][0-9]*):(?:0|[1-9][0-9]*)$/u;
+const SHA256 = /^[0-9a-f]{64}$/u;
+const PREPARED_CAPTURE_BUNDLES = new WeakSet<object>();
 
 /** Fixed code trees required by capture-live + production/shared runtime. */
 const FIXED_CODE_ALLOWLIST_RELATIVE: readonly string[] = Object.freeze([
@@ -54,10 +67,14 @@ const FIXED_CODE_ALLOWLIST_RELATIVE: readonly string[] = Object.freeze([
   "engines/sandbox/src/base-filter",
   "engines/sandbox/src/monitoring",
   "engines/sandbox/src/simulated-tools",
+  "shared/constants",
   "shared/contracts",
   "shared/types",
   "shared/utils",
   "shared/index.ts",
+  "scripts/benchmark/sandbox-security/contracts.ts",
+  "scripts/benchmark/sandbox-security/capture-sink.ts",
+  "scripts/benchmark/sandbox-security/capture-candidate.ts",
   FIXED_CAPTURE_LIVE_RELATIVE
 ]);
 
@@ -70,6 +87,7 @@ export interface SandboxSecurityCaptureBundle {
   readonly capture_output_root: string;
   readonly fixture_ids: readonly string[];
   readonly inputs_tree_sha256: SandboxSecurityBenchmarkSha256;
+  readonly code_tree_sha256: SandboxSecurityBenchmarkSha256;
   readonly code_allowlist: readonly string[];
   readonly read_allowlist: readonly string[];
   readonly write_allowlist: readonly string[];
@@ -92,10 +110,161 @@ export interface SandboxSecurityCaptureChildResult {
   readonly exit_code: number;
   readonly stdout: string;
   readonly stderr: string;
+  readonly candidate_root?: string;
+  readonly candidate_package_sha256?: string;
 }
 
 function fail(code: string): never {
   throw new Error(code);
+}
+
+export const SANDBOX_SECURITY_PREPARED_BUNDLE_DESCRIPTOR_SCHEMA_VERSION =
+  "sandbox-security-prepared-bundle-descriptor.v1" as const;
+
+export interface SandboxSecurityPreparedBundleDescriptor {
+  readonly schema_version: typeof SANDBOX_SECURITY_PREPARED_BUNDLE_DESCRIPTOR_SCHEMA_VERSION;
+  readonly bundle_root: string;
+  readonly input_root: string;
+  readonly capture_output_root: string;
+  readonly inputs_tree_sha256: SandboxSecurityBenchmarkSha256;
+  readonly code_tree_sha256: SandboxSecurityBenchmarkSha256;
+  readonly fixture_count: number;
+  readonly fixture_ids: readonly string[];
+}
+
+const PREPARED_BUNDLE_DESCRIPTOR_FIXTURE_ID_RE = /^ssb-v1-\d{4}$/u;
+
+function dataPropertyValue(
+  source: object,
+  key: string,
+  code: string
+): unknown {
+  const descriptor = Object.getOwnPropertyDescriptor(source, key);
+  if (
+    descriptor === undefined ||
+    !descriptor.enumerable ||
+    !("value" in descriptor)
+  ) {
+    fail(code);
+  }
+  return descriptor.value;
+}
+
+function assertAbsoluteDescriptorPath(value: unknown, code: string): string {
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > 4096 ||
+    value.includes("\0") ||
+    !isAbsolute(value)
+  ) {
+    fail(code);
+  }
+  return value;
+}
+
+/**
+ * Produces the exact serializable prepared-bundle descriptor passed from the
+ * prepare worker to the credentialed capture worker. Uses only own enumerable
+ * data properties so a getter-bearing input cannot forge fields. The capture
+ * worker revalidates code/input tree hashes against disk before launch.
+ */
+export function normalizeSandboxSecurityPreparedBundleDescriptor(
+  input: unknown
+): Readonly<SandboxSecurityPreparedBundleDescriptor> {
+  if (
+    input === null ||
+    typeof input !== "object" ||
+    Array.isArray(input) ||
+    Object.getPrototypeOf(input) !== Object.prototype
+  ) {
+    fail("capture_bundle_reject:prepared_bundle_descriptor_invalid");
+  }
+  const code = "capture_bundle_reject:prepared_bundle_descriptor_invalid";
+  const source = input as Record<string, unknown>;
+
+  const rawSchemaVersion =
+    Object.getOwnPropertyDescriptor(source, "schema_version") === undefined
+      ? SANDBOX_SECURITY_PREPARED_BUNDLE_DESCRIPTOR_SCHEMA_VERSION
+      : dataPropertyValue(source, "schema_version", code);
+  if (
+    rawSchemaVersion !==
+    SANDBOX_SECURITY_PREPARED_BUNDLE_DESCRIPTOR_SCHEMA_VERSION
+  ) {
+    fail(code);
+  }
+
+  const bundleRoot = assertAbsoluteDescriptorPath(
+    dataPropertyValue(source, "root" in source ? "root" : "bundle_root", code),
+    code
+  );
+  const inputRoot = assertAbsoluteDescriptorPath(
+    dataPropertyValue(source, "input_root", code),
+    code
+  );
+  const captureOutputRoot = assertAbsoluteDescriptorPath(
+    dataPropertyValue(source, "capture_output_root", code),
+    code
+  );
+  const inputsTreeSha256 = dataPropertyValue(source, "inputs_tree_sha256", code);
+  const codeTreeSha256 = dataPropertyValue(source, "code_tree_sha256", code);
+  if (
+    typeof inputsTreeSha256 !== "string" ||
+    !SHA256.test(inputsTreeSha256) ||
+    typeof codeTreeSha256 !== "string" ||
+    !SHA256.test(codeTreeSha256)
+  ) {
+    fail(code);
+  }
+
+  const rawFixtureIds = dataPropertyValue(source, "fixture_ids", code);
+  if (!Array.isArray(rawFixtureIds) || rawFixtureIds.length === 0) fail(code);
+  const fixtureIds: string[] = [];
+  for (let index = 0; index < rawFixtureIds.length; index += 1) {
+    const fixtureId = dataPropertyValue(rawFixtureIds, String(index), code);
+    if (
+      typeof fixtureId !== "string" ||
+      !PREPARED_BUNDLE_DESCRIPTOR_FIXTURE_ID_RE.test(fixtureId)
+    ) {
+      fail(code);
+    }
+    fixtureIds.push(fixtureId);
+  }
+  if (new Set(fixtureIds).size !== fixtureIds.length) fail(code);
+
+  const rawFixtureCount =
+    Object.getOwnPropertyDescriptor(source, "fixture_count") === undefined
+      ? fixtureIds.length
+      : dataPropertyValue(source, "fixture_count", code);
+  if (rawFixtureCount !== fixtureIds.length) fail(code);
+
+  return Object.freeze({
+    schema_version: SANDBOX_SECURITY_PREPARED_BUNDLE_DESCRIPTOR_SCHEMA_VERSION,
+    bundle_root: bundleRoot,
+    input_root: inputRoot,
+    capture_output_root: captureOutputRoot,
+    inputs_tree_sha256: inputsTreeSha256 as SandboxSecurityBenchmarkSha256,
+    code_tree_sha256: codeTreeSha256 as SandboxSecurityBenchmarkSha256,
+    fixture_count: fixtureIds.length,
+    fixture_ids: Object.freeze([...fixtureIds])
+  });
+}
+
+function safeCliErrorCode(error: unknown): string {
+  const message = error instanceof Error ? error.message : "";
+  return message.length <= 160 &&
+    /^(?:capture_bundle_(?:invalid|reject)|corpus_validation_failed):[a-z0-9_]+$/u.test(
+      message
+    )
+    ? message
+    : "capture_bundle_reject:internal";
+}
+
+export function sanitizeSandboxSecurityCaptureChildStderr(
+  stderr: string
+): string {
+  void stderr;
+  return "capture_bundle_reject:capture_child_failed";
 }
 
 function assertAbsolutePath(value: string, label: string): string {
@@ -145,6 +314,75 @@ function assertRealFile(path: string, label: string): string {
 function isPathInside(parent: string, candidate: string): boolean {
   const rel = relative(parent, candidate);
   return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
+}
+
+function captureOutputBindingFromStat(
+  stat: Readonly<{ dev: bigint; ino: bigint }>
+): string {
+  return `${stat.dev}:${stat.ino}`;
+}
+
+function assertCaptureOutputBinding(value: string): string {
+  if (!CAPTURE_OUTPUT_BINDING.test(value)) {
+    fail("capture_bundle_invalid:capture_output_binding");
+  }
+  return value;
+}
+
+function parseCaptureChildSummary(stdout: string): Readonly<{
+  candidate_package_sha256: string;
+}> | null {
+  for (const line of stdout.trim().split(/\r?\n/u).reverse()) {
+    if (line.length === 0) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line) as unknown;
+    } catch {
+      continue;
+    }
+    if (
+      parsed !== null &&
+      typeof parsed === "object" &&
+      !Array.isArray(parsed) &&
+      (parsed as { status?: unknown }).status === "capture_complete" &&
+      typeof (parsed as { candidate_package_sha256?: unknown })
+        .candidate_package_sha256 === "string" &&
+      SHA256.test(
+        (parsed as { candidate_package_sha256: string }).candidate_package_sha256
+      )
+    ) {
+      return Object.freeze({
+        candidate_package_sha256: (parsed as { candidate_package_sha256: string })
+          .candidate_package_sha256
+      });
+    }
+  }
+  return null;
+}
+
+function candidateStagingPath(captureOutputRoot: string): string {
+  return join(captureOutputRoot, CANDIDATE_STAGING_FILENAME);
+}
+
+
+function prepareCandidateStagingFile(captureOutputRoot: string): Readonly<{
+  path: string;
+  binding: string;
+}> {
+  const path = candidateStagingPath(captureOutputRoot);
+  try {
+    writeFileSync(path, "", { encoding: "utf8", flag: "wx", mode: 0o600 });
+  } catch {
+    fail("capture_bundle_reject:candidate_staging_already_exists");
+  }
+  const stat = lstatSync(path, { bigint: true });
+  if (stat.isSymbolicLink() || !stat.isFile() || stat.size !== 0n || stat.nlink !== 1n) {
+    fail("capture_bundle_reject:candidate_staging_invalid");
+  }
+  return Object.freeze({
+    path: realpathSync(path),
+    binding: captureOutputBindingFromStat(stat)
+  });
 }
 
 function resolveCodeAllowlist(): readonly string[] {
@@ -320,14 +558,11 @@ export async function prepareSandboxSecurityCaptureBundle(input: Readonly<{
   if (!isPathInside(outputRootParent, bundleRoot)) {
     fail("capture_bundle_reject:output_path_escape");
   }
-  if (existsSync(bundleRoot)) {
-    const existing = lstatSync(bundleRoot);
-    if (existing.isSymbolicLink()) {
-      fail("capture_bundle_reject:symlink_output");
-    }
-    rmSync(bundleRoot, { recursive: true, force: true });
+  try {
+    mkdirSync(bundleRoot, { mode: 0o700 });
+  } catch {
+    fail("capture_bundle_reject:bundle_already_exists");
   }
-  mkdirSync(bundleRoot, { recursive: true });
 
   const sourcesLockPath = join(corpusRoot, "sources.lock.json");
   let sourcesLock;
@@ -364,7 +599,7 @@ export async function prepareSandboxSecurityCaptureBundle(input: Readonly<{
   copyInputEnvelopes(corpusRoot, inputRoot, fixtureIds);
 
   const codeAllowlist = resolveCodeAllowlist();
-  const mirroredCode = materializeCodeMirror(bundleRoot, codeAllowlist);
+  materializeCodeMirror(bundleRoot, codeAllowlist);
   assertBundleHasNoForbiddenArtifacts(bundleRoot);
 
   const inputsTreeSha256 = hashSandboxSecurityBenchmarkTree(inputRoot);
@@ -380,21 +615,19 @@ export async function prepareSandboxSecurityCaptureBundle(input: Readonly<{
   const inputReal = realpathSync(inputRoot);
   const captureReal = realpathSync(captureOutputRoot);
 
-  // Read allowlist: inputs + mirrored/repo code only.
+  // Read allowlist: inputs + immutable code mirror only.
   // capture_output_root is write-only so parent-planted symlinks cannot be
   // followed as a read path into oracle material.
   const codeMirrorRoot = realpathSync(join(bundleRoot, "code"));
+  const codeTreeSha256 = hashSandboxSecurityBenchmarkTree(codeMirrorRoot);
+  const captureLiveEntrypoint = realpathSync(
+    join(codeMirrorRoot, FIXED_CAPTURE_LIVE_RELATIVE)
+  );
   const readAllowlist = Object.freeze(
     Array.from(
       new Set<string>([
         inputReal,
-        codeMirrorRoot,
-        ...codeAllowlist.filter((path) => existsSync(path)),
-        ...mirroredCode.filter((path) => existsSync(path)),
-        // Node must read the entrypoint when present (repo path, not write dir).
-        ...(existsSync(FIXED_CAPTURE_LIVE_PATH)
-          ? [realpathSync(FIXED_CAPTURE_LIVE_PATH)]
-          : [FIXED_CAPTURE_LIVE_PATH])
+        codeMirrorRoot
       ])
     ).sort()
   );
@@ -413,20 +646,97 @@ export async function prepareSandboxSecurityCaptureBundle(input: Readonly<{
     }
   }
 
-  const writeAllowlist = Object.freeze([captureReal]);
+  const candidateStaging = prepareCandidateStagingFile(captureReal);
+  const writeAllowlist = Object.freeze([candidateStaging.path]);
 
-  return Object.freeze({
+  const bundle = Object.freeze({
     root: bundleReal,
     input_root: inputReal,
     capture_output_root: captureReal,
     fixture_ids: Object.freeze([...fixtureIds]),
     inputs_tree_sha256: inputsTreeSha256,
+    code_tree_sha256: codeTreeSha256,
     code_allowlist: Object.freeze([...codeAllowlist]),
     read_allowlist: readAllowlist,
     write_allowlist: writeAllowlist,
-    capture_live_entrypoint: FIXED_CAPTURE_LIVE_PATH,
+    capture_live_entrypoint: captureLiveEntrypoint,
     repository_root: REPOSITORY_ROOT
   });
+  PREPARED_CAPTURE_BUNDLES.add(bundle);
+  return bundle;
+}
+
+/**
+ * Reconstructs and revalidates a prepared bundle from its serializable
+ * descriptor inside the separate credentialed capture worker. Every path and
+ * tree hash is rechecked against disk; the returned bundle is registered so the
+ * fixed child command can only launch a bundle whose code/input trees still
+ * match what the prepare worker committed.
+ */
+export function reconstructSandboxSecurityCaptureBundleFromDescriptor(
+  descriptorInput: unknown
+): Readonly<SandboxSecurityCaptureBundle> {
+  const descriptor =
+    normalizeSandboxSecurityPreparedBundleDescriptor(descriptorInput);
+  const bundleRoot = assertRealDirectory(descriptor.bundle_root, "bundle_root");
+  const inputRoot = assertRealDirectory(descriptor.input_root, "input_root");
+  const captureOutputRoot = assertRealDirectory(
+    descriptor.capture_output_root,
+    "capture_output_root"
+  );
+  if (
+    bundleRoot !== descriptor.bundle_root ||
+    inputRoot !== join(bundleRoot, "inputs") ||
+    captureOutputRoot !== join(bundleRoot, "capture-output")
+  ) {
+    fail("capture_bundle_reject:descriptor_layout_invalid");
+  }
+
+  const codeMirrorRoot = assertRealDirectory(
+    join(bundleRoot, "code"),
+    "code_root"
+  );
+  if (hashSandboxSecurityBenchmarkTree(codeMirrorRoot) !== descriptor.code_tree_sha256) {
+    fail("capture_bundle_reject:code_tree_hash_changed");
+  }
+  if (hashSandboxSecurityBenchmarkTree(inputRoot) !== descriptor.inputs_tree_sha256) {
+    fail("capture_bundle_reject:inputs_tree_hash_changed");
+  }
+  assertBundleHasNoForbiddenArtifacts(bundleRoot);
+
+  const captureLiveEntrypoint = realpathSync(
+    join(codeMirrorRoot, FIXED_CAPTURE_LIVE_RELATIVE)
+  );
+  const readAllowlist = Object.freeze(
+    Array.from(new Set<string>([inputRoot, codeMirrorRoot])).sort()
+  );
+  const stagingPath = candidateStagingPath(captureOutputRoot);
+  const stagingStat = lstatSync(stagingPath, { bigint: true });
+  if (
+    stagingStat.isSymbolicLink() ||
+    !stagingStat.isFile() ||
+    stagingStat.size !== 0n ||
+    stagingStat.nlink !== 1n
+  ) {
+    fail("capture_bundle_reject:candidate_staging_invalid");
+  }
+  const writeAllowlist = Object.freeze([realpathSync(stagingPath)]);
+
+  const bundle = Object.freeze({
+    root: bundleRoot,
+    input_root: inputRoot,
+    capture_output_root: captureOutputRoot,
+    fixture_ids: Object.freeze([...descriptor.fixture_ids]),
+    inputs_tree_sha256: descriptor.inputs_tree_sha256,
+    code_tree_sha256: descriptor.code_tree_sha256,
+    code_allowlist: resolveCodeAllowlist(),
+    read_allowlist: readAllowlist,
+    write_allowlist: writeAllowlist,
+    capture_live_entrypoint: captureLiveEntrypoint,
+    repository_root: REPOSITORY_ROOT
+  });
+  PREPARED_CAPTURE_BUNDLES.add(bundle);
+  return bundle;
 }
 
 export function buildSandboxSecurityCaptureChildCommand(
@@ -435,6 +745,29 @@ export function buildSandboxSecurityCaptureChildCommand(
   if (bundle === null || typeof bundle !== "object") {
     fail("capture_bundle_invalid:bundle");
   }
+  if (!PREPARED_CAPTURE_BUNDLES.has(bundle as object)) {
+    fail("capture_bundle_reject:prepared_bundle_authority_invalid");
+  }
+  const bundleRoot = assertRealDirectory(bundle.root, "bundle_root");
+  const inputRoot = assertRealDirectory(bundle.input_root, "input_root");
+  const captureOutputRoot = assertRealDirectory(
+    bundle.capture_output_root,
+    "capture_output_root"
+  );
+  const codeRoot = assertRealDirectory(join(bundleRoot, "code"), "code_root");
+  if (
+    !SHA256.test(bundle.code_tree_sha256) ||
+    hashSandboxSecurityBenchmarkTree(codeRoot) !== bundle.code_tree_sha256
+  ) {
+    fail("capture_bundle_reject:code_tree_hash_changed");
+  }
+  if (
+    inputRoot !== join(bundleRoot, "inputs") ||
+    captureOutputRoot !== join(bundleRoot, "capture-output")
+  ) {
+    fail("capture_bundle_reject:bundle_path_revalidation");
+  }
+
   const entrypoint = bundle.capture_live_entrypoint;
   if (
     typeof entrypoint !== "string" ||
@@ -445,12 +778,44 @@ export function buildSandboxSecurityCaptureChildCommand(
   ) {
     fail("capture_bundle_reject:entrypoint_not_capture_live");
   }
-  if (entrypoint !== FIXED_CAPTURE_LIVE_PATH) {
+  const expectedEntrypoint = resolve(
+    bundleRoot,
+    "code",
+    FIXED_CAPTURE_LIVE_RELATIVE
+  );
+  if (entrypoint !== expectedEntrypoint) {
     fail("capture_bundle_reject:entrypoint_not_fixed");
+  }
+  const entrypointStat = lstatSync(entrypoint);
+  if (entrypointStat.isSymbolicLink() || !entrypointStat.isFile()) {
+    fail("capture_bundle_reject:entrypoint_invalid");
   }
 
   const allowFsRead = [...bundle.read_allowlist];
   const allowFsWrite = [...bundle.write_allowlist];
+  if (
+    allowFsRead.length !== 2 ||
+    !allowFsRead.includes(inputRoot) ||
+    !allowFsRead.includes(codeRoot)
+  ) {
+    fail("capture_bundle_reject:read_allowlist_revalidation");
+  }
+  const candidateStagingPathValue = candidateStagingPath(captureOutputRoot);
+  if (allowFsWrite.length !== 1 || allowFsWrite[0] !== candidateStagingPathValue) {
+    fail("capture_bundle_reject:write_allowlist_revalidation");
+  }
+  const stagingStat = lstatSync(candidateStagingPathValue, { bigint: true });
+  if (
+    stagingStat.isSymbolicLink() ||
+    !stagingStat.isFile() ||
+    stagingStat.size !== 0n ||
+    stagingStat.nlink !== 1n
+  ) {
+    fail("capture_bundle_reject:candidate_staging_invalid");
+  }
+  const captureOutputBinding = assertCaptureOutputBinding(
+    captureOutputBindingFromStat(stagingStat)
+  );
 
   for (const path of allowFsRead) {
     if (
@@ -465,8 +830,7 @@ export function buildSandboxSecurityCaptureChildCommand(
   }
   for (const path of allowFsWrite) {
     if (
-      path !== bundle.capture_output_root &&
-      !isPathInside(bundle.capture_output_root, path)
+      path !== candidateStagingPathValue
     ) {
       fail("capture_bundle_reject:write_allowlist_escape");
     }
@@ -481,6 +845,7 @@ export function buildSandboxSecurityCaptureChildCommand(
     `--bundle-root=${bundle.root}`,
     `--input-root=${bundle.input_root}`,
     `--capture-output=${bundle.capture_output_root}`,
+    `--capture-output-binding=${captureOutputBinding}`,
     `--inputs-tree-sha256=${bundle.inputs_tree_sha256}`
   ]);
 
@@ -497,8 +862,21 @@ export function buildSandboxSecurityCaptureChildCommand(
     allow_child_process: false,
     allow_worker: false,
     exec_path: process.execPath,
-    cwd: REPOSITORY_ROOT
+    cwd: bundle.root
   });
+}
+
+export function selectSandboxSecurityCaptureChildEnvironment(
+  environment: Readonly<Record<string, string | undefined>>
+): Readonly<Record<string, string>> {
+  const selected: Record<string, string> = {};
+  for (const key of CAPTURE_CHILD_ENVIRONMENT_KEYS) {
+    const value = environment[key];
+    if (typeof value === "string" && value.length > 0) {
+      selected[key] = value;
+    }
+  }
+  return Object.freeze(selected);
 }
 
 export async function launchSandboxSecurityCaptureChild(input: Readonly<{
@@ -522,31 +900,19 @@ export async function launchSandboxSecurityCaptureChild(input: Readonly<{
   }
 
   const command = buildSandboxSecurityCaptureChildCommand(input.bundle);
+  const launchLock = join(input.bundle.capture_output_root, CAPTURE_LAUNCH_LOCK_NAME);
+  try {
+    mkdirSync(launchLock, { mode: 0o700 });
+  } catch {
+    fail("capture_bundle_reject:capture_in_progress");
+  }
 
+  try {
   // stdio: ignore stdin, capture stdout/stderr. No fd inheritance beyond that.
-  return await new Promise((resolvePromise, rejectPromise) => {
+  const childResult = await new Promise<Readonly<SandboxSecurityCaptureChildResult>>((resolvePromise, rejectPromise) => {
     const child = spawn(command.exec_path, [...command.args], {
       cwd: command.cwd,
-      env: (() => {
-        const childEnv: Record<string, string> = {
-          PATH: process.env.PATH ?? "",
-          HOME: process.env.HOME ?? "",
-          LANG: process.env.LANG ?? "C"
-        };
-        for (const key of [
-          "SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST",
-          "SANDBOX_SECURITY_JUDGE_BASE_URL",
-          "SANDBOX_SECURITY_JUDGE_MODEL",
-          "SANDBOX_SECURITY_JUDGE_API_KEY",
-          "SANDBOX_SECURITY_ENABLE_JUDGE"
-        ] as const) {
-          const value = process.env[key];
-          if (typeof value === "string" && value.length > 0) {
-            childEnv[key] = value;
-          }
-        }
-        return childEnv;
-      })(),
+      env: selectSandboxSecurityCaptureChildEnvironment(process.env),
       stdio: ["ignore", "pipe", "pipe"],
       // Never pass custom uid/gid or detached with inherited sockets.
       windowsHide: true
@@ -575,6 +941,46 @@ export async function launchSandboxSecurityCaptureChild(input: Readonly<{
       );
     });
   });
+
+  let candidateRoot: string | undefined;
+  let candidatePackageSha256: string | undefined;
+  if (childResult.exit_code === 0) {
+    const summary = parseCaptureChildSummary(childResult.stdout);
+    if (summary === null) {
+      fail("capture_bundle_reject:capture_child_summary_missing");
+    }
+    const commandArg = command.args.find((arg) =>
+      arg.startsWith("--capture-output-binding=")
+    );
+    const captureOutputBinding =
+      typeof commandArg === "string"
+        ? assertCaptureOutputBinding(
+            commandArg.slice("--capture-output-binding=".length)
+          )
+        : fail("capture_bundle_reject:capture_output_binding_missing");
+    candidateRoot = materializeSandboxSecurityCandidatePackage({
+      capture_output_root: input.bundle.capture_output_root,
+      capture_output_binding: captureOutputBinding,
+      fixture_ids: input.bundle.fixture_ids,
+      candidate_package_sha256: summary.candidate_package_sha256
+    });
+    candidatePackageSha256 = summary.candidate_package_sha256;
+  }
+
+  return Object.freeze({
+    ...childResult,
+    ...(candidateRoot === undefined ? {} : { candidate_root: candidateRoot }),
+    ...(candidatePackageSha256 === undefined
+      ? {}
+      : { candidate_package_sha256: candidatePackageSha256 })
+  });
+  } finally {
+    try {
+      rmdirSync(launchLock);
+    } catch {
+      fail("capture_bundle_reject:capture_lock_cleanup_failed");
+    }
+  }
 }
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
@@ -589,7 +995,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       options.output_root = argv[++index];
       continue;
     }
-    fail(`capture_bundle_reject:unknown_cli_argument:${token}`);
+    fail("capture_bundle_reject:unknown_cli_argument");
   }
 
   const corpusRoot = options.corpus_root ??
@@ -619,7 +1025,29 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     join(bundle.root, "bundle-summary.json"),
     `${JSON.stringify(summary, null, 2)}\n`
   );
-  process.stdout.write(`${JSON.stringify(summary)}\n`);
+  process.stdout.write(`${JSON.stringify({ phase: "bundle_ready", ...summary })}\n`);
+
+  // Parent owns child_process: launch the fixed capture-live entrypoint under
+  // Node --permission with the exact allowlists (truth-blind).
+  const child = await launchSandboxSecurityCaptureChild({ bundle });
+  process.stdout.write(
+    `${JSON.stringify({
+      phase: "capture_child_finished",
+      exit_code: child.exit_code,
+      stdout_bytes: child.stdout.length,
+      stderr_bytes: child.stderr.length
+    })}\n`
+  );
+  if (child.stderr.length > 0) {
+    process.stderr.write(
+      `${JSON.stringify({
+        error_code: sanitizeSandboxSecurityCaptureChildStderr(child.stderr)
+      })}\n`
+    );
+  }
+  if (child.exit_code !== 0) {
+    process.exitCode = child.exit_code;
+  }
 }
 
 const entrypoint = process.argv[1];
@@ -629,8 +1057,9 @@ if (
   fileURLToPath(import.meta.url) === resolve(entrypoint)
 ) {
   main().catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : "capture_bundle_failed:internal";
-    process.stderr.write(`${JSON.stringify({ error_code: message })}\n`);
+    process.stderr.write(
+      `${JSON.stringify({ error_code: safeCliErrorCode(error) })}\n`
+    );
     process.exitCode = 1;
   });
 }
