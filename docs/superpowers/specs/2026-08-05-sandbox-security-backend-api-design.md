@@ -4,7 +4,7 @@
 
 - Requirement: `REQ-SBX-GENERAL-003`
 - Date: `2026-08-05`
-- Status: `APPROVED_SPEC_PENDING_IMPLEMENTATION_PLAN`
+- Status: `APPROVED_SPEC_PLAN_COMPLETE_PENDING_USER_APPROVAL`
 - Workflow: `Design -> Test (RED) -> Implement (GREEN) -> Document -> Stop`
 - Dependencies: GENERAL-001 and GENERAL-002
 

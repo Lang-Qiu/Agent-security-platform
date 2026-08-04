@@ -372,23 +372,27 @@ test("REQ-SBX-GENERAL-002 Spec final review gate rejects incomplete qualificatio
   assert.throws(() => assertGeneral002SpecReviewCorrections(weakened));
 });
 
-test("REQ-SBX-GENERAL-002 owns active sprint state without freezing one transition", () => {
+test("REQ-SBX-GENERAL-003 owns active sprint state after the authorized transition", () => {
   const sprint = readText("docs/sprint-current.md");
   assert.equal(
     extractSection(sprint, "## Requirement ID"),
-    "REQ-SBX-GENERAL-002"
+    "REQ-SBX-GENERAL-003"
   );
   assert.match(
     extractSection(sprint, "## Canonical Inputs"),
-    /2026-07-16-sandbox-security-production-detectors-spec\.md/
+    /2026-08-05-sandbox-security-backend-api-design\.md/
   );
   assert.match(
     extractSection(sprint, "## Current Work"),
-    /Current execution node: Phase [1-7], P[1-7]-T[1-9][^.]*\./
+    /No GENERAL-003 business test or production implementation has started\./
+  );
+  assert.equal(
+    extractSection(sprint, "## Status"),
+    "SPEC_APPROVED_PLAN_COMPLETE_PENDING_USER_APPROVAL"
   );
   assert.match(
-    extractSection(sprint, "## Status"),
-    /^(?:SPEC_PENDING_REVIEW|SPEC_REVIEW_CHANGES_REQUIRED|SPEC_FIXED_PENDING_REVIEW|SPEC_REVIEWED_PENDING_USER_APPROVAL|SPEC_APPROVED_PLAN_IN_PROGRESS|PLAN_PENDING_REVIEW|PLAN_REVIEW_CHANGES_REQUIRED|PLAN_FIXED_PENDING_REVIEW|PLAN_REVIEWED_PENDING_USER_APPROVAL|IMPLEMENTATION_IN_PROGRESS|IMPLEMENTATION_PENDING_FORMAL_P6_EVIDENCE|PHASE_[1-7]_IN_PROGRESS|P[1-7]-T[1-9]_IN_PROGRESS|COMPLETE_PENDING_REVIEW)$/
+    extractSection(sprint, "## Dependency Gate"),
+    /GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`/
   );
 });
 
