@@ -54,9 +54,15 @@ import {
   type SandboxSecurityBenchmarkSha256
 } from "./contracts.ts";
 import {
-  hashSandboxSecurityP6AcceptanceReceipt,
-  verifySandboxSecurityP6AcceptanceReceipt
+  normalizeSandboxSecurityP6AcceptanceReceiptChain,
+  type SandboxSecurityP6AcceptanceReceiptChain
 } from "./p6-acceptance-protocol.ts";
+import {
+  SANDBOX_SECURITY_FS_SNAPSHOT_MAX_BYTES,
+  snapshotSandboxSecurityDirectory,
+  snapshotSandboxSecurityFile,
+  type SandboxSecurityFileSnapshot
+} from "./fs-snapshot.ts";
 const INVALID = "sandbox_security_seal_invalid";
 const FIXTURE_COUNT = 300 as const;
 const HIGH_CRITICAL_DENOMINATOR = 60 as const;
@@ -84,8 +90,6 @@ const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(SCRIPT_DIR, "../../..");
 const OUTPUT_PUBLICATION_RESERVATION = ".sandbox-security-seal-publish-lock";
 const RECEIPT_CHAIN_ENTRY = "receipt-chain.json";
-const RECEIPT_CHAIN_SCHEMA_VERSION =
-  "sandbox-security-p6-acceptance-receipt-chain.v1";
 const DEFAULT_CORPUS_ROOT = resolve(
   REPOSITORY_ROOT,
   "samples/sandbox-security-benchmark/v1"
@@ -199,6 +203,56 @@ function readJson(path: string): unknown {
     return JSON.parse(text) as unknown;
   } catch {
     fail(`malformed_json:${basename(path)}`);
+  }
+}
+
+function snapshotEvidenceFile(
+  realRoot: string,
+  path: string,
+  code: string
+): SandboxSecurityFileSnapshot {
+  try {
+    return snapshotSandboxSecurityFile({
+      real_root: realRoot,
+      path,
+      max_bytes: SANDBOX_SECURITY_FS_SNAPSHOT_MAX_BYTES
+    });
+  } catch {
+    fail(code);
+  }
+}
+
+function parseSnapshotJson(snapshot: SandboxSecurityFileSnapshot): unknown {
+  try {
+    return JSON.parse(snapshot.bytes.toString("utf8")) as unknown;
+  } catch {
+    fail(`malformed_json:${basename(snapshot.path)}`);
+  }
+}
+
+function snapshotEvidenceJson(
+  realRoot: string,
+  path: string,
+  code: string
+): Readonly<{ snapshot: SandboxSecurityFileSnapshot; json: unknown }> {
+  const snapshot = snapshotEvidenceFile(realRoot, path, code);
+  return Object.freeze({ snapshot, json: parseSnapshotJson(snapshot) });
+}
+
+function snapshotEvidenceDirectory(
+  realRoot: string,
+  path: string,
+  expectedEntries: readonly string[],
+  code: string
+): void {
+  try {
+    snapshotSandboxSecurityDirectory({
+      real_root: realRoot,
+      path,
+      expected_entries: expectedEntries
+    });
+  } catch {
+    fail(code);
   }
 }
 
@@ -843,10 +897,17 @@ export function prepareSandboxSecuritySealPreview(input: Readonly<{
 export function publishSandboxSecuritySealPreview(input: Readonly<{
   preview: Readonly<SandboxSecuritySealPreview>;
   output_root: string;
+  receipt_chain_factory?: (anchors: Readonly<{
+    seal_sha256: string;
+    capture_manifest_sha256: string;
+    replay_tree_sha256: string;
+  }>) => unknown;
 }>): Readonly<{
   cassette_tree_sha256: string;
   replay_count: number;
   capture_manifest_sha256: string;
+  seal_sha256: string;
+  replay_tree_sha256: string;
   seal_path: string;
 }> {
   if (typeof input.output_root !== "string") fail("output_root_invalid");
@@ -864,9 +925,20 @@ export function publishSandboxSecuritySealPreview(input: Readonly<{
   try {
     // Evidence is immutable. A seal marker is published last, so no partially
     // published directory can validate as accepted evidence.
-    for (const name of ["capture.json", "replay", "seal.json"]) {
+    for (const name of [
+      "capture.json",
+      "replay",
+      "seal.json",
+      ...(input.receipt_chain_factory === undefined
+        ? []
+        : [RECEIPT_CHAIN_ENTRY])
+    ]) {
       if (existsSync(join(outputRoot, name))) {
-        fail(`output_already_published:${name}`);
+        fail(
+          name === RECEIPT_CHAIN_ENTRY
+            ? "exclusive_write_target_exists"
+            : `output_already_published:${name}`
+        );
       }
     }
 
@@ -886,6 +958,7 @@ export function publishSandboxSecuritySealPreview(input: Readonly<{
     let replayPublished = false;
     let capturePublished = false;
     let sealPublished = false;
+    let receiptChainPublished = false;
 
     try {
       // Copy cassette units unchanged into replay envelopes (schema rename only).
@@ -917,7 +990,20 @@ export function publishSandboxSecuritySealPreview(input: Readonly<{
         )
       });
       normalizeSandboxSecurityBenchmarkSeal(sealDocument);
-      writeAtomicJson(join(tempRoot, "seal.json"), sealDocument);
+      const sealPath = join(tempRoot, "seal.json");
+      writeAtomicJson(sealPath, sealDocument);
+      const sealSha256 = sha256File(sealPath);
+      if (input.receipt_chain_factory !== undefined) {
+        if (typeof input.receipt_chain_factory !== "function") {
+          fail("receipt_chain_factory_invalid");
+        }
+        const receiptChain = input.receipt_chain_factory({
+          seal_sha256: sealSha256,
+          capture_manifest_sha256: captureManifestSha256,
+          replay_tree_sha256: replayTreeSha256
+        });
+        writeAtomicJson(join(tempRoot, RECEIPT_CHAIN_ENTRY), receiptChain);
+      }
 
       // Atomic publish into output_root. seal.json is the commit marker and is
       // renamed only after the replay tree and capture manifest are durable.
@@ -928,18 +1014,30 @@ export function publishSandboxSecuritySealPreview(input: Readonly<{
       capturePublished = true;
       renameSync(join(tempRoot, "seal.json"), join(outputRoot, "seal.json"));
       sealPublished = true;
+      if (input.receipt_chain_factory !== undefined) {
+        renameSync(
+          join(tempRoot, RECEIPT_CHAIN_ENTRY),
+          join(outputRoot, RECEIPT_CHAIN_ENTRY)
+        );
+        receiptChainPublished = true;
+      }
       rmSync(tempRoot, { recursive: true, force: true });
 
       return deepFreeze({
         cassette_tree_sha256: input.preview.cassette_tree_sha256,
         replay_count: FIXTURE_COUNT,
         capture_manifest_sha256: captureManifestSha256,
+        seal_sha256: sealSha256,
+        replay_tree_sha256: replayTreeSha256,
         seal_path: join(outputRoot, "seal.json")
       });
     } catch (error) {
       if (sealPublished) unlinkSync(join(outputRoot, "seal.json"));
       if (capturePublished) unlinkSync(join(outputRoot, "capture.json"));
       if (replayPublished) rmSync(join(outputRoot, "replay"), { recursive: true, force: true });
+      if (receiptChainPublished) {
+        unlinkSync(join(outputRoot, RECEIPT_CHAIN_ENTRY));
+      }
       rmSync(tempRoot, { recursive: true, force: true });
       throw error;
     }
@@ -952,20 +1050,46 @@ export function publishSandboxSecuritySealPreview(input: Readonly<{
   }
 }
 
-export async function sealSandboxSecurityAcceptedCapture(input: Readonly<{
+type SandboxSecuritySealInput = Readonly<{
   corpus_root: string;
   candidate_capture_root: string;
   evaluation_report_path: string;
   output_root: string;
-}>): Promise<ReturnType<typeof publishSandboxSecuritySealPreview>> {
+}>;
+
+type SandboxSecurityReceiptChainFactory = (
+  anchors: Readonly<{
+    seal_sha256: string;
+    capture_manifest_sha256: string;
+    replay_tree_sha256: string;
+  }>
+) => unknown;
+
+function prepareAndPublishSandboxSecuritySeal(
+  input: SandboxSecuritySealInput,
+  receiptChainFactory?: SandboxSecurityReceiptChainFactory
+): ReturnType<typeof publishSandboxSecuritySealPreview> {
+  const preview = prepareSandboxSecuritySealPreview({
+    corpus_root: input.corpus_root,
+    candidate_capture_root: input.candidate_capture_root,
+    evaluation_report_path: input.evaluation_report_path
+  });
+  return publishSandboxSecuritySealPreview({
+    preview,
+    output_root: input.output_root,
+    ...(receiptChainFactory === undefined
+      ? {}
+      : { receipt_chain_factory: receiptChainFactory })
+  });
+}
+
+function normalizeSandboxSecuritySealInput(
+  input: unknown,
+  exactKeys: readonly string[]
+): SandboxSecuritySealInput & Record<string, unknown> {
   const normalizedInput = exactRecord(
     input,
-    [
-      "corpus_root",
-      "candidate_capture_root",
-      "evaluation_report_path",
-      "output_root"
-    ],
+    exactKeys,
     "input_invalid"
   );
   if (
@@ -976,24 +1100,164 @@ export async function sealSandboxSecurityAcceptedCapture(input: Readonly<{
   ) {
     fail("input_invalid");
   }
+  return normalizedInput as SandboxSecuritySealInput & Record<string, unknown>;
+}
 
-  // The signed-receipt seal worker verifies both Ed25519 receipts before calling
-  // this authority; the preview independently rebinds every candidate, report,
-  // corpus, and threshold hash from disk so a stale path fails closed here too.
-  const preview = prepareSandboxSecuritySealPreview({
-    corpus_root: normalizedInput.corpus_root,
-    candidate_capture_root: normalizedInput.candidate_capture_root,
-    evaluation_report_path: normalizedInput.evaluation_report_path
-  });
-  return publishSandboxSecuritySealPreview({
-    preview,
-    output_root: normalizedInput.output_root
-  });
+export async function sealSandboxSecurityAcceptedCapture(
+  input: SandboxSecuritySealInput
+): Promise<ReturnType<typeof publishSandboxSecuritySealPreview>> {
+  const normalizedInput = normalizeSandboxSecuritySealInput(input, [
+    "corpus_root",
+    "candidate_capture_root",
+    "evaluation_report_path",
+    "output_root"
+  ]);
+  return prepareAndPublishSandboxSecuritySeal(normalizedInput);
+}
+
+export async function sealSandboxSecurityAcceptedCaptureWithReceiptChain(
+  input: SandboxSecuritySealInput & {
+    readonly receipt_chain_factory: SandboxSecurityReceiptChainFactory;
+  }
+): Promise<ReturnType<typeof publishSandboxSecuritySealPreview>> {
+  const normalizedInput = normalizeSandboxSecuritySealInput(input, [
+    "corpus_root",
+    "candidate_capture_root",
+    "evaluation_report_path",
+    "output_root",
+    "receipt_chain_factory"
+  ]);
+  const receiptChainFactory = (normalizedInput as Record<string, unknown>)
+    .receipt_chain_factory;
+  if (typeof receiptChainFactory !== "function") {
+    fail("receipt_chain_factory_invalid");
+  }
+  return prepareAndPublishSandboxSecuritySeal(
+    normalizedInput,
+    receiptChainFactory as SandboxSecurityReceiptChainFactory
+  );
+}
+
+function assertReceiptChainBindings(input: Readonly<{
+  chain: SandboxSecurityP6AcceptanceReceiptChain;
+  manifest: Readonly<SandboxSecurityBenchmarkCaptureManifest>;
+  corpus_manifest: Readonly<ReturnType<typeof normalizeSandboxSecurityBenchmarkManifest>>;
+  corpus_manifest_sha256: string;
+  seal: Readonly<SandboxSecurityBenchmarkSeal>;
+  seal_sha256: string;
+  replay_tree_sha256: string;
+}>): void {
+  const captureBinding = input.chain.capture_binding;
+  const evaluationBinding = input.chain.evaluation_binding;
+  const evidenceBinding = input.chain.evidence_binding;
+
+  if (
+    captureBinding.fixture_count !== FIXTURE_COUNT ||
+    evaluationBinding.fixture_count !== FIXTURE_COUNT ||
+    evidenceBinding.fixture_count !== FIXTURE_COUNT
+  ) {
+    fail("receipt_chain_fixture_count_mismatch");
+  }
+  if (
+    captureBinding.inputs_tree_sha256 !== input.manifest.inputs_tree_sha256 ||
+    captureBinding.decisions_tree_sha256 !== input.manifest.decisions_tree_sha256 ||
+    captureBinding.cassette_tree_sha256 !== input.manifest.cassette_tree_sha256
+  ) {
+    fail("receipt_chain_capture_anchor_mismatch");
+  }
+
+  const profile = captureBinding.execution_profile;
+  if (
+    profile.execution_profile_id !== input.manifest.execution_profile_id ||
+    profile.readiness_timeout_ms !== input.manifest.readiness_timeout_ms ||
+    profile.qualification_timeout_ms !== input.manifest.qualification_timeout_ms ||
+    profile.local_detector_slot_timeout_ms !==
+      input.manifest.local_detector_slot_timeout_ms ||
+    profile.judge_detector_slot_timeout_ms !==
+      input.manifest.judge_detector_slot_timeout_ms ||
+    profile.normal_work_budget_ms !== input.manifest.normal_work_budget_ms
+  ) {
+    fail("receipt_chain_execution_profile_mismatch");
+  }
+
+  const judgeBinding = captureBinding.judge_binding;
+  if (
+    judgeBinding.judge_protocol_id !== input.manifest.judge_protocol_id ||
+    judgeBinding.judge_endpoint_policy_id !==
+      input.manifest.judge_endpoint_policy_id ||
+    judgeBinding.judge_requested_model_id !==
+      input.manifest.judge_requested_model ||
+    judgeBinding.judge_resolved_model_id !==
+      input.manifest.judge_resolved_model ||
+    judgeBinding.judge_binding_sha256 !== input.manifest.judge_binding_sha256 ||
+    judgeBinding.judge_base_url_sha256 !==
+      sha256Bytes(input.manifest.judge_base_url) ||
+    judgeBinding.judge_endpoint_url_sha256 !==
+      sha256Bytes(input.manifest.judge_endpoint_url) ||
+    judgeBinding.judge_requested_model_sha256 !==
+      sha256Bytes(input.manifest.judge_requested_model) ||
+    judgeBinding.judge_resolved_model_sha256 !==
+      sha256Bytes(input.manifest.judge_resolved_model)
+  ) {
+    fail("receipt_chain_judge_binding_mismatch");
+  }
+
+  for (const key of [
+    "candidate_package_sha256",
+    "candidate_tree_sha256",
+    "inputs_tree_sha256",
+    "decisions_tree_sha256",
+    "cassette_tree_sha256"
+  ] as const) {
+    if (captureBinding[key] !== evaluationBinding[key]) {
+      fail("receipt_chain_capture_evaluation_mismatch");
+    }
+  }
+
+  const corpusManifestFileSha256 = input.corpus_manifest_sha256;
+  if (
+    evaluationBinding.benchmark_manifest_sha256 !== corpusManifestFileSha256 ||
+    evaluationBinding.inputs_tree_sha256 !== input.manifest.inputs_tree_sha256 ||
+    evaluationBinding.decisions_tree_sha256 !==
+      input.manifest.decisions_tree_sha256 ||
+    evaluationBinding.cassette_tree_sha256 !== input.manifest.cassette_tree_sha256 ||
+    evaluationBinding.truth_tree_sha256 !==
+      input.corpus_manifest.truth_tree_sha256 ||
+    evaluationBinding.truth_tree_sha256 !== input.seal.truth_tree_sha256 ||
+    evaluationBinding.accepted_metrics_sha256 !==
+      input.seal.accepted_metrics_sha256
+  ) {
+    fail("receipt_chain_evaluation_anchor_mismatch");
+  }
+
+  if (
+    evidenceBinding.capture_manifest_sha256 !== input.seal.capture_manifest_sha256 ||
+    evidenceBinding.replay_tree_sha256 !== input.replay_tree_sha256 ||
+    evidenceBinding.benchmark_manifest_sha256 !==
+      evaluationBinding.benchmark_manifest_sha256 ||
+    evidenceBinding.inputs_tree_sha256 !== evaluationBinding.inputs_tree_sha256 ||
+    evidenceBinding.decisions_tree_sha256 !==
+      evaluationBinding.decisions_tree_sha256 ||
+    evidenceBinding.cassette_tree_sha256 !==
+      evaluationBinding.cassette_tree_sha256 ||
+    evidenceBinding.truth_tree_sha256 !== evaluationBinding.truth_tree_sha256 ||
+    evidenceBinding.accepted_metrics_sha256 !==
+      evaluationBinding.accepted_metrics_sha256
+  ) {
+    fail("receipt_chain_evidence_anchor_mismatch");
+  }
+
+  if (input.chain.seal_sha256 !== input.seal_sha256) {
+    fail("receipt_chain_seal_mismatch");
+  }
 }
 
 export function validateAcceptedSandboxSecurityLiveEvidence(
   root: string,
-  options: Readonly<{ corpus_root?: string }> = {}
+  options: Readonly<{
+    corpus_root?: string;
+    require_receipt_chain?: boolean;
+  }> = {}
 ): Readonly<{
   capture: Readonly<{
     inputs: readonly unknown[];
@@ -1007,9 +1271,11 @@ export function validateAcceptedSandboxSecurityLiveEvidence(
   const rootStat = lstatSync(resolved);
   if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) fail("root_invalid");
   const allEntries = readdirSync(resolved).sort();
-  // The signed receipt chain persisted beside the evidence is an optional, and
-  // when present verified, entry; it is excluded from the exact layout check.
+  // The signed receipt chain is required unless validating a direct synthetic fixture.
   const hasReceiptChain = allEntries.includes(RECEIPT_CHAIN_ENTRY);
+  if (options.require_receipt_chain !== false && !hasReceiptChain) {
+    fail("receipt_chain_missing");
+  }
   const entries = allEntries.filter((name) => name !== RECEIPT_CHAIN_ENTRY);
   if (
     STANDALONE_EVIDENCE_ENTRIES.some((name) => !entries.includes(name))
@@ -1040,11 +1306,22 @@ export function validateAcceptedSandboxSecurityLiveEvidence(
     if (kind === "dir" && !stat.isDirectory()) fail("final_entry_not_directory");
   }
 
-  const captureRaw = readJson(capturePath);
-  const manifest = normalizeSandboxSecurityBenchmarkCaptureManifest(captureRaw);
-  const seal = normalizeSandboxSecurityBenchmarkSeal(readJson(sealPath));
+  const captureSnapshot = snapshotEvidenceJson(
+    resolved,
+    capturePath,
+    "final_entry_not_file"
+  );
+  const sealSnapshot = snapshotEvidenceJson(
+    resolved,
+    sealPath,
+    "final_entry_not_file"
+  );
+  const manifest = normalizeSandboxSecurityBenchmarkCaptureManifest(
+    captureSnapshot.json
+  );
+  const seal = normalizeSandboxSecurityBenchmarkSeal(sealSnapshot.json);
 
-  const fileHash = sha256File(capturePath);
+  const fileHash = captureSnapshot.snapshot.sha256_hex;
   if (seal.capture_manifest_sha256 !== fileHash) {
     fail("capture_manifest_hash_mismatch");
   }
@@ -1059,10 +1336,16 @@ export function validateAcceptedSandboxSecurityLiveEvidence(
       fail("replay_entry_invalid");
     }
   }
+  snapshotEvidenceDirectory(resolved, replayRoot, replayFiles, "replay_entry_invalid");
 
   const inputs = replayFiles.map((name) => {
+    const replaySnapshot = snapshotEvidenceJson(
+      resolved,
+      join(replayRoot, name),
+      "replay_entry_invalid"
+    );
     const envelope = normalizeSandboxSecurityBenchmarkReplayEnvelope(
-      readJson(join(replayRoot, name))
+      replaySnapshot.json
     );
     const expectedId = name.replace(/\.json$/u, "");
     if (envelope.fixture_id !== expectedId) {
@@ -1205,13 +1488,36 @@ export function validateAcceptedSandboxSecurityLiveEvidence(
     fail("cassette_tree_hash_mismatch");
   }
 
-  // Optional signed receipt chain: when present it must be a non-symlink regular
-  // file carrying a valid, self-consistent two-stage receipt chain that binds to
-  // this exact seal. Verification uses the tracked acceptance public key only.
+  // Optional signed receipt chain: when present it must bind every retained
+  // evidence anchor to the verified two-stage receipts and this exact seal.
   if (hasReceiptChain) {
-    verifySandboxSecurityLiveEvidenceReceiptChain({
-      chain_path: join(resolved, RECEIPT_CHAIN_ENTRY),
-      seal_path: sealPath
+    const chainPath = join(resolved, RECEIPT_CHAIN_ENTRY);
+    const chainRaw = snapshotEvidenceJson(
+      resolved,
+      chainPath,
+      "receipt_chain_entry_invalid"
+    ).json;
+    if (!isPlainObject(chainRaw)) fail("receipt_chain_invalid");
+    if (
+      chainRaw.schema_version !==
+      "sandbox-security-p6-acceptance-receipt-chain.v1"
+    ) {
+      fail("receipt_chain_schema_invalid");
+    }
+    let chain: SandboxSecurityP6AcceptanceReceiptChain;
+    try {
+      chain = normalizeSandboxSecurityP6AcceptanceReceiptChain(chainRaw);
+    } catch {
+      fail("receipt_chain_invalid");
+    }
+    assertReceiptChainBindings({
+      chain,
+      manifest,
+      corpus_manifest: corpusManifest,
+      corpus_manifest_sha256: sha256File(corpusManifestPath),
+      seal,
+      seal_sha256: sealSnapshot.snapshot.sha256_hex,
+      replay_tree_sha256: replayTreeSha256
     });
   }
 
@@ -1222,60 +1528,6 @@ export function validateAcceptedSandboxSecurityLiveEvidence(
     },
     seal
   });
-}
-
-function verifySandboxSecurityLiveEvidenceReceiptChain(input: Readonly<{
-  chain_path: string;
-  seal_path: string;
-}>): void {
-  const chainStat = lstatSync(input.chain_path);
-  if (chainStat.isSymbolicLink() || !chainStat.isFile()) {
-    fail("receipt_chain_entry_invalid");
-  }
-  const raw = readJson(input.chain_path);
-  if (
-    raw === null ||
-    typeof raw !== "object" ||
-    Array.isArray(raw)
-  ) {
-    fail("receipt_chain_invalid");
-  }
-  const record = raw as Record<string, unknown>;
-  if (record.schema_version !== RECEIPT_CHAIN_SCHEMA_VERSION) {
-    fail("receipt_chain_schema_invalid");
-  }
-  let captureReceipt;
-  let evaluationReceipt;
-  try {
-    captureReceipt = verifySandboxSecurityP6AcceptanceReceipt(
-      record.capture_receipt
-    );
-    evaluationReceipt = verifySandboxSecurityP6AcceptanceReceipt(
-      record.evaluation_receipt
-    );
-  } catch {
-    fail("receipt_chain_signature_invalid");
-  }
-  if (
-    captureReceipt.issuer !== "capture" ||
-    evaluationReceipt.issuer !== "evaluation" ||
-    captureReceipt.run_id !== evaluationReceipt.run_id ||
-    record.run_id !== captureReceipt.run_id
-  ) {
-    fail("receipt_chain_binding_invalid");
-  }
-  const captureReceiptSha256 = hashSandboxSecurityP6AcceptanceReceipt(
-    record.capture_receipt
-  );
-  const evaluationBinding = evaluationReceipt.issued_binding as Readonly<
-    Record<string, unknown>
-  >;
-  if (evaluationBinding.capture_receipt_sha256 !== captureReceiptSha256) {
-    fail("receipt_chain_link_broken");
-  }
-  if (record.seal_sha256 !== sha256File(input.seal_path)) {
-    fail("receipt_chain_seal_mismatch");
-  }
 }
 
 export function assertNoSensitiveLiveEvidence(root: string): void {

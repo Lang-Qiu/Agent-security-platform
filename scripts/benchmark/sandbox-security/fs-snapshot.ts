@@ -275,6 +275,65 @@ function assertCanonicalRealRoot(value: unknown, prefix: string): string {
   return rootPath;
 }
 
+function parseRootIdentity(value: unknown, code: string): bigint {
+  if (typeof value === "bigint") {
+    if (value < 0n) fail(code);
+    return value;
+  }
+  if (typeof value !== "string" || !/^(?:0|[1-9][0-9]*)$/u.test(value)) {
+    fail(code);
+  }
+  try {
+    return BigInt(value);
+  } catch {
+    fail(code);
+  }
+}
+
+/**
+ * Rebinds a live root to the identity captured by the authority. Workers call
+ * this before touching any path derived from a stage handoff, so replacing a
+ * root directory at its stable pathname fails closed.
+ */
+export function assertSandboxSecurityLiveRootBinding(
+  input: unknown
+): SandboxSecurityBoundLiveRoot {
+  const record = snapshotDataRecord(input, "root_binding_invalid", [
+    "root",
+    "dev",
+    "ino"
+  ] as const);
+  const rootPath = assertCanonicalRealRoot(record.values.get("root"), "root");
+  const expectedDev = parseRootIdentity(
+    record.values.get("dev"),
+    "root_binding_identity_invalid"
+  );
+  const expectedIno = parseRootIdentity(
+    record.values.get("ino"),
+    "root_binding_identity_invalid"
+  );
+  let stat;
+  try {
+    stat = lstatSync(rootPath, { bigint: true });
+  } catch {
+    fail("root_binding_missing");
+  }
+  if (
+    stat.isSymbolicLink() ||
+    !stat.isDirectory() ||
+    stat.dev !== expectedDev ||
+    stat.ino !== expectedIno
+  ) {
+    fail("root_binding_changed");
+  }
+  return Object.freeze({
+    requested_path: rootPath,
+    real_path: rootPath,
+    dev: stat.dev,
+    ino: stat.ino
+  });
+}
+
 function assertPathWithinRoot(
   path: string,
   realRoot: string,

@@ -10,6 +10,7 @@ export const SANDBOX_SECURITY_P6_LIVE_ENVIRONMENT_KEYS = Object.freeze([
 ] as const);
 
 export const SANDBOX_SECURITY_STAGE_MAX_STDOUT_BYTES = 4096;
+export const SANDBOX_SECURITY_STAGE_MAX_FAILURE_STDERR_BYTES = 512;
 
 export type SandboxSecurityStageStatus =
   | "prepare_complete"
@@ -99,6 +100,10 @@ const FORBIDDEN_RECORD_KEYS = Object.freeze([
   "prototype",
   "constructor"
 ] as const);
+const SAFE_STAGE_ERROR_CODE =
+  /^(?:sandbox_security_[a-z_]+_(?:reject|invalid)|capture_bundle_(?:invalid|reject)|corpus_validation_failed):[a-z0-9_]+(?::[a-z0-9_./:,-]+)?$/u;
+const GENERIC_STAGE_FAILURE =
+  "sandbox_security_stage_reject:stage_exit_invalid";
 
 function fail(code: string): never {
   throw new Error(`${INVALID}:${code}`);
@@ -280,6 +285,53 @@ export function parseSandboxSecurityStageResult(
   if (!isStageStatus(status)) fail("stage_status_invalid");
 
   return Object.freeze({ status, frame: frameRecord });
+}
+
+/**
+ * Classifies a failed worker frame without reflecting arbitrary stderr. Only a
+ * single bounded JSON line containing exactly one source-controlled error_code
+ * is admitted; every other shape collapses to the generic stage failure.
+ */
+export function classifySandboxSecurityFailedStage(input: unknown): string {
+  try {
+    const record = snapshotDataRecord(input, "input_invalid", STAGE_RESULT_KEYS);
+    const exitCode = record.values.get("exit_code");
+    const stdout = record.values.get("stdout");
+    const stderr = record.values.get("stderr");
+    if (
+      typeof exitCode !== "number" ||
+      !Number.isSafeInteger(exitCode) ||
+      exitCode === 0 ||
+      stdout !== "" ||
+      typeof stderr !== "string" ||
+      !isWellFormed(stderr) ||
+      Buffer.byteLength(stderr, "utf8") >
+        SANDBOX_SECURITY_STAGE_MAX_FAILURE_STDERR_BYTES ||
+      stderr.length < 3 ||
+      !stderr.endsWith("\n") ||
+      stderr.indexOf("\n") !== stderr.length - 1
+    ) {
+      return GENERIC_STAGE_FAILURE;
+    }
+
+    const parsed = JSON.parse(stderr.slice(0, -1)) as unknown;
+    const errorRecord = snapshotDataRecord(
+      parsed,
+      "failure_frame_invalid",
+      ["error_code"]
+    );
+    const errorCode = errorRecord.values.get("error_code");
+    if (
+      typeof errorCode !== "string" ||
+      errorCode.length > 200 ||
+      !SAFE_STAGE_ERROR_CODE.test(errorCode)
+    ) {
+      return GENERIC_STAGE_FAILURE;
+    }
+    return errorCode;
+  } catch {
+    return GENERIC_STAGE_FAILURE;
+  }
 }
 
 function requireExactSummaryKeys(

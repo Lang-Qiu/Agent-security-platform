@@ -13,12 +13,14 @@ import { fileURLToPath } from "node:url";
 
 import {
   assertSandboxSecurityAcceptanceThresholds,
-  writeSandboxSecurityEvaluationReport
+  writeSandboxSecurityEvaluationReport,
+  type SandboxSecurityBenchmarkEvaluationReport
 } from "./evaluate.ts";
 import {
   hashSandboxSecurityBenchmarkTree
 } from "./contracts.ts";
 import {
+  assertSandboxSecurityLiveRootBinding,
   snapshotSandboxSecurityJson
 } from "./fs-snapshot.ts";
 import { assertSandboxSecurityLiveEnvironmentAbsent } from "./stage-protocol.ts";
@@ -34,6 +36,15 @@ const MAX_JSON_BYTES = 16 * 1024 * 1024;
 
 function fail(code: string): never {
   throw new Error(`${INVALID}:${code}`);
+}
+
+export function assertSandboxSecurityEvaluateWorkerAccepted(
+  report: Readonly<SandboxSecurityBenchmarkEvaluationReport>
+): void {
+  if (report.accepted !== true || report.infrastructure_codes.length !== 0) {
+    fail("evaluation_not_accepted");
+  }
+  assertSandboxSecurityAcceptanceThresholds(report);
 }
 
 function safeCliErrorCode(error: unknown): string {
@@ -56,9 +67,18 @@ function sha256HexOfFile(path: string, realRoot: string): string {
 
 interface EvaluateWorkerOptions {
   readonly corpus_root: string;
+  readonly corpus_dev: string;
+  readonly corpus_ino: string;
+  readonly capture_parent_root: string;
+  readonly capture_parent_dev: string;
+  readonly capture_parent_ino: string;
+  readonly output_root: string;
+  readonly output_dev: string;
+  readonly output_ino: string;
   readonly candidate_root: string;
   readonly report_out: string;
   readonly capture_receipt: string;
+  readonly receipt_registry: string;
   readonly run_id: string;
 }
 
@@ -66,9 +86,18 @@ function parseArgv(argv: readonly string[]): EvaluateWorkerOptions {
   const values: Record<string, string> = {};
   const flags = [
     "--corpus-root=",
+    "--corpus-dev=",
+    "--corpus-ino=",
+    "--capture-parent-root=",
+    "--capture-parent-dev=",
+    "--capture-parent-ino=",
+    "--output-root=",
+    "--output-dev=",
+    "--output-ino=",
     "--candidate-root=",
     "--report-out=",
     "--capture-receipt=",
+    "--receipt-registry=",
     "--run-id="
   ] as const;
   for (const token of argv) {
@@ -83,9 +112,18 @@ function parseArgv(argv: readonly string[]): EvaluateWorkerOptions {
   const runId = values["run-id"];
   if (
     corpusRoot === undefined ||
+    values["corpus-dev"] === undefined ||
+    values["corpus-ino"] === undefined ||
+    values["capture-parent-root"] === undefined ||
+    values["capture-parent-dev"] === undefined ||
+    values["capture-parent-ino"] === undefined ||
+    values["output-root"] === undefined ||
+    values["output-dev"] === undefined ||
+    values["output-ino"] === undefined ||
     candidateRoot === undefined ||
     reportOut === undefined ||
     captureReceipt === undefined ||
+    values["receipt-registry"] === undefined ||
     runId === undefined
   ) {
     fail("missing_cli_arguments");
@@ -93,24 +131,58 @@ function parseArgv(argv: readonly string[]): EvaluateWorkerOptions {
   if (!RUN_ID.test(runId)) fail("run_id_invalid");
   return Object.freeze({
     corpus_root: corpusRoot,
+    corpus_dev: values["corpus-dev"]!,
+    corpus_ino: values["corpus-ino"]!,
+    capture_parent_root: values["capture-parent-root"]!,
+    capture_parent_dev: values["capture-parent-dev"]!,
+    capture_parent_ino: values["capture-parent-ino"]!,
+    output_root: values["output-root"]!,
+    output_dev: values["output-dev"]!,
+    output_ino: values["output-ino"]!,
     candidate_root: candidateRoot,
     report_out: reportOut,
     capture_receipt: captureReceipt,
+    receipt_registry: values["receipt-registry"]!,
     run_id: runId
   });
 }
 
 export async function runSandboxSecurityEvaluateWorker(input: Readonly<{
   corpus_root: string;
+  corpus_dev: string;
+  corpus_ino: string;
+  capture_parent_root: string;
+  capture_parent_dev: string;
+  capture_parent_ino: string;
+  output_root: string;
+  output_dev: string;
+  output_ino: string;
   candidate_root: string;
   report_out: string;
   capture_receipt_path: string;
+  receipt_registry_path: string;
   run_id: string;
 }>): Promise<Readonly<{
   status: "evaluation_accepted";
   issued_binding: Readonly<Record<string, unknown>>;
 }>> {
   assertSandboxSecurityLiveEnvironmentAbsent();
+
+  assertSandboxSecurityLiveRootBinding({
+    root: resolve(input.corpus_root),
+    dev: input.corpus_dev,
+    ino: input.corpus_ino
+  });
+  assertSandboxSecurityLiveRootBinding({
+    root: resolve(input.capture_parent_root),
+    dev: input.capture_parent_dev,
+    ino: input.capture_parent_ino
+  });
+  assertSandboxSecurityLiveRootBinding({
+    root: resolve(input.output_root),
+    dev: input.output_dev,
+    ino: input.output_ino
+  });
 
   const captureReceiptPath = resolve(input.capture_receipt_path);
   const captureReceiptSnapshot = snapshotSandboxSecurityJson({
@@ -119,7 +191,11 @@ export async function runSandboxSecurityEvaluateWorker(input: Readonly<{
     max_bytes: MAX_JSON_BYTES
   });
   const captureReceipt = consumeSandboxSecurityP6AcceptanceReceipt(
-    captureReceiptSnapshot.json
+    captureReceiptSnapshot.json,
+    {
+      consumer: "evaluation",
+      registry_path: input.receipt_registry_path
+    }
   );
   if (captureReceipt.issuer !== "capture" || captureReceipt.run_id !== input.run_id) {
     fail("capture_receipt_binding_invalid");
@@ -138,10 +214,7 @@ export async function runSandboxSecurityEvaluateWorker(input: Readonly<{
     candidate_capture_root: candidateRoot,
     report_path: reportPath
   });
-  assertSandboxSecurityAcceptanceThresholds(report);
-  if (report.accepted !== true || report.infrastructure_codes.length !== 0) {
-    fail("evaluation_not_accepted");
-  }
+  assertSandboxSecurityEvaluateWorkerAccepted(report);
   if (
     report.capture_package_sha256 !== captureBinding.candidate_package_sha256 ||
     report.decisions_tree_sha256 !== captureBinding.decisions_tree_sha256 ||
@@ -186,9 +259,18 @@ export async function main(
   const options = parseArgv(argv);
   const summary = await runSandboxSecurityEvaluateWorker({
     corpus_root: options.corpus_root,
+    corpus_dev: options.corpus_dev,
+    corpus_ino: options.corpus_ino,
+    capture_parent_root: options.capture_parent_root,
+    capture_parent_dev: options.capture_parent_dev,
+    capture_parent_ino: options.capture_parent_ino,
+    output_root: options.output_root,
+    output_dev: options.output_dev,
+    output_ino: options.output_ino,
     candidate_root: options.candidate_root,
     report_out: options.report_out,
     capture_receipt_path: options.capture_receipt,
+    receipt_registry_path: options.receipt_registry,
     run_id: options.run_id
   });
   process.stdout.write(`${JSON.stringify(summary)}\n`);

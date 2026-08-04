@@ -55,8 +55,10 @@ import {
 import type {
   SandboxSecurityHttpTransport
 } from "../../../engines/sandbox/src/security-production/http-transport.ts";
-import type {
-  SandboxSecurityJudgeProtocolId
+import {
+  normalizeSandboxSecurityJudgeEndpoint,
+  resolveSandboxSecurityJudgeProtocol,
+  type SandboxSecurityJudgeProtocolId
 } from "../../../engines/sandbox/src/security-production/judge-protocol-adapter.ts";
 import {
   SANDBOX_SECURITY_BENCHMARK_CAPTURE_SCHEMA_VERSION,
@@ -93,6 +95,25 @@ import {
 import {
   SANDBOX_SECURITY_OLLAMA_LOCAL_PROMPT_VERSION
 } from "../../../engines/sandbox/src/security-production/ollama-contract.ts";
+import {
+  assertSandboxSecurityCandidateOutputAcknowledgement,
+  buildSandboxSecurityCandidateDecisionEnvelope,
+  SANDBOX_SECURITY_CANDIDATE_OUTPUT_FRAME_SCHEMA_VERSION,
+  type SandboxSecurityCandidateCompleteFrame,
+  type SandboxSecurityCandidateOutputFrame,
+  type SandboxSecurityCandidateProgressFrame
+} from "./candidate-progress.ts";
+
+export {
+  appendSandboxSecurityCandidateProgress,
+  buildSandboxSecurityCandidateDecisionEnvelope,
+  createSandboxSecurityCandidateProgressDocument,
+  markSandboxSecurityCandidateProgressFailed,
+  normalizeSandboxSecurityCandidateOutputFrame,
+  normalizeSandboxSecurityCandidateProgressDocument,
+  SANDBOX_SECURITY_CANDIDATE_OUTPUT_FRAME_SCHEMA_VERSION,
+  SANDBOX_SECURITY_CANDIDATE_PROGRESS_SCHEMA_VERSION
+} from "./candidate-progress.ts";
 
 const INVALID = "sandbox_security_capture_live_reject";
 const READINESS_TIMEOUT_MS =
@@ -123,16 +144,6 @@ interface SandboxSecurityLiveCaptureConfig {
   readonly binding: SandboxSecurityLiveBinding;
   readonly production_config: Readonly<SandboxSecurityProductionConfig> | null;
 }
-
-const TEST_LIVE_BINDING: SandboxSecurityLiveBinding = Object.freeze({
-  ollama_digest:
-    "sha256:0000000000000000000000000000000000000000000000000000000000000000",
-  judge_protocol_id: "openai_responses_v1",
-  judge_endpoint_policy_id: "operator_https_fqdn_v1",
-  judge_base_url: "https://us.doro.lol/v1",
-  judge_endpoint_url: "https://us.doro.lol/v1/responses",
-  judge_requested_model: "gpt-5.4-mini"
-});
 
 export type SandboxSecurityLiveCaptureEvent =
   | "judge_readiness"
@@ -192,7 +203,16 @@ export interface SandboxSecurityLiveCapturePorts {
   has_worker_permission?: () => boolean;
   has_fs_read_permission?: (path: string) => boolean;
   has_fs_write_permission?: (path: string) => boolean;
+  /** Test-only: inject a complete synthetic binding instead of reading env. */
+  live_binding?: SandboxSecurityLiveBinding;
   require_live_config?: () => void;
+}
+
+export interface SandboxSecurityLiveCaptureOptions {
+  readonly candidate_output?: "bound_file" | "stream";
+  readonly output_frame_writer?: Readonly<{
+    write(frame: SandboxSecurityCandidateOutputFrame): void | PromiseLike<void>;
+  }>;
 }
 
 function fail(code: string): never {
@@ -201,12 +221,110 @@ function fail(code: string): never {
   throw error;
 }
 
-function safeCliErrorCode(error: unknown): string {
+function normalizeInjectedLiveBinding(value: unknown): SandboxSecurityLiveBinding {
+  if (!isPlainObject(value)) fail("live_binding_invalid");
+  const keys = Object.keys(value).sort();
+  const expectedKeys = [
+    "judge_base_url",
+    "judge_endpoint_policy_id",
+    "judge_endpoint_url",
+    "judge_protocol_id",
+    "judge_requested_model",
+    "ollama_digest"
+  ];
+  if (
+    keys.length !== expectedKeys.length ||
+    keys.some((key, index) => key !== expectedKeys[index])
+  ) {
+    fail("live_binding_invalid");
+  }
+
+  const ollamaDigest = value.ollama_digest;
+  const protocolId = value.judge_protocol_id;
+  const endpointPolicyId = value.judge_endpoint_policy_id;
+  const baseUrl = value.judge_base_url;
+  const endpointUrl = value.judge_endpoint_url;
+  const requestedModel = value.judge_requested_model;
+  if (
+    typeof ollamaDigest !== "string" ||
+    !/^sha256:[a-f0-9]{64}$/u.test(ollamaDigest) ||
+    (protocolId !== "openai_responses_v1" &&
+      protocolId !== "openai_chat_completions_json_v1") ||
+    endpointPolicyId !== "operator_https_fqdn_v1" ||
+    typeof baseUrl !== "string" ||
+    typeof endpointUrl !== "string" ||
+    typeof requestedModel !== "string" ||
+    !JUDGE_MODEL.test(requestedModel)
+  ) {
+    fail("live_binding_invalid");
+  }
+  try {
+    const protocol = resolveSandboxSecurityJudgeProtocol(protocolId, baseUrl);
+    const endpoint = normalizeSandboxSecurityJudgeEndpoint(
+      protocolId,
+      endpointUrl
+    );
+    if (protocol.endpoint_url !== endpoint.endpoint_url) {
+      fail("live_binding_invalid");
+    }
+  } catch {
+    fail("live_binding_invalid");
+  }
+  return Object.freeze({
+    ollama_digest: ollamaDigest,
+    judge_protocol_id: protocolId,
+    judge_endpoint_policy_id: endpointPolicyId,
+    judge_base_url: baseUrl,
+    judge_endpoint_url: endpointUrl,
+    judge_requested_model: requestedModel
+  });
+}
+
+const SAFE_CAPTURE_RUNTIME_FAILURE_CODES = Object.freeze([
+  "sandbox_security_benchmark_composition_invalid",
+  "sandbox_security_external_pipeline_invalid",
+  "sandbox_security_judge_protocol_invalid",
+  "sandbox_security_ollama_construction",
+  "sandbox_security_ollama_detector_invalid",
+  "sandbox_security_ollama_qualification_invalid",
+  "sandbox_security_ollama_request_invalid",
+  "sandbox_security_ollama_response_invalid",
+  "sandbox_security_openai_chat_judge_request_invalid",
+  "sandbox_security_openai_chat_judge_response_invalid",
+  "sandbox_security_openai_judge_request_invalid",
+  "sandbox_security_openai_judge_response_invalid",
+  "sandbox_security_openai_judge_detector_invalid",
+  "sandbox_security_production_composition_invalid",
+  "sandbox_security_production_config_invalid",
+  "sandbox_security_provider_outcome_invalid",
+  "sandbox_security_transport_aborted",
+  "sandbox_security_transport_connection_failed",
+  "sandbox_security_transport_credential_reflection",
+  "sandbox_security_transport_digest_mismatch",
+  "sandbox_security_transport_invalid",
+  "sandbox_security_transport_response_too_large"
+] as const);
+
+export function classifySandboxSecurityCaptureLiveError(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
-  return message.length <= 160 &&
-    /^sandbox_security_capture_live_reject:[a-z0-9_]+(?::[a-z0-9_]+){0,2}$/u.test(message)
-    ? message
-    : `${INVALID}:internal`;
+  if (
+    message.length <= 160 &&
+    /^sandbox_security_capture_live_reject:[a-z0-9_]+(?::[a-z0-9_]+){0,2}$/u.test(
+      message
+    )
+  ) {
+    return message;
+  }
+  if (
+    (SAFE_CAPTURE_RUNTIME_FAILURE_CODES as readonly string[]).includes(message)
+  ) {
+    return `${INVALID}:${message.slice("sandbox_security_".length)}`;
+  }
+  return `${INVALID}:internal`;
+}
+
+function safeCliErrorCode(error: unknown): string {
+  return classifySandboxSecurityCaptureLiveError(error);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -293,20 +411,6 @@ function defaultRuntime(): SandboxSecurityRuntimePorts {
       return () => clearTimeout(handle);
     }
   };
-}
-
-function contentFreeDecisionProjection(
-  decision: Readonly<SandboxSecurityDecision>
-): Readonly<Record<string, unknown>> {
-  return deepFreeze({
-    schema_version: decision.schema_version,
-    verdict: decision.verdict,
-    action: decision.action,
-    risk_level: decision.risk_level,
-    finding_count: decision.findings.length,
-    detector_run_count: decision.detector_runs.length,
-    evidence_ref_count: decision.evidence_refs.length
-  });
 }
 
 function sha256Text(value: string): string {
@@ -397,6 +501,7 @@ const LIVE_CAPTURE_PORT_KEYS = Object.freeze([
   "has_worker_permission",
   "has_fs_read_permission",
   "has_fs_write_permission",
+  "live_binding",
   "require_live_config"
 ] as const satisfies readonly (keyof SandboxSecurityLiveCapturePorts)[]);
 
@@ -522,8 +627,11 @@ function resolveLiveCaptureConfig(
 ): SandboxSecurityLiveCaptureConfig {
   if (ports.require_live_config !== undefined) {
     ports.require_live_config();
+    if (ports.live_binding === undefined) {
+      fail("live_binding_missing");
+    }
     return Object.freeze({
-      binding: TEST_LIVE_BINDING,
+      binding: normalizeInjectedLiveBinding(ports.live_binding),
       production_config: null
     });
   }
@@ -690,6 +798,34 @@ interface SandboxSecurityBuiltCandidatePackage {
   readonly decisions_tree_sha256: string;
 }
 
+function classifyAcceptanceBlockingProviderOutcome(
+  accumulator: Readonly<SandboxSecurityCaptureAccumulator>
+): string {
+  for (const unit of accumulator.inputs) {
+    for (const [slot, outcome] of [
+      ["ollama", unit.ollama],
+      ["judge", unit.judge]
+    ] as const) {
+      if (outcome.status === "http_error") {
+        return `${slot}_http_error_${outcome.http_status}`;
+      }
+      if (outcome.status === "transport_error") {
+        return `${slot}_transport_error_${outcome.error_code}`;
+      }
+      if (outcome.status === "signal_termination") {
+        return `${slot}_signal_termination_${outcome.termination_reason}`;
+      }
+    }
+    if (
+      unit.judge.status === "response" &&
+      unit.ollama.status === "not_called"
+    ) {
+      return "judge_response_without_local_response";
+    }
+  }
+  return "unclassified";
+}
+
 function buildCandidatePackage(input: Readonly<{
   fixture_ids: readonly string[];
   decisions: readonly Readonly<SandboxSecurityDecision>[];
@@ -732,15 +868,12 @@ function buildCandidatePackage(input: Readonly<{
   for (let index = 0; index < input.fixture_ids.length; index += 1) {
     const fixtureId = input.fixture_ids[index]!;
     const decision = input.decisions[index]!;
-    const projection = contentFreeDecisionProjection(decision);
-    const projectionSha = hashSandboxSecurityBenchmarkCanonicalJson(projection);
+    const envelope = buildSandboxSecurityCandidateDecisionEnvelope(
+      fixtureId,
+      decision
+    );
+    const projectionSha = envelope.decision_projection_sha256;
     decisionHashes.push(projectionSha);
-    const envelope = deepFreeze({
-      schema_version: "sandbox-security-benchmark-decision-projection.v1",
-      fixture_id: fixtureId,
-      decision_projection_sha256: projectionSha,
-      projection
-    });
     const filename = `${fixtureId}.json`;
     const serialized = `${JSON.stringify(envelope)}\n`;
     decisionEnvelopes.push(envelope);
@@ -814,7 +947,11 @@ function buildCandidatePackage(input: Readonly<{
       cassette as never
     );
   } catch {
-    fail("provider_outcome_not_acceptance_capable");
+    fail(
+      `provider_outcome_not_acceptance_capable:${
+        classifyAcceptanceBlockingProviderOutcome(input.accumulator)
+      }`
+    );
   }
   const captureManifestSha256 = hashSandboxSecurityBenchmarkCanonicalJson(
     captureManifest
@@ -950,10 +1087,159 @@ function writeBoundCaptureOutput(
   }
 }
 
+interface SandboxSecurityCandidateAcknowledgementReader {
+  waitFor(frame: Readonly<SandboxSecurityCandidateOutputFrame>): Promise<void>;
+  dispose(): void;
+}
+
+function createSandboxSecurityCandidateAcknowledgementReader(): SandboxSecurityCandidateAcknowledgementReader {
+  let pending = "";
+  let queued: unknown[] = [];
+  let closed = false;
+  let terminalError: Error | undefined;
+  let waiter:
+    | Readonly<{
+        expected: Readonly<{
+          output_event: "candidate_progress" | "capture_complete";
+          ordinal: number;
+        }>;
+        resolve: () => void;
+        reject: (error: unknown) => void;
+      }>
+    | undefined;
+
+  const rejectReader = (error: Error): void => {
+    if (terminalError === undefined) terminalError = error;
+    closed = true;
+    if (waiter !== undefined) {
+      const current = waiter;
+      waiter = undefined;
+      current.reject(terminalError);
+    }
+  };
+
+  const consumeLine = (line: string): void => {
+    if (line.length === 0) return;
+    let value: unknown;
+    try {
+      value = JSON.parse(line) as unknown;
+    } catch {
+      rejectReader(new Error(`${INVALID}:candidate_output_ack_invalid`));
+      return;
+    }
+    if (waiter === undefined) {
+      queued.push(value);
+      return;
+    }
+    const current = waiter;
+    waiter = undefined;
+    try {
+      assertSandboxSecurityCandidateOutputAcknowledgement(value, current.expected);
+      current.resolve();
+    } catch {
+      current.reject(new Error(`${INVALID}:candidate_output_ack_invalid`));
+      rejectReader(new Error(`${INVALID}:candidate_output_ack_invalid`));
+    }
+  };
+
+  const onData = (chunk: string): void => {
+    if (closed) return;
+    pending += chunk;
+    if (Buffer.byteLength(pending, "utf8") > 64 * 1024) {
+      rejectReader(new Error(`${INVALID}:candidate_output_ack_too_large`));
+      return;
+    }
+    const lines = pending.split(/\r?\n/u);
+    pending = lines.pop() ?? "";
+    for (const line of lines) consumeLine(line);
+  };
+  const onEnd = (): void => {
+    if (closed) return;
+    if (pending.trim().length > 0) consumeLine(pending.trim());
+    if (!closed) {
+      rejectReader(new Error(`${INVALID}:candidate_output_ack_closed`));
+    }
+  };
+  const onError = (): void => {
+    rejectReader(new Error(`${INVALID}:candidate_output_ack_closed`));
+  };
+
+  process.stdin.setEncoding("utf8");
+  process.stdin.on("data", onData);
+  process.stdin.on("end", onEnd);
+  process.stdin.on("error", onError);
+
+  return {
+    waitFor(frame) {
+      const expected = {
+        output_event: frame.event,
+        ordinal:
+          frame.event === "candidate_progress"
+            ? frame.input_ordinal
+            : frame.decision_count
+      } as const;
+      if (queued.length > 0) {
+        const value = queued.shift();
+        try {
+          assertSandboxSecurityCandidateOutputAcknowledgement(value, expected);
+          return Promise.resolve();
+        } catch {
+          const error = new Error(`${INVALID}:candidate_output_ack_invalid`);
+          rejectReader(error);
+          return Promise.reject(error);
+        }
+      }
+      if (closed) {
+        return Promise.reject(
+          terminalError ?? new Error(`${INVALID}:candidate_output_ack_closed`)
+        );
+      }
+      return new Promise<void>((resolvePromise, rejectPromise) => {
+        if (waiter !== undefined) {
+          rejectPromise(new Error(`${INVALID}:candidate_output_ack_invalid`));
+          return;
+        }
+        waiter = Object.freeze({
+          expected,
+          resolve: resolvePromise,
+          reject: rejectPromise
+        });
+      });
+    },
+    dispose() {
+      process.stdin.off("data", onData);
+      process.stdin.off("end", onEnd);
+      process.stdin.off("error", onError);
+      process.stdin.pause();
+      queued = [];
+      pending = "";
+    }
+  };
+}
+
 export async function runSandboxSecurityLiveCapture(
-  rawPorts: Readonly<SandboxSecurityLiveCapturePorts>
+  rawPorts: Readonly<SandboxSecurityLiveCapturePorts>,
+  rawOptions: Readonly<SandboxSecurityLiveCaptureOptions> = {}
 ): Promise<Readonly<SandboxSecurityLiveCaptureResult>> {
   if (!isPlainObject(rawPorts)) fail("ports_invalid");
+  if (!isPlainObject(rawOptions)) fail("candidate_output_options_invalid");
+  const candidateOutput = rawOptions.candidate_output ?? "bound_file";
+  if (candidateOutput !== "bound_file" && candidateOutput !== "stream") {
+    fail("candidate_output_mode_invalid");
+  }
+  const outputFrameWriter = rawOptions.output_frame_writer;
+  if (
+    candidateOutput === "stream" &&
+    (outputFrameWriter === undefined ||
+      outputFrameWriter === null ||
+      typeof outputFrameWriter !== "object" ||
+      typeof outputFrameWriter.write !== "function")
+  ) {
+    fail("candidate_output_writer_missing");
+  }
+  if (candidateOutput === "bound_file" && outputFrameWriter !== undefined) {
+    fail("candidate_output_writer_unexpected");
+  }
   const productionProvenance = !isInjectableCapturePorts(rawPorts);
   const ports = snapshotLiveCapturePorts(rawPorts);
   rejectForbiddenPorts(ports, productionProvenance);
@@ -1010,11 +1296,22 @@ export async function runSandboxSecurityLiveCapture(
     (productionProvenance
       ? fail("capture_output_binding_invalid")
       : prepareInjectableCaptureOutput(captureOutputRoot));
-  const boundOutput = openBoundCaptureOutput(
-    captureOutputRoot,
-    captureOutputBinding
-  );
-  let boundOutputOpen = true;
+  const boundOutput =
+    candidateOutput === "bound_file"
+      ? openBoundCaptureOutput(captureOutputRoot, captureOutputBinding)
+      : null;
+  let boundOutputOpen = boundOutput !== null;
+
+  async function emitOutputFrame(frame: SandboxSecurityCandidateOutputFrame): Promise<void> {
+    if (outputFrameWriter === undefined) {
+      fail("candidate_output_writer_missing");
+    }
+    try {
+      await outputFrameWriter.write(frame);
+    } catch {
+      fail("candidate_output_write_failed");
+    }
+  }
 
   try {
   const liveConfig = resolveLiveCaptureConfig(ports);
@@ -1025,7 +1322,7 @@ export async function runSandboxSecurityLiveCapture(
 
   if (parentSignal?.aborted) fail("caller_cancelled");
 
-  // Judge readiness first: independent 20000 ms budget, no retry, not a decision.
+  // Judge readiness first: independent 40000 ms budget, no retry, not a decision.
   const readinessController = new AbortController();
   const onParentAbort = (): void => {
     readinessController.abort(parentSignal?.reason ?? "caller_cancelled");
@@ -1136,14 +1433,30 @@ export async function runSandboxSecurityLiveCapture(
     const envelope = frozenEnvelopes[index]!;
 
     sink.beginInput();
+    let completedDecision: SandboxSecurityDecision | undefined;
     try {
       const decision = await engine.evaluate(
         envelope.evaluation_request as never,
         parentSignal
       );
       decisions.push(decision);
+      completedDecision = decision;
     } finally {
       sink.endInput();
+    }
+    if (completedDecision !== undefined && candidateOutput === "stream") {
+      const frame: SandboxSecurityCandidateProgressFrame = {
+        schema_version: SANDBOX_SECURITY_CANDIDATE_OUTPUT_FRAME_SCHEMA_VERSION,
+        event: "candidate_progress",
+        input_ordinal: index + 1,
+        fixture_count: fixtureIds.length,
+        completed_count: decisions.length,
+        decision: buildSandboxSecurityCandidateDecisionEnvelope(
+          fixtureId,
+          completedDecision
+        )
+      };
+      await emitOutputFrame(frame);
     }
   }
   events.push("inputs_complete");
@@ -1188,22 +1501,36 @@ export async function runSandboxSecurityLiveCapture(
       ? "production_permissioned_v1"
       : "test_injected_v1"
   });
-  writeBoundCaptureOutput(boundOutput, written.staging_serialized);
-  closeSync(boundOutput.fd);
-  boundOutputOpen = false;
-  if (
-    !productionProvenance &&
-    (
-      typeof process.permission?.has !== "function" ||
-      process.permission.has("fs.write", captureOutputRoot)
-    )
-  ) {
-    materializeSandboxSecurityCandidatePackage({
-      capture_output_root: captureOutputRoot,
-      capture_output_binding: captureOutputBinding,
-      fixture_ids: fixtureIds,
-      candidate_package_sha256: written.candidate_package_sha256
-    });
+  if (candidateOutput === "stream") {
+    const finalFrame: SandboxSecurityCandidateCompleteFrame = {
+      schema_version: SANDBOX_SECURITY_CANDIDATE_OUTPUT_FRAME_SCHEMA_VERSION,
+      event: "capture_complete",
+      status: "capture_complete",
+      decision_count: decisions.length,
+      fixture_count: fixtureIds.length,
+      candidate_package_sha256: written.candidate_package_sha256,
+      staging_serialized: written.staging_serialized
+    };
+    await emitOutputFrame(finalFrame);
+  } else {
+    if (boundOutput === null) fail("candidate_output_writer_missing");
+    writeBoundCaptureOutput(boundOutput, written.staging_serialized);
+    closeSync(boundOutput.fd);
+    boundOutputOpen = false;
+    if (
+      !productionProvenance &&
+      (
+        typeof process.permission?.has !== "function" ||
+        process.permission.has("fs.write", captureOutputRoot)
+      )
+    ) {
+      materializeSandboxSecurityCandidatePackage({
+        capture_output_root: captureOutputRoot,
+        capture_output_binding: captureOutputBinding,
+        fixture_ids: fixtureIds,
+        candidate_package_sha256: written.candidate_package_sha256
+      });
+    }
   }
   events.push("candidate_written");
   events.push("capture_complete");
@@ -1232,7 +1559,7 @@ export async function runSandboxSecurityLiveCapture(
   } finally {
     if (boundOutputOpen) {
       try {
-        closeSync(boundOutput.fd);
+        if (boundOutput !== null) closeSync(boundOutput.fd);
       } catch {
         // Preserve the original fail-closed capture error.
       }
@@ -1298,14 +1625,46 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     fail("missing_cli_arguments");
   }
 
-  const result = await runSandboxSecurityLiveCapture({
-    bundle_root: options.bundle_root,
-    input_root: options.input_root,
-    capture_output_root: options.capture_output,
-    capture_output_binding: options.capture_output_binding,
-    inputs_tree_sha256: options.inputs_tree_sha256
-  });
-  process.stdout.write(`${result.stdout_summary}\n`);
+  const acknowledgementReader =
+    createSandboxSecurityCandidateAcknowledgementReader();
+  try {
+    await runSandboxSecurityLiveCapture(
+      {
+        bundle_root: options.bundle_root,
+        input_root: options.input_root,
+        capture_output_root: options.capture_output,
+        capture_output_binding: options.capture_output_binding,
+        inputs_tree_sha256: options.inputs_tree_sha256
+      },
+      {
+        candidate_output: "stream",
+        output_frame_writer: {
+          async write(frame) {
+            await new Promise<void>((resolvePromise, rejectPromise) => {
+              try {
+                process.stdout.write(
+                  `${JSON.stringify(frame)}\n`,
+                  "utf8",
+                  (error?: Error | null) => {
+                    if (error !== undefined && error !== null) {
+                      rejectPromise(error);
+                    } else {
+                      resolvePromise();
+                    }
+                  }
+                );
+              } catch (error) {
+                rejectPromise(error);
+              }
+            });
+            await acknowledgementReader.waitFor(frame);
+          }
+        }
+      }
+    );
+  } finally {
+    acknowledgementReader.dispose();
+  }
 }
 
 const entrypoint = process.argv[1];

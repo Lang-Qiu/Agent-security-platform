@@ -216,6 +216,14 @@ const result = await runSandboxSecurityLiveCapture({
   fixture_ids: ["ssb-v1-0001", "ssb-v1-0002"],
   skip_input_hash_check: true,
   require_live_config: () => {},
+  live_binding: {
+    ollama_digest: "sha256:${"0".repeat(64)}",
+    judge_protocol_id: "openai_responses_v1",
+    judge_endpoint_policy_id: "operator_https_fqdn_v1",
+    judge_base_url: "https://judge.example.test/v1",
+    judge_endpoint_url: "https://judge.example.test/v1/responses",
+    judge_requested_model: "gpt-5.4-mini"
+  },
   run_judge_readiness: async () => "permission-smoke-judge",
   runtime: {
     now: () => "2026-07-22T00:00:00.000Z",
@@ -273,7 +281,7 @@ const result = await runSandboxSecurityLiveCapture({
           stage: "user_input",
           policy_profile_id: "sandbox-security-balanced.v1",
           verdict: "no_detected_risk",
-          action: "allow",
+          action: decisionCount === 1 ? "allow" : "deny",
           risk_level: "info",
           findings: [],
           detector_runs: [],
@@ -626,6 +634,11 @@ test("REQ-SBX-GENERAL-002 parent launches only the fixed capture-live entrypoint
         "engines/sandbox/src/security-production/judge-protocol-adapter.ts"
       )
     ]) {
+      assert.equal(
+        existsSync(dependency),
+        true,
+        `capture child must contain mirrored dependency: ${dependency}`
+      );
       assert.ok(
         command.allow_fs_read.some(
           (path) => dependency === path || dependency.startsWith(`${path}${sep}`)

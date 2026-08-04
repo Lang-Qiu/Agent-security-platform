@@ -40,7 +40,7 @@ JSON Schema data, no new production dependency.
 ## Document Status
 
 - Requirement: `REQ-SBX-GENERAL-002`
-- Status: `IMPLEMENTATION_IN_PROGRESS`
+- Status: `IMPLEMENTATION_PENDING_FORMAL_P6_EVIDENCE`
 - Date: `2026-07-16`
 - Spec:
   `docs/superpowers/specs/2026-07-16-sandbox-security-production-detectors-spec.md`
@@ -53,13 +53,39 @@ JSON Schema data, no new production dependency.
 - Explicit Judge Protocol Selection amendment:
   `docs/superpowers/specs/2026-07-23-sandbox-security-explicit-judge-protocol-selection-amendment.md`
 - P6 timing amendment: the source-controlled
-  `p6_local_hardware_compatibility_v1` profile gives controlled P6 live capture
-  `20000ms` Judge readiness, Ollama qualification, warmed prewarm, local slot,
-  and Judge slot limits plus a `40000ms` normal work budget; ordinary production
-  composition and P7 hermetic replay retain the inherited GENERAL-001
-  `5000ms` normal budget and `100/1000/4000ms` detector slots
+  `p6_local_hardware_compatibility_v8` profile gives controlled P6 live capture
+  `40000ms` Judge readiness and `40000ms` Ollama qualification/warmed prewarm limits,
+  a `60000ms` local slot, a `300000ms` Judge slot, and a `360000ms` normal
+  work budget; ordinary production composition and P7 hermetic replay retain
+  the inherited GENERAL-001 `5000ms` normal budget and `100/1000/4000ms`
+  detector slots. The v2/v3 profiles are historical only.
+- P6 local prompt binding:
+  `sandbox-security-ollama-local-prompt.v2` adds the exact no-duplicate
+  `subject_refs` instruction discovered necessary by the first v2 run; capture,
+  replay, and seal reject prompt v1, and no retry or response repair is allowed
 - P6 local-hardware compatibility architecture amendment:
   `docs/superpowers/specs/2026-07-26-sandbox-security-p6-local-hardware-compatibility-amendment.md`
+- P6 local-hardware compatibility v2 amendment:
+  `docs/superpowers/specs/2026-07-31-sandbox-security-p6-local-hardware-compatibility-v2-amendment.md`
+- P6 Judge-latency compatibility v4 amendment:
+  `docs/superpowers/specs/2026-08-02-sandbox-security-p6-judge-latency-v4-amendment.md`;
+  controlled P6 live capture alone uses local `60000ms`, Judge `120000ms`, and
+  normal work `360000ms`, with no retry and no ordinary-production/P7 change
+- P6 Judge-readiness compatibility v5 amendment:
+  `docs/superpowers/specs/2026-08-03-sandbox-security-p6-judge-readiness-v5-amendment.md`;
+  newly produced P6 evidence uses `40000ms` readiness while preserving the v4
+  qualification, slot, work, ordinary-production, and P7 boundaries
+- P6 local-hardware compatibility v6 amendment:
+  `docs/superpowers/specs/2026-08-03-sandbox-security-p6-local-hardware-compatibility-v6-amendment.md`;
+  newly produced P6 evidence uses `40000ms` qualification and warmed prewarm
+  after the v5 post-readiness transport boundary, while preserving the v5
+  readiness, slot, work, ordinary-production, and P7 boundaries
+- Seven-Domain Judge Screening amendment:
+  `docs/superpowers/specs/2026-08-02-sandbox-security-seven-domain-judge-screening-amendment.md`;
+  ordinary `local` remains unchanged, while `local_and_judge` uses the exact
+  seven-domain unresolved routing set after a valid Ollama response. All timing,
+  thresholds, corpus, truth, sanitizer, protocol, and P7 replay boundaries stay
+  fixed. This supersedes the historical five-domain amendment.
 
 The amendments replace fixed Judge vendor/configuration and single-protocol
 assumptions in this plan. OpenAI-named transport operations and internal types

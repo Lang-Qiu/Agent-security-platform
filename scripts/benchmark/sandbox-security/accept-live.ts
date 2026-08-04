@@ -24,11 +24,13 @@ import {
   type SandboxSecurityP6AcceptanceEvaluationBinding
 } from "./p6-acceptance-protocol.ts";
 import {
+  assertSandboxSecurityLiveRootBinding,
   bindSandboxSecurityLiveRoots,
   writeSandboxSecurityExclusiveAtomicFile
 } from "./fs-snapshot.ts";
 import {
   assertSandboxSecurityLiveEnvironmentAbsent,
+  classifySandboxSecurityFailedStage,
   createSandboxSecurityCaptureWorkerEnvironment,
   createSandboxSecurityEvaluateWorkerEnvironment,
   createSandboxSecurityPrepareWorkerEnvironment,
@@ -50,6 +52,33 @@ const PREPARE_WORKER = join(SCRIPT_DIR, "prepare-live-worker.ts");
 const CAPTURE_WORKER = join(SCRIPT_DIR, "capture-live-worker.ts");
 const EVALUATE_WORKER = join(SCRIPT_DIR, "evaluate-live-worker.ts");
 const SEAL_WORKER = join(SCRIPT_DIR, "seal-live-worker.ts");
+const RECEIPT_LEDGER_ROOT = join(
+  REPOSITORY_ROOT,
+  "tmp/sandbox-security-p6-receipt-ledger"
+);
+
+function receiptRegistryPath(
+  receiptSha256: string,
+  consumer: "evaluation" | "seal"
+): string {
+  return join(RECEIPT_LEDGER_ROOT, `${receiptSha256}.${consumer}.token`);
+}
+
+function assertBoundLiveRoots(
+  bound: ReturnType<typeof bindSandboxSecurityLiveRoots>
+): void {
+  for (const root of [
+    bound.corpus_root,
+    bound.capture_parent_root,
+    bound.output_root
+  ]) {
+    assertSandboxSecurityLiveRootBinding({
+      root: root.real_path,
+      dev: root.dev.toString(10),
+      ino: root.ino.toString(10)
+    });
+  }
+}
 
 function fail(code: string): never {
   throw new Error(`${INVALID}:${code}`);
@@ -130,11 +159,15 @@ function runWorker(input: Readonly<{
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...input.worker_env }
   });
-  return Object.freeze({
+  const stageResult = Object.freeze({
     exit_code: result.status ?? 1,
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? ""
   });
+  if (stageResult.exit_code !== 0) {
+    throw new Error(classifySandboxSecurityFailedStage(stageResult));
+  }
+  return stageResult;
 }
 
 export async function runSandboxSecurityAcceptedLiveCapture(input: Readonly<{
@@ -180,6 +213,7 @@ export async function runSandboxSecurityAcceptedLiveCapture(input: Readonly<{
     capture_parent_root: resolve(input.capture_parent_root),
     output_root: resolve(input.output_root)
   });
+  assertBoundLiveRoots(bound);
   const corpusRoot = bound.corpus_root.real_path;
   const captureParentRoot = bound.capture_parent_root.real_path;
   const outputRoot = bound.output_root.real_path;
@@ -191,6 +225,7 @@ export async function runSandboxSecurityAcceptedLiveCapture(input: Readonly<{
     resolve(input.credential_env_file)
   );
   const runId = randomBytes(16).toString("hex");
+  mkdirSync(RECEIPT_LEDGER_ROOT, { recursive: true, mode: 0o700 });
 
   const workspace = join(captureParentRoot, `.p6-acceptance-${runId}`);
   mkdirSync(workspace, { mode: 0o700 });
@@ -215,7 +250,11 @@ export async function runSandboxSecurityAcceptedLiveCapture(input: Readonly<{
     worker: PREPARE_WORKER,
     args: [
       `--corpus-root=${corpusRoot}`,
+      `--corpus-dev=${bound.corpus_root.dev}`,
+      `--corpus-ino=${bound.corpus_root.ino}`,
       `--capture-parent-root=${captureParentRoot}`,
+      `--capture-parent-dev=${bound.capture_parent_root.dev}`,
+      `--capture-parent-ino=${bound.capture_parent_root.ino}`,
       `--descriptor-out=${descriptorPath}`
     ],
     worker_env: createSandboxSecurityPrepareWorkerEnvironment()
@@ -225,7 +264,18 @@ export async function runSandboxSecurityAcceptedLiveCapture(input: Readonly<{
   // Stage 2 → credentialed capture worker (six-variable env file only).
   const captured = runWorker({
     worker: CAPTURE_WORKER,
-    args: [`--descriptor=${descriptorPath}`],
+    args: [
+      `--descriptor=${descriptorPath}`,
+      `--corpus-root=${corpusRoot}`,
+      `--corpus-dev=${bound.corpus_root.dev}`,
+      `--corpus-ino=${bound.corpus_root.ino}`,
+      `--capture-parent-root=${captureParentRoot}`,
+      `--capture-parent-dev=${bound.capture_parent_root.dev}`,
+      `--capture-parent-ino=${bound.capture_parent_root.ino}`,
+      `--output-root=${outputRoot}`,
+      `--output-dev=${bound.output_root.dev}`,
+      `--output-ino=${bound.output_root.ino}`
+    ],
     worker_env: createSandboxSecurityCaptureWorkerEnvironment(),
     credential_env_file: credentialEnvFile
   });
@@ -235,6 +285,8 @@ export async function runSandboxSecurityAcceptedLiveCapture(input: Readonly<{
   // Bind the prepare → capture chain: the signed capture binding must carry the
   // exact input and code tree hashes the prepare worker reported.
   if (
+    captureBinding.bundle_descriptor_sha256 !==
+      prepareSummary.bundle_descriptor_sha256 ||
     captureBinding.inputs_tree_sha256 !== prepareSummary.inputs_tree_sha256 ||
     captureBinding.code_tree_sha256 !== prepareSummary.code_tree_sha256 ||
     captureBinding.fixture_count !== prepareSummary.fixture_count
@@ -254,15 +306,29 @@ export async function runSandboxSecurityAcceptedLiveCapture(input: Readonly<{
   });
   const captureReceiptSha256 =
     hashSandboxSecurityP6AcceptanceReceipt(captureReceipt);
+  const captureEvaluationRegistry = receiptRegistryPath(
+    captureReceiptSha256,
+    "evaluation"
+  );
+  const captureSealRegistry = receiptRegistryPath(captureReceiptSha256, "seal");
 
   // Stage 3 → truth-aware evaluator (uncredentialed, closed environment).
   const evaluated = runWorker({
     worker: EVALUATE_WORKER,
     args: [
       `--corpus-root=${corpusRoot}`,
+      `--corpus-dev=${bound.corpus_root.dev}`,
+      `--corpus-ino=${bound.corpus_root.ino}`,
+      `--capture-parent-root=${captureParentRoot}`,
+      `--capture-parent-dev=${bound.capture_parent_root.dev}`,
+      `--capture-parent-ino=${bound.capture_parent_root.ino}`,
+      `--output-root=${outputRoot}`,
+      `--output-dev=${bound.output_root.dev}`,
+      `--output-ino=${bound.output_root.ino}`,
       `--candidate-root=${candidateRoot}`,
       `--report-out=${reportPath}`,
       `--capture-receipt=${captureReceiptPath}`,
+      `--receipt-registry=${captureEvaluationRegistry}`,
       `--run-id=${runId}`
     ],
     worker_env: createSandboxSecurityEvaluateWorkerEnvironment()
@@ -297,17 +363,30 @@ export async function runSandboxSecurityAcceptedLiveCapture(input: Readonly<{
   });
   const evaluationReceiptSha256 =
     hashSandboxSecurityP6AcceptanceReceipt(evaluationReceipt);
+  const evaluationSealRegistry = receiptRegistryPath(
+    evaluationReceiptSha256,
+    "seal"
+  );
 
   // Stage 4 → truth-blind sealer (uncredentialed, closed environment).
   const sealed = runWorker({
     worker: SEAL_WORKER,
     args: [
       `--corpus-root=${corpusRoot}`,
+      `--corpus-dev=${bound.corpus_root.dev}`,
+      `--corpus-ino=${bound.corpus_root.ino}`,
+      `--capture-parent-root=${captureParentRoot}`,
+      `--capture-parent-dev=${bound.capture_parent_root.dev}`,
+      `--capture-parent-ino=${bound.capture_parent_root.ino}`,
       `--candidate-root=${candidateRoot}`,
       `--report=${reportPath}`,
       `--output-root=${outputRoot}`,
+      `--output-dev=${bound.output_root.dev}`,
+      `--output-ino=${bound.output_root.ino}`,
       `--capture-receipt=${captureReceiptPath}`,
+      `--capture-receipt-registry=${captureSealRegistry}`,
       `--evaluation-receipt=${evaluationReceiptPath}`,
+      `--evaluation-receipt-registry=${evaluationSealRegistry}`,
       `--run-id=${runId}`
     ],
     worker_env: createSandboxSecuritySealWorkerEnvironment()

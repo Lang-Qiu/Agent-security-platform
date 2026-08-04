@@ -7,17 +7,23 @@
  */
 
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   copyFileSync,
   cpSync,
+  closeSync,
+  constants as fsConstants,
   existsSync,
+  fsyncSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmdirSync,
+  unlinkSync,
   writeFileSync
 } from "node:fs";
 import {
@@ -41,6 +47,16 @@ import {
 } from "./contracts.ts";
 import { validateSandboxSecurityBenchmarkCorpus } from "./validate-corpus.ts";
 import { materializeSandboxSecurityCandidatePackage } from "./capture-candidate.ts";
+import {
+  appendSandboxSecurityCandidateOutputFrame,
+  assertSandboxSecurityCandidateStagingMatchesProgress,
+  createSandboxSecurityCandidateProgressDocument,
+  createSandboxSecurityCandidateOutputAcknowledgement,
+  markSandboxSecurityCandidateProgressFailed,
+  normalizeSandboxSecurityCandidateOutputFrame,
+  type SandboxSecurityCandidateCompleteFrame,
+  type SandboxSecurityCandidateOutputState
+} from "./candidate-progress.ts";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(SCRIPT_DIR, "../../..");
@@ -75,6 +91,7 @@ const FIXED_CODE_ALLOWLIST_RELATIVE: readonly string[] = Object.freeze([
   "scripts/benchmark/sandbox-security/contracts.ts",
   "scripts/benchmark/sandbox-security/capture-sink.ts",
   "scripts/benchmark/sandbox-security/capture-candidate.ts",
+  "scripts/benchmark/sandbox-security/candidate-progress.ts",
   FIXED_CAPTURE_LIVE_RELATIVE
 ]);
 
@@ -329,39 +346,115 @@ function assertCaptureOutputBinding(value: string): string {
   return value;
 }
 
-function parseCaptureChildSummary(stdout: string): Readonly<{
-  candidate_package_sha256: string;
-}> | null {
-  for (const line of stdout.trim().split(/\r?\n/u).reverse()) {
-    if (line.length === 0) continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line) as unknown;
-    } catch {
-      continue;
-    }
-    if (
-      parsed !== null &&
-      typeof parsed === "object" &&
-      !Array.isArray(parsed) &&
-      (parsed as { status?: unknown }).status === "capture_complete" &&
-      typeof (parsed as { candidate_package_sha256?: unknown })
-        .candidate_package_sha256 === "string" &&
-      SHA256.test(
-        (parsed as { candidate_package_sha256: string }).candidate_package_sha256
-      )
-    ) {
-      return Object.freeze({
-        candidate_package_sha256: (parsed as { candidate_package_sha256: string })
-          .candidate_package_sha256
-      });
-    }
-  }
-  return null;
+function sha256Text(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
 function candidateStagingPath(captureOutputRoot: string): string {
   return join(captureOutputRoot, CANDIDATE_STAGING_FILENAME);
+}
+
+export function writeSandboxSecurityCandidateFileAtomic(input: Readonly<{
+  capture_output_root: string;
+  serialized: string;
+}>): void {
+  if (
+    input === null ||
+    typeof input !== "object" ||
+    Array.isArray(input) ||
+    Object.keys(input).sort().join(",") !== "capture_output_root,serialized"
+  ) {
+    fail("capture_bundle_reject:candidate_atomic_input_invalid");
+  }
+  const captureOutputRoot = assertRealDirectory(
+    input.capture_output_root,
+    "capture_output_root"
+  );
+  if (captureOutputRoot !== resolve(input.capture_output_root)) {
+    fail("capture_bundle_reject:candidate_atomic_path_changed");
+  }
+  if (
+    typeof input.serialized !== "string" ||
+    input.serialized.length === 0 ||
+    Buffer.byteLength(input.serialized, "utf8") > 16 * 1024 * 1024
+  ) {
+    fail("capture_bundle_reject:candidate_atomic_size_invalid");
+  }
+  try {
+    JSON.parse(input.serialized) as unknown;
+  } catch {
+    fail("capture_bundle_reject:candidate_atomic_json_invalid");
+  }
+
+  const target = candidateStagingPath(captureOutputRoot);
+  let targetStat;
+  try {
+    targetStat = lstatSync(target, { bigint: true });
+  } catch {
+    fail("capture_bundle_reject:candidate_staging_invalid");
+  }
+  if (
+    targetStat.isSymbolicLink() ||
+    !targetStat.isFile() ||
+    targetStat.nlink !== 1n
+  ) {
+    fail("capture_bundle_reject:candidate_staging_invalid");
+  }
+
+  const temporaryPath = join(
+    captureOutputRoot,
+    `.${CANDIDATE_STAGING_FILENAME}.${randomUUID()}.tmp`
+  );
+  let temporaryFd: number | undefined;
+  let renamed = false;
+  try {
+    temporaryFd = openSync(
+      temporaryPath,
+      fsConstants.O_WRONLY |
+        fsConstants.O_CREAT |
+        fsConstants.O_EXCL |
+        fsConstants.O_NOFOLLOW,
+      0o600
+    );
+    writeFileSync(temporaryFd, input.serialized, { encoding: "utf8" });
+    fsyncSync(temporaryFd);
+    closeSync(temporaryFd);
+    temporaryFd = undefined;
+    renameSync(temporaryPath, target);
+    renamed = true;
+
+    const directoryFd = openSync(captureOutputRoot, fsConstants.O_RDONLY);
+    try {
+      fsyncSync(directoryFd);
+    } finally {
+      closeSync(directoryFd);
+    }
+  } catch {
+    if (temporaryFd !== undefined) {
+      try {
+        closeSync(temporaryFd);
+      } catch {
+        // Preserve the atomic-write failure.
+      }
+    }
+    if (!renamed) {
+      try {
+        unlinkSync(temporaryPath);
+      } catch {
+        // The temporary file may not have been created.
+      }
+    }
+    fail("capture_bundle_reject:candidate_atomic_write_failed");
+  }
+}
+
+export function consumeSandboxSecurityCaptureOutputLines(
+  lines: readonly string[],
+  consumeLine: (line: string) => boolean
+): void {
+  for (const line of lines) {
+    if (!consumeLine(line)) break;
+  }
 }
 
 
@@ -908,33 +1001,159 @@ export async function launchSandboxSecurityCaptureChild(input: Readonly<{
   }
 
   try {
-  // stdio: ignore stdin, capture stdout/stderr. No fd inheritance beyond that.
-  const childResult = await new Promise<Readonly<SandboxSecurityCaptureChildResult>>((resolvePromise, rejectPromise) => {
+  let progress = createSandboxSecurityCandidateProgressDocument(
+    input.bundle.fixture_ids
+  );
+  writeSandboxSecurityCandidateFileAtomic({
+    capture_output_root: input.bundle.capture_output_root,
+    serialized: `${JSON.stringify(progress)}\n`
+  });
+
+  let outputState: SandboxSecurityCandidateOutputState = Object.freeze({
+    progress
+  });
+  let completeFrame: SandboxSecurityCandidateCompleteFrame | undefined;
+  let protocolFailure: string | undefined;
+  const childResult = await new Promise<Readonly<SandboxSecurityCaptureChildResult>>((resolvePromise) => {
     const child = spawn(command.exec_path, [...command.args], {
       cwd: command.cwd,
       env: selectSandboxSecurityCaptureChildEnvironment(process.env),
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
       // Never pass custom uid/gid or detached with inherited sockets.
       windowsHide: true
     });
 
     let stdout = "";
     let stderr = "";
+    let pending = "";
+    let childKilled = false;
+
+    const rejectProtocol = (code: string): void => {
+      if (protocolFailure !== undefined) return;
+      protocolFailure = code;
+      if (!childKilled) {
+        childKilled = true;
+        child.kill("SIGKILL");
+      }
+    };
+
+    const acknowledgeFrame = (
+      frame: Readonly<
+        ReturnType<typeof normalizeSandboxSecurityCandidateOutputFrame>
+      >
+    ): void => {
+      if (protocolFailure !== undefined) return;
+      try {
+        if (child.stdin === null || !child.stdin.writable) {
+          throw new Error("candidate_output_ack_pipe_closed");
+        }
+        child.stdin.write(
+          `${JSON.stringify(createSandboxSecurityCandidateOutputAcknowledgement(frame))}\n`,
+          "utf8"
+        );
+        if (frame.event === "capture_complete") {
+          child.stdin.end();
+        }
+      } catch {
+        rejectProtocol("capture_bundle_reject:capture_output_ack_failed");
+      }
+    };
+
+    const consumeLine = (line: string): boolean => {
+      if (protocolFailure !== undefined) return false;
+      if (line.length === 0) return true;
+      let raw: unknown;
+      try {
+        raw = JSON.parse(line) as unknown;
+      } catch {
+        rejectProtocol("capture_bundle_reject:capture_child_protocol_invalid");
+        return false;
+      }
+      let frame;
+      try {
+        frame = normalizeSandboxSecurityCandidateOutputFrame(
+          raw,
+          input.bundle.fixture_ids
+        );
+      } catch {
+        rejectProtocol("capture_bundle_reject:capture_child_protocol_invalid");
+        return false;
+      }
+      try {
+        const nextState = appendSandboxSecurityCandidateOutputFrame(
+          outputState,
+          frame,
+          input.bundle.fixture_ids
+        );
+        if (frame.event === "candidate_progress") {
+          writeSandboxSecurityCandidateFileAtomic({
+            capture_output_root: input.bundle.capture_output_root,
+            serialized: `${JSON.stringify(nextState.progress)}\n`
+          });
+        } else {
+          if (
+            sha256Text(frame.staging_serialized) !==
+            frame.candidate_package_sha256
+          ) {
+            throw new TypeError("candidate_package_hash_mismatch");
+          }
+          assertSandboxSecurityCandidateStagingMatchesProgress(
+            frame.staging_serialized,
+            nextState.progress,
+            input.bundle.fixture_ids
+          );
+          writeSandboxSecurityCandidateFileAtomic({
+            capture_output_root: input.bundle.capture_output_root,
+            serialized: frame.staging_serialized
+          });
+        }
+        outputState = nextState;
+        progress = nextState.progress;
+        completeFrame = nextState.complete_frame;
+        acknowledgeFrame(frame);
+        return protocolFailure === undefined;
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("candidate_package_hash_mismatch")) {
+          rejectProtocol("capture_bundle_reject:candidate_package_hash_mismatch");
+        } else if (
+          error instanceof Error &&
+          error.message.startsWith("sandbox_security_candidate_progress_invalid:")
+        ) {
+          rejectProtocol("capture_bundle_reject:capture_child_protocol_invalid");
+        } else {
+          rejectProtocol("capture_bundle_reject:capture_progress_write_failed");
+        }
+        return false;
+      }
+    };
+
     child.stdout?.setEncoding("utf8");
     child.stderr?.setEncoding("utf8");
     child.stdout?.on("data", (chunk: string) => {
+      if (protocolFailure !== undefined) return;
       stdout += chunk;
+      if (Buffer.byteLength(stdout, "utf8") > 32 * 1024 * 1024) {
+        rejectProtocol("capture_bundle_reject:capture_child_output_too_large");
+        return;
+      }
+      pending += chunk;
+      const lines = pending.split(/\r?\n/u);
+      pending = lines.pop() ?? "";
+      consumeSandboxSecurityCaptureOutputLines(lines, consumeLine);
     });
     child.stderr?.on("data", (chunk: string) => {
       stderr += chunk;
     });
-    child.on("error", (error) => {
-      rejectPromise(error);
+    child.on("error", () => {
+      rejectProtocol("capture_bundle_reject:capture_child_failed");
     });
     child.on("close", (code) => {
+      if (protocolFailure === undefined && pending.trim().length > 0) {
+        consumeLine(pending.trim());
+      }
       resolvePromise(
         Object.freeze({
-          exit_code: code ?? 1,
+          exit_code: protocolFailure === undefined ? code ?? 1 : 1,
           stdout,
           stderr
         })
@@ -944,27 +1163,72 @@ export async function launchSandboxSecurityCaptureChild(input: Readonly<{
 
   let candidateRoot: string | undefined;
   let candidatePackageSha256: string | undefined;
-  if (childResult.exit_code === 0) {
-    const summary = parseCaptureChildSummary(childResult.stdout);
-    if (summary === null) {
-      fail("capture_bundle_reject:capture_child_summary_missing");
-    }
-    const commandArg = command.args.find((arg) =>
-      arg.startsWith("--capture-output-binding=")
+  if (childResult.exit_code !== 0 || protocolFailure !== undefined) {
+    const failureCode =
+      protocolFailure ?? sanitizeSandboxSecurityCaptureChildStderr(childResult.stderr);
+    const failed = markSandboxSecurityCandidateProgressFailed(
+      progress,
+      failureCode,
+      input.bundle.fixture_ids
     );
-    const captureOutputBinding =
-      typeof commandArg === "string"
-        ? assertCaptureOutputBinding(
-            commandArg.slice("--capture-output-binding=".length)
-          )
-        : fail("capture_bundle_reject:capture_output_binding_missing");
-    candidateRoot = materializeSandboxSecurityCandidatePackage({
+    writeSandboxSecurityCandidateFileAtomic({
       capture_output_root: input.bundle.capture_output_root,
-      capture_output_binding: captureOutputBinding,
-      fixture_ids: input.bundle.fixture_ids,
-      candidate_package_sha256: summary.candidate_package_sha256
+      serialized: `${JSON.stringify(failed)}\n`
     });
-    candidatePackageSha256 = summary.candidate_package_sha256;
+  } else {
+    try {
+      if (completeFrame === undefined) {
+        fail("capture_bundle_reject:capture_child_summary_missing");
+      }
+      if (progress.completed_count !== input.bundle.fixture_ids.length) {
+        fail("capture_bundle_reject:capture_progress_count_mismatch");
+      }
+      if (
+        sha256Text(completeFrame.staging_serialized) !==
+        completeFrame.candidate_package_sha256
+      ) {
+        fail("capture_bundle_reject:candidate_package_hash_mismatch");
+      }
+      assertSandboxSecurityCandidateStagingMatchesProgress(
+        completeFrame.staging_serialized,
+        progress,
+        input.bundle.fixture_ids
+      );
+      const stagingPath = candidateStagingPath(input.bundle.capture_output_root);
+      const stagingStat = lstatSync(stagingPath, { bigint: true });
+      if (
+        stagingStat.isSymbolicLink() ||
+        !stagingStat.isFile() ||
+        stagingStat.nlink !== 1n
+      ) {
+        fail("capture_bundle_reject:candidate_staging_invalid");
+      }
+      const captureOutputBinding = assertCaptureOutputBinding(
+        captureOutputBindingFromStat(stagingStat)
+      );
+      candidateRoot = materializeSandboxSecurityCandidatePackage({
+        capture_output_root: input.bundle.capture_output_root,
+        capture_output_binding: captureOutputBinding,
+        fixture_ids: input.bundle.fixture_ids,
+        candidate_package_sha256: completeFrame.candidate_package_sha256
+      });
+      candidatePackageSha256 = completeFrame.candidate_package_sha256;
+    } catch (error) {
+      const failed = markSandboxSecurityCandidateProgressFailed(
+        progress,
+        "capture_bundle_reject:candidate_staging_invalid",
+        input.bundle.fixture_ids
+      );
+      try {
+        writeSandboxSecurityCandidateFileAtomic({
+          capture_output_root: input.bundle.capture_output_root,
+          serialized: `${JSON.stringify(failed)}\n`
+        });
+      } catch {
+        // Preserve the original fail-closed candidate error.
+      }
+      throw error;
+    }
   }
 
   return Object.freeze({

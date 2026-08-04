@@ -15,7 +15,10 @@ import {
   normalizeSandboxSecurityPreparedBundleDescriptor,
   prepareSandboxSecurityCaptureBundle
 } from "./prepare-capture-bundle.ts";
-import { writeSandboxSecurityExclusiveAtomicFile } from "./fs-snapshot.ts";
+import {
+  assertSandboxSecurityLiveRootBinding,
+  writeSandboxSecurityExclusiveAtomicFile
+} from "./fs-snapshot.ts";
 import { assertSandboxSecurityLiveEnvironmentAbsent } from "./stage-protocol.ts";
 
 const INVALID = "sandbox_security_prepare_worker_reject";
@@ -52,7 +55,11 @@ function canonicalJson(value: unknown): string {
 
 interface PrepareWorkerOptions {
   readonly corpus_root: string;
+  readonly corpus_dev: string;
+  readonly corpus_ino: string;
   readonly capture_parent_root: string;
+  readonly capture_parent_dev: string;
+  readonly capture_parent_ino: string;
   readonly descriptor_out: string;
 }
 
@@ -60,11 +67,23 @@ function parseArgv(argv: readonly string[]): PrepareWorkerOptions {
   let corpusRoot: string | undefined;
   let captureParentRoot: string | undefined;
   let descriptorOut: string | undefined;
+  let corpusDev: string | undefined;
+  let corpusIno: string | undefined;
+  let captureParentDev: string | undefined;
+  let captureParentIno: string | undefined;
   for (const token of argv) {
     if (token.startsWith("--corpus-root=")) {
       corpusRoot = token.slice("--corpus-root=".length);
+    } else if (token.startsWith("--corpus-dev=")) {
+      corpusDev = token.slice("--corpus-dev=".length);
+    } else if (token.startsWith("--corpus-ino=")) {
+      corpusIno = token.slice("--corpus-ino=".length);
     } else if (token.startsWith("--capture-parent-root=")) {
       captureParentRoot = token.slice("--capture-parent-root=".length);
+    } else if (token.startsWith("--capture-parent-dev=")) {
+      captureParentDev = token.slice("--capture-parent-dev=".length);
+    } else if (token.startsWith("--capture-parent-ino=")) {
+      captureParentIno = token.slice("--capture-parent-ino=".length);
     } else if (token.startsWith("--descriptor-out=")) {
       descriptorOut = token.slice("--descriptor-out=".length);
     } else {
@@ -73,21 +92,33 @@ function parseArgv(argv: readonly string[]): PrepareWorkerOptions {
   }
   if (
     corpusRoot === undefined ||
+    corpusDev === undefined ||
+    corpusIno === undefined ||
     captureParentRoot === undefined ||
+    captureParentDev === undefined ||
+    captureParentIno === undefined ||
     descriptorOut === undefined
   ) {
     fail("missing_cli_arguments");
   }
   return Object.freeze({
     corpus_root: corpusRoot,
+    corpus_dev: corpusDev,
+    corpus_ino: corpusIno,
     capture_parent_root: captureParentRoot,
+    capture_parent_dev: captureParentDev,
+    capture_parent_ino: captureParentIno,
     descriptor_out: descriptorOut
   });
 }
 
 export async function runSandboxSecurityPrepareWorker(input: Readonly<{
   corpus_root: string;
+  corpus_dev: string;
+  corpus_ino: string;
   capture_parent_root: string;
+  capture_parent_dev: string;
+  capture_parent_ino: string;
   descriptor_out: string;
 }>): Promise<Readonly<{
   status: "prepare_complete";
@@ -98,8 +129,16 @@ export async function runSandboxSecurityPrepareWorker(input: Readonly<{
 }>> {
   assertSandboxSecurityLiveEnvironmentAbsent();
 
-  const corpusRoot = resolve(input.corpus_root);
-  const captureParentReal = resolve(input.capture_parent_root);
+  const corpusRoot = assertSandboxSecurityLiveRootBinding({
+    root: resolve(input.corpus_root),
+    dev: input.corpus_dev,
+    ino: input.corpus_ino
+  }).real_path;
+  const captureParentReal = assertSandboxSecurityLiveRootBinding({
+    root: resolve(input.capture_parent_root),
+    dev: input.capture_parent_dev,
+    ino: input.capture_parent_ino
+  }).real_path;
   const bundle = await prepareSandboxSecurityCaptureBundle({
     corpus_root: corpusRoot,
     output_root: captureParentReal

@@ -1,9 +1,13 @@
 # P6 Local Hardware Compatibility Amendment
 
+> Superseded for controlled live capture on `2026-07-31` by
+> `2026-07-31-sandbox-security-p6-local-hardware-compatibility-v2-amendment.md`.
+> This file remains the historical v1 decision record.
+
 ## Document Status
 
 - Requirement: `REQ-SBX-GENERAL-002`
-- Status: `SPEC_AMENDMENT_APPROVED_IMPLEMENTATION_IN_PROGRESS`
+- Status: `SUPERSEDED_BY_P6_LOCAL_HARDWARE_COMPATIBILITY_V2`
 - Date: `2026-07-26`
 - Scope: controlled P6 live-capture timing only
 - Authority: the operator approved the `20000ms` / `40000ms` limits and

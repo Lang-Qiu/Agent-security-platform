@@ -32,7 +32,7 @@ must retain the same resolved model. OpenAI-named operations below are
 wire-format labels only.
 
 P7 validates the sealed P6 execution-profile provenance but does not inherit
-the live-only `p6_local_hardware_compatibility_v1` limits. Hermetic replay uses
+the live-only `p6_local_hardware_compatibility_v8` limits. Hermetic replay uses
 the ordinary production composition with the inherited GENERAL-001 `5000ms`
 normal work budget and `100/1000/4000ms` rule/local/Judge detector slots.
 

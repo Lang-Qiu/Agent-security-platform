@@ -17,7 +17,7 @@ const ollamaContractPath = new URL(
 
 type OllamaContractModule = {
   readonly SANDBOX_SECURITY_OLLAMA_LOCAL_PROMPT_VERSION:
-    "sandbox-security-ollama-local-prompt.v1";
+    "sandbox-security-ollama-local-prompt.v2";
   createSandboxSecurityOllamaChatRequest(
     snapshot: Readonly<SandboxSecurityRawDetectorSnapshot>
   ): Readonly<{ body: Uint8Array }>;
@@ -30,7 +30,7 @@ type OllamaContractModule = {
 
 const inertOllamaContractModule: OllamaContractModule = {
   SANDBOX_SECURITY_OLLAMA_LOCAL_PROMPT_VERSION:
-    "sandbox-security-ollama-local-prompt.v1",
+    "sandbox-security-ollama-local-prompt.v2",
   createSandboxSecurityOllamaChatRequest() {
     return { body: new Uint8Array() };
   },
@@ -65,7 +65,8 @@ const EXPECTED_SYSTEM_PROMPT =
   "explain, quote source text, emit a clearance, invent a category, invent a\n" +
   "subject, or use any identifier other than a supplied source ordinal or fixed\n" +
   "tool component. Return status no_match with an empty candidates array when no\n" +
-  "risk candidate is supported by the supplied data.";
+  "risk candidate is supported by the supplied data.\n" +
+  "Each candidate's subject_refs array must contain no duplicate references.";
 
 const EXPECTED_FORMAT = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -397,16 +398,16 @@ test("REQ-SBX-GENERAL-002 Ollama prompt version and prewarm bytes are fixed", ()
   const expected = expectedRequestBytes(PREWARM_USER_MESSAGE);
   assert.equal(
     sha256(encoder.encode(EXPECTED_SYSTEM_PROMPT)),
-    "66203fcf01a54e0a3b0666ad952075b927a062411d0baad4230f51d71acf0553"
+    "e2632e29c2720f8f3c34436fe5daf6a7f251f5e912c3effeb21beccf56e4c196"
   );
-  assert.equal(expected.byteLength, 2411);
+  assert.equal(expected.byteLength, 2486);
   assert.equal(
     sha256(expected),
-    "8467159d8ed46259145bf3684514c8b9e5b222922381bde7eecb09e5858cca98"
+    "d485c1671c61545499447b6b496ff2f965df4f93d0b43797d7ee105da874e486"
   );
   assert.equal(
     SANDBOX_SECURITY_OLLAMA_LOCAL_PROMPT_VERSION,
-    "sandbox-security-ollama-local-prompt.v1"
+    "sandbox-security-ollama-local-prompt.v2"
   );
 
   const first = createSandboxSecurityOllamaPrewarmRequest();

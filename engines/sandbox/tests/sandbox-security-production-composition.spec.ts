@@ -38,7 +38,8 @@ interface CompositionPorts {
     transport: SandboxSecurityHttpTransport;
     expected_digest: string;
     signal: AbortSignal;
-    qualification_timeout_ms: 1000 | 20000;
+    qualification_timeout_ms: 1000 | 40000;
+    judge_screening_mode: "disabled" | "seven_domain_v2";
   }>): Promise<RawLocalDetector>;
   create_external_pipeline(input: Readonly<{
     transport: SandboxSecurityHttpTransport;
@@ -201,7 +202,8 @@ function portsHarness() {
         transport: SandboxSecurityHttpTransport;
         expected_digest: string;
         signal: AbortSignal;
-        qualification_timeout_ms: 1000 | 20000;
+        qualification_timeout_ms: 1000 | 40000;
+        judge_screening_mode: "disabled" | "seven_domain_v2";
       }>
     | undefined;
   let pipelineTransport: SandboxSecurityHttpTransport | undefined;
@@ -324,6 +326,10 @@ for (const mode of ["local", "local_and_judge"] as const) {
     assert.equal(harness.local_input?.transport, TRANSPORT);
     assert.equal(harness.local_input?.expected_digest, DIGEST);
     assert.equal(harness.local_input?.qualification_timeout_ms, 1000);
+    assert.equal(
+      harness.local_input?.judge_screening_mode,
+      mode === "local_and_judge" ? "seven_domain_v2" : "disabled"
+    );
     assert.equal(harness.local_input?.signal instanceof AbortSignal, true);
     assert.equal(harness.local_input?.signal.aborted, false);
     assert.equal(
@@ -398,7 +404,7 @@ for (const scenario of [
   });
 }
 
-test("REQ-SBX-GENERAL-002 P6 live capture isolates the approved 20000 ms Ollama qualification policy", async () => {
+test("REQ-SBX-GENERAL-002 P6 v8 live capture isolates the approved 40000 ms Ollama qualification policy", async () => {
   if (createLiveCaptureWithPorts === undefined) {
     assert.fail("missing P6-only live capture composition entrypoint");
   }
@@ -411,12 +417,10 @@ test("REQ-SBX-GENERAL-002 P6 live capture isolates the approved 20000 ms Ollama 
   );
 
   assert.equal(typeof engine.evaluate, "function");
-  assert.deepEqual(runtime.delays, [
-    SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.qualification_timeout_ms
-  ]);
+  assert.deepEqual(runtime.delays, [40000]);
   assert.equal(
     harness.local_input?.qualification_timeout_ms,
-    SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.qualification_timeout_ms
+    40000
   );
   assert.deepEqual(harness.calls, [
     "config:local_and_judge",
@@ -427,14 +431,14 @@ test("REQ-SBX-GENERAL-002 P6 live capture isolates the approved 20000 ms Ollama 
 
   await engine.evaluate(evaluationRequest());
   assert.deepEqual(runtime.delays, [
-    SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.qualification_timeout_ms,
+    40000,
     100,
     SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.local_detector_slot_timeout_ms
   ]);
   assert.equal(runtime.cancellation_count, 3);
 });
 
-test("REQ-SBX-GENERAL-002 P6 live capture uses 40000 ms work budget and 20000 ms Judge slot only in live path", async () => {
+test("REQ-SBX-GENERAL-002 P6 v8 uses 360000 ms work budget and keeps the 300000 ms Judge slot only in live path", async () => {
   if (createLiveCaptureWithPorts === undefined) {
     assert.fail("missing P6-only live capture composition entrypoint");
   }
@@ -513,6 +517,26 @@ test("REQ-SBX-GENERAL-002 P6 live capture uses 40000 ms work budget and 20000 ms
     SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.judge_detector_slot_timeout_ms
   ]);
   assert.equal(cancellationCount, 4);
+});
+
+test("REQ-SBX-GENERAL-002 P6 v8 raises only the Judge long-tail boundary", () => {
+  assert.deepEqual(SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING, {
+    readiness_timeout_ms: 40000,
+    qualification_timeout_ms: 40000,
+    local_detector_slot_timeout_ms: 60000,
+    judge_detector_slot_timeout_ms: 300000,
+    normal_work_budget_ms: 360000
+  });
+});
+
+test("REQ-SBX-GENERAL-002 P6 v8 bounds the repeated Judge long tail without changing local timing", () => {
+  assert.deepEqual(SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING, {
+    readiness_timeout_ms: 40000,
+    qualification_timeout_ms: 40000,
+    local_detector_slot_timeout_ms: 60000,
+    judge_detector_slot_timeout_ms: 300000,
+    normal_work_budget_ms: 360000
+  });
 });
 
 test("REQ-SBX-GENERAL-002 P6 work budget remains available one millisecond below the approved boundary", async () => {

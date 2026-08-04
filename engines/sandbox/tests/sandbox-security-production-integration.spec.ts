@@ -486,7 +486,6 @@ function replayTransport(routed = false) {
         localConsumed = true;
         return ollamaResponse(routed);
       }
-      assert.equal(routed, true);
       assert.equal(localConsumed, true);
       assert.equal(judgeConsumed, false);
       assert.equal(input.provider, "openai");
@@ -506,8 +505,14 @@ function replayTransport(routed = false) {
       const payload = JSON.parse(
         (prompt as string).slice(start.length, -end.length)
       ) as { routed_obligations?: readonly { obligation_id?: unknown }[] };
-      const obligationId = payload.routed_obligations?.[0]?.obligation_id;
-      assert.equal(typeof obligationId, "string");
+      const obligations = payload.routed_obligations;
+      assert.equal(obligations?.length, 7);
+      assert.equal(
+        obligations?.every(
+          (obligation) => typeof obligation.obligation_id === "string"
+        ),
+        true
+      );
       return Object.freeze({
         status: 200,
         content_type: "application/json",
@@ -524,12 +529,14 @@ function replayTransport(routed = false) {
               type: "output_text",
               text: JSON.stringify({
                 schema_version: "sandbox-security-judge.v1",
-                obligation_results: [{
-                  obligation_id: obligationId,
-                  outcome: "risk",
-                  confidence: "probable",
-                  severity: "high"
-                }]
+                obligation_results: obligations!.map(
+                  (obligation, index) => ({
+                    obligation_id: obligation.obligation_id,
+                    outcome: routed && index === 0 ? "risk" : "clearance",
+                    confidence: "probable",
+                    severity: routed && index === 0 ? "high" : null
+                  })
+                )
               })
             }]
           }]
@@ -545,7 +552,7 @@ function replayTransport(routed = false) {
     endInput() {
       assert.equal(phase, "input");
       assert.equal(localConsumed, true);
-      assert.equal(judgeConsumed, routed);
+      assert.equal(judgeConsumed, true);
       phase = "ready";
     },
     assertDrained() {
@@ -554,7 +561,7 @@ function replayTransport(routed = false) {
         "ollama:model_inventory",
         "ollama:chat",
         "ollama:chat",
-        ...(routed ? ["openai:responses"] : [])
+        "openai:responses"
       ]);
     }
   });

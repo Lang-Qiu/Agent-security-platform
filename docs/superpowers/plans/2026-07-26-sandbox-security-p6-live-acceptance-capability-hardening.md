@@ -370,7 +370,8 @@ the local mode-`600` acceptance key, fresh capture parent, and intended output.
 Never print environment values or worker bodies.
 
 Expected: Judge readiness, five warmed Ollama probes, 300 evaluations, accepted
-metrics, signed seal, and empty successful worker stderr within `20s/40s`.
+metrics, signed seal, and empty successful worker stderr within the v2
+`60s` local / `20s` Judge / `80s` work profile.
 
 - [ ] **Step 4: Validate real evidence**
 
@@ -395,4 +396,3 @@ VERIFIED.
   `signature_base64url` are consistent from Task 1 through Task 8.
 - Scope: this closes only the corrective P6-T4 blocker. P7 remains under its
   existing Phase 7 plan and starts only after Task 8.
-

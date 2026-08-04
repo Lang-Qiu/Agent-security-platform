@@ -91,9 +91,9 @@ interface SealedProviderConfig {
   judge_requested_model: string;
   judge_resolved_model: string;
   judge_binding_sha256: string;
-  local_prompt_version: "sandbox-security-ollama-local-prompt.v1";
+  local_prompt_version: "sandbox-security-ollama-local-prompt.v2";
   local_schema_version: "sandbox-security-local-model.v1";
-  judge_prompt_version: "sandbox-security-openai-judge-prompt.v1";
+  judge_prompt_version: "sandbox-security-openai-judge-prompt.v2";
   judge_schema_version: "sandbox-security-judge.v1";
   rule_catalog_version: string;
   sanitizer_version: string;
@@ -214,9 +214,9 @@ function sealedConfig(
     ollama_digest: DIGEST,
     ...binding,
     judge_binding_sha256: hashSandboxSecurityBenchmarkJudgeBinding(binding),
-    local_prompt_version: "sandbox-security-ollama-local-prompt.v1",
+    local_prompt_version: "sandbox-security-ollama-local-prompt.v2",
     local_schema_version: "sandbox-security-local-model.v1",
-    judge_prompt_version: "sandbox-security-openai-judge-prompt.v1",
+    judge_prompt_version: "sandbox-security-openai-judge-prompt.v2",
     judge_schema_version: "sandbox-security-judge.v1",
     rule_catalog_version: SANDBOX_SECURITY_PRODUCTION_RULE_CATALOG_VERSION,
     sanitizer_version: SANDBOX_SECURITY_DETERMINISTIC_SANITIZER_VERSION,
@@ -467,20 +467,23 @@ function ollamaNormalized(
   });
 }
 
-function openAiNormalized(): SandboxSecurityReplayOpenAIResponse {
+function openAiNormalized(
+  obligationCount = 1
+): SandboxSecurityReplayOpenAIResponse {
   return normalizeSandboxSecurityReplayOpenAIResponse({
     model: "gpt-5.4-mini",
     status: "completed",
     parsed: {
       schema_version: "sandbox-security-judge.v1",
-      obligation_results: [
-        {
-          obligation_ordinal: 1,
+      obligation_results: Array.from(
+        { length: obligationCount },
+        (_, index) => ({
+          obligation_ordinal: index + 1,
           outcome: "clearance",
           confidence: "probable",
           severity: null
-        }
-      ]
+        })
+      )
     }
   });
 }
@@ -706,7 +709,13 @@ function ollamaWire(
 
 function openAiWire(
   normalized: SandboxSecurityReplayOpenAIResponse,
-  requestBody: Uint8Array
+  requestBody: Uint8Array,
+  inspectPayload?: (payload: Readonly<{
+    routed_obligations: readonly {
+      obligation_id: string;
+      category: string;
+    }[];
+  }>) => void
 ): Readonly<SandboxSecurityHttpResponse> {
   const requestEnvelope = JSON.parse(DECODER.decode(requestBody)) as {
     input?: readonly {
@@ -723,8 +732,12 @@ function openAiWire(
   assert.equal(text.startsWith(start), true);
   assert.equal(text.endsWith(end), true);
   const payload = JSON.parse(text.slice(start.length, -end.length)) as {
-    routed_obligations: readonly { obligation_id: string }[];
+    routed_obligations: readonly {
+      obligation_id: string;
+      category: string;
+    }[];
   };
+  inspectPayload?.(payload);
   const obligationResults = normalized.parsed.obligation_results.map((result) => {
     const obligation = payload.routed_obligations[result.obligation_ordinal - 1];
     assert.ok(obligation);
@@ -958,11 +971,9 @@ function withProductionEnvironment(action: () => Promise<void>): Promise<void> {
 
 test("REQ-SBX-GENERAL-002 live composition captures qualification before return then anonymous evaluation slots", async () => {
   const operations: string[] = [];
+  let judgeCategories: string[] = [];
   const transport = Object.freeze({
-    async request(input: Readonly<{
-      provider: "ollama" | "openai";
-      operation: string;
-    }>) {
+    async request(input: Readonly<SandboxSecurityHttpRequest>) {
       operations.push(`${input.provider}:${input.operation}`);
       if (input.provider === "ollama" && input.operation === "model_inventory") {
         return Object.freeze({
@@ -997,6 +1008,13 @@ test("REQ-SBX-GENERAL-002 live composition captures qualification before return 
             }
           })),
           verified_ollama_digest: DIGEST
+        });
+      }
+      if (input.provider === "openai" && input.operation === "responses") {
+        return openAiWire(openAiNormalized(7), input.body, (payload) => {
+          judgeCategories = payload.routed_obligations.map(
+            (obligation) => obligation.category
+          );
         });
       }
       throw new Error("unexpected_provider_request");
@@ -1040,16 +1058,26 @@ test("REQ-SBX-GENERAL-002 live composition captures qualification before return 
     ]),
     [
       ["ollama", "chat", "response"],
-      ["openai", "responses", "not_called"]
+      ["openai", "responses", "response"]
     ]
   );
   assert.deepEqual(operations, [
     "ollama:model_inventory",
     "ollama:chat",
-    "ollama:chat"
+    "ollama:chat",
+    "openai:responses"
   ]);
-  assert.deepEqual(runtime.delays, [20000, 100, 20000]);
-  assert.equal(runtime.cancellation_count, 3);
+  assert.deepEqual(judgeCategories.sort(), [
+    "instruction_override",
+    "jailbreak",
+    "privilege_escalation",
+    "prompt_injection",
+    "sensitive_data_exposure",
+    "trust_boundary_violation",
+    "unsafe_side_effect"
+  ]);
+  assert.deepEqual(runtime.delays, [40000, 100, 60000, 300000]);
+  assert.equal(runtime.cancellation_count, 4);
 });
 
 test("REQ-SBX-GENERAL-002 live composition tests do not bind a fixed 11434 listener", () => {
@@ -1064,7 +1092,10 @@ test("REQ-SBX-GENERAL-002 replay consumes inventory and prewarm before returning
       ollamaNormalized(),
       normalizeSandboxSecurityReplayOllamaResponse
     ),
-    openai: Object.freeze({ status: "not_called" })
+    openai: responseOutcome(
+      openAiNormalized(7),
+      normalizeSandboxSecurityReplayOpenAIResponse
+    )
   });
   const replay = createConformingReplayTransport({ units: [unit] });
 
@@ -1086,11 +1117,12 @@ test("REQ-SBX-GENERAL-002 replay consumes inventory and prewarm before returning
   assert.deepEqual(replay.operations, [
     "ollama:model_inventory",
     "ollama:chat",
-    "ollama:chat"
+    "ollama:chat",
+    "openai:responses"
   ]);
   assert.equal(replay.wrong_this_count, 0);
-  assert.deepEqual(runtime.delays, [1000, 100, 1000]);
-  assert.equal(runtime.cancellation_count, 3);
+  assert.deepEqual(runtime.delays, [1000, 100, 1000, 4000]);
+  assert.equal(runtime.cancellation_count, 4);
 });
 
 test("REQ-SBX-GENERAL-002 replay routes matched local and Judge through one original runner state", async () => {
@@ -1400,9 +1432,9 @@ test("REQ-SBX-GENERAL-002 replay rejects every sealed config mismatch before pro
     { judge_endpoint_url: "https://us.doro.lol/v1/not-responses" },
     { judge_binding_sha256: "a".repeat(64) },
     { judge_requested_model: "-bad" },
-    { local_prompt_version: "sandbox-security-ollama-local-prompt.v2" },
+    { local_prompt_version: "sandbox-security-ollama-local-prompt.v1" },
     { local_schema_version: "sandbox-security-local-model.v2" },
-    { judge_prompt_version: "sandbox-security-openai-judge-prompt.v2" },
+    { judge_prompt_version: "sandbox-security-openai-judge-prompt.v3" },
     { judge_schema_version: "sandbox-security-judge.v2" },
     { rule_catalog_version: "sandbox-security-rule-catalog.v2" },
     { sanitizer_version: "sandbox-security-deterministic-sanitizer.v2" },
@@ -1531,6 +1563,30 @@ test("REQ-SBX-GENERAL-002 factories reject open input bags and lifecycle accesso
       credential: "secret"
     } as never)
   );
+});
+
+test("REQ-SBX-GENERAL-002 live capture rejects missing runtime Judge binding before provider effects", async () => {
+  let requestCount = 0;
+  const transport: SandboxSecurityHttpTransport = Object.freeze({
+    async request() {
+      requestCount += 1;
+      throw new Error("provider_effect_forbidden");
+    }
+  });
+
+  await assert.rejects(
+    () =>
+      createLiveCaptureEngine({
+        runtime: runtimeHarness().runtime,
+        capture_sink: createConformingCaptureSink().sink,
+        transport,
+        judge_protocol_id: "openai_responses_v1",
+        ollama_digest: DIGEST,
+        judge_endpoint_policy_id: "operator_https_fqdn_v1"
+      } as never),
+    { name: "sandbox_security_benchmark_composition_invalid" }
+  );
+  assert.equal(requestCount, 0);
 });
 
 test("REQ-SBX-GENERAL-002 qualification failure preserves error identity and cleans the timer without fallback", async () => {

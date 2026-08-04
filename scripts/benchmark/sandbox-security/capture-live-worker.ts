@@ -23,12 +23,16 @@ import {
   normalizeSandboxSecurityBenchmarkCandidatePackage
 } from "./contracts.ts";
 import {
+  assertSandboxSecurityLiveRootBinding,
   snapshotSandboxSecurityJson,
   type SandboxSecurityJsonSnapshot
 } from "./fs-snapshot.ts";
 import {
   verifySandboxSecurityP6LiveJudgeBinding
 } from "./p6-live-judge-binding.ts";
+import {
+  classifySandboxSecurityFailedStage
+} from "./stage-protocol.ts";
 
 const INVALID = "sandbox_security_capture_worker_reject";
 const SHA256 = /^[0-9a-f]{64}$/u;
@@ -62,6 +66,19 @@ function requireSha256(value: unknown, code: string): string {
   return value;
 }
 
+export function classifySandboxSecurityCaptureChildFailure(
+  stderr: string
+): string {
+  const classified = classifySandboxSecurityFailedStage({
+    exit_code: 1,
+    stdout: "",
+    stderr
+  });
+  return classified.startsWith("sandbox_security_capture_live_reject:")
+    ? classified
+    : `${INVALID}:capture_child_failed`;
+}
+
 function loadCandidateJson(
   candidateRoot: string,
   name: string
@@ -75,6 +92,7 @@ function loadCandidateJson(
 
 function buildCaptureBinding(input: Readonly<{
   candidate_root: string;
+  bundle_descriptor_sha256: string;
   inputs_tree_sha256: string;
   code_tree_sha256: string;
 }>): Readonly<Record<string, unknown>> {
@@ -153,8 +171,7 @@ function buildCaptureBinding(input: Readonly<{
   // Enforce the reviewed P6 live Judge channel: the runtime-resolved Judge
   // binding must match the source-controlled profile before any of its values
   // may enter signed acceptance evidence. Evidence copies only the profile's
-  // reviewed stable model IDs. The committed profile is unreviewed and fails
-  // closed until the operator commits the real reviewed channel.
+  // reviewed stable model IDs. Any profile or runtime drift fails closed.
   const reviewedIds = verifySandboxSecurityP6LiveJudgeBinding({
     judge_protocol_id: judgeProtocolId,
     judge_endpoint_policy_id: judgeEndpointPolicyId,
@@ -179,6 +196,7 @@ function buildCaptureBinding(input: Readonly<{
   });
 
   return Object.freeze({
+    bundle_descriptor_sha256: input.bundle_descriptor_sha256,
     inputs_tree_sha256: input.inputs_tree_sha256,
     code_tree_sha256: input.code_tree_sha256,
     candidate_package_sha256: candidatePackageSha256,
@@ -193,27 +211,96 @@ function buildCaptureBinding(input: Readonly<{
 
 interface CaptureWorkerOptions {
   readonly descriptor: string;
+  readonly corpus_root: string;
+  readonly corpus_dev: string;
+  readonly corpus_ino: string;
+  readonly capture_parent_root: string;
+  readonly capture_parent_dev: string;
+  readonly capture_parent_ino: string;
+  readonly output_root: string;
+  readonly output_dev: string;
+  readonly output_ino: string;
 }
 
 function parseArgv(argv: readonly string[]): CaptureWorkerOptions {
-  let descriptor: string | undefined;
+  const values: Record<string, string> = {};
   for (const token of argv) {
-    if (token.startsWith("--descriptor=")) {
-      descriptor = token.slice("--descriptor=".length);
-    } else {
+    const flag = [
+      "--descriptor=",
+      "--corpus-root=",
+      "--corpus-dev=",
+      "--corpus-ino=",
+      "--capture-parent-root=",
+      "--capture-parent-dev=",
+      "--capture-parent-ino=",
+      "--output-root=",
+      "--output-dev=",
+      "--output-ino="
+    ].find((candidate) => token.startsWith(candidate));
+    if (flag === undefined) {
       fail("unknown_cli_argument");
     }
+    values[flag.slice(2, -1)] = token.slice(flag.length);
   }
-  if (descriptor === undefined) fail("missing_cli_arguments");
-  return Object.freeze({ descriptor });
+  const required = [
+    "descriptor",
+    "corpus-root",
+    "corpus-dev",
+    "corpus-ino",
+    "capture-parent-root",
+    "capture-parent-dev",
+    "capture-parent-ino",
+    "output-root",
+    "output-dev",
+    "output-ino"
+  ] as const;
+  for (const key of required) {
+    if (values[key] === undefined) fail("missing_cli_arguments");
+  }
+  return Object.freeze({
+    descriptor: values.descriptor!,
+    corpus_root: values["corpus-root"]!,
+    corpus_dev: values["corpus-dev"]!,
+    corpus_ino: values["corpus-ino"]!,
+    capture_parent_root: values["capture-parent-root"]!,
+    capture_parent_dev: values["capture-parent-dev"]!,
+    capture_parent_ino: values["capture-parent-ino"]!,
+    output_root: values["output-root"]!,
+    output_dev: values["output-dev"]!,
+    output_ino: values["output-ino"]!
+  });
 }
 
 export async function runSandboxSecurityCaptureWorker(input: Readonly<{
   descriptor_path: string;
+  corpus_root: string;
+  corpus_dev: string;
+  corpus_ino: string;
+  capture_parent_root: string;
+  capture_parent_dev: string;
+  capture_parent_ino: string;
+  output_root: string;
+  output_dev: string;
+  output_ino: string;
 }>): Promise<Readonly<{
   status: "capture_complete";
   issued_binding: Readonly<Record<string, unknown>>;
 }>> {
+  assertSandboxSecurityLiveRootBinding({
+    root: resolve(input.corpus_root),
+    dev: input.corpus_dev,
+    ino: input.corpus_ino
+  });
+  assertSandboxSecurityLiveRootBinding({
+    root: resolve(input.capture_parent_root),
+    dev: input.capture_parent_dev,
+    ino: input.capture_parent_ino
+  });
+  assertSandboxSecurityLiveRootBinding({
+    root: resolve(input.output_root),
+    dev: input.output_dev,
+    ino: input.output_ino
+  });
   const descriptorPath = resolve(input.descriptor_path);
   const descriptorSnapshot = snapshotSandboxSecurityJson({
     real_root: resolve(descriptorPath, ".."),
@@ -225,8 +312,12 @@ export async function runSandboxSecurityCaptureWorker(input: Readonly<{
   );
 
   const child = await launchSandboxSecurityCaptureChild({ bundle });
+  if (child.exit_code !== 0) {
+    throw new Error(
+      classifySandboxSecurityCaptureChildFailure(child.stderr)
+    );
+  }
   if (
-    child.exit_code !== 0 ||
     child.candidate_root === undefined ||
     child.candidate_package_sha256 === undefined
   ) {
@@ -235,6 +326,9 @@ export async function runSandboxSecurityCaptureWorker(input: Readonly<{
 
   const issuedBinding = buildCaptureBinding({
     candidate_root: child.candidate_root,
+    bundle_descriptor_sha256: hashSandboxSecurityBenchmarkCanonicalJson(
+      descriptorSnapshot.json
+    ),
     inputs_tree_sha256: bundle.inputs_tree_sha256,
     code_tree_sha256: bundle.code_tree_sha256
   });
@@ -250,7 +344,16 @@ export async function main(
 ): Promise<void> {
   const options = parseArgv(argv);
   const summary = await runSandboxSecurityCaptureWorker({
-    descriptor_path: options.descriptor
+    descriptor_path: options.descriptor,
+    corpus_root: options.corpus_root,
+    corpus_dev: options.corpus_dev,
+    corpus_ino: options.corpus_ino,
+    capture_parent_root: options.capture_parent_root,
+    capture_parent_dev: options.capture_parent_dev,
+    capture_parent_ino: options.capture_parent_ino,
+    output_root: options.output_root,
+    output_dev: options.output_dev,
+    output_ino: options.output_ino
   });
   process.stdout.write(`${JSON.stringify(summary)}\n`);
 }

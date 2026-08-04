@@ -24,6 +24,13 @@ fields and their canonical binding hash before evaluation or sealing.
 finish all deterministic gates before the already-blocked live P6-T4 attempt is
 restarted. P7 remains unstarted until a real accepted P6 capture and seal.
 
+> Timing note (2026-08-03): the historical timing examples in this plan are
+> superseded for active P6 capture by
+> `docs/superpowers/specs/2026-08-03-sandbox-security-p6-local-hardware-compatibility-v6-amendment.md`.
+> Active P6 uses readiness/qualification `40000ms`, local/Judge slots
+> `60000ms`/`120000ms`, and work `180000ms`; ordinary production and P7 remain
+> on GENERAL-001 timing.
+
 ## File Map
 
 | Area | Files |
@@ -96,7 +103,7 @@ only the permission-handoff assertions that require the new nonsecret binding.
 2. Confirm RED in the focused capture/evaluation/live-evidence suite.
 3. Propagate the summary's nonsecret protocol ID through candidate construction
    and exact normalizers. Preserve the existing closed six-variable child
-   environment and the P6-only `p6_local_hardware_compatibility_v1`
+   environment and the P6-only `p6_local_hardware_compatibility_v2`
    `20000ms` readiness limit.
 4. Run all P6 deterministic tests, benchmark typecheck, sandbox TypeScript,
    corpus validator, frontend build, and `git diff --check`.

@@ -89,9 +89,9 @@ type SandboxSecurityPolicyProfileResolver = (
 ) => Readonly<SandboxSecurityPolicyProfileManifest>;
 
 const DEFAULT_NORMAL_WORK_BUDGET_MS = 5000;
-const P6_LIVE_CAPTURE_NORMAL_WORK_BUDGET_MS = 40000;
-const P6_LIVE_CAPTURE_LOCAL_SLOT_TIMEOUT_MS = 20000;
-const P6_LIVE_CAPTURE_JUDGE_SLOT_TIMEOUT_MS = 20000;
+const P6_LIVE_CAPTURE_NORMAL_WORK_BUDGET_MS = 360000;
+const P6_LIVE_CAPTURE_LOCAL_SLOT_TIMEOUT_MS = 60000;
+const P6_LIVE_CAPTURE_JUDGE_SLOT_TIMEOUT_MS = 300000;
 
 const INTERNAL = "sandbox_security_internal_invalid";
 const CANCELLED = "sandbox_security_cancelled";
@@ -291,7 +291,7 @@ function createSandboxSecurityEngineInternal(deps: {
   profileResolver: SandboxSecurityPolicyProfileResolver;
   sanitizer?: SandboxSecuritySanitizer;
   runtime: SandboxSecurityRuntimePorts;
-  entryNormalWorkBudgetMs: 5000 | 40000;
+  entryNormalWorkBudgetMs: 5000 | 360000;
 }): SandboxSecurityEngine {
   const {
     registry,

@@ -35,19 +35,34 @@ internal types and the `openai` transport operation remain Responses wire
 protocol labels only; they do not identify the live provider.
 
 The P6 Local Hardware Compatibility amendment at
-`docs/superpowers/specs/2026-07-26-sandbox-security-p6-local-hardware-compatibility-amendment.md`
-supersedes only the frozen-core and production deep-import rules needed for the
-fixed P6 execution overlay. It does not change the public core index, ordinary
-production, P7 replay, or any policy contract.
+`docs/superpowers/specs/2026-07-31-sandbox-security-p6-local-hardware-compatibility-v2-amendment.md`
+introduced the frozen-core and production deep-import rules needed for the fixed
+P6 execution overlay. Its timing record and the subsequent v3/v4 records are
+superseded first by the P6 Judge Readiness Compatibility v5 amendment at
+`docs/superpowers/specs/2026-08-03-sandbox-security-p6-judge-readiness-v5-amendment.md`.
+The active qualification boundary is now governed by the P6 Local Hardware
+Compatibility v6 amendment at
+`docs/superpowers/specs/2026-08-03-sandbox-security-p6-local-hardware-compatibility-v6-amendment.md`.
+Neither amendment changes the public core index, ordinary production, P7
+replay, or any policy contract.
 
 For P6 controlled live capture only, the user approved the source-controlled
-`p6_local_hardware_compatibility_v1` execution profile: Judge readiness,
-Ollama qualification, warmed prewarm, the local detector slot, and the Judge
-detector slot each use `20000ms`, while the normal work budget uses `40000ms`.
-The profile is not caller-, environment-, or CLI-selectable. Ordinary
-production composition and P7 hermetic replay continue to use the inherited
-GENERAL-001 `5000ms` normal work budget and `100/1000/4000ms`
+`p6_local_hardware_compatibility_v8` execution profile: Judge readiness and
+Ollama qualification/warmed prewarm use `40000ms`; the local
+detector slot uses `60000ms`, the Judge slot uses `120000ms`, and the normal work
+budget uses `180000ms`.
+The profile adds no retry capacity and is not caller-, environment-, or
+CLI-selectable. P6 candidates and signed evidence reject v5 and older timing.
+Ordinary production composition and P7 hermetic replay continue to use the
+inherited GENERAL-001 `5000ms` normal work budget and `100/1000/4000ms`
 rule/local/Judge detector slot limits.
+
+The Seven-Domain Judge Screening amendment at
+`docs/superpowers/specs/2026-08-02-sandbox-security-seven-domain-judge-screening-amendment.md`
+supersedes only `local_and_judge` routing after a valid pinned Ollama response.
+It does not change ordinary `local` behavior, timing, prompts, provider
+protocols, thresholds, corpus, truth, or evidence isolation. It also retires the
+historical `five_domain_v1` profile.
 
 ## Goal
 
@@ -108,7 +123,7 @@ compatibility guarantees:
 
 GENERAL-002 preserves these GENERAL-001 decisions exactly for ordinary
 production composition and P7 hermetic replay. Controlled P6 live capture uses
-only the source-controlled `p6_local_hardware_compatibility_v1` timing profile
+only the source-controlled `p6_local_hardware_compatibility_v8` timing profile
 defined above:
 
 - detector order is rule, local, Judge;
@@ -288,9 +303,9 @@ export interface SandboxSecuritySealedProviderConfig {
   judge_responses_url: string;
   judge_requested_model: string;
   judge_resolved_model: string;
-  local_prompt_version: "sandbox-security-ollama-local-prompt.v1";
+  local_prompt_version: "sandbox-security-ollama-local-prompt.v2";
   local_schema_version: "sandbox-security-local-model.v1";
-  judge_prompt_version: "sandbox-security-openai-judge-prompt.v1";
+  judge_prompt_version: "sandbox-security-openai-judge-prompt.v2";
   judge_schema_version: "sandbox-security-judge.v1";
   rule_catalog_version: string;
   sanitizer_version: string;
@@ -442,7 +457,7 @@ every chat operation re-runs GET `/api/tags` inside the default transport
 immediately before `POST /api/chat`. Digest revalidation and chat share the
 Engine-provided signal and the active execution profile's single local-model
 lease; revalidation never creates or extends a second lease. Controlled P6 uses
-the profile's `20000ms` local slot, while ordinary production and P7 retain the
+    the profile's `60000ms` local slot, while ordinary production and P7 retain the
 inherited `1000ms` local slot. Any inventory failure or digest drift aborts
 before sending raw snapshot content to chat.
 
@@ -542,7 +557,7 @@ it may not compare, hash, branch on, or catalog `request_id`, canonical hashes,
 handles, or provenance.
 
 The exact system prompt has version
-`sandbox-security-ollama-local-prompt.v1` and these UTF-8 bytes, without a
+`sandbox-security-ollama-local-prompt.v2` and these UTF-8 bytes, without a
 trailing newline:
 
 ```text
@@ -554,7 +569,15 @@ explain, quote source text, emit a clearance, invent a category, invent a
 subject, or use any identifier other than a supplied source ordinal or fixed
 tool component. Return status no_match with an empty candidates array when no
 risk candidate is supported by the supplied data.
+Each candidate's subject_refs array must contain no duplicate references.
 ```
+
+The complete prompt SHA-256 is
+`e2632e29c2720f8f3c34436fe5daf6a7f251f5e912c3effeb21beccf56e4c196`.
+The fixed prewarm body is `2486` UTF-8 bytes with SHA-256
+`d485c1671c61545499447b6b496ff2f965df4f93d0b43797d7ee105da874e486`.
+The adapter does not repair or deduplicate returned references; duplicates
+remain a provider-contract failure.
 
 The adapter constructs the untrusted user message with this exact algorithm:
 
@@ -700,7 +723,7 @@ validation as an evaluation response, including `verified_ollama_digest`; its
 classification is not a benchmark decision. Model loading is never performed
 inside a detector lease. Qualification evidence records the warmed probe latency
 and rejects a runtime that cannot settle the fixed probe within the approved
-`20000ms` P6 qualification ceiling.
+`40000ms` P6 qualification ceiling.
 Every benchmark and production chat uses the same keep-alive value and requires
 the outer response `model` to equal `qwen3:8b`. The per-chat digest
 revalidation, not an operator promise, detects a restart or tag drift before
@@ -734,6 +757,39 @@ The local model does not emit clearances. Its confidence vocabulary maps to:
 Arbitrary numeric self-scores are forbidden. The adapter must reject raw HTTP
 responses over 64 KiB before JSON parsing. JSON, schema, mapping, category,
 reason-code, locator, or size failure throws and cannot become `no_match`.
+
+### Seven-Domain Judge Screening
+
+Composition passes an exact `judge_screening_mode` to the Ollama adapter:
+ordinary `local` uses `disabled`; every `local_and_judge` path, including P6
+live capture and P7 hermetic replay, uses `seven_domain_v2`. `rule_only` creates
+no local adapter.
+
+The mode is applied only after the normal Ollama response has passed HTTP,
+content-type, digest, envelope, model, completion, schema, and parser checks.
+`seven_domain_v2` maps that valid response to exactly seven unresolved local
+routing candidates, in source-controlled order:
+
+1. `prompt_injection`
+2. `jailbreak`
+3. `instruction_override`
+4. `privilege_escalation`
+5. `sensitive_data_exposure`
+6. `unsafe_side_effect`
+7. `trust_boundary_violation`
+
+Each candidate has severity `low`, confidence `0.6`, its canonical reason code,
+and fresh refs covering every authoritative content source plus the optional
+whole tool call. These candidates are below the qualification threshold and
+therefore cannot become local findings; they select the existing deterministic
+sanitizer and Judge path. More than eight combined subjects fails closed rather
+than truncating, chunking, or partially screening the request.
+
+The seven domains are a fixed production policy derived from pinned independent
+AgentDojo and ToolEmu development probes and the taxonomy's control,
+instruction, privilege, data, side-effect, and boundary surfaces. Acceptance
+fixture text, fixture identity, truth, and per-item labels are not development
+or routing inputs.
 
 ## Deterministic Sanitizer
 
@@ -892,7 +948,7 @@ canonical hashes, source locators not already present in the sanitized contract,
 benchmark truth, and fixture metadata are forbidden.
 
 The developer instruction has version
-`sandbox-security-openai-judge-prompt.v1` and these UTF-8 bytes, without a
+`sandbox-security-openai-judge-prompt.v2` and these UTF-8 bytes, without a
 trailing newline:
 
 ```text
@@ -994,10 +1050,10 @@ caching identifiers, and caller-provided messages are absent.
 
 The live gate performs a non-benchmark strict-schema readiness request before
 capture and rejects an environment that cannot settle it within the independent
-`20000ms` P6 readiness budget. Readiness occurs before benchmark evaluation,
+`40000ms` P6 readiness budget. Readiness occurs before benchmark evaluation,
 does not consume or extend an Engine lease, create a retry, or count as a
 benchmark decision. Every real Judge call still uses only the Engine-provided
-signal and the remaining `20000ms` P6 Judge slot lease. Ordinary production
+signal and the remaining `60000ms` P6 Judge slot lease. Ordinary production
 composition and P7 hermetic replay retain the inherited `4000ms` Judge slot.
 
 ### Judge Response
@@ -1384,8 +1440,8 @@ interface SandboxSecurityBenchmarkCaptureManifest {
   judge_responses_url: string;
   judge_requested_model: string;
   judge_resolved_model: string;
-  local_prompt_version: "sandbox-security-ollama-local-prompt.v1";
-  judge_prompt_version: "sandbox-security-openai-judge-prompt.v1";
+  local_prompt_version: "sandbox-security-ollama-local-prompt.v2";
+  judge_prompt_version: "sandbox-security-openai-judge-prompt.v2";
   local_schema_version: "sandbox-security-local-model.v1";
   judge_schema_version: "sandbox-security-judge.v1";
   rule_catalog_version: string;

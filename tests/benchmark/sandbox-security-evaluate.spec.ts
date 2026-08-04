@@ -38,12 +38,12 @@ const EVALUATOR_PATH = resolve(
 const CANDIDATE_OLLAMA_DIGEST =
   "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const P6_TIMING = {
-  execution_profile_id: "p6_local_hardware_compatibility_v1",
-  readiness_timeout_ms: 20000,
-  qualification_timeout_ms: 20000,
-  local_detector_slot_timeout_ms: 20000,
-  judge_detector_slot_timeout_ms: 20000,
-  normal_work_budget_ms: 40000
+  execution_profile_id: "p6_local_hardware_compatibility_v8",
+  readiness_timeout_ms: 40000,
+  qualification_timeout_ms: 40000,
+  local_detector_slot_timeout_ms: 60000,
+  judge_detector_slot_timeout_ms: 300000,
+  normal_work_budget_ms: 360000
 } as const;
 const TEMP_ROOTS: string[] = [];
 
@@ -312,8 +312,8 @@ function writeCapturePackage(input: Readonly<{
     },
     ...judgeBinding,
     judge_binding_sha256: hashSandboxSecurityBenchmarkJudgeBinding(judgeBinding),
-    local_prompt_version: "sandbox-security-ollama-local-prompt.v1",
-    judge_prompt_version: "sandbox-security-openai-judge-prompt.v1",
+    local_prompt_version: "sandbox-security-ollama-local-prompt.v2",
+    judge_prompt_version: "sandbox-security-openai-judge-prompt.v2",
     local_schema_version: "sandbox-security-local-model.v1",
     judge_schema_version: "sandbox-security-judge.v1",
     rule_catalog_version: "sandbox-security-rule-catalog.v1",
@@ -546,7 +546,7 @@ test("REQ-SBX-GENERAL-002 evaluator action or risk level does not change detecti
       const truth = corpus.truthById.get(fixtureId)!;
       if (truth.verdict_class !== "risk") return {};
       return {
-        action: "block",
+        action: "deny",
         risk_level: "critical"
       };
     }
@@ -1254,5 +1254,49 @@ test("REQ-SBX-GENERAL-002 evaluator rejects non-production candidate provenance"
         capture_root: captureRoot
       }),
     /provenance|production/i
+  );
+});
+
+test("REQ-SBX-GENERAL-002 live evaluator maps a multi-threshold rejection to one bounded worker code", async () => {
+  const worker = (await import(
+    "../../scripts/benchmark/sandbox-security/evaluate-live-worker.ts"
+  )) as unknown as Readonly<{
+    assertSandboxSecurityEvaluateWorkerAccepted?: (
+      report: Readonly<Record<string, unknown>>
+    ) => void;
+  }>;
+  assert.equal(
+    typeof worker.assertSandboxSecurityEvaluateWorkerAccepted,
+    "function"
+  );
+  assert.throws(
+    () =>
+      worker.assertSandboxSecurityEvaluateWorkerAccepted?.({
+        accepted: false,
+        infrastructure_codes: [],
+        unsafe_recall: 0,
+        high_critical_recall: 0,
+        safe_false_positive_rate: 0,
+        transformed_recall: 0,
+        decision_coverage: 1,
+        category_recall: {
+          prompt_injection: 0,
+          jailbreak: 0,
+          instruction_override: 0,
+          privilege_escalation: 0,
+          sensitive_data_exposure: 0,
+          tool_hijacking: 0,
+          unsafe_side_effect: 0,
+          memory_poisoning: 0,
+          trust_boundary_violation: 0
+        }
+      }),
+    (error: unknown) => {
+      assert.equal(
+        error instanceof Error ? error.message : "",
+        "sandbox_security_evaluate_worker_reject:evaluation_not_accepted"
+      );
+      return true;
+    }
   );
 });

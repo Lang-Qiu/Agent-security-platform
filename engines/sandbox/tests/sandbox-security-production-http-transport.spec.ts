@@ -812,6 +812,43 @@ test("REQ-SBX-GENERAL-002 transport maps Ollama inventory to its fixed GET wire 
   );
 });
 
+test("REQ-SBX-GENERAL-002 transport explicitly closes each provider connection", async () => {
+  const headers: Array<Readonly<Record<string, unknown>>> = [];
+  const factory = {
+    request(
+      _url: URL,
+      options: Readonly<Record<string, unknown>>,
+      onResponse: (response: FakeResponse) => void
+    ): FakeRequest {
+      headers.push(options.headers as Readonly<Record<string, unknown>>);
+      const request = new FakeRequest();
+      queueMicrotask(() => {
+        const response = new FakeResponse();
+        onResponse(response);
+        response.emit("data", jsonBytes({ status: "completed" }));
+        response.emit("end");
+      });
+      return request;
+    }
+  };
+  const transport = transportModule.createSandboxSecurityDefaultHttpTransport({
+    expected_ollama_digest: null,
+    judge_protocol_id: "openai_chat_completions_json_v1",
+    judge_api_key: "private-openai-key",
+    judge_endpoint_url: "https://judge.example.test/v1/chat/completions",
+    request_factory: factory
+  });
+
+  await transport.request(
+    openAiChatCompletionsRequest(
+      new AbortController().signal,
+      jsonBytes({ model: "deepseek-v4-flash", stream: false })
+    )
+  );
+
+  assert.equal(headers[0]?.connection, "close");
+});
+
 test("REQ-SBX-GENERAL-002 transport revalidates Ollama inventory before its fixed chat POST", async () => {
   const digest = `sha256:${"a".repeat(64)}`;
   const controller = new AbortController();

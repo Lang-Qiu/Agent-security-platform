@@ -2,19 +2,19 @@
  * P6-only source-controlled live Judge binding profile.
  *
  * Ordinary production keeps runtime requested-model selection. Controlled P6
- * acceptance additionally pins the reviewed Judge channel: the selected
- * protocol, endpoint policy, canonical base/endpoint hashes, and canonical
- * requested/resolved model hashes plus their stable IDs. The capture worker
- * compares the runtime-resolved Judge binding against this profile before the
- * values may enter evidence; any mismatch fails closed and requires a reviewed
- * profile change and a fresh capture.
+ * acceptance additionally pins the reviewed Judge protocol and endpoint policy.
+ * The operator environment is the sole source for the base URL, credential,
+ * requested model, and runtime-resolved model; those values are bound into the
+ * signed evidence after this policy check.
  *
- * The pinned SHA-256 values below are placeholders that MUST be replaced with
- * the operator's reviewed live channel values before a real P6 capture. Until
- * then verification fails closed, which is the intended pre-review state.
+ * Channel-specific values are intentionally absent from this source-controlled
+ * profile so a channel change is controlled only by the operator environment.
  */
 
-import { createHash } from "node:crypto";
+import {
+  normalizeSandboxSecurityJudgeEndpoint,
+  resolveSandboxSecurityJudgeProtocol
+} from "../../../engines/sandbox/src/security-production/judge-protocol-adapter.ts";
 
 export const SANDBOX_SECURITY_P6_LIVE_JUDGE_BINDING_PROFILE_ID =
   "p6_live_judge_binding_v1" as const;
@@ -27,50 +27,26 @@ export interface SandboxSecurityP6LiveJudgeBindingProfile {
   readonly profile_id: typeof SANDBOX_SECURITY_P6_LIVE_JUDGE_BINDING_PROFILE_ID;
   readonly judge_protocol_id: SandboxSecurityP6JudgeProtocolId;
   readonly judge_endpoint_policy_id: "operator_https_fqdn_v1";
-  readonly judge_base_url_sha256: string;
-  readonly judge_endpoint_url_sha256: string;
-  readonly judge_requested_model_id: string;
-  readonly judge_requested_model_sha256: string;
-  readonly judge_resolved_model_id: string;
-  readonly judge_resolved_model_sha256: string;
   readonly reviewed: boolean;
 }
 
 /**
- * The reviewed P6 live Judge binding profile. The pinned hashes and stable IDs
- * below were reviewed against the operator's live channel (chat-completions JSON
- * over an operator HTTPS FQDN) via the config-normalized runtime binding, so
- * `reviewed` is `true`. Changing any value requires a fresh reviewed profile and
- * a new capture.
+ * The reviewed P6 live Judge policy profile. Runtime channel values remain
+ * operator-controlled and are validated before they enter acceptance evidence.
  */
 export const SANDBOX_SECURITY_P6_LIVE_JUDGE_BINDING_PROFILE: SandboxSecurityP6LiveJudgeBindingProfile =
   Object.freeze({
     profile_id: SANDBOX_SECURITY_P6_LIVE_JUDGE_BINDING_PROFILE_ID,
     judge_protocol_id: "openai_chat_completions_json_v1",
     judge_endpoint_policy_id: "operator_https_fqdn_v1",
-    judge_base_url_sha256:
-      "a34e2a4708ed1c61008a151688838dcf1c44d4e7f08054633e72ba7c0b16cfc1",
-    judge_endpoint_url_sha256:
-      "948f1ecb6b48f91adc4e110d0351cd172b16450e9936d358992e0dfad7b863f3",
-    judge_requested_model_id: "deepseek-v4-flash",
-    judge_requested_model_sha256:
-      "f61ff5cf8e1cc88da6944d6bcd3e2e7da5ff27dd3288a8781908018cb8240cd6",
-    judge_resolved_model_id: "deepseek-v4-flash",
-    judge_resolved_model_sha256:
-      "f61ff5cf8e1cc88da6944d6bcd3e2e7da5ff27dd3288a8781908018cb8240cd6",
     reviewed: true
   });
 
 const INVALID = "sandbox_security_p6_judge_binding_reject";
-const SHA256_HEX = /^[0-9a-f]{64}$/u;
 const MODEL_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/u;
 
 function fail(code: string): never {
   throw new Error(`${INVALID}:${code}`);
-}
-
-function sha256Hex(value: string): string {
-  return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
 export interface SandboxSecurityP6RuntimeJudgeBinding {
@@ -83,9 +59,9 @@ export interface SandboxSecurityP6RuntimeJudgeBinding {
 }
 
 /**
- * Verifies a runtime-resolved Judge binding against the reviewed P6 profile and
- * returns the reviewed stable IDs that may enter evidence. Fails closed on an
- * unreviewed profile or any protocol/policy/hash/id mismatch.
+ * Verifies a runtime-resolved Judge binding against the reviewed P6 policy and
+ * returns the runtime model IDs that may enter evidence. Fails closed on an
+ * unreviewed profile or any protocol/policy/endpoint/model mismatch.
  */
 export function verifySandboxSecurityP6LiveJudgeBinding(
   runtime: SandboxSecurityP6RuntimeJudgeBinding,
@@ -95,15 +71,6 @@ export function verifySandboxSecurityP6LiveJudgeBinding(
   judge_resolved_model_id: string;
 }> {
   if (!profile.reviewed) fail("profile_not_reviewed");
-  for (const hash of [
-    profile.judge_base_url_sha256,
-    profile.judge_endpoint_url_sha256,
-    profile.judge_requested_model_sha256,
-    profile.judge_resolved_model_sha256
-  ]) {
-    if (!SHA256_HEX.test(hash)) fail("profile_hash_invalid");
-  }
-
   if (
     runtime.judge_protocol_id !== profile.judge_protocol_id ||
     runtime.judge_endpoint_policy_id !== profile.judge_endpoint_policy_id
@@ -111,24 +78,32 @@ export function verifySandboxSecurityP6LiveJudgeBinding(
     fail("judge_channel_mismatch");
   }
   if (
+    typeof runtime.judge_base_url !== "string" ||
+    typeof runtime.judge_endpoint_url !== "string" ||
     !MODEL_IDENTIFIER.test(runtime.judge_requested_model) ||
     !MODEL_IDENTIFIER.test(runtime.judge_resolved_model)
   ) {
     fail("judge_model_identifier_invalid");
   }
-  if (
-    sha256Hex(runtime.judge_base_url) !== profile.judge_base_url_sha256 ||
-    sha256Hex(runtime.judge_endpoint_url) !== profile.judge_endpoint_url_sha256 ||
-    sha256Hex(runtime.judge_requested_model) !==
-      profile.judge_requested_model_sha256 ||
-    sha256Hex(runtime.judge_resolved_model) !==
-      profile.judge_resolved_model_sha256
-  ) {
+
+  try {
+    const protocol = resolveSandboxSecurityJudgeProtocol(
+      runtime.judge_protocol_id as SandboxSecurityP6JudgeProtocolId,
+      runtime.judge_base_url
+    );
+    const endpoint = normalizeSandboxSecurityJudgeEndpoint(
+      runtime.judge_protocol_id as SandboxSecurityP6JudgeProtocolId,
+      runtime.judge_endpoint_url
+    );
+    if (protocol.endpoint_url !== endpoint.endpoint_url) {
+      fail("judge_channel_mismatch");
+    }
+  } catch {
     fail("judge_channel_mismatch");
   }
 
   return Object.freeze({
-    judge_requested_model_id: profile.judge_requested_model_id,
-    judge_resolved_model_id: profile.judge_resolved_model_id
+    judge_requested_model_id: runtime.judge_requested_model,
+    judge_resolved_model_id: runtime.judge_resolved_model
   });
 }

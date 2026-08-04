@@ -4,6 +4,10 @@ import test from "node:test";
 
 const SPEC_PATH =
   "docs/superpowers/specs/2026-07-16-sandbox-security-production-detectors-spec.md";
+const SEVEN_DOMAIN_AMENDMENT_PATH =
+  "docs/superpowers/specs/2026-08-02-sandbox-security-seven-domain-judge-screening-amendment.md";
+const P6_JUDGE_LONG_TAIL_V8_AMENDMENT_PATH =
+  "docs/superpowers/specs/2026-08-04-sandbox-security-p6-judge-long-tail-v8-amendment.md";
 
 function readText(relativePath: string): string {
   return readFileSync(new URL(`../../${relativePath}`, import.meta.url), "utf8");
@@ -62,11 +66,19 @@ function assertGeneral002SpecReviewCorrections(text: string): void {
   assert.match(compact, /exactly one completed assistant message/);
   assert.match(compact, /refusal, incomplete, error, or model mismatch/);
   assert.doesNotMatch(text, /\b(?:FIXED_PROMPT|JUDGE_SCHEMA_V1|SANITIZED_JSON)\b/);
-  assert.match(text, /sandbox-security-openai-judge-prompt\.v1/);
+  assert.match(text, /sandbox-security-openai-judge-prompt\.v2/);
   assert.match(text, /BEGIN_SANITIZED_PAYLOAD/);
   assert.match(text, /"additionalProperties": false/);
 
-  assert.match(text, /sandbox-security-ollama-local-prompt\.v1/);
+  assert.match(text, /sandbox-security-ollama-local-prompt\.v2/);
+  assert.match(
+    text,
+    /Each candidate's subject_refs array must contain no duplicate references\./
+  );
+  assert.match(
+    text,
+    /e2632e29c2720f8f3c34436fe5daf6a7f251f5e912c3effeb21beccf56e4c196/
+  );
   assert.match(text, /BEGIN_UNTRUSTED_SNAPSHOT/);
   assert.match(text, /num_predict: 2048/);
   assert.match(text, /num_ctx: 8192/);
@@ -180,8 +192,84 @@ function assertGeneral002SpecReviewCorrections(text: string): void {
   );
 }
 
+function assertSevenDomainJudgeScreeningContract(): void {
+  const spec = readText(SPEC_PATH);
+  const amendment = readText(SEVEN_DOMAIN_AMENDMENT_PATH);
+  const detector = readText(
+    "engines/sandbox/src/security-production/ollama-local-detector.ts"
+  );
+  const composition = readText(
+    "engines/sandbox/src/security-production/composition.ts"
+  );
+  const benchmark = readText(
+    "engines/sandbox/src/security-production/benchmark-composition.ts"
+  );
+  const compactAmendment = amendment.replace(/\s+/g, " ");
+
+  assert.match(spec, /### Seven-Domain Judge Screening/);
+  assert.match(spec, /seven_domain_v2/);
+  assert.match(amendment, /IMPLEMENTED_PENDING_FRESH_LIVE_ACCEPTANCE/);
+  assert.match(compactAmendment, /AgentDojo revision `089ed468cf3ed0322acc66b0211f26d9d90dbf60`/);
+  assert.match(compactAmendment, /ToolEmu revision `ac4a7ab7ed8c7985d96231e214bd6b54304b7ddb`/);
+  assert.match(compactAmendment, /ordinary `local` mode;.*`seven_domain_v2` for `local_and_judge`/);
+  assert.match(
+    compactAmendment,
+    /more than eight combined content\/tool subjects.*fail with the fixed local detector failure/i
+  );
+  assert.match(compactAmendment, /does not change:.*metric thresholds/);
+  assert.match(compactAmendment, /P7 MUST replay the captured seven-obligation Judge request/);
+  assert.match(compactAmendment, /exactly one Judge request/);
+  assert.match(compactAmendment, /no retry, fallback, or alternate provider/i);
+  assert.match(compactAmendment, /must not read.*benchmark.*body.*per-item label/i);
+  assert.match(compactAmendment, /AgentDojo.*IgnorePreviousAttack/i);
+  assert.match(compactAmendment, /ToolEmu.*underspecified instruction/i);
+
+  assert.match(
+    detector,
+    /SEVEN_DOMAIN_SCREENING_CATEGORIES\s*=\s*Object\.freeze\(\[\s*"prompt_injection",\s*"jailbreak",\s*"instruction_override",\s*"privilege_escalation",\s*"sensitive_data_exposure",\s*"unsafe_side_effect",\s*"trust_boundary_violation"/s
+  );
+  assert.match(detector, /confidence:\s*0\.6/);
+  assert.match(detector, /subjectCount === 0 \|\| subjectCount > 8/);
+  assert.match(detector, /judgeScreeningMode === "seven_domain_v2"/);
+  assert.doesNotMatch(detector, /judgeScreeningMode === "five_domain_v1"/);
+  assert.match(
+    composition,
+    /normalized\.mode === "local_and_judge"\s*\? "seven_domain_v2"\s*:\s*"disabled"/s
+  );
+  assert.match(benchmark, /judge_screening_mode:\s*input\.judge_screening_mode/g);
+}
+
 test("REQ-SBX-GENERAL-002 Spec closes blocking review findings", () => {
   assertGeneral002SpecReviewCorrections(readText(SPEC_PATH));
+});
+
+test("REQ-SBX-GENERAL-002 seven-domain Judge screening policy is source-controlled and replay-bound", () => {
+  assertSevenDomainJudgeScreeningContract();
+});
+
+test("REQ-SBX-GENERAL-002 P6 v8 Judge long-tail profile is exact and isolated from ordinary production", () => {
+  const amendment = readText(P6_JUDGE_LONG_TAIL_V8_AMENDMENT_PATH);
+  const profile = readText(
+    "engines/sandbox/src/security-production/p6-live-capture-profile.ts"
+  );
+  const engine = readText("engines/sandbox/src/security/engine.ts");
+  const compact = amendment.replace(/\s+/g, " ");
+
+  assert.match(amendment, /p6_local_hardware_compatibility_v8/);
+  assert.match(compact, /Judge readiness: `40000ms`/);
+  assert.match(compact, /Ollama qualification and warmed prewarm: `40000ms`/);
+  assert.match(compact, /Judge detector slot: `300000ms`/);
+  assert.match(compact, /normal work budget: `360000ms`/);
+  assert.match(compact, /Ordinary production and P7 hermetic replay retain the GENERAL-001 `5000ms`/);
+  assert.match(compact, /Every invoked provider slot still requires a normalized response/);
+  assert.match(profile, /p6_local_hardware_compatibility_v8/);
+  assert.match(profile, /readiness_timeout_ms: 40000/);
+  assert.match(profile, /qualification_timeout_ms: 40000/);
+  assert.match(profile, /judge_detector_slot_timeout_ms: 300000/);
+  assert.match(profile, /normal_work_budget_ms: 360000/);
+  assert.match(engine, /const DEFAULT_NORMAL_WORK_BUDGET_MS = 5000/);
+  assert.match(engine, /const P6_LIVE_CAPTURE_NORMAL_WORK_BUDGET_MS = 360000/);
+  assert.match(engine, /const P6_LIVE_CAPTURE_JUDGE_SLOT_TIMEOUT_MS = 300000/);
 });
 
 test("REQ-SBX-GENERAL-002 Spec review gate rejects weakened Ollama qualification", () => {
@@ -218,7 +306,7 @@ test("REQ-SBX-GENERAL-002 Spec review gate rejects unbound source revisions", ()
 
 test("REQ-SBX-GENERAL-002 Spec re-review gate rejects symbolic provider contracts", () => {
   const weakened = readText(SPEC_PATH).replace(
-    "sandbox-security-openai-judge-prompt.v1",
+    "sandbox-security-openai-judge-prompt.v2",
     "FIXED_PROMPT"
   );
   assert.throws(() => assertGeneral002SpecReviewCorrections(weakened));
@@ -300,7 +388,7 @@ test("REQ-SBX-GENERAL-002 owns active sprint state without freezing one transiti
   );
   assert.match(
     extractSection(sprint, "## Status"),
-    /^(?:SPEC_PENDING_REVIEW|SPEC_REVIEW_CHANGES_REQUIRED|SPEC_FIXED_PENDING_REVIEW|SPEC_REVIEWED_PENDING_USER_APPROVAL|SPEC_APPROVED_PLAN_IN_PROGRESS|PLAN_PENDING_REVIEW|PLAN_REVIEW_CHANGES_REQUIRED|PLAN_FIXED_PENDING_REVIEW|PLAN_REVIEWED_PENDING_USER_APPROVAL|IMPLEMENTATION_IN_PROGRESS|PHASE_[1-7]_IN_PROGRESS|P[1-7]-T[1-9]_IN_PROGRESS|COMPLETE_PENDING_REVIEW)$/
+    /^(?:SPEC_PENDING_REVIEW|SPEC_REVIEW_CHANGES_REQUIRED|SPEC_FIXED_PENDING_REVIEW|SPEC_REVIEWED_PENDING_USER_APPROVAL|SPEC_APPROVED_PLAN_IN_PROGRESS|PLAN_PENDING_REVIEW|PLAN_REVIEW_CHANGES_REQUIRED|PLAN_FIXED_PENDING_REVIEW|PLAN_REVIEWED_PENDING_USER_APPROVAL|IMPLEMENTATION_IN_PROGRESS|IMPLEMENTATION_PENDING_FORMAL_P6_EVIDENCE|PHASE_[1-7]_IN_PROGRESS|P[1-7]-T[1-9]_IN_PROGRESS|COMPLETE_PENDING_REVIEW)$/
   );
 });
 

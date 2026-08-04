@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  lstatSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -24,6 +26,7 @@ import {
 } from "../../scripts/benchmark/sandbox-security/capture-sink.ts";
 import {
   main as runSandboxSecurityCaptureLiveCli,
+  materializeSandboxSecurityCandidatePackage,
   runSandboxSecurityLiveCapture,
   type SandboxSecurityLiveCapturePorts
 } from "../../scripts/benchmark/sandbox-security/capture-live.ts";
@@ -96,6 +99,40 @@ let runSandboxSecurityJudgeReadiness: RunSandboxSecurityJudgeReadiness =
 const captureLiveModule = await import(
   "../../scripts/benchmark/sandbox-security/capture-live.ts"
 );
+
+test("REQ-SBX-GENERAL-002 capture does not synthesize an operator Judge channel", () => {
+  const source = readFileSync(CAPTURE_LIVE_PATH, "utf8");
+  assert.doesNotMatch(source, /TEST_LIVE_BINDING/u);
+  assert.doesNotMatch(source, /https:\/\/us\.doro\.lol|gpt-5\.4-mini/u);
+});
+
+test("REQ-SBX-GENERAL-002 capture CLI preserves bounded provider failure codes", () => {
+  const classifyCaptureLiveError =
+    captureLiveModule.classifySandboxSecurityCaptureLiveError;
+  assert.equal(
+    typeof classifyCaptureLiveError,
+    "function",
+    "capture_live_error_classifier_missing"
+  );
+  if (typeof classifyCaptureLiveError !== "function") return;
+
+  assert.equal(
+    classifyCaptureLiveError(
+      new Error("sandbox_security_transport_connection_failed")
+    ),
+    "sandbox_security_capture_live_reject:transport_connection_failed"
+  );
+  assert.equal(
+    classifyCaptureLiveError(
+      new Error("sandbox_security_ollama_qualification_invalid")
+    ),
+    "sandbox_security_capture_live_reject:ollama_qualification_invalid"
+  );
+  assert.equal(
+    classifyCaptureLiveError(new Error("provider response contains a secret")),
+    "sandbox_security_capture_live_reject:internal"
+  );
+});
 if (typeof captureLiveModule.runSandboxSecurityJudgeReadiness === "function") {
   runSandboxSecurityJudgeReadiness =
     captureLiveModule.runSandboxSecurityJudgeReadiness as RunSandboxSecurityJudgeReadiness;
@@ -339,6 +376,11 @@ function fakeLivePorts(
     : SAFE_TEST_JUDGE_RESOLVED_MODEL;
   const hasJudgeResponse = Object.hasOwn(options, "judgeResponseModel");
   const sink = createSandboxSecurityCaptureSink();
+  const testProtocol =
+    options.judgeResponseOperation === "chat_completions"
+      ? "openai_chat_completions_json_v1"
+      : "openai_responses_v1";
+  const testBaseUrl = "https://judge.example.test/v1";
 
   const ports: SandboxSecurityLiveCapturePorts & {
     sinkEvents: string[];
@@ -365,6 +407,18 @@ function fakeLivePorts(
     runtime: defaultRuntime(),
     has_child_permission: () => options.hasChild === true,
     has_worker_permission: () => options.hasWorker === true,
+    live_binding: {
+      ollama_digest: DIGEST,
+      judge_protocol_id: testProtocol,
+      judge_endpoint_policy_id: "operator_https_fqdn_v1",
+      judge_base_url: testBaseUrl,
+      judge_endpoint_url: `${testBaseUrl}/${
+        testProtocol === "openai_chat_completions_json_v1"
+          ? "chat/completions"
+          : "responses"
+      }`,
+      judge_requested_model: "gpt-5.4-mini"
+    },
     create_sink: () => {
       const tracked = createSandboxSecurityCaptureSink();
       return {
@@ -550,7 +604,7 @@ test("REQ-SBX-GENERAL-002 P6 live runtime timing comes only from the P6 profile"
   );
   assert.doesNotMatch(
     benchmarkCompositionSource,
-    /qualification_timeout_ms !== 20000/u
+    /qualification_timeout_ms !== 40000/u
   );
   assert.match(
     ollamaSource,
@@ -558,15 +612,31 @@ test("REQ-SBX-GENERAL-002 P6 live runtime timing comes only from the P6 profile"
   );
   assert.doesNotMatch(
     ollamaSource,
-    /LIVE_CAPTURE_WARMED_PROBE_LATENCY_MS = 20000/u
+    /LIVE_CAPTURE_WARMED_PROBE_LATENCY_MS = 40000/u
   );
   assert.deepEqual(SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING, {
-    readiness_timeout_ms: 20000,
-    qualification_timeout_ms: 20000,
-    local_detector_slot_timeout_ms: 20000,
-    judge_detector_slot_timeout_ms: 20000,
-    normal_work_budget_ms: 40000
+    readiness_timeout_ms: 40000,
+    qualification_timeout_ms: 40000,
+    local_detector_slot_timeout_ms: 60000,
+    judge_detector_slot_timeout_ms: 300000,
+    normal_work_budget_ms: 360000
   });
+  assert.match(
+    profileSource,
+    /p6_local_hardware_compatibility_v8/u
+  );
+  assert.match(
+    engineSource,
+    /const P6_LIVE_CAPTURE_NORMAL_WORK_BUDGET_MS = 360000/u
+  );
+  assert.match(
+    engineSource,
+    /const P6_LIVE_CAPTURE_LOCAL_SLOT_TIMEOUT_MS = 60000/u
+  );
+  assert.match(
+    engineSource,
+    /const P6_LIVE_CAPTURE_JUDGE_SLOT_TIMEOUT_MS = 300000/u
+  );
   assert.match(
     engineSource,
     /createSandboxSecurityP6LiveCaptureEngine[\s\S]*?profileResolver:\s*resolveSandboxSecurityP6LiveCaptureProfile/u
@@ -589,13 +659,125 @@ test("REQ-SBX-GENERAL-002 capture child performs non-benchmark Judge readiness f
     "capture_child_started"
   ]);
   assert.equal(ports.readinessCalls, 1);
-  assert.deepEqual(ports.readinessTimeouts, [20000]);
+  assert.deepEqual(ports.readinessTimeouts, [40000]);
   assert.ok(result.events.indexOf("judge_readiness") < result.events.indexOf("capture_child_started"));
   assert.ok(result.events.indexOf("capture_child_started") < result.events.indexOf("engine_created"));
   assert.ok(result.events.indexOf("engine_created") < result.events.indexOf("inputs_complete"));
 });
 
-test("REQ-SBX-GENERAL-002 Chat readiness creates and parses exactly one request at 20000 ms", async () => {
+test("REQ-SBX-GENERAL-002 emits one content-free candidate frame per completed sample", async () => {
+  const ports = fakeLivePorts({ fixtureCount: 3 });
+  const frames: unknown[] = [];
+  const run = runSandboxSecurityLiveCapture as unknown as (
+    ports: SandboxSecurityLiveCapturePorts,
+    options: Readonly<{
+      candidate_output: "stream";
+      output_frame_writer: { write(frame: unknown): void };
+    }>
+  ) => Promise<Readonly<{ decision_count: number }>>;
+
+  const result = await run(ports, {
+    candidate_output: "stream",
+    output_frame_writer: {
+      write(frame: unknown) {
+        frames.push(frame);
+      }
+    }
+  });
+
+  assert.equal(result.decision_count, 3);
+  assert.deepEqual(
+    (frames as Array<Record<string, unknown>>).map((frame) => frame.event),
+    [
+      "candidate_progress",
+      "candidate_progress",
+      "candidate_progress",
+      "capture_complete"
+    ]
+  );
+  assert.deepEqual(
+    (frames as Array<Record<string, unknown>>)
+      .filter((frame) => frame.event === "candidate_progress")
+      .map((frame) => frame.completed_count),
+    [1, 2, 3]
+  );
+  assert.doesNotMatch(JSON.stringify(frames), /fixture text|raw_body|truth|SANDBOX_SECURITY_JUDGE_API_KEY/u);
+});
+
+test("REQ-SBX-GENERAL-002 emits no decision frame for a failed in-flight sample", async () => {
+  const ports = fakeLivePorts({ fixtureCount: 3, throwAtInput: 2 });
+  const frames: Array<Record<string, unknown>> = [];
+  const run = runSandboxSecurityLiveCapture as unknown as (
+    ports: SandboxSecurityLiveCapturePorts,
+    options: Readonly<{
+      candidate_output: "stream";
+      output_frame_writer: { write(frame: unknown): void };
+    }>
+  ) => Promise<Readonly<{ decision_count: number }>>;
+
+  await assert.rejects(
+    () =>
+      run(ports, {
+        candidate_output: "stream",
+        output_frame_writer: {
+          write(frame: unknown) {
+            frames.push(frame as Record<string, unknown>);
+          }
+        }
+      }),
+    /forced_evaluate_failure/u
+  );
+  assert.deepEqual(
+    frames.map((frame) => frame.event),
+    ["candidate_progress"]
+  );
+  assert.equal(frames[0]?.completed_count, 1);
+});
+
+test("REQ-SBX-GENERAL-002 waits for parent persistence before evaluating the next sample", async () => {
+  const ports = fakeLivePorts({ fixtureCount: 2 });
+  let releaseFirstPersistence!: () => void;
+  const firstPersistence = new Promise<void>((resolve) => {
+    releaseFirstPersistence = resolve;
+  });
+  let firstProgressStarted = false;
+  const run = runSandboxSecurityLiveCapture as unknown as (
+    ports: SandboxSecurityLiveCapturePorts,
+    options: Readonly<{
+      candidate_output: "stream";
+      output_frame_writer: {
+        write(frame: unknown): void | Promise<void>;
+      };
+    }>
+  ) => Promise<Readonly<{ decision_count: number }>>;
+
+  const capture = run(ports, {
+    candidate_output: "stream",
+    output_frame_writer: {
+      async write(frame: unknown) {
+        const candidateFrame = frame as { event?: string; completed_count?: number };
+        if (
+          candidateFrame.event === "candidate_progress" &&
+          candidateFrame.completed_count === 1
+        ) {
+          firstProgressStarted = true;
+          await firstPersistence;
+        }
+      }
+    }
+  });
+
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(firstProgressStarted, true);
+  assert.equal(ports.evaluateCalls, 1);
+
+  releaseFirstPersistence();
+  const result = await capture;
+  assert.equal(result.decision_count, 2);
+  assert.equal(ports.evaluateCalls, 2);
+});
+
+test("REQ-SBX-GENERAL-002 Chat readiness creates and parses exactly one request at 40000 ms", async () => {
   const operations: string[] = [];
   const transport: SandboxSecurityHttpTransport = Object.freeze({
     async request(request: Readonly<SandboxSecurityHttpRequest>) {
@@ -611,7 +793,7 @@ test("REQ-SBX-GENERAL-002 Chat readiness creates and parses exactly one request 
   });
 
   const resolvedModel = await runSandboxSecurityJudgeReadiness({
-    timeout_ms: 20000,
+    timeout_ms: 40000,
     signal: new AbortController().signal,
     judge_protocol_id: "openai_chat_completions_json_v1",
     judge_requested_model: "gpt-5.4-mini",
@@ -656,7 +838,7 @@ test("REQ-SBX-GENERAL-002 Chat readiness never probes Responses after any Chat f
     await assert.rejects(
       () =>
         runSandboxSecurityJudgeReadiness({
-          timeout_ms: 20000,
+          timeout_ms: 40000,
           signal: new AbortController().signal,
           judge_protocol_id: "openai_chat_completions_json_v1",
           judge_requested_model: "gpt-5.4-mini",
@@ -768,11 +950,11 @@ test("REQ-SBX-GENERAL-002 capture CLI stderr is bounded JSON for unknown profile
   assert.doesNotMatch(result.stderr, /Error:|node:internal|\.ts:/u);
 });
 
-test("REQ-SBX-GENERAL-002 readiness budget is exactly 20000 ms with no retry", async () => {
+test("REQ-SBX-GENERAL-002 readiness budget is exactly 40000 ms with no retry", async () => {
   const ports = fakeLivePorts({ readinessFail: true, fixtureCount: 1 });
   await assert.rejects(() => runSandboxSecurityLiveCapture(ports));
   assert.equal(ports.readinessCalls, 1);
-  assert.deepEqual(ports.readinessTimeouts, [20000]);
+  assert.deepEqual(ports.readinessTimeouts, [40000]);
   assert.equal(ports.evaluateCalls, 0);
   assert.ok(!ports.sinkEvents.some((event) => event.startsWith("begin:")));
 });
@@ -1168,6 +1350,13 @@ test("REQ-SBX-GENERAL-002 live capture rejects invoked provider failures before 
 
   for (const provider of ["ollama", "openai"] as const) {
     for (const outcome of failures) {
+      const slot = provider === "ollama" ? "ollama" : "judge";
+      const expectedSuffix =
+        outcome.status === "http_error"
+          ? `${slot}_http_error_${outcome.http_status}`
+          : outcome.status === "transport_error"
+            ? `${slot}_transport_error_${outcome.error_code}`
+            : `${slot}_signal_termination_${outcome.termination_reason}`;
       const ports = fakeLivePorts({
         fixtureCount: 1,
         evaluationOutcomes: [
@@ -1182,7 +1371,10 @@ test("REQ-SBX-GENERAL-002 live capture rejects invoked provider failures before 
 
       await assert.rejects(
         () => runSandboxSecurityLiveCapture(ports),
-        /provider_outcome_not_acceptance_capable|provider.*outcome|acceptance/i
+        new RegExp(
+          `sandbox_security_capture_live_reject:provider_outcome_not_acceptance_capable:${expectedSuffix}`,
+          "u"
+        )
       );
       assert.equal(
         existsSync(join(ports.capture_output_root, "candidate", "package.json")),
@@ -1331,6 +1523,14 @@ test("REQ-SBX-GENERAL-002 live capture reuses the readiness transport and does n
     has_child_permission: () => false,
     has_worker_permission: () => false,
     require_live_config: () => {},
+    live_binding: {
+      ollama_digest: DIGEST,
+      judge_protocol_id: "openai_responses_v1",
+      judge_endpoint_policy_id: "operator_https_fqdn_v1",
+      judge_base_url: "https://judge.example.test/v1",
+      judge_endpoint_url: "https://judge.example.test/v1/responses",
+      judge_requested_model: "gpt-5.4-mini"
+    },
     run_judge_readiness: async () => {
       configFactoryCalls += 1;
       return Object.freeze({
@@ -1394,11 +1594,72 @@ test("REQ-SBX-GENERAL-002 production capture entry rejects unrestricted processe
 interface MutableCaptureFsExports {
   openSync: typeof import("node:fs").openSync;
   readFileSync: typeof import("node:fs").readFileSync;
+  renameSync: typeof import("node:fs").renameSync;
 }
 
 const mutableCaptureFs = createRequire(import.meta.url)(
   "node:fs"
 ) as MutableCaptureFsExports;
+
+test("REQ-SBX-GENERAL-002 preserves staging when candidate publication rename fails", async () => {
+  const ports = fakeLivePorts({ fixtureCount: 1 });
+  const result = await runSandboxSecurityLiveCapture(ports);
+  const candidateRoot = join(ports.capture_output_root, "candidate");
+  const stagingPath = join(
+    ports.capture_output_root,
+    ".candidate-package.json"
+  );
+  const formalStaging = {
+    schema_version: "sandbox-security-benchmark-candidate-staging.v1",
+    capture_manifest: JSON.parse(
+      readFileSync(join(candidateRoot, "capture-manifest.json"), "utf8")
+    ),
+    cassette: JSON.parse(readFileSync(join(candidateRoot, "cassette.json"), "utf8")),
+    package: JSON.parse(readFileSync(join(candidateRoot, "package.json"), "utf8")),
+    decisions: [
+      JSON.parse(
+        readFileSync(join(candidateRoot, "decisions", "ssb-v1-0001.json"), "utf8")
+      )
+    ]
+  };
+  const serialized = `${JSON.stringify(formalStaging)}\n`;
+  const candidatePackageSha256 = createHash("sha256")
+    .update(serialized, "utf8")
+    .digest("hex");
+  rmSync(candidateRoot, { recursive: true, force: true });
+  writeFileSync(stagingPath, serialized, { encoding: "utf8", flag: "wx", mode: 0o600 });
+  const stagingStat = lstatSync(stagingPath, { bigint: true });
+  const binding = `${stagingStat.dev}:${stagingStat.ino}`;
+  const temporaryRoot = join(
+    ports.capture_output_root,
+    `.candidate-${candidatePackageSha256}.tmp`
+  );
+  const originalRenameSync = mutableCaptureFs.renameSync;
+  mutableCaptureFs.renameSync = ((source, target) => {
+    if (source === temporaryRoot && target === candidateRoot) {
+      throw new Error("injected_candidate_publish_rename_failure");
+    }
+    return originalRenameSync(source, target);
+  }) as typeof originalRenameSync;
+  syncBuiltinESMExports();
+  try {
+    assert.throws(
+      () =>
+        materializeSandboxSecurityCandidatePackage({
+          capture_output_root: ports.capture_output_root,
+          capture_output_binding: binding,
+          fixture_ids: ["ssb-v1-0001"],
+          candidate_package_sha256: candidatePackageSha256
+        }),
+      /candidate_materialize_failed/i
+    );
+  } finally {
+    mutableCaptureFs.renameSync = originalRenameSync;
+    syncBuiltinESMExports();
+  }
+  assert.equal(existsSync(candidateRoot), false);
+  assert.deepEqual(JSON.parse(readFileSync(stagingPath, "utf8")), formalStaging);
+});
 
 test("REQ-SBX-GENERAL-002 live capture opens every input envelope before Judge readiness", async () => {
   const ports = fakeLivePorts({ fixtureCount: 3 });

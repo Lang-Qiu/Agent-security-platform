@@ -8,6 +8,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  truncateSync,
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -62,6 +63,9 @@ const normalizeCapture = normalizer(
 const normalizeSeal = normalizer(
   "normalizeSandboxSecurityBenchmarkSeal"
 );
+const normalizeCandidateDecision = normalizer(
+  "normalizeSandboxSecurityBenchmarkCandidateDecisionEnvelope"
+);
 
 function requiredNormalizer(name: string): Normalizer {
   const candidate = contracts[name];
@@ -81,12 +85,12 @@ const C = "c".repeat(64);
 const D = "d".repeat(64);
 const FIXTURE_ID = "ssb-v1-0001";
 const P6_TIMING = {
-  execution_profile_id: "p6_local_hardware_compatibility_v1",
-  readiness_timeout_ms: 20000,
-  qualification_timeout_ms: 20000,
-  local_detector_slot_timeout_ms: 20000,
-  judge_detector_slot_timeout_ms: 20000,
-  normal_work_budget_ms: 40000
+  execution_profile_id: "p6_local_hardware_compatibility_v8",
+  readiness_timeout_ms: 40000,
+  qualification_timeout_ms: 40000,
+  local_detector_slot_timeout_ms: 60000,
+  judge_detector_slot_timeout_ms: 300000,
+  normal_work_budget_ms: 360000
 } as const;
 
 function evaluationRequest() {
@@ -364,8 +368,8 @@ function captureManifest() {
     },
     ...judgeBinding(),
     judge_binding_sha256: judgeBindingSha256(),
-    local_prompt_version: "sandbox-security-ollama-local-prompt.v1",
-    judge_prompt_version: "sandbox-security-openai-judge-prompt.v1",
+    local_prompt_version: "sandbox-security-ollama-local-prompt.v2",
+    judge_prompt_version: "sandbox-security-openai-judge-prompt.v2",
     local_schema_version: "sandbox-security-local-model.v1",
     judge_schema_version: "sandbox-security-judge.v1",
     rule_catalog_version: "sandbox-security-rule-catalog.v1",
@@ -384,6 +388,23 @@ function candidateCaptureManifest() {
   return {
     ...candidate,
     fixture_count: 300
+  };
+}
+
+function candidateDecision(action: string) {
+  return {
+    schema_version: "sandbox-security-benchmark-decision-projection.v1",
+    fixture_id: FIXTURE_ID,
+    decision_projection_sha256: A,
+    projection: {
+      schema_version: "sandbox-security-decision.v1",
+      verdict: "risk_detected",
+      action,
+      risk_level: "high",
+      finding_count: 1,
+      detector_run_count: 3,
+      evidence_ref_count: 1
+    }
   };
 }
 
@@ -645,6 +666,14 @@ test("REQ-SBX-GENERAL-002 candidate artifacts bind protocol evidence and capture
     normalizeCandidateCapture({
       ...candidateManifest,
       local_detector_slot_timeout_ms: 1000
+    })
+  );
+  assert.throws(() =>
+    normalizeCandidateCapture({
+      ...candidateManifest,
+      execution_profile_id: "p6_local_hardware_compatibility_v3",
+      judge_detector_slot_timeout_ms: 60000,
+      normal_work_budget_ms: 120000
     })
   );
   assert.throws(() =>
@@ -1091,6 +1120,19 @@ test("REQ-SBX-GENERAL-002 candidate capture manifest normalizes the capture chil
   assert.equal((normalized as Record<string, unknown>).inputs_tree_sha256, C);
 });
 
+test("REQ-SBX-GENERAL-002 candidate decisions use the frozen GENERAL-001 action catalog", () => {
+  for (const action of ["allow", "alert", "ask", "deny"]) {
+    assert.deepEqual(
+      normalizeCandidateDecision(candidateDecision(action)),
+      candidateDecision(action)
+    );
+  }
+  assert.throws(
+    () => normalizeCandidateDecision(candidateDecision("block")),
+    /benchmark_contract_invalid/
+  );
+});
+
 test("REQ-SBX-GENERAL-002 candidate capture manifest rejects unclosed, malformed, and mismatched bindings", () => {
   const normalizeCandidateCapture = requiredNormalizer(
     "normalizeSandboxSecurityBenchmarkCandidateCaptureManifest"
@@ -1335,6 +1377,26 @@ test("REQ-SBX-GENERAL-002 tree hash bounds directory entries, not only files", (
     }
     assert.equal(typeof hashTree, "function");
     assert.throws(() => hashTree!(root), { message: /benchmark_contract_invalid/ });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("REQ-SBX-GENERAL-002 tree hash admits aggregate evidence above one request while bounding each artifact", () => {
+  const hashTree = contracts.hashSandboxSecurityBenchmarkTree as
+    | ((root: string) => string)
+    | undefined;
+  const root = mkdtempSync(join(tmpdir(), "sandbox-security-evidence-tree-"));
+  try {
+    const aggregateArtifact = join(root, "cassette.json");
+    writeFileSync(aggregateArtifact, Buffer.alloc((512 * 1024) + 1, 0x20));
+    assert.equal(typeof hashTree, "function");
+    assert.match(hashTree!(root), /^[a-f0-9]{64}$/);
+
+    truncateSync(aggregateArtifact, (16 * 1024 * 1024) + 1);
+    assert.throws(() => hashTree!(root), {
+      message: /benchmark_contract_invalid/
+    });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

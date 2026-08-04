@@ -259,7 +259,7 @@ exact-byte or strict-schema assertion to fail.
 
 ~~~ts
 export const SANDBOX_SECURITY_OPENAI_JUDGE_PROMPT_VERSION =
-  "sandbox-security-openai-judge-prompt.v1" as const;
+  "sandbox-security-openai-judge-prompt.v2" as const;
 
 export interface SandboxSecurityParsedOpenAIResponse {
   readonly model: "gpt-5.6-terra";

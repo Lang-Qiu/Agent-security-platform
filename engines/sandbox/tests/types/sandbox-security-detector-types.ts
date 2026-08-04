@@ -138,14 +138,14 @@ createSandboxSecurityEngine(publicDepsWithProfileResolver);
 const publicDepsWithEntryBudget = {
   registry,
   runtime: runtimePorts,
-  entryNormalWorkBudgetMs: 40000
+  entryNormalWorkBudgetMs: 360000
 };
 createSandboxSecurityEngine(publicDepsWithEntryBudget);
 
 const internalDepsWithEntryBudget = {
   registry,
   runtime: runtimePorts,
-  entryNormalWorkBudgetMs: 40000
+  entryNormalWorkBudgetMs: 360000
 };
 createSandboxSecurityP6LiveCaptureEngine(
   // @ts-expect-error internal P6 Engine owns its entry budget
@@ -165,7 +165,7 @@ createSandboxSecurityP6LiveCaptureEngine(
 const badNormalWorkBudgetProfile: SandboxSecurityPolicyProfileManifest = {
   ...profile,
   // @ts-expect-error core policy manifests retain the GENERAL-001 budget
-  normal_work_budget_ms: 40000
+  normal_work_budget_ms: 80000
 };
 
 // prove approved evaluation request is not the internal branded type:

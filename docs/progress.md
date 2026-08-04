@@ -7071,3 +7071,1230 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   `4000ms` Judge detector/readiness limit remain historical evidence only;
   they are superseded for controlled P6 live capture by this profile, while
   ordinary production and P7 timing remain unchanged
+
+## 2026-07-31 - REQ-SBX-GENERAL-002 P6 live acceptance hardening and hardware compatibility v2
+
+- phase/task: Phase 6 / P6-T4 controlled live acceptance
+- status: IMPLEMENTATION_GREEN_LIVE_ACCEPTANCE_PENDING
+- operator authority:
+  - authorized the mode-`600` `.env.sandbox-security.local` Judge endpoint and
+    API key for the real 300-input run and accepted provider usage
+  - after content-free latency evidence, explicitly approved
+    `p6_local_hardware_compatibility_v2`: `60000ms` local detector slot and
+    `80000ms` normal work budget; readiness, qualification, warmed prewarm,
+    Judge slot, ordinary production, and P7 limits remain unchanged
+- acceptance trust root:
+  - the prior tracked public key had no recoverable matching local private key,
+    so the trust root was rotated before any evidence existed
+  - the new tracked Ed25519 SPKI fingerprint is
+    `8wkE8E-myTau0xBFFnugrbS-CKmlq_a-XuvUGhcWL48`
+  - the matching mode-`600`, single-link private key is local-only and
+    Git-ignored
+- live failure observability hardening:
+  - worker failures now preserve only one bounded source-controlled JSON error
+    code; arbitrary, multiline, accessor-backed, extra-field, or oversized
+    stderr still collapses to the generic stage rejection
+  - the capture stage classifies acceptance-blocking provider outcomes by
+    provider and content-free failure type only, without fixture IDs, request
+    bodies, responses, credentials, truth, or decisions
+  - regression tests cover both strict authority-stage propagation and the
+    capture child boundary
+- controlled attempts:
+  - fresh attempts published no evidence on failure and left their output roots
+    empty
+  - the final v1 attempt passed preparation, Judge readiness, and Ollama
+    qualification, then failed closed with
+    `provider_outcome_not_acceptance_capable:ollama_signal_termination_slot_timeout`
+  - external Judge was not the classified blocker
+- content-free local diagnostics:
+  - host: CPU-only 16-logical-CPU Intel i7-1360P; no compatible GPU backend
+  - warmed fixed production prewarm requests completed in approximately
+    `3.6s` to `4.3s`
+  - at least three of the 20 largest real production-protocol requests exceeded
+    the v1 `20000ms` local slot
+  - the largest request completed in `41663ms` with 663 prompt tokens and 22
+    output tokens when allowed to finish
+  - `OLLAMA_NUM_PARALLEL=1` did not improve the warmed baseline; forcing 16
+    inference threads increased its median to approximately `9.6s`
+  - no diagnostic contacted Judge or logged provider bodies or sample content
+- RED evidence:
+  - v2 timing/profile tests failed against the v1 implementation because the
+    runtime profile still exposed local `20000ms` / work `40000ms`
+  - the evaluator rejected a v2 candidate manifest as
+    `candidate_manifest_invalid`
+- minimal GREEN implementation:
+  - source-controlled profile ID is now
+    `p6_local_hardware_compatibility_v2`
+  - the private P6 Engine factory owns fixed local `60000ms`, Judge `20000ms`,
+    and normal-work `80000ms` values
+  - candidate/capture contracts, signed receipt bindings, evaluator, seal, and
+    live-evidence validators require the exact v2 ID and timing record
+  - ordinary production and P7 retain GENERAL-001 `5000ms` work and
+    `100/1000/4000ms` detector slots
+- deterministic evidence so far:
+  - focused RED-to-GREEN profile tests: `4/4`
+  - complete affected P6/production suite: `156/156`
+  - authority/capture/capability baseline: `91/91`
+  - sandbox and benchmark TypeScript checks: pass
+  - `git diff --check`: pass
+- documentation:
+  - added the v2 amendment and marked the v1 amendment historical
+  - synchronized sprint, main Spec/Plans, architecture, API contract,
+    capability amendment, and operator runbook
+- next: run the full deterministic repository/production gates, prewarm the
+  pinned local model, execute one fresh controlled 300-input v2 acceptance,
+  validate and promote the real evidence, and only then enter P7
+
+## 2026-07-31 - REQ-SBX-GENERAL-002 Ollama local prompt v2
+
+- phase/task: Phase 6 / P6-T4 controlled live acceptance
+- status: IMPLEMENTATION_GREEN_FULL_LOCAL_PREFLIGHT_PENDING
+- observed failure:
+  - the first controlled profile-v2 run passed timing qualification and failed
+    closed with
+    `provider_outcome_not_acceptance_capable:ollama_transport_error_provider_response_invalid`
+  - content-free exact-parser diagnostics localized the failure to ordinal
+    `241`: three returned `subject_refs` contained only one unique reference
+  - the strict production normalizer correctly rejected the duplicate; no
+    evidence was published and Judge was not the classified blocker
+- rejected alternative:
+  - Ollama `0.6.8` ignored an experimental `uniqueItems` response-schema
+    annotation for the same request
+  - no retry, fallback, response repair, or automatic deduplication was added
+- RED evidence:
+  - exact request-byte and prompt-version tests failed against v1
+  - benchmark composition, candidate manifest, evaluator, and sealer fixtures
+    bound to v2 failed closed against the old contract
+- minimal GREEN:
+  - `sandbox-security-ollama-local-prompt.v2` appends exactly
+    `Each candidate's subject_refs array must contain no duplicate references.`
+  - prompt SHA-256:
+    `e2632e29c2720f8f3c34436fe5daf6a7f251f5e912c3effeb21beccf56e4c196`
+  - fixed prewarm request: `2486` UTF-8 bytes, SHA-256
+    `d485c1671c61545499447b6b496ff2f965df4f93d0b43797d7ee105da874e486`
+  - capture/replay/evaluate/seal contracts now reject prompt-v1 evidence
+- deterministic result:
+  - affected suite: `127/130` pass
+  - the only three RED tests are the pre-existing real-live-evidence gates,
+    still missing `capture.json`, 300 replay envelopes, and `seal.json`
+  - CLI child-process checks pass outside the filesystem sandbox; their
+    sandbox-only `spawnSync` failures were confirmed as `EPERM`, not regressions
+- next: run all 300 corpus inputs locally through the exact production v2
+  request and parser before spending another Judge request
+
+## 2026-07-31 - REQ-SBX-GENERAL-002 candidate action contract correction
+
+- phase/task: Phase 6 / P6-T4 candidate materialization
+- status: IMPLEMENTATION_GREEN_LIVE_ACCEPTANCE_PENDING
+- controlled-run outcome:
+  - all 300 local requests passed the production prompt-v2 parser in a separate
+    no-Judge preflight, including the former ordinal `241` failure
+  - the formal run then completed 300 capture evaluations and produced only
+    acceptance-capable provider outcomes
+  - publication failed closed with `candidate_staging_invalid`; the evidence
+    root remained empty
+- content-free diagnosis:
+  - capture manifest, cassette, all provider outcomes, and package normalized
+    successfully
+  - decision ordinal `78` was the sole failing envelope; every structural,
+    schema, hash, verdict, risk, and count predicate passed
+  - its action was legal under frozen GENERAL-001 but rejected by the benchmark
+    contract's incorrect `allow|block` subset; the action value itself was not
+    logged during diagnosis
+- RED:
+  - a new contract test requiring `allow|alert|ask|deny` failed on `alert`
+    against the old normalizer
+  - permission-child materialization was extended to exercise a non-`allow`
+    core action
+- GREEN:
+  - candidate projection type and normalizer now import
+    `SANDBOX_SECURITY_ACTIONS` / `SandboxSecurityAction` from shared
+  - deprecated `block` is rejected
+  - the retained real staging envelope now normalizes all `300/300` decisions
+    in a read-only diagnostic
+  - complete affected benchmark suite: `138/141`; the only three RED tests are
+    the unchanged missing-live-evidence gates
+- unchanged boundaries:
+  - metrics remain verdict-only; Engine, policy, provider, sanitizer, prompt,
+    timing, thresholds, truth, and Judge binding are unchanged
+  - the failed staging envelope is diagnostic evidence only and will not be
+    materialized, signed, or promoted
+- next: rerun deterministic type/production/repository gates, then execute a
+  fresh controlled acceptance with new roots
+
+## 2026-07-31 - REQ-SBX-GENERAL-002 P6-T4 controlled v2 evaluation BLOCKED on detection quality
+
+- phase/task: Phase 6 / P6-T4 controlled live acceptance
+- status: `BLOCKED_DETECTION_QUALITY`; GENERAL-002 is not VERIFIED
+- operator authority exercised:
+  - used the mode-`600` `.env.sandbox-security.local` configuration for the
+    reviewed Judge endpoint/API key with authorized provider usage
+  - used the approved P6-only `60000ms` local slot and `80000ms` normal work
+    budget; other P6, ordinary-production, and P7 limits remained unchanged
+- controlled-run outcome:
+  - fresh preparation/capture completed all 300 production Engine evaluations
+    and wrote a truth-blind candidate
+  - truth-aware evaluation rejected the candidate; seal stage did not run and
+    the intended evidence root remained empty
+  - the candidate and evaluation report are retained only under ignored
+    `tmp/` for diagnosis and must never be promoted, signed, reused, or treated
+    as acceptance evidence
+- frozen metrics:
+  - unsafe recall: `6/180 = 0.033333`
+  - high/critical recall: `2/60 = 0.033333`
+  - transformed recall: `1/54 = 0.018519`
+  - safe false-positive rate: `0/120 = 0`
+  - decision coverage: `300/300 = 1`
+  - category detections: prompt injection `3`, privilege escalation `1`,
+    trust-boundary violation `2`, and `0` in the other six categories
+- provider aggregate, without bodies or fixture identifiers:
+  - Ollama: 299 responses (`3` matched, `296` no-match), plus one
+    rule-short-circuited `not_called`
+  - Judge: binding/readiness passed; `300/300 not_called`
+  - the Judge count is correct under the frozen production router, which calls
+    Judge only for unresolved signals; provider-usage authorization does not
+    authorize changing core routing semantics
+  - final actions: `294 allow`, `4 deny`, `2 ask`
+- quality investigation:
+  - generalized prompt/schema experiments were performed only in `/tmp` on a
+    separate stratified diagnostic subset and never entered production
+  - the strongest diagnostic variant still missed the acceptance bar and
+    introduced safe false positives; tuning stopped to avoid overfitting the
+    frozen acceptance corpus
+  - no threshold relaxation, response repair, retry, synthetic evidence, or
+    forced Judge routing was introduced
+- evaluator observability defect and TDD correction:
+  - RED: a new live-worker regression expected one bounded
+    `evaluation_not_accepted` code, but the worker exported no acceptance guard
+  - cause: threshold assertion ran before the worker's explicit rejection,
+    allowing a long multi-threshold message to collapse to generic `internal`
+  - GREEN: the worker now maps every rejected report or infrastructure code to
+    `sandbox_security_evaluate_worker_reject:evaluation_not_accepted` before
+    invoking the detailed invariant assertion for accepted reports
+  - focused regression: `2/2`
+- final deterministic verification:
+  - affected non-evidence benchmark suites: `176/176`
+  - live-evidence suite outside the filesystem sandbox: `41/44`; the only three
+    RED tests are the required accepted-live-evidence checks and all fail with
+    `live_evidence_missing`
+  - permanent repository gate: `308/308`
+  - production sandbox suite: `418/418`
+  - sandbox and benchmark TypeScript checks: pass
+  - `git diff --check`: pass
+- evidence boundary:
+  - no `capture.json`, replay directory, `seal.json`, or receipt chain was
+    copied into the committed corpus
+  - the three live-evidence tests remain intentionally RED because the only
+    real candidate failed acceptance, not because synthetic evidence is
+    missing
+- blocker and next authority:
+  - the approved qwen3:8b prompt-v2/core-routing contract does not meet frozen
+    acceptance quality
+  - continuation requires explicit approval of one material design amendment:
+    a P6-only prompt/schema change validated on independent development data, a
+    stronger pinned local model/digest, or a Judge-routing semantic change
+  - ordinary production and P7 must remain unchanged unless separately and
+    explicitly amended
+
+## 2026-08-01 - REQ-SBX-GENERAL-002 five-domain Judge screening implemented, fresh acceptance pending
+
+- phase/task: Phase 6 / P6-T4 detection-quality correction
+- status: `IMPLEMENTED_PENDING_FRESH_LIVE_ACCEPTANCE`; GENERAL-002 is not yet
+  VERIFIED
+- authority and frozen boundaries:
+  - the user authorized the reviewed Judge endpoint/API key and associated
+    service usage for the 300-input benchmark
+  - the approved P6 v2 local `60000ms` / work `80000ms` limits remain fixed;
+    all other P6, ordinary-production, and P7 timing remains unchanged
+  - corpus, truth, thresholds, prompt-v2 bytes/hash, sanitizer, Judge protocol,
+    provider binding, receipts, and evidence validators remain unchanged
+- truth-blind live diagnostic:
+  - one fixed `trust_boundary_violation` obligation was sent for all 300
+    sanitized production inputs without reading acceptance truth during capture
+  - provider outcomes: 297 success, one invalid response, and two timeouts
+  - offline diagnostic only: unsafe recall `151/180 = 0.838889`, high/critical
+    recall `56/60 = 0.933333`, transformed recall `46/54 = 0.851852`, safe
+    false-positive rate `3/120 = 0.025`, coverage `295/300 = 0.983333`
+  - this diagnostic was not acceptance evidence and did not meet every frozen
+    threshold
+- independent development evidence:
+  - AgentDojo revision `089ed468cf3ed0322acc66b0211f26d9d90dbf60` and
+    ToolEmu revision `ac4a7ab7ed8c7985d96231e214bd6b54304b7ddb` supplied
+    60 literal-nonoverlapping probes: 30 risk and 30 safe
+  - the unchanged prompt detected `0/30` risks; a taxonomy prompt detected
+    `16/30` but matched `7/30` safe probes and was rejected
+  - a routing-only prompt emitted a signal for `60/60` but collapsed `49/60`
+    to one generic category and was rejected
+  - production sanitizer/protocol capacity probes completed one, two, three,
+    and five obligations inside the unchanged P6 Judge slot; nine timed out
+- RED-first implementation:
+  - detector tests first required the exact five-domain mode and failed with
+    `qualification_invalid`
+  - composition tests first required `disabled` for ordinary `local` and
+    `five_domain_v1` for `local_and_judge` and failed on the missing mode
+  - a subject-binding regression then failed because more than eight subjects
+    were silently truncated
+- GREEN behavior:
+  - valid pinned Ollama responses in `local_and_judge` produce exactly five
+    low-confidence unresolved signals: prompt injection, privilege escalation,
+    sensitive-data exposure, unsafe side effects, and trust-boundary violation
+  - each signal binds every authoritative content source plus the optional whole
+    tool call; zero or more than eight subjects fails closed without truncation
+  - ordinary `local` behavior and all timing remain unchanged; P7 replays the
+    same five-obligation request through ordinary `local_and_judge`
+- deterministic verification at implementation checkpoint:
+  - Ollama detector: `26/26`
+  - production composition: `22/22`
+  - benchmark composition: `20/20`
+  - production integration/replay: `12/12`
+  - complete production sandbox suite: `420/420`
+  - sandbox and benchmark TypeScript checks: pass
+  - permanent repository spec gate: `17/17`
+- evidence boundary and next step:
+  - the 2026-07-31 rejected candidate remains diagnostic-only and cannot be
+    signed, sealed, copied, or reused
+  - no new accepted `capture.json`, replay directory, `seal.json`, or receipt
+    chain exists yet
+  - rerun all deterministic gates, then execute one completely fresh controlled
+    300-input acceptance; only accepted, signed, validated evidence can advance
+    Phase 6 and Phase 7
+
+## 2026-08-01 - REQ-SBX-GENERAL-002 fresh five-domain capture blocked by Judge slot latency
+
+- phase/task: Phase 6 / P6-T4 controlled live acceptance
+- status: `BLOCKED_JUDGE_SLOT_LATENCY`; GENERAL-002 is not VERIFIED
+- deterministic pre-run gates:
+  - production sandbox `420/420`, repository `309/309`, core sandbox
+    `1030/1030`, shared `207/207`
+  - sandbox and benchmark TypeScript checks pass
+  - `git diff --check` passes
+- first fresh attempt:
+  - preparation completed, then capture failed in approximately seven seconds
+    with the bounded `sandbox_security_capture_live_reject:internal` code
+  - the intended output root remained empty and the zero-byte exclusive staging
+    reservation proves that no candidate was materialized
+  - content-free isolation checks then confirmed Ollama qualification in about
+    `3.6s` and Judge readiness in about `4.0s`, with resolved model matching
+  - a truth-blind 20-input production Engine diagnostic completed `20/20`:
+    Ollama returned 20 responses; Judge returned 18 responses and two
+    `slot_timeout` terminations; no code invariant failed
+- second fresh attempt:
+  - used a new capture parent and output root; never reused the first attempt
+  - ran for approximately 103 minutes and completed the serialized evaluation
+    loop, then failed before candidate materialization with
+    `provider_outcome_not_acceptance_capable:judge_signal_termination_slot_timeout`
+  - no capture receipt, evaluation receipt, seal, replay pack, or accepted
+    metrics were produced; the output root remains unsealed
+- normative conflict requiring new authority:
+  - provenance audit confirms the frozen P6 provider gate is not an accidental
+    implementation restriction: Steps 7 through 9 of the approved explicit
+    Judge protocol plan require every invoked slot to contain a normalized
+    response and state that failure cassettes are never acceptance-capable
+  - the gate deliberately rejects every invoked HTTP, transport, or
+    signal-termination failure before truth-aware evaluation
+  - the existing replay contract can faithfully replay `slot_timeout`, and the
+    frozen metric contract treats resulting `indeterminate` decisions as risk
+    false negatives and requires at least 95% total decision coverage
+  - the 95% decision-coverage metric therefore does not override provider
+    qualification; it applies only after an infrastructure-clean candidate is
+    admitted to truth-aware evaluation
+  - changing either the provider gate or the approved P6 `20000ms` Judge /
+    `80000ms` work timing is material and is not authorized by the current
+    profile-v2 approval
+- next authority required:
+  - provide and review a Judge channel/model that completes every invoked
+    request inside the unchanged 20-second slot; or
+  - explicitly amend P6 candidate admission to allow replayable Judge
+    `slot_timeout` outcomes and let the unchanged recall/coverage thresholds
+    decide acceptance; or
+  - explicitly approve new P6-only Judge/work limits
+
+## 2026-08-01 - REQ-SBX-GENERAL-002 P6 Judge latency compatibility v3 implemented
+
+- phase/task: Phase 6 / P6-T4 controlled live acceptance timing correction
+- status: `IMPLEMENTED_PENDING_FRESH_LIVE_ACCEPTANCE`; GENERAL-002 is not yet
+  VERIFIED
+- authority and design:
+  - after the v2 five-domain run failed on Judge slot latency, the operator
+    explicitly approved new P6-only Judge/work limits
+  - the exact source-controlled profile is
+    `p6_local_hardware_compatibility_v3`: readiness `20000ms`, qualification and
+    warmed prewarm `20000ms`, local slot `60000ms`, Judge slot `60000ms`, and
+    normal work budget `120000ms`
+  - `120000ms` is the closed local-plus-Judge sum and authorizes no retry,
+    fallback, repair, or second request
+  - ordinary production and P7 remain on GENERAL-001 `5000ms` work and
+    `100/1000/4000ms` rule/local/Judge slots
+- RED-first evidence:
+  - candidate, evaluator, acceptance-receipt, and permanent repository tests
+    failed because production still exposed v2 / Judge `20000ms` / work
+    `80000ms`
+  - an explicit regression proves v2 candidate artifacts and receipt bindings
+    fail closed
+- GREEN implementation:
+  - the private P6 profile and Engine factory now own the exact v3 limits
+  - capture/candidate contracts, evaluation, signed receipts, sealer inputs, and
+    final evidence validation bind the v3 ID and timing record
+  - no public request, environment variable, CLI argument, ordinary composition,
+    or P7 path can select or inherit the profile
+- deterministic verification at implementation checkpoint:
+  - affected composition, capture, contracts, evaluator, receipt, and permanent
+    repository suites: `176/176`
+  - sandbox and benchmark TypeScript checks: pass
+  - fresh 300-input live acceptance and the complete post-run gate battery remain
+    pending
+
+## 2026-08-01 - REQ-SBX-GENERAL-002 P6 v3 live acceptance rejected on Judge latency
+
+- phase/task: Phase 6 / P6-T4 controlled live acceptance
+- status: `BLOCKED_JUDGE_SLOT_LATENCY`; GENERAL-002 is not VERIFIED
+- pre-run evidence:
+  - production sandbox `420/420`, repository `310/310`, shared `207/207`, and
+    core sandbox `1030/1030`
+  - sandbox and benchmark TypeScript checks, corpus validation, and
+    `git diff --check` passed
+  - the mode-`600` env/key hygiene passed; content-free live preflight returned
+    Ollama qualification `response`, Judge readiness `response`, reviewed Judge
+    binding `match`, and a warmed probe within `20000ms`
+- fresh v3 attempts:
+  - `v3-01` failed early with the bounded capture `internal` code; its candidate
+    reservation stayed zero bytes and its evidence root remained empty
+  - after the independent preflight, `v3-02` used entirely new roots and ran for
+    approximately 103 minutes
+  - `v3-02` failed before candidate materialization with
+    `provider_outcome_not_acceptance_capable:judge_signal_termination_slot_timeout`
+    despite the new `60000ms` Judge slot and `120000ms` work budget
+- evidence boundary:
+  - the candidate reservation is zero bytes and no candidate directory exists
+  - zero capture/evaluation receipts were signed
+  - the evidence root has zero entries; `capture.json`, `seal.json`, and
+    `receipt-chain.json` do not exist
+  - no rejected root may be reused, promoted, or treated as acceptance evidence
+- next authority required:
+  - provide and review a Judge channel/model that reliably completes every
+    invoked request within the current `60000ms` slot; or
+  - explicitly approve another P6-only timing/admission amendment; and
+  - explicitly authorize the service usage for another fresh 300-input run
+- post-failure attribution audit (2026-08-02):
+  - the credentialed capture bundle contains the exact v3 Engine/profile bytes;
+    its hashes match the live sources, excluding a stale v2 bundle
+  - the deadline controller gives `work_budget` precedence whenever the total
+    budget narrows a lease or expires simultaneously, so the observed
+    `judge_signal_termination_slot_timeout` is not a mislabeled `120000ms`
+    work-budget exhaustion
+  - the Judge lease includes deterministic sanitization and the external
+    request; the earlier truth-blind 300-input single-obligation screen under
+    the same sanitizer/protocol returned 297 responses, two timeouts, and one
+    invalid response at `20000ms`
+  - because successful-request latency was not persisted, existing evidence
+    proves long-tail/intermittent channel failure but supplies no safe timeout
+    upper bound; no further external call was made during this audit
+
+## 2026-08-02 - REQ-SBX-GENERAL-002 P6 Judge latency compatibility v4 implemented
+
+- phase/task: Phase 6 / P6-T4 controlled live acceptance timing correction
+- status: `IMPLEMENTED_PENDING_FRESH_LIVE_ACCEPTANCE`; GENERAL-002 is not yet
+  VERIFIED
+- authority and design:
+  - the operator explicitly approved P6-only local `60000ms`, Judge `120000ms`,
+    and work `180000ms`
+  - strict response-only provider admission and zero retry remain unchanged;
+    readiness, qualification, warmed prewarm, rule, ordinary production, and P7
+    timing remain unchanged
+  - the operator authorized one completely fresh 300-input run using the
+    reviewed `.env.sandbox-security.local` channel and accepted its service
+    usage
+- RED evidence:
+  - engine runtime recorded Judge `60000ms` where the v4 test required
+    `120000ms`
+  - candidate, evaluator, receipt, and capture fixtures failed against the old
+    v3 ID/timing record
+  - the permanent repository gate failed because the v4 amendment did not yet
+    exist
+- minimal GREEN implementation:
+  - source-controlled profile ID is
+    `p6_local_hardware_compatibility_v4`
+  - private P6 Engine limits are local `60000ms`, Judge `120000ms`, and normal
+    work `180000ms`
+  - candidate/capture contracts, signed receipt bindings, evaluator, sealer,
+    and live-evidence validation require the exact v4 record and reject v3
+  - no public request, environment variable, CLI argument, ordinary
+    composition, or P7 path can select the profile
+- focused verification:
+  - engine/composition `42/42`
+  - capture/contracts/evaluator/receipt `136/136` outside the filesystem sandbox
+  - full deterministic gate battery and the authorized fresh live run remain
+    pending
+
+## 2026-08-02 - REQ-SBX-GENERAL-002 P6 v4 post-capture tree-boundary defect fixed
+
+- phase/task: Phase 6 / P6-T4 controlled live acceptance
+- status: `IMPLEMENTED_PENDING_NEW_FRESH_LIVE_ACCEPTANCE_AUTHORITY`;
+  GENERAL-002 is not VERIFIED
+- authorized v4 run:
+  - used fresh capture/evidence roots, the mode-`600` reviewed env/key, exact
+    `p6_local_hardware_compatibility_v4`, strict admission, and no retry
+  - ran for approximately 75.5 minutes and materialized a real candidate with
+    300 decision files, an exact v4 manifest, and a 645046-byte cassette
+  - then failed before capture-receipt issuance with the bounded
+    `sandbox_security_capture_worker_reject:internal` code
+  - zero receipts were signed and the intended evidence root has zero entries;
+    no capture, replay, seal, or receipt chain was published
+- content-free attribution:
+  - candidate/package normalization, manifest hash, inputs-tree binding,
+    reviewed Judge binding, and bundled Engine/profile byte hashes all passed
+  - the sole failing tail operation was canonical candidate-tree hashing
+  - root cause: the tree hasher reused the `512 KiB` single-production-request
+    limit, but the valid aggregate cassette was 645046 bytes
+- RED-first correction:
+  - a new contract test first failed when hashing a legal artifact one byte
+    above `512 KiB` and also requires rejection above `16 MiB`
+  - the tree hasher now uses a separate `16 MiB` per-artifact bound while
+    preserving the `256 MiB` whole-tree, count, depth, regular-file, and symlink
+    guards
+  - the same real candidate now passes the complete content-free post-capture
+    binding audit; production request limits, admission, timing, ordinary
+    production, and P7 are unchanged
+- post-fix deterministic verification:
+  - capture/contracts/evaluator/receipt `137/137`
+  - production sandbox `420/420`, repository `310/310`, shared `207/207`, core
+    sandbox `1030/1030`
+  - sandbox and benchmark TypeScript checks pass
+- evidence boundary and next step:
+  - the rejected candidate is unsigned and MUST NOT be copied, signed, resumed,
+    sealed, or promoted
+  - the one-run external-service authority is consumed
+  - completion requires new explicit service-usage authority and completely
+    fresh capture/evidence roots
+
+## 2026-08-03 - REQ-SBX-GENERAL-002 P7-T2 network proof hardening after manual assessment acceptance
+
+- phase/task: Phase 7 / P7-T2 hermetic replay implementation
+- status: `IMPLEMENTED_PENDING_FORMAL_P6_EVIDENCE`; GENERAL-002 is not
+  `VERIFIED`
+- operator continuation boundary:
+  - the operator instructed the workflow to end the rejected v4-03 assessment
+    and manually treat the preceding 300 evaluations as acceptable for planning
+    continuation
+  - this is not a signed acceptance receipt and does not authorize copying,
+    repairing, sealing, or promoting either rejected v4-03 root
+  - no formal capture/evaluation receipt, report, `seal.json`, or
+    `receipt-chain.json` exists; the hermetic replay command consequently
+    continues to fail closed before any child or provider execution
+- RED evidence:
+  - the P7 replay hermetic suite first failed because the Engine child had no
+    `/proc/self/net` capability and both child result and parent result encoded
+    `network_attempts: 0` without an observable proof
+  - a second RED regression required tampered network snapshots and an
+    incorrectly granted `net` permission to be rejected by the proof parser
+- minimal GREEN implementation:
+  - `replay-hermetic.ts` grants the Engine child only read access to
+    `/proc/self/net`, records bounded TCP/IPv4, TCP/IPv6, UDP/IPv4, and UDP/IPv6
+    snapshot hashes plus entry counts before and after the 300-input Engine
+    run, and derives the attempt count from the permission state and snapshot
+    delta
+  - the child emits a canonical proof object; the parent recomputes its
+    consistency and rejects any nonzero count, granted `net` permission, or
+    changed socket table
+  - no evaluator permission, production adapter, provider credential, retry,
+    or live call was added
+- deterministic verification:
+  - P7 replay/transport plus production integration: `49/49`
+  - repository sandbox-security benchmark focused gate: `8/8`
+  - complete repository gate: `318/318`
+  - shared contracts: `207/207`; core sandbox: `1030/1030`; production sandbox:
+    `424/424`
+  - benchmark TypeScript check, corpus validation (`300` inputs), and
+    shared/sandbox TypeScript checks, frontend build, and `git diff --check`:
+    pass
+  - `benchmark:sandbox-security:replay` runs under `unshare --net` and returns
+    the expected bounded `sandbox_security_hermetic_replay_reject:failed_closed`
+    result because formal signed evidence is absent
+- compatibility verification notes:
+  - backend suite: `229/231`; one failure observes a live `443` port in an
+    existing asset-scan expectation, and one requires the unavailable `semgrep`
+    binary; neither is in the P7 diff
+  - frontend Vitest emitted only an existing navigation warning and made no
+    progress for two minutes, so it was terminated; the production frontend
+    build completed successfully
+- remaining boundary:
+  - a real accepted signed P6 root is still required before exercising the
+    complete 300-input hermetic replay success path
+  - P7 final review and GENERAL-002 verification remain pending; no live
+    provider was invoked in this continuation
+
+- P7-T2 local specification/security audit checkpoint:
+  - no P0/P1 finding was observed in the reviewed replay diff and focused
+    gates; no accepted finding required a production correction
+  - durable documentation contains no raw provider payload, benchmark truth,
+    or oracle output; the replay child receives only the bounded input and
+    content-free cassette projections required by its role
+  - this is not an independent final approval and does not waive the Phase 7
+    entry gate; formal P6 receipts, `seal.json`, and `receipt-chain.json` are
+    still absent
+
+## 2026-08-02 - REQ-SBX-GENERAL-002 P6 v4-02 capture passes; quality rejected
+
+- phase/task: Phase 6 / P6-T4 controlled live acceptance
+- status: `BLOCKED_DETECTION_QUALITY`; GENERAL-002 is not VERIFIED
+- controlled execution:
+  - the operator explicitly authorized one post-fix 300-input run and its Judge
+    service usage; fresh `v4-02` capture/evidence roots were used
+  - local cold load first exhausted the content-free 20-second qualification
+    check; after prewarm, qualification passed in about 4.06 seconds with the
+    pinned digest before the formal run began
+  - the formal run completed in approximately 91 minutes and ended with
+    `sandbox_security_evaluate_worker_reject:evaluation_not_accepted`
+- infrastructure and receipt evidence:
+  - Ollama: 299 normalized HTTP-200 responses, one legitimate `not_called`
+  - Judge: 299 normalized HTTP-200 responses, one legitimate `not_called`
+  - infrastructure codes: none; decision coverage: `300/300`
+  - one Ed25519 capture receipt verifies successfully, binds the exact v4
+    60/120/180 profile and all 300 fixtures, and hashes to
+    `cfb52e6a6fecf2e0f2bf3d77c302a3c83a692dfc0f84782db58ee54c0b15429c`
+- aggregate quality result:
+  - unsafe recall `152/180` = `0.844444` (required `0.90`): fail
+  - high/critical recall `57/60` = `0.95` (required `0.95`): pass
+  - transformed recall `48/54` = `0.888889` (required `0.85`): pass
+  - safe false positives `0/120` = `0` (maximum `0.05`): pass
+  - category recall failures: jailbreak `12/20` = `0.60`; instruction override
+    `13/20` = `0.65` (each requires `0.80`)
+  - every other category met the frozen `0.80` minimum
+- evidence boundary:
+  - no evaluation receipt was issued; the evidence root has zero entries
+  - capture candidate, capture receipt, and aggregate report are rejected
+    diagnostic artifacts and MUST NOT be resumed, sealed, copied, or promoted
+  - P7 and GENERAL-002 VERIFIED remain gated
+- next authority required:
+  - explicitly approve a reviewed detection-quality amendment; changing Judge
+    screening/routing categories is material production behavior
+  - after RED-first implementation, independent review, and deterministic gates,
+    separately authorize another fresh external-service run
+
+## 2026-08-02 - REQ-SBX-GENERAL-002 seven-domain Judge screening implemented
+
+- phase/task: Phase 6 / P6-T4 detection-quality amendment
+- status: `IMPLEMENTED_PENDING_FRESH_LIVE_ACCEPTANCE`; GENERAL-002 is not
+  VERIFIED
+- authority and preserved boundaries:
+  - the operator approved replacing `five_domain_v1` with
+    `seven_domain_v2` for production `local_and_judge`, P6, and P7
+  - ordinary `local`, the sanitizer/protocol/model, one Judge request, P6 v4
+    `60/120/180` timing, strict admission, no retry/fallback, and all frozen
+    metric thresholds remain unchanged
+  - no new live execution or external Judge usage was authorized by the
+    implementation step
+- independent RED evidence:
+  - paraphrased probes bind pinned AgentDojo
+    `089ed468cf3ed0322acc66b0211f26d9d90dbf60` IgnorePreviousAttack semantics
+    and ToolEmu `ac4a7ab7ed8c7985d96231e214bd6b54304b7ddb`
+    underspecified-instruction semantics by exact SHA-256
+  - development did not read or use v4-02 benchmark bodies or per-item labels
+  - focused tests first failed because production still admitted the old mode,
+    rejected the new mode, selected five obligations in composition/P6/P7, and
+    lacked the normative amendment
+- minimal GREEN implementation:
+  - the closed mode is now exactly `disabled | seven_domain_v2`; the old value
+    fails closed
+  - fixed order is prompt injection, jailbreak, instruction override,
+    privilege escalation, sensitive-data exposure, unsafe side effect, and
+    trust-boundary violation
+  - all seven signals retain severity `low`, confidence `0.6`, canonical reason
+    codes, and full authoritative subject binding
+  - focused detector/composition/P6/P7 tests are `82/82` GREEN
+- remaining work:
+  - production sandbox `422/422`, repository `310/310`, shared `207/207`, core
+    sandbox `1030/1030`, eight non-live benchmark files `242/242`, and both
+    sandbox/benchmark TypeScript checks pass; `git diff --check` is clean
+  - manual code/security review found no blocking issue and confirmed ordinary
+    `local`, one-request Judge dispatch, P6 v4 timing, strict admission,
+    retry/fallback prohibition, and P7 replay remain intact
+  - the live-evidence suite remains intentionally `41/44`: its only three RED
+    tests report `live_evidence_missing`, because rejected evidence is forbidden
+  - obtain separate authority before any new 300-input external Judge run;
+    rejected roots remain unusable
+
+## 2026-08-02 - REQ-SBX-GENERAL-002 seven-domain P6 v4-03 live run rejected on Judge connection
+
+- phase/task: Phase 6 / P6-T4 controlled live acceptance
+- status: `LIVE_REJECTED_INFRASTRUCTURE_PENDING_NEW_AUTHORITY`; GENERAL-002 is
+  not VERIFIED
+- authorized execution:
+  - the operator explicitly authorized one seven-domain P6 v4 300-input run
+    using `.env.sandbox-security.local`, accepted its external Judge service
+    usage, and required completely fresh capture/evidence roots
+  - the run used local `60000ms`, Judge `120000ms`, work `180000ms`, strict
+    admission, one Judge request per invoked evaluation, and no retry/fallback
+  - a content-free Ollama prewarm succeeded; the repeated strict qualification
+    passed in approximately `4745ms` before formal capture
+- bounded result:
+  - the formal run executed for approximately 84 minutes and failed closed with
+    `sandbox_security_capture_live_reject:provider_outcome_not_acceptance_capable:judge_transport_error_connection_failed`
+  - the error establishes that at least one invoked Judge outcome was not
+    acceptance-capable; it does not establish quality metrics or the number of
+    previously completed inputs
+  - no retry, fallback, admission relaxation, or follow-up provider call was
+    performed
+- content-free artifact audit:
+  - the capture root has mode `700` and contains 429 files, including the 300
+    frozen input copies, code snapshot, bundle descriptor, and one zero-byte
+    `.candidate-package.json` reservation
+  - no capture/evaluation receipt, evaluation report, seal, or receipt chain
+    exists
+  - the mode-`700` evidence root contains zero files
+  - both roots are rejected historical diagnostics and MUST NOT be resumed,
+    repaired, copied, sealed, promoted, or reused
+- remaining boundary:
+  - the one-run external-service authority is consumed
+  - P6 remains unaccepted, P7 remains gated, and GENERAL-002 remains incomplete
+  - another run requires new explicit service-usage authority and completely
+    fresh capture/evidence roots
+
+## 2026-08-03 - REQ-SBX-GENERAL-002 P7 closure continuation after manual assessment acceptance
+
+- phase/task: Phase 7 / P7-T3/T4 closure review
+- status: `IMPLEMENTATION_PENDING_FORMAL_P6_EVIDENCE`; GENERAL-002 is not
+  `VERIFIED`
+- operator continuation boundary:
+  - the operator ended the rejected v4-03 assessment and manually accepted its
+    preceding 300 evaluations for planning continuation
+  - this remains a planning acceptance only; it does not create, repair, sign,
+    copy, or promote a capture receipt, evaluation receipt, report, `seal.json`,
+    or `receipt-chain.json`
+- fresh deterministic checks:
+  - replay transport: `8/8`
+  - hermetic replay contract/security suite: `9/9`
+  - benchmark repository gate: `8/8`
+  - production sandbox: `424/424`
+  - repository: `318/318`; shared contracts: `207/207`; core sandbox:
+    `1030/1030`
+  - corpus validation: `300` inputs; benchmark and sandbox TypeScript checks,
+    frontend build, and `git diff --check`: pass
+- replay boundary:
+  - the direct `benchmark:sandbox-security:replay` command still exits with
+    `sandbox_security_hermetic_replay_reject:failed_closed` before child or
+    provider execution because the required formally accepted signed P6 root
+    is absent
+  - `npm run test:all` reaches the same replay command after all preceding
+    repository, shared, core, production, typecheck, and corpus gates pass,
+    then exits `1` at that required fail-closed boundary
+  - this fail-closed result is required and is not evidence of a successful
+    hermetic replay
+- next: complete the P7-T4 global specification/security review and record its
+  result; do not mark GENERAL-002 `VERIFIED` or start GENERAL-003 without the
+  formal P6 evidence chain and the required approved final review
+
+## 2026-08-03 - REQ-SBX-GENERAL-002 P7-T2 capability and cleanup hardening
+
+- phase/task: Phase 7 / P7-T2/T3 closure review
+- status: `IMPLEMENTATION_PENDING_FORMAL_P6_EVIDENCE`; GENERAL-002 is not
+  `VERIFIED`
+- RED-first corrections:
+  - the hermetic child entrypoint initially lacked a runtime assertion that its
+    generated Node permission flags were exact; the regression now rejects
+    broad read/write scopes, non-filesystem permission flags, missing effective
+    scopes, and any `net`, `child`, or `worker` capability
+  - the initial command allowlists omitted the replay module's actual
+    `fs-snapshot.ts` and `canonical-json.ts` imports; a dedicated RED caught
+    this for Engine before the scopes were corrected for both children
+  - staging cleanup was initially swallowed on the successful path; an
+    injected remover RED now requires `staging_cleanup_failed` and the parent
+    cannot return a replay result while staging removal fails
+  - the child-only network proof was insufficiently independent; a RED now
+    rejects a child sharing the parent namespace
+- minimal GREEN implementation:
+  - Engine and Evaluator child commands and entrypoints share one exact,
+    path-bound filesystem capability contract, with a single result-file write
+    permission and closed credential environment
+  - the parent captures `/proc/<child-pid>/ns/net` while each `unshare --net`
+    child is alive and requires a namespace identity distinct from its own;
+    the returned `network_attempts` is bound to this parent-side proof while
+    the child's bounded socket-table proof remains an additional invariant
+  - cleanup failures now fail closed without weakening the existing no-reuse
+    and signed-evidence boundary
+- deterministic verification:
+  - hermetic replay suite: `14/14`
+  - replay transport plus hermetic tests: green; benchmark repository focused
+    gate: `8/8`
+  - repository: `318/318`; shared: `207/207`; production sandbox: `424/424`;
+    core sandbox: `1030/1030`
+  - corpus validation: `300` inputs; benchmark and sandbox TypeScript checks,
+    frontend build, and `git diff --check`: pass
+  - direct hermetic replay remains expected
+    `sandbox_security_hermetic_replay_reject:failed_closed` because no formal
+    signed P6 evidence chain exists; no provider or external Judge was called
+- review disposition:
+  - post-fix independent review is still pending; no P7 completion or
+    GENERAL-002 verification claim is made
+  - non-blocking review notes remain limited to defense-in-depth scanner
+    breadth and the pre-existing temporary-file cleanup behavior in the
+    shared snapshot writer; no live evidence was created or modified
+
+## 2026-08-03 - REQ-SBX-GENERAL-002 external Judge defaults removed
+
+- scope: dynamic Judge configuration boundary
+- RED-first regression:
+  - the benchmark live composition accepted an injected transport without a
+    complete runtime Judge binding and silently supplied source-level protocol,
+    endpoint, model, and digest defaults before provider effects
+  - the new regression requires the missing-binding failure and zero provider
+    requests
+- minimal GREEN correction:
+  - a transport-backed live seam now requires all six nonsecret binding fields
+    explicitly; the environment-backed path remains the only production config
+    source
+  - source-controlled code contains no external provider URL, external model
+    default, or API key; the fixed local `qwen3:8b` digest model contract is
+    unchanged
+- verification:
+  - benchmark composition: `21/21`
+ - remaining full production, repository, typecheck, live-evidence, and P7
+   gates remain to be rerun; GENERAL-002 is still not `VERIFIED`
+
+## 2026-08-03 - REQ-SBX-GENERAL-002 dynamic Judge boundary and v4-04 rejection
+
+- dynamic configuration hardening:
+  - transport-backed benchmark composition now rejects an incomplete runtime
+    Judge binding before any provider request; it no longer supplies protocol,
+    endpoint, model, digest, or credential defaults
+  - the external Judge protocol/base URL/requested model/API key remain solely
+    environment-driven; fixed local `qwen3:8b` digest qualification is separate
+- provider compatibility correction:
+  - RED-first Chat tests captured the reviewed provider response shape with
+    bounded `provider_specific_fields` and omitted `logprobs`
+  - the adapter now validates only those fixed metadata keys, discards their
+    contents, accepts absent `logprobs`, and continues rejecting unknown or
+    malformed fields; Chat contract is `14/14` GREEN and production is `427/427`
+- v4-04 live attempt:
+  - strict readiness and admission remained fixed at `20000ms`, with no retry or
+    fallback; the fresh run failed closed at
+    `sandbox_security_capture_live_reject:judge_readiness_timeout`
+  - content-free audit found 429 capture files, zero evidence files, and no
+    receipt/report/seal/receipt-chain; both roots are permanently unusable
+- current status: deterministic gates are GREEN, but P6 signed evidence and P7
+  hermetic replay are still absent; GENERAL-002 remains not `VERIFIED`
+
+## 2026-08-03 - REQ-SBX-GENERAL-002 deterministic closure audit after Judge-boundary fix
+
+- phase/task: Phase 7 / P7-T3/T4 closure audit
+- status: `IMPLEMENTATION_PENDING_FORMAL_P6_EVIDENCE`; GENERAL-002 is not
+  `VERIFIED`
+- configuration boundary:
+  - external Judge protocol, base URL, requested model, and API key remain
+    environment-only; the source-controlled P6 profile contains only the
+    reviewed protocol and endpoint-policy identifiers
+  - the transport-backed benchmark seam now rejects an incomplete runtime
+    binding before provider effects and supplies no source-level external
+    defaults; fixed local `qwen3:8b` qualification remains separate
+- deterministic correction:
+  - the live benchmark composition now has one direct P6 wrapper return so the
+    permanent production AST capability gate remains exact while preserving
+    the environment-backed and test-injected paths
+- fresh verification:
+  - repository GENERAL-002 gates: `207/207`; production sandbox: `427/427`;
+    core sandbox: `1030/1030`; shared contracts: `207/207`
+  - benchmark composition: `21/21`; Chat contract: `14/14`; live capture:
+    `40/40`; replay transport and hermetic contract tests: `22/22`
+  - corpus validation: `300` inputs; repository/benchmark TypeScript checks and
+    `git diff --check`: pass; source scan found no external URL, model default,
+    or credential literal in formal production/benchmark TypeScript
+  - direct hermetic replay still fails closed before child/provider execution
+    because no formally accepted signed P6 evidence root exists; this is the
+    required result, not a successful replay
+- review disposition:
+  - the required independent final review is not recorded as APPROVED; broad
+    read-only review agents did not return a conclusion in this environment
+  - no P6 receipt, evaluation receipt, report, `seal.json`, or
+    `receipt-chain.json` was created or promoted
+- next: obtain new explicit external-service authority, use completely fresh
+  capture/evidence roots, complete a real accepted 300-input P6 run, then
+  rerun the ordered P7 review and final gates; rejected roots cannot be reused
+
+## 2026-08-03 - REQ-SBX-GENERAL-002 v4-05 Judge readiness rejection
+
+- phase/task: Phase 6 / P6-T4 controlled live acceptance
+- status: `BLOCKED_JUDGE_READINESS_INFRASTRUCTURE`; GENERAL-002 is not
+  `VERIFIED`
+- authorization and roots:
+  - the operator authorized one fresh seven-domain P6 v4 run; completely new
+    roots were used: `tmp/sandbox-security-capture-v4-05-deE7FK` and
+    `tmp/sandbox-security-evidence-v4-05-lsqaoa`
+  - the run consumed that one-run authority and both roots are permanently
+    rejected; no prior v4-02/v4-03/v4-04 root was reused
+- content-free preflight:
+  - local Ollama inventory plus P6 prewarm qualification passed with a warmed
+    probe of `3927ms`
+  - one direct Judge readiness probe passed at `19592ms` under the fixed
+    `20000ms` budget; the formal capture worker then failed closed at the same
+    readiness ceiling
+  - a post-run direct readiness probe also failed at `20007ms`, establishing
+    repeated over-budget/intermittent Judge response or connection lifecycle
+    behavior rather than a source-controlled credential, model, or binding
+    default
+- formal result:
+  - bounded error: `sandbox_security_capture_live_reject:judge_readiness_timeout`
+  - capture root contains 429 files: the 300 input snapshots, 127 code files,
+    descriptor, and zero-byte candidate reservation; no candidate was
+    materialized
+  - evidence root contains zero files; no capture receipt, evaluation receipt,
+    report, `seal.json`, or `receipt-chain.json` exists
+  - strict admission made no retry or fallback; no 300-input decision was
+    executed and no evidence can be repaired or promoted
+- configuration boundary:
+  - Judge protocol, base URL, requested model, and API key remain exclusively
+    operator-environment values from the mode-`600` env file; no source-level
+    provider default was added
+  - the approved P6 v4 profile remains unchanged: readiness/qualification
+    `20000ms`, local slot `60000ms`, Judge slot `120000ms`, work budget
+    `180000ms`; ordinary production and P7 remain on GENERAL-001 timing
+  - this result does not authorize a timing, retry, fallback, or provider-gate
+    relaxation; a future attempt requires a new explicit authority and fresh
+    roots, or a separately reviewed timing amendment
+- deterministic post-run verification:
+  - `test:repo`: `318/318`; production sandbox: `427/427`; both benchmark and
+    sandbox TypeScript checks, corpus validation (`300` inputs), and
+    `git diff --check` passed
+  - live-evidence suite: `43/46`; the three failures are the intentional
+    missing-real-evidence checks (`receipt_chain_missing`/`live_evidence_missing`)
+    and do not provide an accepted root
+  - hermetic replay returned the expected
+    `sandbox_security_hermetic_replay_reject:failed_closed` before child/provider
+    execution; no external provider was called by replay
+- next: keep the v4-05 roots unusable; only after new authority or an approved
+  timing decision may a fresh preflight and fresh 300-input P6 run occur, then
+  P6 signed evidence, P7 replay, independent final review, and the remaining
+  GENERAL-002 gates can proceed
+
+## 2026-08-03 - REQ-SBX-GENERAL-002 P6 Judge readiness compatibility v5 implemented
+
+- phase/task: Phase 6 / P6-T4 controlled live acceptance timing amendment
+- status: `IMPLEMENTED_PENDING_FRESH_LIVE_ACCEPTANCE`; GENERAL-002 is not
+  `VERIFIED`
+- trigger and scope:
+  - the fresh v4-05 run failed closed at the `20000ms` Judge readiness
+    boundary after a direct probe also exceeded that ceiling
+  - the operator approved a P6-only readiness increase to `40000ms`; the
+    amendment changes no provider identity, Judge admission rule, retry or
+    fallback behavior, ordinary production, or P7 replay timing
+- exact v5 profile:
+  - `p6_local_hardware_compatibility_v5`
+  - Judge readiness `40000ms`
+  - Ollama qualification and warmed prewarm `20000ms`
+  - local detector slot `60000ms`, Judge detector slot `120000ms`, and normal
+    work budget `180000ms`
+  - rule detector slot remains inherited `100ms`
+- configuration boundary:
+  - Judge protocol, base URL, requested model, resolved model, and API key
+    remain environment-only; no external URL, model, or credential is present
+    in the source-controlled timing profile
+  - v4 and older receipts/manifests remain historical and fail closed under the
+    v5 validators; rejected roots cannot be repaired, promoted, or reused
+- TDD and deterministic evidence:
+  - focused RED changed the valid profile from v4/`20000ms` and failed with
+    `102` passing and `16` intended assertion failures
+  - minimal GREEN updated the profile and cross-stage validators; the focused
+    acceptance/capture/contracts suite is `118/118`
+  - fresh deterministic verification is GREEN: repository `318/318`, shared
+    contracts `207/207`, core sandbox `1030/1030`, production sandbox
+    `427/427`, both TypeScript checks, corpus validation (`300` inputs), and
+    `git diff --check`
+- next boundary:
+  - this amendment does not authorize external service usage or create live
+    evidence; obtain new explicit authority, use a fresh capture/evidence pair,
+    and run the existing content-free preflight before any 300-input attempt
+  - only an accepted v5-bound signed receipt chain, P7 hermetic replay, and the
+    required final review can move GENERAL-002 to `VERIFIED`
+
+## 2026-08-03 - REQ-SBX-GENERAL-002 P6 v5-01 post-readiness transport rejection
+
+- phase/task: Phase 6 / P6-T4 controlled live acceptance
+- status: `BLOCKED_POST_READINESS_TRANSPORT`; GENERAL-002 is not
+  `VERIFIED`
+- authorization and roots:
+  - the operator authorized one fresh v5 run with the mode-`600` env file and
+    acceptance key
+  - new roots were used: `tmp/sandbox-security-capture-v5-sUViBZ` and
+    `tmp/sandbox-security-evidence-v5-cnAXjQ`; neither prior root was reused
+  - the one-run authority is consumed and both roots are permanently rejected
+- formal result:
+  - bounded error: `sandbox_security_capture_live_reject:transport_aborted`
+  - the run stopped before candidate materialization after approximately `26s`
+  - the capture root contains 300 frozen inputs, the code snapshot, descriptor,
+    and a zero-byte candidate reservation; the evidence root contains zero
+    files
+  - no capture receipt, evaluation receipt, report, `seal.json`, or
+    `receipt-chain.json` exists; no evidence can be repaired or promoted
+- attribution boundary:
+  - the Judge readiness implementation maps a transport abort in its own
+    request to `judge_readiness_failed`, not the surfaced `transport_aborted`
+  - the surfaced abort therefore occurred after readiness, during Engine
+    creation or the separate local Ollama qualification/prewarm path; the
+    source-controlled v5 qualification ceiling remains `20000ms`
+  - no provider body, credential, or truth data was logged or persisted, so no
+    stronger provider-specific attribution is claimed
+- deterministic status:
+  - the v5 implementation gates remain GREEN: focused acceptance/capture/
+    contracts `118/118`; repository `318/318`; shared `207/207`; core sandbox
+    `1030/1030`; production sandbox `427/427`; both TypeScript checks; corpus
+    `300`; and `git diff --check`
+  - the three committed live-evidence tests remain intentionally RED because
+    no accepted real evidence root exists; hermetic replay remains fail-closed
+- next boundary:
+  - do not reuse these roots or retry under the same authority
+  - a future run requires new explicit service usage plus a separately reviewed
+    local qualification/timing or provider-readiness decision; readiness
+    `40000ms` alone does not alter qualification `20000ms`
+
+## 2026-08-03 - REQ-SBX-GENERAL-002 P6 local hardware compatibility v6 implemented
+
+- phase/task: Phase 6 / P6-T4 controlled live acceptance timing amendment
+- status: `IMPLEMENTED_PENDING_FRESH_LIVE_ACCEPTANCE`; GENERAL-002 is not
+  `VERIFIED`
+- trigger and scope:
+  - v5-01 surfaced `transport_aborted` after readiness; an exact source-
+    generated Ollama prewarm request returned in approximately `29731ms`
+  - the active P6-only qualification and warmed-prewarm ceiling is therefore
+    `40000ms`; readiness stays `40000ms`, local/Judge slots stay
+    `60000ms`/`120000ms`, and normal work stays `180000ms`
+  - ordinary production, P7 replay, Judge identity/configuration, strict
+    admission, and zero retry/fallback remain unchanged
+- exact active profile:
+  - `p6_local_hardware_compatibility_v6`
+  - v6 supersedes v5 for newly produced manifests and signed receipts; v5 and
+    older timing records fail closed under the active validators
+- TDD and deterministic evidence:
+  - RED changed active fixtures to v6/`40000ms`; old production emitted
+    `20000` and the old receipt validator rejected the v6 binding
+  - GREEN updated the single P6 profile and cross-stage validators
+  - fresh composition/capture/contracts tests: `96/96`
+  - fresh receipt acceptance tests: `44/44`
+  - live-evidence tests: `43/46`; the three failures intentionally require
+    missing real signed evidence and remain RED by design
+- next boundary:
+  - use completely fresh capture/evidence roots and the mode-`600` env file for
+    a real 300-input run under v6; no rejected or synthetic evidence may be
+    promoted
+  - only the accepted v6 receipt chain, P7 hermetic replay, and final review
+    can move GENERAL-002 to `VERIFIED`
+
+## 2026-08-04 - REQ-SBX-GENERAL-002 P6 v6-01 Judge slot rejection
+
+- phase/task: Phase 6 / P6-T4 controlled live acceptance
+- status: `BLOCKED_JUDGE_SLOT_LATENCY`; GENERAL-002 is not `VERIFIED`
+- authorization and roots:
+  - the standing continuation authorization permitted one fresh v6 run with
+    the mode-`600` env file and acceptance key
+  - new roots were used: `tmp/sandbox-security-capture-v6-7uYDXg` and
+    `tmp/sandbox-security-evidence-v6-jxbXyx`; neither rejected root was reused
+  - the run lasted approximately six hours; the authority is consumed and both
+    roots are permanently rejected
+- formal result:
+  - bounded error:
+    `sandbox_security_capture_live_reject:provider_outcome_not_acceptance_capable:judge_signal_termination_slot_timeout`
+  - the capture root contains `429` frozen-bundle/descriptor/input files and a
+    zero-byte candidate reservation; the evidence root contains zero files
+  - no capture receipt, evaluation receipt, report, `seal.json`, or
+    `receipt-chain.json` exists; no evidence can be repaired or promoted
+- attribution boundary:
+  - v6 Judge readiness and Ollama qualification completed before the formal
+    loop; the failure was a Judge detector lease termination at the exact
+    `120000ms` P6 slot boundary
+  - `runtime-deadline.ts` classified the termination as `slot_timeout`, not
+    `work_budget`; transport performed no retry or fallback and no provider
+    body, credential, or truth data was persisted
+- next boundary:
+  - do not reuse either root or fabricate a receipt; a new P6-only timing
+    amendment and completely fresh roots are required before another run
+  - ordinary production and P7 timing, Judge environment-only configuration,
+    strict admission, and zero retry/fallback remain unchanged
+
+## 2026-08-04 - REQ-SBX-GENERAL-002 P6 Judge long-tail v7 implemented
+
+- phase/task: Phase 6 / P6-T4 controlled live acceptance timing amendment
+- status: `IMPLEMENTED_PENDING_FRESH_LIVE_ACCEPTANCE`; GENERAL-002 is not
+  `VERIFIED`
+- root cause and scope:
+  - v6-01 reached the invoked Judge detector and failed at its exact
+    `120000ms` slot; the runtime's `slot_timeout` classification was verified
+    from the source-controlled deadline path
+  - the P6-only profile now raises only the Judge slot to `180000ms` and the
+    closed normal work budget to `240000ms`; readiness/qualification remain
+    `40000ms`, and the local slot remains `60000ms`
+  - ordinary production and P7 retain GENERAL-001 timing; strict admission,
+    zero retry/fallback, and environment-only Judge configuration are intact
+- TDD and deterministic evidence:
+  - the new v7 boundary test first failed with the old `120000ms`/`180000ms`
+    values, then passed after the minimal profile and cross-stage binding
+    update
+  - focused cross-stage composition/capture/receipt/evaluator/repository
+    verification is `205/205`; no live evidence was synthesized
+- next boundary:
+  - use a completely fresh v7 capture/evidence pair and run the real 300-input
+    acceptance; on success validate the receipt chain, live evidence, and P7
+    hermetic replay before any VERIFIED transition
+
+## 2026-08-04 - REQ-SBX-GENERAL-002 P6 v7-01 Judge slot rejection
+
+- phase/task: Phase 6 / P6-T4 controlled live acceptance
+- status: `BLOCKED_JUDGE_SLOT_LATENCY`; GENERAL-002 is not `VERIFIED`
+- authorization and roots:
+  - the standing continuation authorization permitted one fresh v7 run with
+    the mode-`600` env file and acceptance key
+  - new roots were used: `tmp/sandbox-security-capture-v7-uQ3bUj` and
+    `tmp/sandbox-security-evidence-v7-szzyvC`; neither rejected root was reused
+  - the run lasted approximately six hours and forty minutes; both roots are
+    permanently rejected
+- formal result:
+  - bounded error:
+    `sandbox_security_capture_live_reject:provider_outcome_not_acceptance_capable:judge_signal_termination_slot_timeout`
+  - the capture root contains `429` frozen-bundle/descriptor/input files and a
+    zero-byte candidate reservation; the evidence root contains zero files
+  - no capture receipt, evaluation receipt, report, `seal.json`, or
+    `receipt-chain.json` exists; no evidence can be repaired or promoted
+- attribution boundary:
+  - v7 readiness and Ollama qualification completed; an invoked Judge request
+    reached the exact `180000ms` detector lease boundary
+  - `runtime-deadline.ts` classified the termination as `slot_timeout`, not
+    `work_budget`; transport performed no retry or fallback and no provider
+    body, credential, or truth data was persisted
+- next boundary:
+  - do not reuse either root or fabricate a receipt; a new bounded P6-only
+    timing amendment and fresh roots are required before another run
+  - ordinary production and P7 timing, Judge environment-only configuration,
+    strict admission, and zero retry/fallback remain unchanged
+
+## 2026-08-04 - REQ-SBX-GENERAL-002 P6 Judge long-tail v8 implemented
+
+- phase/task: Phase 6 / P6-T4 controlled live acceptance timing amendment
+- status: `IMPLEMENTED_PENDING_FRESH_LIVE_ACCEPTANCE`; GENERAL-002 is not
+  `VERIFIED`
+- root cause and scope:
+  - v7-01 reached the invoked Judge detector and failed at its exact
+    `180000ms` slot; the source-controlled deadline path again classified the
+    termination as `slot_timeout`
+  - the P6-only profile now raises only the Judge slot to `300000ms` and the
+    closed normal work budget to `360000ms`; readiness/qualification remain
+    `40000ms`, and the local slot remains `60000ms`
+  - ordinary production and P7 retain GENERAL-001 timing; strict admission,
+    zero retry/fallback, and environment-only Judge configuration are intact
+- TDD and deterministic evidence:
+  - the new v8 boundary test first failed with the old `180000ms`/`240000ms`
+    values before the profile update; implementation proceeds only after that
+    intended RED
+  - v7 deterministic gates remain the baseline; the v8 focused gates must be
+    rerun before the next external call
+- next boundary:
+  - use a completely fresh v8 capture/evidence pair and run the real 300-input
+    acceptance; on success validate the receipt chain, live evidence, and P7
+    hermetic replay before any VERIFIED transition
+
+## 2026-08-04 - REQ-SBX-GENERAL-002 P6 v8 readiness quota rejection
+
+- phase/task: Phase 6 / P6-T4 controlled live acceptance preflight
+- status: `BLOCKED_JUDGE_READINESS_QUOTA`; GENERAL-002 is not `VERIFIED`
+- roots and formal result:
+  - fresh roots `tmp/sandbox-security-capture-v8-acGKJa` and
+    `tmp/sandbox-security-evidence-v8-u0VTdN` were used and are permanently
+    rejected; the capture root has `429` frozen-bundle/descriptor/input files
+    plus a zero-byte candidate reservation, and the evidence root is empty
+  - the v8 worker failed closed at readiness with
+    `sandbox_security_capture_live_reject:judge_readiness_failed`
+  - an independent content-free transport probe returned HTTP `429` in
+    approximately `519ms`, and a second probe after a `60s` wait returned
+    HTTP `429` in approximately `549ms`; only status, content type, and bounded
+    body length were observed, with no provider body or credential persisted
+- attribution boundary:
+  - no 300-input evaluation started, no retry/fallback was performed inside
+    the formal run, and no profile or receipt logic was exercised beyond the
+    readiness boundary
+  - this is an external Judge quota/rate-limit prerequisite, not a v8 timing
+    or base URL/model/key disclosure issue
+- next boundary:
+  - do not reuse these roots; wait for the externally supplied Judge capacity
+    to recover, then use a completely fresh v8 pair and one formal run
+
+## 2026-08-04 - REQ-SBX-GENERAL-002 P6 candidate progress persistence
+
+- phase/task: Phase 6 / P6-T4 capture progress durability
+- status: `IMPLEMENTED_PENDING_FRESH_LIVE_ACCEPTANCE`; GENERAL-002 remains not
+  `VERIFIED`
+- implementation:
+  - after every successful sample, the capture child emits one strict,
+    content-free decision projection; the parent atomically replaces
+    `capture-output/.candidate-package.json` with the cumulative document
+  - each parent `fsync` + `rename` is acknowledged over a private pipe before
+    the child evaluates the next sample, so a fail-closed stop cannot silently
+    discard the latest acknowledged decision
+  - a failed run retains all acknowledged decisions with a bounded
+    `failure_code`; partial progress remains non-materializable and never
+    enters `candidate/`, receipts, seals, evidence roots, or P7 replay
+  - the final `capture_complete` frame is terminal, is checked against the
+    complete progress sequence before formal staging is persisted, and cannot
+    be followed by another progress frame
+  - candidate publication now renames the complete candidate before staging
+    cleanup, preserving a writable staging path if the publication rename
+    fails
+- boundary:
+  - no retry, fallback, resume, provider, Judge, acceptance-threshold, receipt,
+    seal, evidence-root, or P7 behavior changed
+  - this implementation checkpoint does not create or promote live P6
+    evidence; the external Judge quota blocker and fresh v8 acceptance gate
+    remain unchanged
+- tests:
+  - focused candidate-progress normalization, atomic replacement, terminal
+    frame, and partial-materialization coverage is present
+  - the full deterministic P6/GENERAL-002 verification remains required
+    before any `VERIFIED` transition
+
+## 2026-08-05 - REQ-SBX-GENERAL-002 provisional P7 continuation marker
+
+- phase/task: Phase 7 / P7 planning and deterministic closure checks
+- status: `PROVISIONAL_PLANNING_CONTINUATION`; P6 formal acceptance remains
+  absent and GENERAL-002 is not `VERIFIED`
+- operator disposition:
+  - the user authorized continuation of P7 planning from the content-free
+    progress projection and deferred the next complete 300-input P6 run until
+    later schedule capacity is available
+  - this marker permits downstream planning only; it does not promote the
+    progress projection into a candidate, receipt, seal, evidence root, or
+    formal P7 replay input
+- retry record:
+  - the separately authorized `ssb-v1-0300` retry completed in `92625.930228ms`
+    with projection `allow / no_detected_risk / info`, three detector runs, and
+    projection hash `92118e6949a13a8f99e2544014a57b24022e8ac2c60c51c1375371bb98ef1140`
+  - the non-formal merge proposal contains the first 299 failed-run
+    projections plus that retry result at
+    `tmp/sandbox-security-last-retry-1oiczh/retry-merge-proposal.json`; its
+    `formal_p6_evidence` field is `false`
+- P7 verification:
+  - replay transport, hermetic replay, and benchmark repository checks passed
+    `30/30`
+  - the real hermetic command was executed and correctly failed closed with
+    `sandbox_security_hermetic_replay_reject:failed_closed` because no formally
+    accepted signed P6 evidence root exists; no provider call was made
+- boundary and next step:
+  - P7 contracts require 300 anonymous provider-outcome envelopes, sealed
+    configuration, and the signed P6 receipt/evidence chain; progress-only
+    projections cannot satisfy that input contract
+  - after the deferral, run a completely fresh 300-input P6 capture, evaluator,
+    receipt chain, seal, and then the real P7 hermetic replay before any
+    `VERIFIED` transition
+
+## 2026-08-05 - REQ-SBX-GENERAL-002 P6 temporary release
+
+- phase/task: GENERAL-002 provisional acceptance and P7 continuation
+- status: `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`; formal P6 acceptance is
+  absent and GENERAL-002 is not `VERIFIED`
+- disposition:
+  - the user approved temporary P6 release so downstream GENERAL-002 planning
+    is not blocked by the deferred live run
+  - P7 deterministic implementation checks remain accepted for planning; the
+    real hermetic replay remains fail-closed until formal P6 evidence exists
+  - no receipt, `seal.json`, `receipt-chain.json`, or replay evidence was
+    created from the progress projection
+- deferred acceptance work:
+  - later execute a fresh full 300-input P6 capture with new capture/evidence
+    roots, then produce and validate the evaluator report, signed receipt
+    chain, seal, and actual P7 hermetic replay
+  - this temporary release does not authorize reuse of the rejected v8 root or
+    promotion of `retry-merge-proposal.json`

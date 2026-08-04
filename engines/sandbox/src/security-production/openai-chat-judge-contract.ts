@@ -21,9 +21,20 @@ const OUTER_KEYS = [
   "system_fingerprint",
   "usage"
 ] as const;
-const CHOICE_KEYS = ["finish_reason", "index", "logprobs", "message"] as const;
+const CHOICE_REQUIRED_KEYS = ["finish_reason", "index", "message"] as const;
+const CHOICE_OPTIONAL_KEYS = ["logprobs", "provider_specific_fields"] as const;
 const MESSAGE_REQUIRED_KEYS = ["content", "role"] as const;
-const MESSAGE_OPTIONAL_KEYS = ["reasoning_content"] as const;
+const MESSAGE_OPTIONAL_KEYS = ["reasoning_content", "provider_specific_fields"] as const;
+const CHOICE_PROVIDER_SPECIFIC_KEYS = [
+  "routed_experts",
+  "stop_reason",
+  "token_ids"
+] as const;
+const MESSAGE_PROVIDER_SPECIFIC_KEYS = [
+  "reasoning",
+  "reasoning_content",
+  "refusal"
+] as const;
 const USAGE_REQUIRED_KEYS = [
   "prompt_tokens",
   "completion_tokens",
@@ -333,6 +344,34 @@ function validateUsage(value: unknown): void {
   }
 }
 
+function validateProviderSpecificChoiceFields(value: unknown): void {
+  const fields = exactRecord(value, [], CHOICE_PROVIDER_SPECIFIC_KEYS);
+  for (const key of CHOICE_PROVIDER_SPECIFIC_KEYS) {
+    if (hasDataProperty(fields, key) && dataProperty(fields, key) !== null) {
+      return responseInvalid();
+    }
+  }
+}
+
+function validateProviderSpecificMessageFields(value: unknown): void {
+  const fields = exactRecord(value, [], MESSAGE_PROVIDER_SPECIFIC_KEYS);
+  for (const key of ["reasoning", "reasoning_content"] as const) {
+    if (hasDataProperty(fields, key)) {
+      const reasoning = dataProperty(fields, key);
+      assertString(reasoning);
+      if (ENCODER.encode(reasoning).byteLength > MAX_REASONING_CONTENT_BYTES) {
+        return responseInvalid();
+      }
+    }
+  }
+  if (
+    hasDataProperty(fields, "refusal") &&
+    dataProperty(fields, "refusal") !== null
+  ) {
+    return responseInvalid();
+  }
+}
+
 function parseEnvelope(
   value: unknown,
   payload: Readonly<SandboxSecuritySanitizedJudgePayload>
@@ -352,13 +391,27 @@ function parseEnvelope(
 
   const choices = exactArray(dataProperty(envelope, "choices"));
   if (choices.length !== 1) return responseInvalid();
-  const choice = exactRecord(choices[0], CHOICE_KEYS);
+  const choice = exactRecord(
+    choices[0],
+    CHOICE_REQUIRED_KEYS,
+    CHOICE_OPTIONAL_KEYS
+  );
+ if (
+   dataProperty(choice, "finish_reason") !== "stop" ||
+    dataProperty(choice, "index") !== 0
+ ) {
+   return responseInvalid();
+ }
   if (
-    dataProperty(choice, "finish_reason") !== "stop" ||
-    dataProperty(choice, "index") !== 0 ||
+    hasDataProperty(choice, "logprobs") &&
     dataProperty(choice, "logprobs") !== null
   ) {
     return responseInvalid();
+  }
+  if (hasDataProperty(choice, "provider_specific_fields")) {
+    validateProviderSpecificChoiceFields(
+      dataProperty(choice, "provider_specific_fields")
+    );
   }
 
   const message = exactRecord(
@@ -379,6 +432,11 @@ function parseEnvelope(
         return responseInvalid();
       }
     }
+  }
+  if (hasDataProperty(message, "provider_specific_fields")) {
+    validateProviderSpecificMessageFields(
+      dataProperty(message, "provider_specific_fields")
+    );
   }
   return parseSandboxSecurityOpenAiJudgeAssistantContent(
     content,

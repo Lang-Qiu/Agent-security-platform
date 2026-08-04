@@ -2050,10 +2050,68 @@ validates authority within that budget, and returns the versioned
 `sandbox-security-decision.v1` decision boundary.
 
 The GENERAL-002 controlled live benchmark uses a production-internal
-`p6_local_hardware_compatibility_v1` execution profile with a `40000ms` entry
-budget and `20000ms` local/Judge slots. This is not a public API profile or
-request field. Ordinary production and P7 replay retain the fixed GENERAL-001
-budget and slots.
+`p6_local_hardware_compatibility_v8` execution profile with a `360000ms` entry
+budget, a `60000ms` local slot, and a `300000ms` Judge slot. Readiness and
+qualification/warmed prewarm are respectively `40000ms` and `40000ms`. This is
+not a public API profile or request field and does not add retry capacity.
+Candidate manifests and signed evidence require the exact v6 record and reject
+v5 and older records. Ordinary production and P7
+replay retain the fixed
+GENERAL-001 budget and `100/1000/4000ms` slots.
+
+Its sealed provider configuration requires
+`local_prompt_version: "sandbox-security-ollama-local-prompt.v2"`. The v2 prompt
+adds an exact no-duplicate-`subject_refs` instruction; the provider response is
+still validated without retry, repair, or deduplication. This is an internal
+capture/replay binding and not a backend or frontend API field.
+
+The internal candidate decision projection also uses
+`SandboxSecurityAction` unchanged: `allow|alert|ask|deny`. It must not translate
+`deny` to the obsolete `block` spelling. Benchmark detection numerators are
+still determined solely by `verdict === "risk_detected"`.
+
+Internal canonical benchmark trees use a `16 MiB` per-artifact and `256 MiB`
+whole-tree bound. These are evidence-aggregation limits, not public request
+limits; the production request contract retains its independent `512 KiB`
+boundary.
+
+The internal live evaluator worker exposes only bounded stage diagnostics. A
+report with `accepted !== true` or any infrastructure code maps to
+`sandbox_security_evaluate_worker_reject:evaluation_not_accepted`; detailed
+multi-threshold text is never reflected across the worker boundary.
+
+The internal production factory is
+`createSandboxSecurityProductionEngine`. Hermetic benchmark execution is
+invoked separately with `npm run benchmark:sandbox-security:replay`; it is not
+a backend route or a public transport/configuration contract. The explicit
+`npm run benchmark:sandbox-security:qualify:live` command is operator-only and
+is excluded from `test:all`. Replay remains fail-closed until a signed,
+validated P6 capture/evaluation receipt chain and accepted `seal.json` exist.
+The current manually accepted live assessment does not supply those artifacts,
+so it does not establish GENERAL-002 `VERIFIED` status.
+
+The external Judge configuration is an operator-only runtime boundary rather
+than a public API field. `SANDBOX_SECURITY_JUDGE_PROTOCOL`,
+`SANDBOX_SECURITY_JUDGE_BASE_URL`, `SANDBOX_SECURITY_JUDGE_MODEL`,
+`SANDBOX_SECURITY_JUDGE_API_KEY`, and `SANDBOX_SECURITY_ENABLE_JUDGE` are read
+from the mode-`600` credential environment file. There are no source-level
+defaults for the external base URL, model, or key; the P6 profile constrains
+only the protocol and HTTPS-FQDN policy. The fixed local `qwen3:8b` digest
+requirement is independent of this external Judge configuration.
+
+The production composition factory also owns the internal
+`judge_screening_mode: "disabled" | "seven_domain_v2"` contract. This is not a
+public API field and cannot be supplied by a caller, environment variable, or
+CLI flag. Ordinary `local` selects `disabled`; `local_and_judge`, including P6
+capture and P7 replay, selects `seven_domain_v2`; `five_domain_v1` is retired
+and rejected. After a valid pinned Ollama response, the latter yields exactly
+seven low-confidence unresolved obligations in fixed order:
+`prompt_injection`, `jailbreak`, `instruction_override`, `privilege_escalation`,
+`sensitive_data_exposure`, `unsafe_side_effect`, and
+`trust_boundary_violation`. Each obligation references every authoritative
+content source plus the optional whole tool call and is resolved only by the
+existing sanitized Judge protocol. More than eight combined subjects fails
+closed; no partial or truncated Judge request is valid.
 
 ### Compatibility adapters
 

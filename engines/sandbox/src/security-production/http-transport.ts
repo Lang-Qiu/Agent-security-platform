@@ -474,7 +474,7 @@ function requestWire(
         new URL(input.url),
         Object.freeze({
           method: input.method,
-          headers: Object.freeze({ ...input.headers }),
+          headers: Object.freeze({ ...input.headers, connection: "close" }),
           signal
         }),
         (response) => {

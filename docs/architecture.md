@@ -896,11 +896,72 @@ caller-provided claims cannot select the source authority, stage, profile, or
 tool observations.
 
 GENERAL-002 controlled P6 live capture composes the same core through a
-production-only `p6_local_hardware_compatibility_v1` execution profile. Its
-entry budget is `40000ms`, and its local/Judge slots are `20000ms`; the rule
-slot remains `100ms`. The profile is not exported by the frozen core index and
-is not selectable through request data, environment, CLI, ordinary production,
-or P7 hermetic replay.
+production-only `p6_local_hardware_compatibility_v8` execution profile. Its
+entry budget is `360000ms`, its local slot is `60000ms`, its Judge slot is
+`300000ms`, and
+the rule slot remains `100ms`. Readiness and qualification/warmed prewarm are
+`40000ms`. The entry budget is the closed sum of the two provider
+slots, not retry capacity. The profile is not exported by the frozen core index
+and is not selectable through request data, environment, CLI, ordinary
+production, or P7 hermetic replay. All new P6 evidence and signed bindings
+require this exact v6 record and reject v5 and older profiles.
+
+The production Ollama adapter binds
+`sandbox-security-ollama-local-prompt.v2`. Its sole v2 addition requires every
+candidate's `subject_refs` array to contain no duplicate references. The
+complete prompt SHA-256 is
+`e2632e29c2720f8f3c34436fe5daf6a7f251f5e912c3effeb21beccf56e4c196`;
+capture and replay evidence claiming v1 fails closed. The response boundary
+still independently rejects duplicates and never repairs provider output.
+
+Production composition owns a closed `judge_screening_mode` that is not
+selectable through request data, environment, or CLI. Ordinary `local` uses
+`disabled`; `local_and_judge`, including P6 capture and P7 replay, uses
+`seven_domain_v2`; the historical `five_domain_v1` value is rejected. Only
+after the pinned Ollama response passes every existing
+transport, digest, schema, and parser check does this mode create seven
+low-confidence unresolved routing signals for prompt injection, jailbreak,
+instruction override, privilege escalation, sensitive-data exposure, unsafe
+side effects, and trust-boundary violations. Each signal binds all authoritative
+content sources and the optional whole tool call. The deterministic sanitizer
+then sends those obligations to
+the existing Judge adapter; Judge findings and clearances remain authoritative.
+Zero or more than eight combined subjects fails closed, so the router cannot
+silently truncate or partially screen an evaluation.
+
+Candidate decision projections preserve the shared GENERAL-001 action catalog
+exactly: `allow`, `alert`, `ask`, and `deny`. The benchmark contract imports the
+shared constant instead of maintaining a smaller local enum. Deprecated
+`block` is rejected; acceptance metrics continue to depend only on verdict.
+
+Canonical benchmark tree hashing separates aggregate evidence bounds from the
+production request boundary. Each regular, non-symlink tree artifact is bounded
+at `16 MiB`, while a whole tree remains bounded at `256 MiB`; production request
+normalization retains its independent `512 KiB` limit. This permits a 300-input
+aggregate cassette without relaxing any runtime request boundary.
+
+The truth-aware live evaluator writes its aggregate report, then reduces every
+rejected report or infrastructure outcome to the bounded
+`evaluation_not_accepted` stage code. Detailed threshold assertions remain an
+in-process invariant and cannot expand the worker's cross-process error frame.
+
+The public production construction is
+`createSandboxSecurityProductionEngine`; the sealed benchmark runner is not
+part of that production export graph. `npm run benchmark:sandbox-security:replay`
+executes the replay under `unshare --net` with closed child permissions and no
+Judge credentials. `npm run benchmark:sandbox-security:qualify:live` remains a
+separate operator-only command and is excluded from `test:all`. The replay
+requires a formally accepted signed P6 seal, so a manually accepted assessment
+without `capture.json`, receipts, `seal.json`, and `receipt-chain.json` cannot
+be promoted into replay evidence.
+
+The reviewed P6 Judge binding profile pins only the approved protocol and
+operator HTTPS-FQDN endpoint policy. The base URL, derived endpoint, requested
+model, and credential come exclusively from the mode-`600` operator environment;
+the resolved model comes only from the accepted provider response. None of
+these channel-specific values is defaulted or stored in source-controlled
+profile code, and the credential never enters a manifest, receipt, report, or
+worker environment outside the capture worker.
 
 The balanced profile is versioned as `sandbox-security-balanced.v1`. Local
 detectors produce evidence, and the policy reducer owns the final action. The
@@ -909,6 +970,27 @@ validated `SandboxSecuritySanitizedJudgePayload`: sanitized sources, an optional
 sanitized tool request, and those routed obligations. It never receives the raw
 detector snapshot. Monitor and Track1 adapters preserve their existing
 compatibility ports without creating a second decision reducer.
+
+### P6 sample-level candidate progress
+
+P6 live capture also maintains a separate, content-free progress document at
+`capture-bundle/capture-output/.candidate-package.json`. After each successful
+sample, the permission-limited child emits one strict decision-projection frame
+over stdout. The parent validates the frame, writes the complete cumulative
+document through a same-directory temporary file with `fsync` and atomic
+`rename`, and only then sends a private persistence acknowledgement to the
+child. This keeps the serial evaluation order aligned with durable progress.
+
+The running document uses
+`sandbox-security-benchmark-candidate-progress.v1`; a failed run preserves the
+completed projections and adds only a bounded failure code. The document never
+contains fixture bodies, truth/oracle fields, raw provider output, credentials,
+or provider prose. A complete formal staging envelope replaces the progress
+document only after its hash, ordered decisions, and staging schema agree. The
+materializer still rejects partial progress and publishes `candidate/` only
+after a complete run; candidate, cassette, receipt, seal, evidence-root, and
+P7 contracts do not consume the progress document. The persistence handshake
+does not add retry, fallback, resume, or scheduling behavior.
 
 ### Master unique ownership structure
 

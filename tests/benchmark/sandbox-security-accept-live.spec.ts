@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import {
   createHash,
   createPublicKey,
@@ -41,13 +42,14 @@ const ACCEPTANCE_PUBLIC_KEY = resolve(
   "scripts/benchmark/sandbox-security/p6-acceptance-public-key.pem"
 );
 const REVIEWED_ACCEPTANCE_PUBLIC_KEY_SHA256 =
-  "iYOT_n1bJ1BvgBl55AsKllz75jaklqgW-KGpQ51DXyg";
+  "8wkE8E-myTau0xBFFnugrbS-CKmlq_a-XuvUGhcWL48";
 const RUN_ID = "0123456789abcdef0123456789abcdef";
 const SHA256 = /^[0-9a-f]{64}$/u;
 const BASE64URL = /^[A-Za-z0-9_-]+$/u;
 
 function captureBinding(): Record<string, unknown> {
   return {
+    bundle_descriptor_sha256: "d".repeat(64),
     fixture_count: 300,
     judge_binding: {
       judge_binding_sha256: "9".repeat(64),
@@ -61,12 +63,12 @@ function captureBinding(): Record<string, unknown> {
       judge_protocol_id: "openai_responses_v1"
     },
     execution_profile: {
-      normal_work_budget_ms: 40000,
-      judge_detector_slot_timeout_ms: 20000,
-      local_detector_slot_timeout_ms: 20000,
-      qualification_timeout_ms: 20000,
-      readiness_timeout_ms: 20000,
-      execution_profile_id: "p6_local_hardware_compatibility_v1"
+      normal_work_budget_ms: 360000,
+      judge_detector_slot_timeout_ms: 300000,
+      local_detector_slot_timeout_ms: 60000,
+      qualification_timeout_ms: 40000,
+      readiness_timeout_ms: 40000,
+      execution_profile_id: "p6_local_hardware_compatibility_v8"
     },
     cassette_tree_sha256: "f".repeat(64),
     decisions_tree_sha256: "e".repeat(64),
@@ -427,6 +429,128 @@ test("REQ-SBX-GENERAL-002 P6 receipt separates capture and evaluation issuer dom
   );
 });
 
+test("REQ-SBX-GENERAL-002 capture receipt signs the prepared bundle descriptor hash", async () => {
+  const protocol = await loadIsolatedAcceptanceProtocol();
+  const privateKey = protocol.loadSandboxSecurityP6AcceptancePrivateKey(
+    ACCEPTANCE_PRIVATE_KEY
+  );
+  const bundleDescriptorSha256 = "0".repeat(64);
+  const receipt = protocol.createSandboxSecurityP6AcceptanceReceipt({
+    issuer: "capture",
+    run_id: RUN_ID,
+    issued_binding: {
+      ...captureBinding(),
+      bundle_descriptor_sha256: bundleDescriptorSha256
+    },
+    private_key: privateKey
+  });
+
+  assert.equal(
+    receipt.issued_binding.bundle_descriptor_sha256,
+    bundleDescriptorSha256
+  );
+  assert.notEqual(
+    receipt.issued_binding_sha256,
+    protocol.createSandboxSecurityP6AcceptanceReceipt({
+      issuer: "capture",
+      run_id: RUN_ID,
+      issued_binding: captureBinding(),
+      private_key: privateKey
+    }).issued_binding_sha256
+  );
+});
+
+test("REQ-SBX-GENERAL-002 P6 receipt chain binds both receipts and all evidence anchors", async () => {
+  const protocol = await loadIsolatedAcceptanceProtocol();
+  const privateKey = protocol.loadSandboxSecurityP6AcceptancePrivateKey(
+    ACCEPTANCE_PRIVATE_KEY
+  );
+  const capture = captureBinding();
+  const captureReceipt = protocol.createSandboxSecurityP6AcceptanceReceipt({
+    issuer: "capture",
+    run_id: RUN_ID,
+    issued_binding: capture,
+    private_key: privateKey
+  });
+  const captureReceiptSha256 = protocol.hashSandboxSecurityP6AcceptanceReceipt(
+    captureReceipt
+  );
+  const evaluation = {
+    ...evaluationBinding(),
+    capture_receipt_sha256: captureReceiptSha256
+  } as Record<string, unknown>;
+  const evaluationReceipt = protocol.createSandboxSecurityP6AcceptanceReceipt({
+    issuer: "evaluation",
+    run_id: RUN_ID,
+    issued_binding: evaluation,
+    private_key: privateKey
+  });
+  const evaluationReceiptSha256 =
+    protocol.hashSandboxSecurityP6AcceptanceReceipt(evaluationReceipt);
+  const chain = {
+    schema_version: "sandbox-security-p6-acceptance-receipt-chain.v1",
+    run_id: RUN_ID,
+    seal_sha256: "0".repeat(64),
+    capture_receipt_sha256: captureReceiptSha256,
+    evaluation_receipt_sha256: evaluationReceiptSha256,
+    capture_binding_sha256: captureReceipt.issued_binding_sha256,
+    evaluation_binding_sha256: evaluationReceipt.issued_binding_sha256,
+    capture_binding: captureReceipt.issued_binding,
+    evaluation_binding: evaluationReceipt.issued_binding,
+    evidence_binding: {
+      capture_manifest_sha256: "1".repeat(64),
+      replay_tree_sha256: "2".repeat(64),
+      benchmark_manifest_sha256: evaluation["benchmark_manifest_sha256"],
+      inputs_tree_sha256: evaluation["inputs_tree_sha256"],
+      decisions_tree_sha256: evaluation["decisions_tree_sha256"],
+      cassette_tree_sha256: evaluation["cassette_tree_sha256"],
+      truth_tree_sha256: evaluation["truth_tree_sha256"],
+      accepted_metrics_sha256: evaluation["accepted_metrics_sha256"],
+      fixture_count: 300
+    },
+    capture_receipt: captureReceipt,
+    evaluation_receipt: evaluationReceipt
+  };
+  const normalizeReceiptChain = (
+    protocol as unknown as Readonly<{
+      normalizeSandboxSecurityP6AcceptanceReceiptChain?: (
+        value: unknown
+      ) => Readonly<Record<string, unknown>>;
+    }>
+  ).normalizeSandboxSecurityP6AcceptanceReceiptChain;
+  assert.equal(typeof normalizeReceiptChain, "function");
+  if (typeof normalizeReceiptChain !== "function") return;
+
+  const normalized = normalizeReceiptChain(chain);
+  assert.equal(normalized.schema_version, chain.schema_version);
+  assert.deepEqual(normalized.capture_binding, capture);
+  assert.deepEqual(normalized.evaluation_binding, evaluation);
+  assert.deepEqual(normalized.evidence_binding, chain.evidence_binding);
+
+  assert.throws(
+    () =>
+      normalizeReceiptChain({
+        ...chain,
+        evidence_binding: {
+          ...chain.evidence_binding,
+          truth_tree_sha256: "f".repeat(64)
+        }
+      }),
+    /receipt_chain.*binding|evidence/u
+  );
+  assert.throws(
+    () =>
+      normalizeReceiptChain({
+        ...chain,
+        capture_binding: {
+          ...chain.capture_binding,
+          candidate_tree_sha256: "e".repeat(64)
+        }
+      }),
+    /receipt_chain.*binding|capture/u
+  );
+});
+
 test("REQ-SBX-GENERAL-002 P6 receipt enforces issuer-specific exact binding keys", async () => {
   const protocol = await loadIsolatedAcceptanceProtocol();
   const privateKey = protocol.loadSandboxSecurityP6AcceptancePrivateKey(
@@ -543,6 +667,15 @@ test("REQ-SBX-GENERAL-002 P6 receipt enforces exact execution profile and Judge 
       execution_profile: {
         ...executionProfile,
         readiness_timeout_ms: 19999
+      }
+    },
+    {
+      ...valid,
+      execution_profile: {
+        ...executionProfile,
+        execution_profile_id: "p6_local_hardware_compatibility_v3",
+        judge_detector_slot_timeout_ms: 60000,
+        normal_work_budget_ms: 120000
       }
     },
     { ...valid, judge_binding: {} },
@@ -828,6 +961,77 @@ test("REQ-SBX-GENERAL-002 P6 receipt consumption rejects replayed clones", async
       }),
     /receipt_replayed/u
   );
+});
+
+test("REQ-SBX-GENERAL-002 P6 capture receipt consumption rejects a second independent invocation", async (context) => {
+  const protocol = await loadIsolatedAcceptanceProtocol();
+  const receipt = protocol.createSandboxSecurityP6AcceptanceReceipt({
+    issuer: "capture",
+    run_id: "7123456789abcdef0123456789abcdef",
+    issued_binding: captureBinding(),
+    private_key: protocol.loadSandboxSecurityP6AcceptancePrivateKey(
+      ACCEPTANCE_PRIVATE_KEY
+    )
+  });
+  const registryRoot = mkdtempSync(
+    join(tmpdir(), "sandbox-security-p6-receipt-registry-")
+  );
+  const registryPath = join(registryRoot, "evaluation-consumption.json");
+  const receiptPath = join(registryRoot, "capture-receipt.json");
+  writeFileSync(receiptPath, `${JSON.stringify(receipt)}\n`, { mode: 0o600 });
+  context.after(() => rmSync(registryRoot, { recursive: true, force: true }));
+
+  const consumerScript = `
+const [{ protocolPath, receiptPath, registryPath }] = process.argv.slice(1).map(JSON.parse);
+const protocol = await import(protocolPath);
+const receipt = JSON.parse((await import("node:fs")).readFileSync(receiptPath, "utf8"));
+try {
+  const consume = protocol.consumeSandboxSecurityP6AcceptanceReceipt;
+  const consumed = consume(receipt, { consumer: "evaluation", registry_path: registryPath });
+  process.stdout.write(JSON.stringify({ status: "accepted", issuer: consumed.issuer }) + "\\n");
+} catch (error) {
+  process.stdout.write(JSON.stringify({
+    status: "rejected",
+    error_code: error instanceof Error ? error.message : "unknown"
+  }) + "\\n");
+}
+`;
+  const runConsumer = () =>
+    spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        "--input-type=module",
+        "-e",
+        consumerScript,
+        JSON.stringify({
+          protocolPath: `${isolatedAcceptance.root}/p6-acceptance-protocol.ts`,
+          receiptPath,
+          registryPath
+        })
+      ],
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf8",
+        env: {
+          NODE_NO_WARNINGS: "1"
+        }
+      }
+    );
+
+  const firstInvocation = runConsumer();
+  assert.equal(firstInvocation.status, 0, firstInvocation.stderr);
+  assert.deepEqual(JSON.parse(firstInvocation.stdout), {
+    status: "accepted",
+    issuer: "capture"
+  });
+
+  const secondInvocation = runConsumer();
+  assert.equal(secondInvocation.status, 0, secondInvocation.stderr);
+  assert.deepEqual(JSON.parse(secondInvocation.stdout), {
+    status: "rejected",
+    error_code: "sandbox_security_p6_acceptance_reject:receipt_replayed"
+  });
 });
 
 test("REQ-SBX-GENERAL-002 acceptance private key loads only the matching isolated key", async () => {
@@ -1401,6 +1605,85 @@ test("REQ-SBX-GENERAL-002 stage stderr and exit codes fail closed without invoki
   assert.equal(getterCalls, 0);
 });
 
+test("REQ-SBX-GENERAL-002 failed stages expose only a bounded source-controlled error code", () => {
+  const classifyFailedStage = requireSandboxSecurityStageProtocolExport(
+    "classifySandboxSecurityFailedStage"
+  );
+  const safeCode =
+    "sandbox_security_capture_live_reject:judge_readiness_timeout";
+
+  assert.equal(
+    classifyFailedStage({
+      exit_code: 1,
+      stdout: "",
+      stderr: `${JSON.stringify({ error_code: safeCode })}\n`
+    }),
+    safeCode
+  );
+
+  for (const stderr of [
+    "forbidden-provider-body\n",
+    `${JSON.stringify({
+      error_code: safeCode,
+      leaked: "forbidden-provider-body"
+    })}\n`,
+    `${JSON.stringify({
+      error_code: "sandbox_security_capture_live_reject:bad value"
+    })}\n`,
+    `${JSON.stringify({ error_code: safeCode })}\nextra\n`,
+    "x".repeat(513)
+  ]) {
+    assert.equal(
+      classifyFailedStage({ exit_code: 1, stdout: "", stderr }),
+      "sandbox_security_stage_reject:stage_exit_invalid"
+    );
+  }
+
+  assert.equal(
+    classifyFailedStage({
+      exit_code: 1,
+      stdout: "unexpected\n",
+      stderr: `${JSON.stringify({ error_code: safeCode })}\n`
+    }),
+    "sandbox_security_stage_reject:stage_exit_invalid"
+  );
+});
+
+test("REQ-SBX-GENERAL-002 capture worker preserves only the capture child's safe failure code", async () => {
+  const module = (await import(
+    "../../scripts/benchmark/sandbox-security/capture-live-worker.ts"
+  )) as Readonly<Record<string, unknown>>;
+  const classifyChildFailure =
+    module.classifySandboxSecurityCaptureChildFailure;
+  assert.equal(
+    typeof classifyChildFailure,
+    "function",
+    "capture_child_failure_classifier_missing"
+  );
+  if (typeof classifyChildFailure !== "function") return;
+
+  const safeCode =
+    "sandbox_security_capture_live_reject:closed_input_count_mismatch";
+  assert.equal(
+    (classifyChildFailure as (stderr: string) => string)(
+      `${JSON.stringify({ error_code: safeCode })}\n`
+    ),
+    safeCode
+  );
+  for (const stderr of [
+    "forbidden-provider-body\n",
+    `${JSON.stringify({ error_code: "provider says secret" })}\n`,
+    `${JSON.stringify({ error_code: safeCode, extra: true })}\n`,
+    `${JSON.stringify({ error_code: safeCode })}\nextra\n`,
+    "x".repeat(513)
+  ]) {
+    assert.equal(
+      (classifyChildFailure as (stderr: string) => string)(stderr),
+      "sandbox_security_capture_worker_reject:capture_child_failed"
+    );
+  }
+});
+
 test("REQ-SBX-GENERAL-002 stage summary parsers enforce exact keys for each stage stdout status", () => {
   const parsePrepare = requireSandboxSecurityStageProtocolExport(
     "parseSandboxSecurityPrepareStageSummary"
@@ -1591,18 +1874,10 @@ test("REQ-SBX-GENERAL-002 P6 live Judge binding profile fails closed until revie
     /sandbox_security_p6_judge_binding_reject:profile_not_reviewed/u
   );
 
-  const sha256 = (value: string): string =>
-    createHash("sha256").update(value, "utf8").digest("hex");
   const reviewedProfile = Object.freeze({
     profile_id: "p6_live_judge_binding_v1",
     judge_protocol_id: "openai_chat_completions_json_v1",
     judge_endpoint_policy_id: "operator_https_fqdn_v1",
-    judge_base_url_sha256: sha256(runtime.judge_base_url),
-    judge_endpoint_url_sha256: sha256(runtime.judge_endpoint_url),
-    judge_requested_model_id: "reviewed-requested",
-    judge_requested_model_sha256: sha256(runtime.judge_requested_model),
-    judge_resolved_model_id: "reviewed-resolved",
-    judge_resolved_model_sha256: sha256(runtime.judge_resolved_model),
     reviewed: true
   });
   const reviewedIds = module.verifySandboxSecurityP6LiveJudgeBinding(
@@ -1610,14 +1885,17 @@ test("REQ-SBX-GENERAL-002 P6 live Judge binding profile fails closed until revie
     reviewedProfile
   );
   assert.deepEqual(reviewedIds, {
-    judge_requested_model_id: "reviewed-requested",
-    judge_resolved_model_id: "reviewed-resolved"
+    judge_requested_model_id: runtime.judge_requested_model,
+    judge_resolved_model_id: runtime.judge_resolved_model
   });
 
   assert.throws(
     () =>
       module.verifySandboxSecurityP6LiveJudgeBinding(
-        { ...runtime, judge_resolved_model: "different-model" },
+        {
+          ...runtime,
+          judge_endpoint_url: "https://judge.example.test/v1/responses"
+        },
         reviewedProfile
       ),
     /sandbox_security_p6_judge_binding_reject:judge_channel_mismatch/u
@@ -1630,6 +1908,51 @@ test("REQ-SBX-GENERAL-002 P6 live Judge binding profile fails closed until revie
       ),
     /sandbox_security_p6_judge_binding_reject:judge_channel_mismatch/u
   );
+});
+
+test("REQ-SBX-GENERAL-002 P6 reviewed binding derives channel values from runtime configuration", async () => {
+  const module = (await import(
+    "../../scripts/benchmark/sandbox-security/p6-live-judge-binding.ts"
+  )) as unknown as Readonly<{
+    SANDBOX_SECURITY_P6_LIVE_JUDGE_BINDING_PROFILE: Readonly<Record<string, unknown>>;
+    verifySandboxSecurityP6LiveJudgeBinding: (
+      runtime: Readonly<Record<string, string>>
+    ) => Readonly<{
+      judge_requested_model_id: string;
+      judge_resolved_model_id: string;
+    }>;
+  }>;
+  assert.deepEqual(module.SANDBOX_SECURITY_P6_LIVE_JUDGE_BINDING_PROFILE, {
+    profile_id: "p6_live_judge_binding_v1",
+    judge_protocol_id: "openai_chat_completions_json_v1",
+    judge_endpoint_policy_id: "operator_https_fqdn_v1",
+    reviewed: true
+  });
+
+  for (const runtime of [
+    {
+      judge_protocol_id: "openai_chat_completions_json_v1",
+      judge_endpoint_policy_id: "operator_https_fqdn_v1",
+      judge_base_url: "https://judge.example.test/v1",
+      judge_endpoint_url: "https://judge.example.test/v1/chat/completions",
+      judge_requested_model: "operator-model-a",
+      judge_resolved_model: "operator-model-a-resolved"
+    },
+    {
+      judge_protocol_id: "openai_chat_completions_json_v1",
+      judge_endpoint_policy_id: "operator_https_fqdn_v1",
+      judge_base_url: "https://alternate.example.test/api/v2",
+      judge_endpoint_url:
+        "https://alternate.example.test/api/v2/chat/completions",
+      judge_requested_model: "operator-model-b",
+      judge_resolved_model: "operator-model-b-resolved"
+    }
+  ]) {
+    assert.deepEqual(module.verifySandboxSecurityP6LiveJudgeBinding(runtime), {
+      judge_requested_model_id: runtime.judge_requested_model,
+      judge_resolved_model_id: runtime.judge_resolved_model
+    });
+  }
 });
 
 test("REQ-SBX-GENERAL-002 acceptance authority rejects a malformed input record before launching workers", async () => {

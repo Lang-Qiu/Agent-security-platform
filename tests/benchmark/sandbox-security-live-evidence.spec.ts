@@ -8,6 +8,8 @@ import {
   cpSync,
   existsSync,
   fstatSync,
+  linkSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -37,6 +39,11 @@ import {
   normalizeSandboxSecurityBenchmarkSeal,
   type SandboxSecurityBenchmarkSha256
 } from "../../scripts/benchmark/sandbox-security/contracts.ts";
+import {
+  createSandboxSecurityP6AcceptanceReceipt,
+  hashSandboxSecurityP6AcceptanceReceipt,
+  loadSandboxSecurityP6AcceptancePrivateKey
+} from "../../scripts/benchmark/sandbox-security/p6-acceptance-protocol.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const COMMITTED_ROOT = resolve(
@@ -51,8 +58,20 @@ const EVALUATOR_MODULE = resolve(
   REPO_ROOT,
   "scripts/benchmark/sandbox-security/evaluate.ts"
 );
+const ACCEPTANCE_PRIVATE_KEY = resolve(
+  REPO_ROOT,
+  "scripts/benchmark/sandbox-security/.p6-acceptance-private-key.pem"
+);
 
 const TEMP_ROOTS: string[] = [];
+
+function rootIdentity(path: string): Readonly<{ dev: string; ino: string }> {
+  const stat = lstatSync(path, { bigint: true });
+  return Object.freeze({
+    dev: stat.dev.toString(10),
+    ino: stat.ino.toString(10)
+  });
+}
 
 after(() => {
   for (const root of TEMP_ROOTS) {
@@ -137,12 +156,12 @@ const DIGEST =
 const SHA_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const SHA_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const P6_TIMING = {
-  execution_profile_id: "p6_local_hardware_compatibility_v1",
-  readiness_timeout_ms: 20000,
-  qualification_timeout_ms: 20000,
-  local_detector_slot_timeout_ms: 20000,
-  judge_detector_slot_timeout_ms: 20000,
-  normal_work_budget_ms: 40000
+  execution_profile_id: "p6_local_hardware_compatibility_v8",
+  readiness_timeout_ms: 40000,
+  qualification_timeout_ms: 40000,
+  local_detector_slot_timeout_ms: 60000,
+  judge_detector_slot_timeout_ms: 300000,
+  normal_work_budget_ms: 360000
 } as const;
 
 type JudgeProtocolId =
@@ -170,7 +189,10 @@ type SealCommonModule = {
   resolveDefaultSandboxSecurityCandidateRoot?: () => string;
   validateAcceptedSandboxSecurityLiveEvidence: (
     root: string,
-    options?: Readonly<{ corpus_root?: string }>
+    options?: Readonly<{
+      corpus_root?: string;
+      require_receipt_chain?: boolean;
+    }>
   ) => Readonly<{
     capture: Readonly<{
       inputs: readonly unknown[];
@@ -439,7 +461,7 @@ function decisionEnvelope(
   const projection = Object.freeze({
     schema_version: "sandbox-security-decision.v1",
     verdict,
-    action: verdict === "risk_detected" ? "block" : "allow",
+    action: verdict === "risk_detected" ? "deny" : "allow",
     risk_level: verdict === "risk_detected" ? "high" : "none",
     finding_count: verdict === "risk_detected" ? 1 : 0,
     detector_run_count: 2,
@@ -564,8 +586,8 @@ function writeThresholdPassingCandidate(input: Readonly<{
     },
     ...judgeBinding,
     judge_binding_sha256: judgeBindingSha256,
-    local_prompt_version: "sandbox-security-ollama-local-prompt.v1",
-    judge_prompt_version: "sandbox-security-openai-judge-prompt.v1",
+    local_prompt_version: "sandbox-security-ollama-local-prompt.v2",
+    judge_prompt_version: "sandbox-security-openai-judge-prompt.v2",
     local_schema_version: "sandbox-security-local-model.v1",
     judge_schema_version: "sandbox-security-judge.v1",
     rule_catalog_version: "sandbox-security-rule-catalog.v1",
@@ -966,7 +988,9 @@ test("REQ-SBX-GENERAL-002 truth-blind sealer copies the complete candidate casse
   assert.equal(firstReplay.judge_binding_sha256, manifest.judge_binding_sha256);
 
   const evidence =
-    seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot);
+    seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot, {
+      require_receipt_chain: false
+    });
   assert.equal(evidence.capture.inputs.length, 300);
   assert.doesNotThrow(() => seal.assertNoSensitiveLiveEvidence(outputRoot));
 });
@@ -996,11 +1020,20 @@ test("REQ-SBX-GENERAL-002 seal worker rejects an unsigned or malformed receipt c
   )) as Readonly<{
     runSandboxSecuritySealWorker: (input: Readonly<{
       corpus_root: string;
+      corpus_dev: string;
+      corpus_ino: string;
+      capture_parent_root: string;
+      capture_parent_dev: string;
+      capture_parent_ino: string;
       candidate_root: string;
       report: string;
       output_root: string;
+      output_dev: string;
+      output_ino: string;
       capture_receipt_path: string;
+      capture_receipt_registry_path: string;
       evaluation_receipt_path: string;
+      evaluation_receipt_registry_path: string;
       run_id: string;
     }>) => Promise<unknown>;
   }>;
@@ -1009,6 +1042,9 @@ test("REQ-SBX-GENERAL-002 seal worker rejects an unsigned or malformed receipt c
   const workspace = tempRoot("ssb-seal-worker-forged-receipt-");
   const outputRoot = join(workspace, "out");
   mkdirSync(outputRoot, { recursive: true });
+  const corpusIdentity = rootIdentity(COMMITTED_ROOT);
+  const captureParentIdentity = rootIdentity(workspace);
+  const outputIdentity = rootIdentity(outputRoot);
   const captureReceiptPath = join(workspace, "capture-receipt.json");
   const evaluationReceiptPath = join(workspace, "evaluation-receipt.json");
   writeFileSync(
@@ -1024,15 +1060,166 @@ test("REQ-SBX-GENERAL-002 seal worker rejects an unsigned or malformed receipt c
     () =>
       sealWorker.runSandboxSecuritySealWorker({
         corpus_root: COMMITTED_ROOT,
+        corpus_dev: corpusIdentity.dev,
+        corpus_ino: corpusIdentity.ino,
+        capture_parent_root: workspace,
+        capture_parent_dev: captureParentIdentity.dev,
+        capture_parent_ino: captureParentIdentity.ino,
         candidate_root: join(workspace, "candidate"),
         report: join(workspace, "evaluation-report.json"),
         output_root: outputRoot,
+        output_dev: outputIdentity.dev,
+        output_ino: outputIdentity.ino,
         capture_receipt_path: captureReceiptPath,
+        capture_receipt_registry_path: join(workspace, "capture-seal.token"),
         evaluation_receipt_path: evaluationReceiptPath,
+        evaluation_receipt_registry_path: join(workspace, "evaluation-seal.token"),
         run_id: "0123456789abcdef0123456789abcdef"
       }),
     /reject|receipt|invalid/i
   );
+  assert.equal(existsSync(join(outputRoot, "seal.json")), false);
+});
+
+test("REQ-SBX-GENERAL-002 sealer does not leave core evidence after receipt-chain publication fails", async () => {
+  const sealWorker = (await import(
+    "../../scripts/benchmark/sandbox-security/seal-live-worker.ts"
+  )) as Readonly<{
+    runSandboxSecuritySealWorker: (input: Readonly<{
+      corpus_root: string;
+      corpus_dev: string;
+      corpus_ino: string;
+      capture_parent_root: string;
+      capture_parent_dev: string;
+      capture_parent_ino: string;
+      candidate_root: string;
+      report: string;
+      output_root: string;
+      output_dev: string;
+      output_ino: string;
+      capture_receipt_path: string;
+      capture_receipt_registry_path: string;
+      evaluation_receipt_path: string;
+      evaluation_receipt_registry_path: string;
+      run_id: string;
+    }>) => Promise<unknown>;
+  }>;
+  const fixtureIds = loadCorpusFixtureIds();
+  const workspace = tempRoot("ssb-seal-worker-chain-publication-failure-");
+  const candidateRoot = join(workspace, "candidate");
+  const outputRoot = join(workspace, "out");
+  const reportPath = join(workspace, "evaluation-report.json");
+  const captureReceiptPath = join(workspace, "capture-receipt.json");
+  const evaluationReceiptPath = join(workspace, "evaluation-receipt.json");
+  const runId = "0123456789abcdef0123456789abcdef";
+  mkdirSync(candidateRoot, { recursive: true });
+  mkdirSync(outputRoot, { recursive: true });
+  mkdirSync(join(outputRoot, "receipt-chain.json"));
+  const corpusIdentity = rootIdentity(COMMITTED_ROOT);
+  const captureParentIdentity = rootIdentity(workspace);
+  const outputIdentity = rootIdentity(outputRoot);
+
+  const written = writeThresholdPassingCandidate({
+    candidateRoot,
+    fixtureIds
+  });
+  const report = writeAcceptedReport({
+    reportPath,
+    candidateRoot,
+    fixtureIds,
+    cassetteTreeSha256: written.cassette_tree_sha256,
+    decisionsTreeSha256: written.decisions_tree_sha256,
+    packageSha256: written.package_sha256,
+    accepted: true
+  });
+  const captureBinding = {
+    bundle_descriptor_sha256: "1".repeat(64),
+    inputs_tree_sha256:
+      "5b95a264e3fd4fb393e313a0dbdd3ea099af6257e9ef3a6e75790e0f6c659407",
+    code_tree_sha256: "b".repeat(64),
+    candidate_package_sha256: written.package_sha256,
+    candidate_tree_sha256: hashSandboxSecurityBenchmarkTree(candidateRoot),
+    decisions_tree_sha256: written.decisions_tree_sha256,
+    cassette_tree_sha256: written.cassette_tree_sha256,
+    fixture_count: 300,
+    execution_profile: P6_TIMING,
+    judge_binding: {
+      judge_protocol_id: "openai_responses_v1",
+      judge_endpoint_policy_id: "operator_https_fqdn_v1",
+      judge_base_url_sha256: "c".repeat(64),
+      judge_endpoint_url_sha256: "d".repeat(64),
+      judge_requested_model_id: "grok-4.5",
+      judge_requested_model_sha256: "e".repeat(64),
+      judge_resolved_model_id: "grok-4.5-build-free",
+      judge_resolved_model_sha256: "f".repeat(64),
+      judge_binding_sha256: "0".repeat(64)
+    }
+  };
+  const privateKey = loadSandboxSecurityP6AcceptancePrivateKey(
+    ACCEPTANCE_PRIVATE_KEY
+  );
+  const captureReceipt = createSandboxSecurityP6AcceptanceReceipt({
+    issuer: "capture",
+    run_id: runId,
+    issued_binding: captureBinding,
+    private_key: privateKey
+  });
+  const captureReceiptSha256 =
+    hashSandboxSecurityP6AcceptanceReceipt(captureReceipt);
+  writeFileSync(
+    captureReceiptPath,
+    `${JSON.stringify(captureReceipt, null, 2)}\n`
+  );
+  const evaluationBinding = {
+    capture_receipt_sha256: captureReceiptSha256,
+    evaluation_report_sha256: sha256File(reportPath),
+    benchmark_manifest_sha256: sha256File(join(COMMITTED_ROOT, "manifest.json")),
+    candidate_package_sha256: written.package_sha256,
+    candidate_tree_sha256: hashSandboxSecurityBenchmarkTree(candidateRoot),
+    inputs_tree_sha256: captureBinding.inputs_tree_sha256,
+    decisions_tree_sha256: written.decisions_tree_sha256,
+    cassette_tree_sha256: written.cassette_tree_sha256,
+    truth_tree_sha256: String(report.truth_tree_sha256),
+    accepted_metrics_sha256: String(report.accepted_metrics_sha256),
+    fixture_count: 300
+  };
+  const evaluationReceipt = createSandboxSecurityP6AcceptanceReceipt({
+    issuer: "evaluation",
+    run_id: runId,
+    issued_binding: evaluationBinding,
+    private_key: privateKey
+  });
+  writeFileSync(
+    evaluationReceiptPath,
+    `${JSON.stringify(evaluationReceipt, null, 2)}\n`
+  );
+
+  await assert.rejects(
+    () =>
+      sealWorker.runSandboxSecuritySealWorker({
+        corpus_root: COMMITTED_ROOT,
+        corpus_dev: corpusIdentity.dev,
+        corpus_ino: corpusIdentity.ino,
+        capture_parent_root: workspace,
+        capture_parent_dev: captureParentIdentity.dev,
+        capture_parent_ino: captureParentIdentity.ino,
+        candidate_root: candidateRoot,
+        report: reportPath,
+        output_root: outputRoot,
+        output_dev: outputIdentity.dev,
+        output_ino: outputIdentity.ino,
+        capture_receipt_path: captureReceiptPath,
+        capture_receipt_registry_path: join(workspace, "capture-seal.token"),
+        evaluation_receipt_path: evaluationReceiptPath,
+        evaluation_receipt_registry_path: join(workspace, "evaluation-seal.token"),
+        run_id: runId
+      }),
+    /exclusive_write_target_exists/u
+  );
+
+  assert.deepEqual(readdirSync(outputRoot).sort(), ["receipt-chain.json"]);
+  assert.equal(existsSync(join(outputRoot, "capture.json")), false);
+  assert.equal(existsSync(join(outputRoot, "replay")), false);
   assert.equal(existsSync(join(outputRoot, "seal.json")), false);
 });
 
@@ -1126,7 +1313,8 @@ test("REQ-SBX-GENERAL-002 final validator admits the exact co-located corpus and
 
   assert.doesNotThrow(() =>
     seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot, {
-      corpus_root: outputRoot
+      corpus_root: outputRoot,
+      require_receipt_chain: false
     })
   );
 });
@@ -1857,7 +2045,9 @@ test("REQ-SBX-GENERAL-002 live evidence validator rejects digest/model/schema mi
   writeFileSync(capturePath, `${JSON.stringify(capture, null, 2)}\n`);
 
   assert.throws(
-    () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot),
+    () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot, {
+      require_receipt_chain: false
+    }),
     /digest|hash|mismatch|invalid|seal/i
   );
 });
@@ -1899,7 +2089,9 @@ test("REQ-SBX-GENERAL-002 live evidence validator rejects successful Judge repla
   });
 
   assert.throws(
-    () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot),
+    () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot, {
+      require_receipt_chain: false
+    }),
     /judge.*resolved.*model|resolved.*model.*judge/i
   );
 });
@@ -1989,7 +2181,9 @@ test("REQ-SBX-GENERAL-002 final live evidence validator rejects root symlinks ex
 
   writeFileSync(join(outputRoot, "extra.txt"), "unexpected\n");
   assert.throws(
-    () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot),
+    () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot, {
+      require_receipt_chain: false
+    }),
     /final_root_layout_invalid|layout/i
   );
   unlinkSync(join(outputRoot, "extra.txt"));
@@ -2011,7 +2205,9 @@ test("REQ-SBX-GENERAL-002 final live evidence validator rejects root symlinks ex
   sealDoc.accepted_metrics_sha256 = hashSandboxSecurityBenchmarkAcceptedMetrics(metrics);
   writeFileSync(sealPath, `${JSON.stringify(sealDoc, null, 2)}\n`);
   assert.throws(
-    () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot),
+    () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot, {
+      require_receipt_chain: false
+    }),
     /accepted_metrics_not_accepted|accepted_metrics/i
   );
 
@@ -2038,7 +2234,9 @@ test("REQ-SBX-GENERAL-002 final live evidence validator rejects root symlinks ex
   truthSeal.accepted_metrics_sha256 = hashSandboxSecurityBenchmarkAcceptedMetrics(truthMetrics);
   writeFileSync(truthSealPath, `${JSON.stringify(truthSeal, null, 2)}\n`);
   assert.throws(
-    () => seal.validateAcceptedSandboxSecurityLiveEvidence(goodSeal),
+    () => seal.validateAcceptedSandboxSecurityLiveEvidence(goodSeal, {
+      require_receipt_chain: false
+    }),
     /truth_tree_anchor_mismatch|truth.*anchor|truth.*hash/i
   );
 });
@@ -2085,7 +2283,9 @@ test("REQ-SBX-GENERAL-002 final validator reruns thresholds from retained accept
   writeFileSync(sealPath, `${JSON.stringify(sealDoc, null, 2)}\n`);
 
   assert.throws(
-    () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot),
+    () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot, {
+      require_receipt_chain: false
+    }),
     /accepted_metrics_thresholds_not_met|threshold/i
   );
 });
@@ -2136,7 +2336,9 @@ test("REQ-SBX-GENERAL-002 final validator binds retained metric hashes to sealed
       hashSandboxSecurityBenchmarkAcceptedMetrics(metrics);
     writeFileSync(sealPath, `${JSON.stringify(changed, null, 2)}\n`);
     assert.throws(
-      () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot),
+      () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot, {
+        require_receipt_chain: false
+      }),
       /accepted_metrics_.*_mismatch|metrics.*hash|anchor/i
     );
   }
@@ -2184,7 +2386,9 @@ test("REQ-SBX-GENERAL-002 final validator independently rejects tampered corpus 
     });
 
     assert.throws(
-      () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot),
+      () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot, {
+        require_receipt_chain: false
+      }),
       /benchmark_manifest_anchor_mismatch|sources_lock_anchor_mismatch|inputs_tree_anchor_mismatch|corpus.*anchor|anchor.*mismatch/i
     );
   }
@@ -2288,7 +2492,9 @@ test("REQ-SBX-GENERAL-002 final validator rejects matching symlinks and undeclar
     unlinkSync(finalPath);
     symlinkSync(detachedPath, finalPath);
     assert.throws(
-      () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot),
+      () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot, {
+        require_receipt_chain: false
+      }),
       /final_symlink_rejected|symlink/i
     );
     unlinkSync(finalPath);
@@ -2302,7 +2508,9 @@ test("REQ-SBX-GENERAL-002 final validator rejects matching symlinks and undeclar
   unlinkSync(replayPath);
   symlinkSync(detachedReplay, replayPath);
   assert.throws(
-    () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot),
+    () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot, {
+      require_receipt_chain: false
+    }),
     /replay_entry_invalid|symlink/i
   );
   unlinkSync(replayPath);
@@ -2311,7 +2519,9 @@ test("REQ-SBX-GENERAL-002 final validator rejects matching symlinks and undeclar
   const extraFile = join(replayRoot, "extra.bin");
   writeFileSync(extraFile, "unexpected\n");
   assert.throws(
-    () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot),
+    () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot, {
+      require_receipt_chain: false
+    }),
     /replay_layout_invalid|layout/i
   );
   unlinkSync(extraFile);
@@ -2319,7 +2529,9 @@ test("REQ-SBX-GENERAL-002 final validator rejects matching symlinks and undeclar
   const extraDirectory = join(replayRoot, "extra-directory");
   mkdirSync(extraDirectory);
   assert.throws(
-    () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot),
+    () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot, {
+      require_receipt_chain: false
+    }),
     /replay_layout_invalid|layout/i
   );
   rmSync(extraDirectory, { recursive: true, force: true });
@@ -2327,13 +2539,15 @@ test("REQ-SBX-GENERAL-002 final validator rejects matching symlinks and undeclar
   const extraSymlink = join(replayRoot, "extra-link");
   symlinkSync(detachedReplay, extraSymlink);
   assert.throws(
-    () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot),
+    () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot, {
+      require_receipt_chain: false
+    }),
     /replay_layout_invalid|symlink|layout/i
   );
   unlinkSync(extraSymlink);
 });
 
-test("REQ-SBX-GENERAL-002 final validator admits an optional receipt-chain and verifies it", async () => {
+test("REQ-SBX-GENERAL-002 final validator requires and verifies the receipt-chain", async () => {
   const seal = await loadSeal();
   const fixtureIds = loadCorpusFixtureIds();
   const workspace = tempRoot("ssb-final-receipt-chain-");
@@ -2359,9 +2573,16 @@ test("REQ-SBX-GENERAL-002 final validator admits an optional receipt-chain and v
     output_root: outputRoot
   });
 
-  // Baseline: an output root without a receipt chain still validates.
-  assert.doesNotThrow(() =>
-    seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot)
+  assert.throws(
+    () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot, {
+      require_receipt_chain: true
+    }),
+    /receipt_chain_missing/u
+  );
+
+  assert.throws(
+    () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot),
+    /receipt_chain_missing/u
   );
 
   // A present receipt-chain.json must not trip the exact-layout check; instead
@@ -2384,6 +2605,48 @@ test("REQ-SBX-GENERAL-002 final validator admits an optional receipt-chain and v
   assert.throws(
     () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot),
     /receipt_chain_entry_invalid/u
+  );
+
+});
+
+test("REQ-SBX-GENERAL-002 final validator rejects hardlinked receipt-chain entries before parsing", async () => {
+  const seal = await loadSeal();
+  const fixtureIds = loadCorpusFixtureIds();
+  const workspace = tempRoot("ssb-final-receipt-chain-hardlink-");
+  const candidateRoot = join(workspace, "candidate");
+  const outputRoot = join(workspace, "out");
+  mkdirSync(candidateRoot, { recursive: true });
+  mkdirSync(outputRoot, { recursive: true });
+  const written = writeThresholdPassingCandidate({ candidateRoot, fixtureIds });
+  const reportPath = join(workspace, "evaluation-report.json");
+  writeAcceptedReport({
+    reportPath,
+    candidateRoot,
+    fixtureIds,
+    cassetteTreeSha256: written.cassette_tree_sha256,
+    decisionsTreeSha256: written.decisions_tree_sha256,
+    packageSha256: written.package_sha256,
+    accepted: true
+  });
+  await seal.sealSandboxSecurityAcceptedCapture({
+    corpus_root: COMMITTED_ROOT,
+    candidate_capture_root: candidateRoot,
+    evaluation_report_path: reportPath,
+    output_root: outputRoot
+  });
+
+  const chainPath = join(outputRoot, "receipt-chain.json");
+  const hardlinked = join(workspace, "hardlinked-chain.json");
+  writeFileSync(
+    hardlinked,
+    `${JSON.stringify({ schema_version: "x" }, null, 2)}\n`
+  );
+  linkSync(hardlinked, chainPath);
+  assert.equal(statSync(chainPath).nlink, 2);
+
+  assert.throws(
+    () => seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot),
+    /receipt_chain_entry_invalid|link_count|nlink|snapshot/u
   );
 });
 

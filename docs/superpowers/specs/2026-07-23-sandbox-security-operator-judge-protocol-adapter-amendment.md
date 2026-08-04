@@ -127,10 +127,10 @@ failure may not produce an accepted candidate, capture, replay tree, or seal.
 
 P6-T4 remains blocked until deterministic gates are green and a real
 credentialed strict-schema readiness request plus the full controlled capture
-succeeds. Under `p6_local_hardware_compatibility_v1`, Judge readiness and the
-P6 Judge detector slot are each `20000ms` within a `40000ms` normal work
-budget; ordinary production and P7 Judge slots remain bound by the inherited
-`4000ms` limit.
+succeeds. Under `p6_local_hardware_compatibility_v2`, Judge readiness and the
+P6 Judge detector slot remain `20000ms` within an `80000ms` normal work budget;
+ordinary production and P7 Judge slots remain bound by the inherited `4000ms`
+limit.
 
 ## Required RED Coverage
 

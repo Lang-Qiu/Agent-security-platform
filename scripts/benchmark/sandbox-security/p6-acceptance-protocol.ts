@@ -11,19 +11,22 @@ import {
   closeSync,
   constants,
   fstatSync,
+  fsyncSync,
   lstatSync,
   openSync,
   readFileSync,
-  readSync
+  readSync,
+  unlinkSync,
+  writeSync
 } from "node:fs";
-import { isAbsolute } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { types as utilTypes } from "node:util";
 
 export const SANDBOX_SECURITY_P6_ACCEPTANCE_RECEIPT_SCHEMA_VERSION =
   "sandbox-security-p6-acceptance-receipt.v1" as const;
 export const SANDBOX_SECURITY_P6_ACCEPTANCE_PUBLIC_KEY_SHA256 =
-  "iYOT_n1bJ1BvgBl55AsKllz75jaklqgW-KGpQ51DXyg" as const;
+  "8wkE8E-myTau0xBFFnugrbS-CKmlq_a-XuvUGhcWL48" as const;
 export const SANDBOX_SECURITY_P6_ACCEPTANCE_MAX_BINDING_BYTES = 4096;
 
 export type SandboxSecurityP6AcceptanceIssuer = "capture" | "evaluation";
@@ -42,12 +45,12 @@ export type SandboxSecurityP6AcceptanceJsonValue =
 
 export interface SandboxSecurityP6AcceptanceExecutionProfile
   extends SandboxSecurityP6AcceptanceJsonObject {
-  readonly execution_profile_id: "p6_local_hardware_compatibility_v1";
-  readonly readiness_timeout_ms: 20000;
-  readonly qualification_timeout_ms: 20000;
-  readonly local_detector_slot_timeout_ms: 20000;
-  readonly judge_detector_slot_timeout_ms: 20000;
-  readonly normal_work_budget_ms: 40000;
+  readonly execution_profile_id: "p6_local_hardware_compatibility_v8";
+  readonly readiness_timeout_ms: 40000;
+  readonly qualification_timeout_ms: 40000;
+  readonly local_detector_slot_timeout_ms: 60000;
+  readonly judge_detector_slot_timeout_ms: 300000;
+  readonly normal_work_budget_ms: 360000;
 }
 
 export interface SandboxSecurityP6AcceptanceJudgeBinding
@@ -67,6 +70,7 @@ export interface SandboxSecurityP6AcceptanceJudgeBinding
 
 export interface SandboxSecurityP6AcceptanceCaptureBinding
   extends SandboxSecurityP6AcceptanceJsonObject {
+  readonly bundle_descriptor_sha256: string;
   readonly inputs_tree_sha256: string;
   readonly code_tree_sha256: string;
   readonly candidate_package_sha256: string;
@@ -107,6 +111,37 @@ export interface SandboxSecurityP6AcceptanceReceipt {
   readonly signature_base64url: string;
 }
 
+export const SANDBOX_SECURITY_P6_ACCEPTANCE_RECEIPT_CHAIN_SCHEMA_VERSION =
+  "sandbox-security-p6-acceptance-receipt-chain.v1" as const;
+
+export interface SandboxSecurityP6AcceptanceReceiptChainEvidenceBinding
+  extends SandboxSecurityP6AcceptanceJsonObject {
+  readonly capture_manifest_sha256: string;
+  readonly replay_tree_sha256: string;
+  readonly benchmark_manifest_sha256: string;
+  readonly inputs_tree_sha256: string;
+  readonly decisions_tree_sha256: string;
+  readonly cassette_tree_sha256: string;
+  readonly truth_tree_sha256: string;
+  readonly accepted_metrics_sha256: string;
+  readonly fixture_count: 300;
+}
+
+export interface SandboxSecurityP6AcceptanceReceiptChain {
+  readonly schema_version: typeof SANDBOX_SECURITY_P6_ACCEPTANCE_RECEIPT_CHAIN_SCHEMA_VERSION;
+  readonly run_id: string;
+  readonly seal_sha256: string;
+  readonly capture_receipt_sha256: string;
+  readonly evaluation_receipt_sha256: string;
+  readonly capture_binding_sha256: string;
+  readonly evaluation_binding_sha256: string;
+  readonly capture_binding: SandboxSecurityP6AcceptanceCaptureBinding;
+  readonly evaluation_binding: SandboxSecurityP6AcceptanceEvaluationBinding;
+  readonly evidence_binding: SandboxSecurityP6AcceptanceReceiptChainEvidenceBinding;
+  readonly capture_receipt: SandboxSecurityP6AcceptanceReceipt;
+  readonly evaluation_receipt: SandboxSecurityP6AcceptanceReceipt;
+}
+
 export interface SandboxSecurityP6AcceptanceReceiptInput {
   readonly issuer: SandboxSecurityP6AcceptanceIssuer;
   readonly run_id: string;
@@ -132,6 +167,7 @@ const RECEIPT_INPUT_KEYS = Object.freeze([
   "private_key"
 ] as const);
 const CAPTURE_BINDING_KEYS = Object.freeze([
+  "bundle_descriptor_sha256",
   "inputs_tree_sha256",
   "code_tree_sha256",
   "candidate_package_sha256",
@@ -200,6 +236,31 @@ const JUDGE_BINDING_HASH_KEYS = Object.freeze([
   "judge_requested_model_sha256",
   "judge_resolved_model_sha256",
   "judge_binding_sha256"
+] as const);
+const RECEIPT_CHAIN_KEYS = Object.freeze([
+  "schema_version",
+  "run_id",
+  "seal_sha256",
+  "capture_receipt_sha256",
+  "evaluation_receipt_sha256",
+  "capture_binding_sha256",
+  "evaluation_binding_sha256",
+  "capture_binding",
+  "evaluation_binding",
+  "evidence_binding",
+  "capture_receipt",
+  "evaluation_receipt"
+] as const);
+const RECEIPT_CHAIN_EVIDENCE_KEYS = Object.freeze([
+  "capture_manifest_sha256",
+  "replay_tree_sha256",
+  "benchmark_manifest_sha256",
+  "inputs_tree_sha256",
+  "decisions_tree_sha256",
+  "cassette_tree_sha256",
+  "truth_tree_sha256",
+  "accepted_metrics_sha256",
+  "fixture_count"
 ] as const);
 const RUN_ID = /^[0-9a-f]{32}$/u;
 const SHA256_HEX = /^[0-9a-f]{64}$/u;
@@ -417,12 +478,12 @@ function normalizeExecutionProfile(
   );
   if (
     record.values.get("execution_profile_id") !==
-      "p6_local_hardware_compatibility_v1" ||
-    record.values.get("readiness_timeout_ms") !== 20000 ||
-    record.values.get("qualification_timeout_ms") !== 20000 ||
-    record.values.get("local_detector_slot_timeout_ms") !== 20000 ||
-    record.values.get("judge_detector_slot_timeout_ms") !== 20000 ||
-    record.values.get("normal_work_budget_ms") !== 40000
+      "p6_local_hardware_compatibility_v8" ||
+    record.values.get("readiness_timeout_ms") !== 40000 ||
+    record.values.get("qualification_timeout_ms") !== 40000 ||
+    record.values.get("local_detector_slot_timeout_ms") !== 60000 ||
+    record.values.get("judge_detector_slot_timeout_ms") !== 300000 ||
+    record.values.get("normal_work_budget_ms") !== 360000
   ) {
     fail("issued_binding_invalid");
   }
@@ -581,6 +642,11 @@ if (
   fail("acceptance_public_key_fingerprint_mismatch");
 }
 const CONSUMED_RECEIPTS = new Set<string>();
+const RECEIPT_CONSUMPTION_OPTIONS_KEYS = Object.freeze([
+  "consumer",
+  "registry_path"
+] as const);
+const RECEIPT_CONSUMERS = Object.freeze(["evaluation", "seal"] as const);
 
 function assertIssuer(value: unknown): SandboxSecurityP6AcceptanceIssuer {
   if (value !== "capture" && value !== "evaluation") fail("issuer_invalid");
@@ -711,6 +777,154 @@ function normalizeReceipt(value: unknown): SandboxSecurityP6AcceptanceReceipt {
   });
 }
 
+function normalizeReceiptChainEvidenceBinding(
+  value: unknown
+): SandboxSecurityP6AcceptanceReceiptChainEvidenceBinding {
+  const record = snapshotDataRecord(
+    value,
+    "receipt_chain_evidence_binding_invalid",
+    RECEIPT_CHAIN_EVIDENCE_KEYS
+  );
+  const state: JsonNormalizationState = {
+    active: new WeakSet<object>(),
+    nodes: 1
+  };
+  state.active.add(value as object);
+  let normalized: SandboxSecurityP6AcceptanceJsonObject;
+  try {
+    normalized = normalizeRecordSnapshot(record, state, 0);
+  } finally {
+    state.active.delete(value as object);
+  }
+  for (const key of [
+    "capture_manifest_sha256",
+    "replay_tree_sha256",
+    "benchmark_manifest_sha256",
+    "inputs_tree_sha256",
+    "decisions_tree_sha256",
+    "cassette_tree_sha256",
+    "truth_tree_sha256",
+    "accepted_metrics_sha256"
+  ] as const) {
+    const hash = normalized[key];
+    if (typeof hash !== "string" || !SHA256_HEX.test(hash)) {
+      fail("receipt_chain_evidence_binding_invalid");
+    }
+  }
+  if (normalized.fixture_count !== 300) {
+    fail("receipt_chain_evidence_binding_invalid");
+  }
+  return normalized as SandboxSecurityP6AcceptanceReceiptChainEvidenceBinding;
+}
+
+export function normalizeSandboxSecurityP6AcceptanceReceiptChain(
+  value: unknown
+): SandboxSecurityP6AcceptanceReceiptChain {
+  const record = snapshotDataRecord(
+    value,
+    "receipt_chain_invalid",
+    RECEIPT_CHAIN_KEYS
+  );
+  if (
+    record.values.get("schema_version") !==
+    SANDBOX_SECURITY_P6_ACCEPTANCE_RECEIPT_CHAIN_SCHEMA_VERSION
+  ) {
+    fail("receipt_chain_schema_invalid");
+  }
+  const runId = assertRunId(record.values.get("run_id"));
+  const sealSha256 = record.values.get("seal_sha256");
+  if (typeof sealSha256 !== "string" || !SHA256_HEX.test(sealSha256)) {
+    fail("receipt_chain_seal_invalid");
+  }
+
+  const captureReceipt = normalizeReceipt(record.values.get("capture_receipt"));
+  const evaluationReceipt = normalizeReceipt(
+    record.values.get("evaluation_receipt")
+  );
+  if (
+    captureReceipt.issuer !== "capture" ||
+    evaluationReceipt.issuer !== "evaluation" ||
+    captureReceipt.run_id !== runId ||
+    evaluationReceipt.run_id !== runId
+  ) {
+    fail("receipt_chain_binding_invalid");
+  }
+
+  const captureReceiptSha256 = hashVerifiedReceipt(captureReceipt);
+  const evaluationReceiptSha256 = hashVerifiedReceipt(evaluationReceipt);
+  for (const [key, expected] of [
+    ["capture_receipt_sha256", captureReceiptSha256],
+    ["evaluation_receipt_sha256", evaluationReceiptSha256]
+  ] as const) {
+    if (record.values.get(key) !== expected) {
+      fail("receipt_chain_receipt_hash_invalid");
+    }
+  }
+
+  const captureBinding = normalizeBinding(
+    record.values.get("capture_binding"),
+    "capture"
+  ) as SandboxSecurityP6AcceptanceCaptureBinding;
+  const evaluationBinding = normalizeBinding(
+    record.values.get("evaluation_binding"),
+    "evaluation"
+  ) as SandboxSecurityP6AcceptanceEvaluationBinding;
+  if (
+    canonicalJson(captureBinding) !== canonicalJson(captureReceipt.issued_binding) ||
+    canonicalJson(evaluationBinding) !==
+      canonicalJson(evaluationReceipt.issued_binding)
+  ) {
+    fail("receipt_chain_binding_copy_invalid");
+  }
+  if (
+    record.values.get("capture_binding_sha256") !==
+      captureReceipt.issued_binding_sha256 ||
+    record.values.get("evaluation_binding_sha256") !==
+      evaluationReceipt.issued_binding_sha256
+  ) {
+    fail("receipt_chain_binding_hash_invalid");
+  }
+
+  if (evaluationBinding.capture_receipt_sha256 !== captureReceiptSha256) {
+    fail("receipt_chain_link_broken");
+  }
+
+  const evidenceBinding = normalizeReceiptChainEvidenceBinding(
+    record.values.get("evidence_binding")
+  );
+  if (
+    evidenceBinding.benchmark_manifest_sha256 !==
+      evaluationBinding.benchmark_manifest_sha256 ||
+    evidenceBinding.inputs_tree_sha256 !== evaluationBinding.inputs_tree_sha256 ||
+    evidenceBinding.decisions_tree_sha256 !==
+      evaluationBinding.decisions_tree_sha256 ||
+    evidenceBinding.cassette_tree_sha256 !==
+      evaluationBinding.cassette_tree_sha256 ||
+    evidenceBinding.truth_tree_sha256 !== evaluationBinding.truth_tree_sha256 ||
+    evidenceBinding.accepted_metrics_sha256 !==
+      evaluationBinding.accepted_metrics_sha256 ||
+    evidenceBinding.fixture_count !== evaluationBinding.fixture_count
+  ) {
+    fail("receipt_chain_evidence_binding_invalid");
+  }
+
+  return Object.freeze({
+    schema_version:
+      SANDBOX_SECURITY_P6_ACCEPTANCE_RECEIPT_CHAIN_SCHEMA_VERSION,
+    run_id: runId,
+    seal_sha256: sealSha256,
+    capture_receipt_sha256: captureReceiptSha256,
+    evaluation_receipt_sha256: evaluationReceiptSha256,
+    capture_binding_sha256: captureReceipt.issued_binding_sha256,
+    evaluation_binding_sha256: evaluationReceipt.issued_binding_sha256,
+    capture_binding: captureBinding,
+    evaluation_binding: evaluationBinding,
+    evidence_binding: evidenceBinding,
+    capture_receipt: captureReceipt,
+    evaluation_receipt: evaluationReceipt
+  });
+}
+
 export function createSandboxSecurityP6AcceptanceReceipt(
   input: unknown
 ): SandboxSecurityP6AcceptanceReceipt {
@@ -757,12 +971,77 @@ export function verifySandboxSecurityP6AcceptanceReceipt(
 }
 
 export function consumeSandboxSecurityP6AcceptanceReceipt(
-  receipt: unknown
+  receipt: unknown,
+  options?: Readonly<{
+    consumer: "evaluation" | "seal";
+    registry_path: string;
+  }>
 ): SandboxSecurityP6AcceptanceReceipt {
   const verified = normalizeReceipt(receipt);
   const receiptSha256 = hashVerifiedReceipt(verified);
-  if (CONSUMED_RECEIPTS.has(receiptSha256)) fail("receipt_replayed");
-  CONSUMED_RECEIPTS.add(receiptSha256);
+  if (options === undefined) {
+    if (CONSUMED_RECEIPTS.has(receiptSha256)) fail("receipt_replayed");
+    CONSUMED_RECEIPTS.add(receiptSha256);
+    return verified;
+  }
+
+  const optionRecord = snapshotDataRecord(
+    options,
+    "receipt_consumption_options_invalid",
+    RECEIPT_CONSUMPTION_OPTIONS_KEYS
+  );
+  const consumer = optionRecord.values.get("consumer");
+  if (
+    typeof consumer !== "string" ||
+    !(RECEIPT_CONSUMERS as readonly string[]).includes(consumer)
+  ) {
+    fail("receipt_consumption_options_invalid");
+  }
+  const registryPath = optionRecord.values.get("registry_path");
+  if (
+    typeof registryPath !== "string" ||
+    registryPath.length === 0 ||
+    !isAbsolute(registryPath) ||
+    registryPath.includes("\0")
+  ) {
+    fail("receipt_consumption_registry_invalid");
+  }
+
+  let descriptor: number;
+  try {
+    descriptor = openSync(
+      resolve(registryPath),
+      constants.O_WRONLY |
+        constants.O_CREAT |
+        constants.O_EXCL |
+        constants.O_NOFOLLOW,
+      0o600
+    );
+  } catch (error) {
+    if (
+      error !== null &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: unknown }).code === "EEXIST"
+    ) {
+      fail("receipt_replayed");
+    }
+    fail("receipt_consumption_registry_write_failed");
+  }
+  try {
+    const marker = `${consumer}:${receiptSha256}\n`;
+    writeSync(descriptor, marker, undefined, "utf8");
+    fsyncSync(descriptor);
+  } catch {
+    closeSync(descriptor);
+    try {
+      unlinkSync(resolve(registryPath));
+    } catch {
+      // The marker remains a conservative consumed token if cleanup fails.
+    }
+    fail("receipt_consumption_registry_write_failed");
+  }
+  closeSync(descriptor);
   return verified;
 }
 

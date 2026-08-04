@@ -1,8 +1,8 @@
 # agent-security-platform
 
-> **当前最高优先级阻塞项：** 见 [`CURRENT_BLOCKER.md`](./CURRENT_BLOCKER.md)。
-> REQ-T1-DEMO-010 真实凭据端到端 campaign 卡在 OpenClaw 插件钩子失败（Bug #8），
-> 在此问题解决前不得将该需求标记为完成。
+> **当前工作状态：** GENERAL-002 已完成确定性 P7 门禁实现，但正式 P6
+> 签名 evidence 尚未产生，因此 hermetic replay 继续 fail-closed；详见
+> [`docs/sprint-current.md`](./docs/sprint-current.md)。
 
 ## Asset Scan Discovery Pipeline
 
@@ -320,6 +320,30 @@ deterministic sanitization, selected Judge protocol adapters, and sealed
 benchmark tooling. It remains engine-owned: no new backend REST route,
 frontend DTO, persistent audit store, or deployment surface is opened by
 GENERAL-002.
+
+### GENERAL-002 benchmark boundary
+
+The production entry point is
+`createSandboxSecurityProductionEngine` in
+`engines/sandbox/src/security-production/index.ts`. The hermetic benchmark
+replay is a separate, credential-free command:
+
+```bash
+npm run benchmark:sandbox-security:replay
+```
+
+`benchmark:sandbox-security:qualify:live` is an explicit operator command and
+is never included in `test:all`; ordinary CI uses only corpus validation and
+the network-isolated replay gate. Replay fails closed until a formally signed
+and sealed P6 evidence root is present. The current GENERAL-002 continuation
+has no formal P6 acceptance and is not `VERIFIED`.
+
+The external Judge channel is selected only from the mode-`600` operator
+environment file: `SANDBOX_SECURITY_JUDGE_PROTOCOL`,
+`SANDBOX_SECURITY_JUDGE_BASE_URL`, `SANDBOX_SECURITY_JUDGE_MODEL`, and
+`SANDBOX_SECURITY_JUDGE_API_KEY` (with the enable flag). Source code contains
+no provider URL, external model default, or credential. The local Ollama
+`qwen3:8b` name remains a separate fixed digest-pinned benchmark requirement.
 
 ## Sandbox Security Core
 

@@ -8,6 +8,13 @@
 
 **Tech Stack:** Node.js 22.19, TypeScript with native type stripping, `node:test`, existing sandbox security engine contracts, existing benchmark capture/evaluator/sealer scripts.
 
+> Timing note (2026-08-03): timing values in this historical protocol plan are
+> superseded for active P6 capture by
+> `docs/superpowers/specs/2026-08-03-sandbox-security-p6-local-hardware-compatibility-v6-amendment.md`.
+> Active P6 uses readiness/qualification `40000ms`, local/Judge slots
+> `60000ms`/`120000ms`, and work `180000ms`; ordinary production and P7 remain
+> on GENERAL-001 timing.
+
 ---
 
 ## File Responsibility Map
@@ -365,8 +372,8 @@ absorb unrelated pre-existing P6 hunks.
 - [ ] **Step 1: Write failing readiness and capture tests**
 
 Add tests proving Chat readiness creates/parses one Chat request before input
-zero, returns the resolved model, uses the exact
-`p6_local_hardware_compatibility_v1` `20000ms` readiness limit, and never tries
+zero, returns the resolved model, uses the active v6 `40000ms` readiness limit,
+and never tries
 Responses after any Chat failure.
 
 Add benchmark composition tests that Chat requests are normalized into the
@@ -644,12 +651,13 @@ node --env-file=.env.sandbox-security.local --experimental-strip-types \
   --output-root "${CAPTURE_ROOT}"
 ```
 
-Expected: readiness and Ollama inventory/prewarm succeed inside their
-`p6_local_hardware_compatibility_v1` `20000ms` limits, every local and Judge
-detector slot stays inside `20000ms`, and each of the 300 ordered Engine
-evaluations receives its own `40000ms` normal work budget rather than sharing
-one budget across the run. The sink drains and one exact candidate package
-exists. On any failure, preserve no accepted artifact and return to the owning
+Expected: readiness and Ollama inventory/prewarm succeed inside the active
+v6 `40000ms` limits, every local detector slot stays inside `60000ms`, every
+Judge detector slot stays inside `120000ms`, and each of the 300 ordered Engine
+evaluations receives its own `180000ms` normal
+work budget rather than sharing one budget across the run. The sink drains and
+one exact candidate package exists. On any failure, preserve no accepted
+artifact and return to the owning
 deterministic task; do not retry via another protocol/model or weaken a
 threshold.
 

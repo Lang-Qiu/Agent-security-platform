@@ -8,27 +8,163 @@ import { join, relative, resolve, sep } from "node:path";
 import { types as utilTypes } from "node:util";
 
 import {
-  SANDBOX_SECURITY_P6_LIVE_CAPTURE_EXECUTION_PROFILE_ID,
-  SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING
-} from "../../../engines/sandbox/src/security-production/p6-live-capture-profile.ts";
-import {
-  SANDBOX_SECURITY_OPENAI_CHAT_COMPLETIONS_JSON_PROTOCOL_ID,
-  SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID,
-  SANDBOX_SECURITY_OPERATOR_HTTPS_FQDN_ENDPOINT_POLICY_ID,
-  resolveSandboxSecurityJudgeProtocol,
-  type SandboxSecurityJudgeProtocolId
-} from "../../../engines/sandbox/src/security-production/judge-protocol-adapter.ts";
-import {
+  SANDBOX_SECURITY_ACTIONS,
   SANDBOX_SECURITY_MAX_CONTENT_ITEMS,
   SANDBOX_SECURITY_MAX_JSON_DEPTH,
   SANDBOX_SECURITY_MAX_JSON_NODES,
-  SANDBOX_SECURITY_MAX_REQUEST_BYTES,
   SANDBOX_SECURITY_MAX_TEXT_BYTES,
   normalizeSandboxSecurityRequest,
+  type SandboxSecurityAction,
   type SandboxSecurityClaimedSourceType,
   type SandboxSecurityRequest,
   type SandboxSecurityJsonValue
 } from "../../../shared/index.ts";
+
+const SANDBOX_SECURITY_P6_LIVE_CAPTURE_EXECUTION_PROFILE_ID =
+  "p6_local_hardware_compatibility_v8" as const;
+const SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING = Object.freeze({
+  readiness_timeout_ms: 40000,
+  qualification_timeout_ms: 40000,
+  local_detector_slot_timeout_ms: 60000,
+  judge_detector_slot_timeout_ms: 300000,
+  normal_work_budget_ms: 360000
+} as const);
+const SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID =
+  "openai_responses_v1" as const;
+const SANDBOX_SECURITY_OPENAI_CHAT_COMPLETIONS_JSON_PROTOCOL_ID =
+  "openai_chat_completions_json_v1" as const;
+const SANDBOX_SECURITY_OPERATOR_HTTPS_FQDN_ENDPOINT_POLICY_ID =
+  "operator_https_fqdn_v1" as const;
+type SandboxSecurityJudgeProtocolId =
+  | typeof SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID
+  | typeof SANDBOX_SECURITY_OPENAI_CHAT_COMPLETIONS_JSON_PROTOCOL_ID;
+
+const MAX_JUDGE_BASE_URL_LENGTH = 512;
+const ENCODED_DOT_PATH_SEGMENT =
+  /(?:^|\/)(?:%2e|\.%2e|%2e\.|%2e%2e)(?:\/|$)/iu;
+
+function invalidJudgeProtocol(): never {
+  throw new TypeError("sandbox_security_judge_protocol_invalid");
+}
+
+function rawJudgePath(value: string): string {
+  const schemeEnd = value.indexOf("://");
+  if (schemeEnd < 0) return "/";
+  const authority = value.slice(schemeEnd + 3);
+  const pathStart = authority.search(/[/?#]/u);
+  if (pathStart < 0 || authority[pathStart] !== "/") return "/";
+  return authority.slice(pathStart).split(/[?#]/u, 1)[0] ?? "/";
+}
+
+function rawJudgeAuthority(value: string): string {
+  const schemeEnd = value.indexOf("://");
+  if (schemeEnd < 0) return "";
+  const authorityAndPath = value.slice(schemeEnd + 3);
+  const authorityEnd = authorityAndPath.search(/[/?#]/u);
+  return authorityEnd < 0
+    ? authorityAndPath
+    : authorityAndPath.slice(0, authorityEnd);
+}
+
+function isSafeJudgeBasePath(value: string): boolean {
+  if (
+    value.includes("\\") ||
+    value.includes("//") ||
+    value.includes("/./") ||
+    value.includes("/../") ||
+    ENCODED_DOT_PATH_SEGMENT.test(value) ||
+    /%2f|%5c/iu.test(value)
+  ) {
+    return false;
+  }
+  if (value === "/") return true;
+  const normalized = value.endsWith("/") ? value.slice(0, -1) : value;
+  return normalized
+    .split("/")
+    .slice(1)
+    .every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
+}
+
+function isSafeJudgeHostname(value: string): boolean {
+  const hostname = value.toLowerCase();
+  const labels = hostname.split(".");
+  return (
+    hostname.length <= 253 &&
+    hostname.includes(".") &&
+    hostname !== "localhost" &&
+    !hostname.endsWith(".localhost") &&
+    !hostname.endsWith(".local") &&
+    !/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/u.test(hostname) &&
+    labels.every(
+      (label) =>
+        label.length >= 1 &&
+        label.length <= 63 &&
+        label[0] !== "-" &&
+        label[label.length - 1] !== "-" &&
+        /^[a-z0-9-]+$/u.test(label)
+    )
+  );
+}
+
+function resolveSandboxSecurityJudgeProtocol(
+  protocolId: SandboxSecurityJudgeProtocolId,
+  baseUrl: string
+): Readonly<{
+  protocol_id: SandboxSecurityJudgeProtocolId;
+  endpoint_policy_id: typeof SANDBOX_SECURITY_OPERATOR_HTTPS_FQDN_ENDPOINT_POLICY_ID;
+  base_url: string;
+  endpoint_url: string;
+}> {
+  const endpointPath =
+    protocolId === SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID
+      ? "responses"
+      : protocolId === SANDBOX_SECURITY_OPENAI_CHAT_COMPLETIONS_JSON_PROTOCOL_ID
+        ? "chat/completions"
+        : invalidJudgeProtocol();
+  try {
+    if (typeof baseUrl !== "string") return invalidJudgeProtocol();
+    const value = baseUrl.trim();
+    const authority = rawJudgeAuthority(value);
+    if (
+      value.length === 0 ||
+      value.length > MAX_JUDGE_BASE_URL_LENGTH ||
+      value.includes("\\") ||
+      value.includes("?") ||
+      value.includes("#") ||
+      authority.includes("@") ||
+      !value.toLowerCase().startsWith("https://") ||
+      !isSafeJudgeBasePath(rawJudgePath(value))
+    ) {
+      return invalidJudgeProtocol();
+    }
+    const url = new URL(value);
+    if (
+      url.protocol !== "https:" ||
+      url.username !== "" ||
+      url.password !== "" ||
+      url.search !== "" ||
+      url.hash !== "" ||
+      url.port !== "" ||
+      !isSafeJudgeHostname(url.hostname) ||
+      !isSafeJudgeBasePath(url.pathname)
+    ) {
+      return invalidJudgeProtocol();
+    }
+    const pathname = url.pathname === "/" ? "" : url.pathname.replace(/\/$/u, "");
+    const canonicalBaseUrl = `${url.origin}${pathname}`;
+    if (canonicalBaseUrl.length > MAX_JUDGE_BASE_URL_LENGTH) {
+      return invalidJudgeProtocol();
+    }
+    return Object.freeze({
+      protocol_id: protocolId,
+      endpoint_policy_id: SANDBOX_SECURITY_OPERATOR_HTTPS_FQDN_ENDPOINT_POLICY_ID,
+      base_url: canonicalBaseUrl,
+      endpoint_url: `${canonicalBaseUrl}/${endpointPath}`
+    });
+  } catch {
+    return invalidJudgeProtocol();
+  }
+}
 
 export const SANDBOX_SECURITY_BENCHMARK_SOURCES_SCHEMA_VERSION =
   "sandbox-security-benchmark-sources.v1" as const;
@@ -357,11 +493,11 @@ export interface SandboxSecurityBenchmarkCandidateCaptureManifest {
   readonly inputs_tree_sha256: SandboxSecurityBenchmarkSha256;
   readonly fixture_count: number;
   readonly execution_profile_id: typeof SANDBOX_SECURITY_P6_LIVE_CAPTURE_EXECUTION_PROFILE_ID;
-  readonly readiness_timeout_ms: 20000;
-  readonly qualification_timeout_ms: 20000;
-  readonly local_detector_slot_timeout_ms: 20000;
-  readonly judge_detector_slot_timeout_ms: 20000;
-  readonly normal_work_budget_ms: 40000;
+  readonly readiness_timeout_ms: 40000;
+  readonly qualification_timeout_ms: 40000;
+  readonly local_detector_slot_timeout_ms: 60000;
+  readonly judge_detector_slot_timeout_ms: 300000;
+  readonly normal_work_budget_ms: 360000;
   readonly ollama_model: "qwen3:8b";
   readonly ollama_digest: SandboxSecurityBenchmarkDigest;
   readonly ollama_qualification: Readonly<{
@@ -375,8 +511,8 @@ export interface SandboxSecurityBenchmarkCandidateCaptureManifest {
   readonly judge_requested_model: string;
   readonly judge_resolved_model: string;
   readonly judge_binding_sha256: SandboxSecurityBenchmarkSha256;
-  readonly local_prompt_version: "sandbox-security-ollama-local-prompt.v1";
-  readonly judge_prompt_version: "sandbox-security-openai-judge-prompt.v1";
+  readonly local_prompt_version: "sandbox-security-ollama-local-prompt.v2";
+  readonly judge_prompt_version: "sandbox-security-openai-judge-prompt.v2";
   readonly local_schema_version: "sandbox-security-local-model.v1";
   readonly judge_schema_version: "sandbox-security-judge.v1";
   readonly rule_catalog_version: string;
@@ -386,7 +522,7 @@ export interface SandboxSecurityBenchmarkCandidateCaptureManifest {
 export interface SandboxSecurityBenchmarkCandidateDecisionProjection {
   readonly schema_version: "sandbox-security-decision.v1";
   readonly verdict: "risk_detected" | "no_detected_risk" | "indeterminate";
-  readonly action: "allow" | "block";
+  readonly action: SandboxSecurityAction;
   readonly risk_level:
     | "none"
     | "info"
@@ -449,11 +585,11 @@ export interface SandboxSecurityBenchmarkCaptureManifest {
   readonly decisions_tree_sha256: SandboxSecurityBenchmarkSha256;
   readonly cassette_tree_sha256: SandboxSecurityBenchmarkSha256;
   readonly execution_profile_id: typeof SANDBOX_SECURITY_P6_LIVE_CAPTURE_EXECUTION_PROFILE_ID;
-  readonly readiness_timeout_ms: 20000;
-  readonly qualification_timeout_ms: 20000;
-  readonly local_detector_slot_timeout_ms: 20000;
-  readonly judge_detector_slot_timeout_ms: 20000;
-  readonly normal_work_budget_ms: 40000;
+  readonly readiness_timeout_ms: 40000;
+  readonly qualification_timeout_ms: 40000;
+  readonly local_detector_slot_timeout_ms: 60000;
+  readonly judge_detector_slot_timeout_ms: 300000;
+  readonly normal_work_budget_ms: 360000;
   readonly ollama_model: "qwen3:8b";
   readonly ollama_digest: SandboxSecurityBenchmarkDigest;
   readonly ollama_qualification: Readonly<{
@@ -467,8 +603,8 @@ export interface SandboxSecurityBenchmarkCaptureManifest {
   readonly judge_requested_model: string;
   readonly judge_resolved_model: string;
   readonly judge_binding_sha256: SandboxSecurityBenchmarkSha256;
-  readonly local_prompt_version: "sandbox-security-ollama-local-prompt.v1";
-  readonly judge_prompt_version: "sandbox-security-openai-judge-prompt.v1";
+  readonly local_prompt_version: "sandbox-security-ollama-local-prompt.v2";
+  readonly judge_prompt_version: "sandbox-security-openai-judge-prompt.v2";
   readonly local_schema_version: "sandbox-security-local-model.v1";
   readonly judge_schema_version: "sandbox-security-judge.v1";
   readonly rule_catalog_version: string;
@@ -528,10 +664,13 @@ const MAX_SOURCE_ORDINAL = SANDBOX_SECURITY_MAX_CONTENT_ITEMS;
 const MAX_OBLIGATION_ORDINAL = 32;
 const MAX_TREE_DEPTH = SANDBOX_SECURITY_MAX_JSON_DEPTH;
 const MAX_TREE_FILES = SANDBOX_SECURITY_MAX_JSON_NODES;
-const MAX_TREE_FILE_BYTES = SANDBOX_SECURITY_MAX_REQUEST_BYTES;
+// Tree artifacts aggregate many individually bounded benchmark transactions.
+// Keep their per-file bound aligned with the acceptance snapshot boundary;
+// the production request boundary is enforced before an item reaches here.
+const MAX_TREE_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_TREE_TOTAL_BYTES = 256 * 1024 * 1024;
-const LOCAL_PROMPT_VERSION = "sandbox-security-ollama-local-prompt.v1" as const;
-const JUDGE_PROMPT_VERSION = "sandbox-security-openai-judge-prompt.v1" as const;
+const LOCAL_PROMPT_VERSION = "sandbox-security-ollama-local-prompt.v2" as const;
+const JUDGE_PROMPT_VERSION = "sandbox-security-openai-judge-prompt.v2" as const;
 const LOCAL_SCHEMA_VERSION = "sandbox-security-local-model.v1" as const;
 const JUDGE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/;
 const JUDGE_SCHEMA_VERSION = "sandbox-security-judge.v1" as const;
@@ -1530,11 +1669,11 @@ function normalizeLiveExecutionProfile(
   root: Readonly<Record<string, unknown>>
 ): Readonly<{
   execution_profile_id: typeof SANDBOX_SECURITY_P6_LIVE_CAPTURE_EXECUTION_PROFILE_ID;
-  readiness_timeout_ms: 20000;
-  qualification_timeout_ms: 20000;
-  local_detector_slot_timeout_ms: 20000;
-  judge_detector_slot_timeout_ms: 20000;
-  normal_work_budget_ms: 40000;
+  readiness_timeout_ms: 40000;
+  qualification_timeout_ms: 40000;
+  local_detector_slot_timeout_ms: 60000;
+  judge_detector_slot_timeout_ms: 300000;
+  normal_work_budget_ms: 360000;
 }> {
   if (
     root.execution_profile_id !==
@@ -1895,7 +2034,7 @@ export function normalizeSandboxSecurityBenchmarkCandidateDecisionEnvelope(
           "no_detected_risk",
           "indeterminate"
         ] as const),
-        action: enumValue(projection.action, ["allow", "block"] as const),
+        action: enumValue(projection.action, SANDBOX_SECURITY_ACTIONS),
         risk_level: enumValue(projection.risk_level, [
           "none",
           "info",

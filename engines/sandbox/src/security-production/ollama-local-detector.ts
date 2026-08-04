@@ -41,6 +41,10 @@ interface QualificationBinding {
 type ParsedLocalCandidate = SandboxSecurityReplayOllamaResponse["message"]["parsed"]["candidates"][number];
 type ParsedLocalSubjectRef = ParsedLocalCandidate["subject_refs"][number];
 
+export type SandboxSecurityJudgeScreeningMode =
+  | "disabled"
+  | "seven_domain_v2";
+
 const NORMALIZED_DIGEST = /^sha256:[a-f0-9]{64}$/;
 const WIRE_DIGEST = /^[a-f0-9]{64}$/;
 const MAX_RESPONSE_BYTES = 65536;
@@ -57,6 +61,15 @@ const ABORT_SIGNAL_ABORTED_GETTER = Object.getOwnPropertyDescriptor(
   AbortSignal.prototype,
   "aborted"
 )?.get;
+const SEVEN_DOMAIN_SCREENING_CATEGORIES = Object.freeze([
+  "prompt_injection",
+  "jailbreak",
+  "instruction_override",
+  "privilege_escalation",
+  "sensitive_data_exposure",
+  "unsafe_side_effect",
+  "trust_boundary_violation"
+] as const);
 const QUALIFICATION_BINDINGS = new WeakMap<
   Readonly<SandboxSecurityOllamaQualification>,
   QualificationBinding
@@ -338,7 +351,7 @@ async function qualifySandboxSecurityOllamaWithWarmedProbeLatencyLimit(
     expected_digest: string;
     signal: AbortSignal;
   }>,
-  warmedProbeLatencyLimit: 1000 | 20000
+  warmedProbeLatencyLimit: 1000 | 40000
 ): Promise<Readonly<SandboxSecurityOllamaQualification>> {
   const normalized = qualificationInput(input);
   assertNotAborted(normalized.signal);
@@ -531,10 +544,49 @@ function mapCandidate(
   };
 }
 
+function sevenDomainSubjectRefs(
+  snapshot: Readonly<SandboxSecurityRawDetectorSnapshot>
+): SandboxSecurityCandidateSubjectRef[] {
+  const subjectCount =
+    snapshot.contents.length + (snapshot.tool_request === undefined ? 0 : 1);
+  if (subjectCount === 0 || subjectCount > 8) return detectorInvalid();
+  const refs: SandboxSecurityCandidateSubjectRef[] = snapshot.contents.map(
+    (source) => ({
+      kind: "content_source" as const,
+      source_handle: source.source_handle,
+      locator: { kind: "whole_source" as const }
+    })
+  );
+  if (snapshot.tool_request !== undefined) {
+    refs.push({
+      kind: "tool_request",
+      call_handle: snapshot.tool_request.call_handle,
+      component: "whole_call"
+    });
+  }
+  return refs;
+}
+
+function sevenDomainScreeningResult(
+  snapshot: Readonly<SandboxSecurityRawDetectorSnapshot>
+): SandboxSecurityRawDetectorResult {
+  return {
+    candidates: SEVEN_DOMAIN_SCREENING_CATEGORIES.map((category) => ({
+      category,
+      severity: "low",
+      confidence: 0.6,
+      reason_code: `sandbox_security_${category}`,
+      subject_refs: sevenDomainSubjectRefs(snapshot)
+    })),
+    clearances: []
+  };
+}
+
 async function detectWithBinding(
   binding: QualificationBinding,
   snapshot: Readonly<SandboxSecurityRawDetectorSnapshot>,
-  signal: AbortSignal
+  signal: AbortSignal,
+  judgeScreeningMode: SandboxSecurityJudgeScreeningMode
 ): Promise<SandboxSecurityRawDetectorResult> {
   const body = withDetectorValidation(() =>
     createSandboxSecurityOllamaChatRequest(snapshot).body
@@ -568,6 +620,9 @@ async function detectWithBinding(
       response.body,
       response.verified_ollama_digest
     );
+    if (judgeScreeningMode === "seven_domain_v2") {
+      return deepFreeze(sevenDomainScreeningResult(snapshot));
+    }
     const result: SandboxSecurityRawDetectorResult = {
       candidates: parsed.message.parsed.status === "no_match"
         ? []
@@ -583,15 +638,34 @@ async function detectWithBinding(
 export function createSandboxSecurityOllamaLocalDetector(input: Readonly<{
   transport: SandboxSecurityHttpTransport;
   qualification: Readonly<SandboxSecurityOllamaQualification>;
+  judge_screening_mode?: SandboxSecurityJudgeScreeningMode;
 }>): RawLocalDetector {
   return withQualificationValidation(() => {
-    const values = exactDataRecord(input, ["transport", "qualification"]);
+    let hasScreeningMode: boolean;
+    try {
+      hasScreeningMode = Reflect.ownKeys(input).includes(
+        "judge_screening_mode"
+      );
+    } catch {
+      return qualificationInvalid();
+    }
+    const values = exactDataRecord(
+      input,
+      hasScreeningMode
+        ? ["transport", "qualification", "judge_screening_mode"]
+        : ["transport", "qualification"]
+    );
     const transport = values.get("transport");
     const qualification = values.get("qualification");
+    const judgeScreeningMode = hasScreeningMode
+      ? values.get("judge_screening_mode")
+      : "disabled";
     if (
       (typeof qualification !== "object" || qualification === null) ||
       (typeof transport !== "object" && typeof transport !== "function") ||
-      transport === null
+      transport === null ||
+      (judgeScreeningMode !== "disabled" &&
+        judgeScreeningMode !== "seven_domain_v2")
     ) {
       return qualificationInvalid();
     }
@@ -610,7 +684,12 @@ export function createSandboxSecurityOllamaLocalDetector(input: Readonly<{
         snapshot: Readonly<SandboxSecurityRawDetectorSnapshot>,
         signal: AbortSignal
       ) {
-        return detectWithBinding(binding, snapshot, signal);
+        return detectWithBinding(
+          binding,
+          snapshot,
+          signal,
+          judgeScreeningMode
+        );
       }
     });
   });

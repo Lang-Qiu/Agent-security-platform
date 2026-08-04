@@ -79,8 +79,8 @@ live environment. It:
   sealer code through its Node permission allowlist;
 - may write only its pre-created candidate staging file and capture summary;
 - validates Judge readiness and Ollama qualification with the approved
-  `20000ms` limits, then runs all 300 inputs with `20000ms` local/Judge slots and
-  the `40000ms` work budget;
+  `20000ms` limits, then runs all 300 inputs with a `60000ms` local slot,
+  `20000ms` Judge slot, and the `80000ms` work budget;
 - snapshots every prepared-bundle field once before validation;
 - emits one exact capture summary after candidate materialization and exits
   before evaluation starts.
@@ -241,9 +241,9 @@ This amendment does not change timing. Controlled P6 uses:
 
 - readiness timeout: `20000ms`;
 - Ollama qualification timeout: `20000ms`;
-- local detector slot: `20000ms`;
+- local detector slot: `60000ms`;
 - Judge detector slot: `20000ms`; and
-- normal work budget: `40000ms`.
+- normal work budget: `80000ms`.
 
 Ordinary production and P7 retain `5000ms` and `100/1000/4000ms`.
 
@@ -275,7 +275,8 @@ P6 live execution may resume only when:
   permission graphs;
 - signed receipt verification remains valid after process exit and is retained
   in the final seal;
-- the exact `20s/40s` P6 profile is bound in both receipts and the seal;
+- the exact v2 `60s` local / `20s` Judge / `80s` work profile is bound in both
+  receipts and the seal;
 - specification and quality/security reviewers report every original finding
   RESOLVED and final conclusion APPROVED; and
 - a fresh real 300-input capture passes thresholds, final evidence validation,

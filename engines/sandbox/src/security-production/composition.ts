@@ -26,7 +26,8 @@ import {
 } from "./judge-protocol-adapter.ts";
 import {
   createSandboxSecurityOllamaLocalDetector,
-  qualifySandboxSecurityOllama
+  qualifySandboxSecurityOllama,
+  type SandboxSecurityJudgeScreeningMode
 } from "./ollama-local-detector.ts";
 import {
   createSandboxSecurityProductionConfig,
@@ -51,7 +52,8 @@ export interface SandboxSecurityProductionCompositionPorts {
     transport: SandboxSecurityHttpTransport;
     expected_digest: string;
     signal: AbortSignal;
-    qualification_timeout_ms: 1000 | 20000;
+    qualification_timeout_ms: 1000 | 40000;
+    judge_screening_mode: SandboxSecurityJudgeScreeningMode;
   }>): Promise<RawLocalDetector>;
   create_external_pipeline(input: Readonly<{
     transport: SandboxSecurityHttpTransport;
@@ -238,7 +240,8 @@ async function createDefaultLocalDetector(input: Readonly<{
   transport: SandboxSecurityHttpTransport;
   expected_digest: string;
   signal: AbortSignal;
-  qualification_timeout_ms: 1000 | 20000;
+  qualification_timeout_ms: 1000 | 40000;
+  judge_screening_mode: SandboxSecurityJudgeScreeningMode;
 }>): Promise<RawLocalDetector> {
   if (input.qualification_timeout_ms !== ORDINARY_QUALIFICATION_TIMEOUT_MS) {
     return compositionInvalid();
@@ -250,7 +253,8 @@ async function createDefaultLocalDetector(input: Readonly<{
   });
   return createSandboxSecurityOllamaLocalDetector({
     transport: input.transport,
-    qualification
+    qualification,
+    judge_screening_mode: input.judge_screening_mode
   });
 }
 
@@ -333,7 +337,7 @@ async function createSandboxSecurityProductionCompositionWithQualificationTimeou
     mode: SandboxSecurityProductionMode;
   }>,
   ports: Readonly<SandboxSecurityProductionCompositionPorts>,
-  qualificationTimeoutMs: 1000 | 20000,
+  qualificationTimeoutMs: 1000 | 40000,
   createEngine: SandboxSecurityCompositionEngineFactory
 ): Promise<SandboxSecurityEngine> {
   const normalized = normalizedInput(input);
@@ -385,7 +389,11 @@ async function createSandboxSecurityProductionCompositionWithQualificationTimeou
       transport,
       expected_digest: expectedDigest,
       signal: qualificationController.signal,
-      qualification_timeout_ms: qualificationTimeoutMs
+      qualification_timeout_ms: qualificationTimeoutMs,
+      judge_screening_mode:
+        normalized.mode === "local_and_judge"
+          ? "seven_domain_v2"
+          : "disabled"
     }));
   } finally {
     cancelTimerBestEffort(cancelQualificationTimer);

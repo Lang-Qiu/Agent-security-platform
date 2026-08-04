@@ -31,16 +31,24 @@ startup. Any OpenAI-named operation below is a wire-format label, not a fixed
 vendor requirement. See
 `2026-07-23-sandbox-security-explicit-judge-protocol-selection-amendment.md`.
 
-For controlled P6 live capture only, the user approved the source-controlled
-`p6_local_hardware_compatibility_v1` profile. Judge readiness, Ollama
-qualification, warmed prewarm, the local detector slot, and the Judge detector
-slot each use `20000ms`; the normal work budget uses `40000ms`. The profile is
-not selected through caller input, environment, or CLI. Ordinary production
-composition and P7 replay retain the inherited GENERAL-001 `5000ms` normal
-budget and `100/1000/4000ms` rule/local/Judge slots.
+For controlled P6 live capture only, the active source-controlled
+`p6_local_hardware_compatibility_v8` profile uses `40000ms` Judge readiness,
+Ollama qualification, and warmed prewarm; the local detector slot uses
+`60000ms`, the Judge detector slot uses `300000ms`, and the normal work budget
+uses `360000ms`.
+The profile is not selected through caller input, environment, or CLI.
+Ordinary production composition and P7 replay retain the inherited GENERAL-001
+`5000ms` normal budget and `100/1000/4000ms` rule/local/Judge slots.
+The controlled capture additionally binds
+`sandbox-security-ollama-local-prompt.v2`, whose only added instruction forbids
+duplicate references within a candidate's `subject_refs`. Before another Judge
+run, all 300 inputs must pass the exact production Ollama parser locally.
+Candidate projection materialization must accept the frozen shared
+`allow|alert|ask|deny` action catalog and reject obsolete `block`; no
+benchmark-local action translation is permitted.
 
 The implementation boundary is governed by
-`../specs/2026-07-26-sandbox-security-p6-local-hardware-compatibility-amendment.md`.
+`../specs/2026-08-03-sandbox-security-p6-local-hardware-compatibility-v6-amendment.md`.
 It permits one non-index private Engine factory and one exact import edge because
 runtime virtualization cannot preserve elapsed time and timeout classification.
 The public Engine factory, public index, ordinary production, and P7 replay must
@@ -276,8 +284,8 @@ test("REQ-SBX-GENERAL-002 capture child rejects truth arguments and unexpected d
 });
 ~~~
 
-Cover the `p6_local_hardware_compatibility_v1` readiness budget exactly
-`20000ms` with no retry, readiness not counted as a benchmark decision,
+Cover the active `p6_local_hardware_compatibility_v8` readiness and qualification
+budget exactly `40000ms` with no retry, readiness not counted as a benchmark decision,
 immutable input order, caller abort/no seal, sink drain
 before output, failed qualification, missing config, unexpected fd,
 permission arguments, output containment, cleanup, and no per-fixture
@@ -305,7 +313,7 @@ export async function main(): Promise<void>;
 
 Accept only P5's already-materialized input bundle, capture-output root, and
 staging-file binding, issue one strict-schema readiness request before input
-zero under the profile's separate `20000ms` timeout, then use
+zero under the profile's separate `40000ms` timeout, then use
 createSandboxSecurityLiveCaptureEngine. Call beginInput immediately before
 evaluate and endInput in finally. The permission child writes only the
 content-free candidate staging envelope to the precreated file; the parent
@@ -669,6 +677,16 @@ is credentialed, live, and truth-blind.
 Mark P6-T4 VERIFIED only after approved re-review. Include aggregate metrics,
 model digest, nonsecret versions/hashes, commands, review result, and commit.
 If blocked, record BLOCKED and the exact prerequisite without secrets.
+
+Current BLOCKED evidence (2026-07-31): a fresh v2 run completed all 300
+evaluations but failed the frozen quality thresholds (unsafe `6/180`,
+high/critical `2/60`, transformed `1/54`, safe false positives `0/120`,
+coverage `300/300`). Judge binding/readiness passed; the unchanged production
+router legitimately emitted 300 `not_called` Judge outcomes because no
+unresolved signal selected Judge. No seal/evidence was published. Do not reuse
+the rejected candidate, weaken thresholds, or tune on the acceptance corpus.
+Resume only after an explicitly approved detection-quality amendment and a
+fresh controlled run.
 
 - [ ] **Step 10: Commit only accepted evidence files**
 

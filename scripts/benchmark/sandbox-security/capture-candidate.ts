@@ -282,8 +282,21 @@ export function materializeSandboxSecurityCandidatePackage(input: Readonly<{
     ) {
       fail("candidate_staging_hash_mismatch");
     }
-    unlinkSync(stagingPath);
     renameSync(temporaryRoot, candidateRoot);
+    // Publish the complete candidate before removing the formal staging file.
+    // If the directory rename fails, the caller can still persist failed
+    // progress over the staging path.
+    try {
+      unlinkSync(stagingPath);
+    } catch {
+      try {
+        rmSync(candidateRoot, { recursive: true, force: true });
+      } catch {
+        // Preserve the bounded staging cleanup failure if rollback is unable
+        // to remove the directory just published by this invocation.
+      }
+      fail("candidate_staging_cleanup_failed");
+    }
     committed = true;
     return candidateRoot;
   } catch (error) {
