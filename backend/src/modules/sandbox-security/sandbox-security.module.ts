@@ -17,6 +17,10 @@ import type {
   SandboxSecurityTokenBucket
 } from "./sandbox-security.types.ts";
 
+export {
+  createSandboxSecuritySimulationEvaluationRequest
+} from "./simulation-authority.ts";
+
 export { toSandboxSecurityEngineRuntime } from "./ports/runtime.ts";
 export {
   SandboxSecurityClaimCleanupError,

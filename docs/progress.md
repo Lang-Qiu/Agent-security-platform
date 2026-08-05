@@ -1,3 +1,35 @@
+## 2026-08-05 - REQ-SBX-GENERAL-003 P2-T1 simulation-only authority builder
+
+- phase/task: Phase 2 / P2-T1 Simulation-Only Authoritative Context Builder
+- status: `COMPLETE_PENDING_REVIEW`
+- TDD RED: focused `backend/tests/sandbox-security-simulation-authority.spec.ts`
+  failed in all four scenarios with the intended `AssertionError` because the
+  module boundary did not yet expose the builder; the module loaded without
+  import, syntax, or environment errors.
+- implementation: added the backend-local simulation-only builder. It accepts
+  an already normalized public `SandboxSecurityRequest`, clones text/JSON
+  content and tool arguments, preserves content order and stage/profile, and
+  creates only `simulation_observation` authority with no evaluation-mode
+  argument or Engine-private brand export. The optional tool authority is
+  omitted when no tool is submitted.
+- GREEN evidence: focused builder suite `4/4`; combined builder plus Engine
+  authority regression `22/22`; `npm run test:backend` `245/247` with the two
+  pre-existing local Semgrep `spawn semgrep ENOENT` and asset-scan `open_ports`
+  expectation failures; `npm run typecheck:backend` retains only the existing
+  repository baseline errors and reports no new error in the P2-T1 files;
+  `git diff --check` passed.
+- changed: `backend/src/modules/sandbox-security/simulation-authority.ts`,
+  `backend/src/modules/sandbox-security/sandbox-security.module.ts`,
+  `backend/tests/sandbox-security-simulation-authority.spec.ts`,
+  `package.json`, `docs/progress.md`
+- dependency: GENERAL-002 remains
+  `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`; neither GENERAL-002 nor
+  GENERAL-003 is `VERIFIED`
+- specification review: pending independent review.
+- quality review: pending independent review.
+- next: complete the two reviews, then continue to P2-T2 only after this task
+  is committed and accepted.
+
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T4 mandatory typecheck script registration
 
 - phase/task: Phase 1 / P1-T4 Mandatory Typecheck Script Registration
