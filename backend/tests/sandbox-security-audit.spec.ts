@@ -17,9 +17,19 @@ import type {
   SandboxSecurityAuditRunStatusCounts
 } from "../../shared/types/sandbox-security-api.ts";
 import type {
+  SandboxSecurityAuthorizedCapability,
   SandboxSecurityAuditProjector,
+  SandboxSecurityAuditService,
   SandboxSecurityAuditRejectionCode
 } from "../src/modules/sandbox-security/sandbox-security.types.ts";
+import type { SandboxSecurityAuditRepository } from "../src/modules/sandbox-security/ports/audit.repository.ts";
+import type { SandboxSecurityRuntimePort } from "../src/modules/sandbox-security/ports/runtime.ts";
+import type {
+  SandboxSecurityHmacService,
+  SandboxSecurityIdempotencyMaintenance
+} from "../src/modules/sandbox-security/sandbox-security.types.ts";
+import { createSandboxSecurityHmacService } from "../src/modules/sandbox-security/hmac.ts";
+import { createSandboxSecurityServiceError } from "../src/modules/sandbox-security/sandbox-security.errors.ts";
 import * as boundary from "../src/modules/sandbox-security/sandbox-security.module.ts";
 
 const FIXED_NOW = "2026-08-05T12:00:00.000Z";
@@ -32,6 +42,12 @@ const FINDING_ONE =
   "finding:sha256:0000000000000000000000000000000000000000000000000000000000000001";
 const FINDING_TWO =
   "finding:sha256:0000000000000000000000000000000000000000000000000000000000000002";
+
+test("REQ-SBX-GENERAL-003 exposes the subject-scoped audit service factory", () => {
+  const value = (boundary as unknown as Record<string, unknown>)
+    .createSandboxSecurityAuditService;
+  assert.equal(typeof value, "function");
+});
 
 const RUN_STATUS_CATALOG = [
   "matched",
@@ -212,6 +228,244 @@ function assertNoContent(event: SandboxSecurityAuditEvent): void {
     serialized,
     /RAW_SENTINEL|source_token|call_token|evidence_ref|provenance_ref|provider_payload|idempotency_key|request_fingerprint|detector_id|finding_id/
   );
+}
+
+const SUBJECT_A_CAPABILITY = {
+  capability_id: FIXED_CAPABILITY_ID,
+  subject_id: "subject-reader-a",
+  authorization_scope_id: FIXED_SCOPE,
+  scopes: ["sandbox_security:audit:read"] as const,
+  allowed_stages: [] as const,
+  allowed_policy_profile_ids: [] as const,
+  issued_at: "2026-08-05T00:00:00.000Z",
+  expires_at: "2026-08-05T13:00:00.000Z"
+} satisfies SandboxSecurityAuthorizedCapability;
+
+const SUBJECT_B_CAPABILITY = {
+  ...SUBJECT_A_CAPABILITY,
+  subject_id: "subject-reader-b"
+} satisfies SandboxSecurityAuthorizedCapability;
+
+function makePageEvent(input: Readonly<{
+  event_id: string;
+  occurred_at: string;
+  subject_id?: string;
+  authorization_scope_id?: string;
+}>): SandboxSecurityAuditEvent {
+  return getProjector().capabilityRevoked({
+    event_id: input.event_id,
+    occurred_at: input.occurred_at,
+    subject_id: input.subject_id ?? SUBJECT_A_CAPABILITY.subject_id,
+    authorization_scope_id:
+      input.authorization_scope_id ?? SUBJECT_A_CAPABILITY.authorization_scope_id,
+    capability_id: FIXED_CAPABILITY_ID,
+    revoked_at: input.occurred_at
+  });
+}
+
+function cloneEvent(event: SandboxSecurityAuditEvent): SandboxSecurityAuditEvent {
+  return structuredClone(event);
+}
+
+function makeAuditServiceFixture(input: Readonly<{
+  events?: readonly SandboxSecurityAuditEvent[];
+  over_limit_events?: boolean;
+  list_error?: unknown;
+  purge_error?: unknown;
+  hmac_error?: unknown;
+  pre_cleanup_error?: unknown;
+  projector_error?: unknown;
+  maintenance_state?: "healthy" | "degraded" | "closed";
+  purge_deleted_count?: number;
+  purge_has_more?: boolean;
+  now?: string;
+}> = {}) {
+  const state = {
+    now: input.now ?? FIXED_NOW,
+    monotonic_now_ms: 1000,
+    events: (input.events ?? [
+      makePageEvent({
+        event_id: "audit:00000000-0000-4000-8000-000000000003",
+        occurred_at: "2026-08-05T11:00:00.000Z"
+      }),
+      makePageEvent({
+        event_id: "audit:00000000-0000-4000-8000-000000000002",
+        occurred_at: "2026-08-05T11:00:00.000Z"
+      }),
+      makePageEvent({
+        event_id: "audit:00000000-0000-4000-8000-000000000001",
+        occurred_at: "2026-08-05T10:00:00.000Z"
+      })
+    ]).map(cloneEvent),
+    over_limit_events: input.over_limit_events ?? false,
+    list_inputs: [] as unknown[],
+    purge_inputs: [] as unknown[],
+    read_inputs: [] as unknown[],
+    purge_projector_inputs: [] as unknown[],
+    read_events: [] as SandboxSecurityAuditEvent[],
+    purge_events: [] as SandboxSecurityAuditEvent[],
+    call_order: [] as string[],
+    pre_cleanup_calls: 0,
+    maintenance_state: input.maintenance_state ?? "healthy",
+    list_error: input.list_error,
+    purge_error: input.purge_error,
+    pre_cleanup_error: input.pre_cleanup_error,
+    projector_error: input.projector_error,
+    purge_deleted_count: input.purge_deleted_count ?? 4,
+    purge_has_more: input.purge_has_more ?? false
+  };
+
+  const baseHmac = createSandboxSecurityHmacService(
+    Uint8Array.from({ length: 32 }, (_, index) => index + 1)
+  );
+  const hmac: SandboxSecurityHmacService = input.hmac_error === undefined
+    ? baseHmac
+    : {
+        ...baseHmac,
+        decodeAuditCursor() {
+          throw input.hmac_error;
+        }
+      };
+  const runtime: SandboxSecurityRuntimePort = {
+    now() {
+      return state.now;
+    },
+    monotonicNowMs() {
+      state.monotonic_now_ms += 5;
+      return state.monotonic_now_ms;
+    },
+    randomBytes(length) {
+      return new Uint8Array(length);
+    },
+    nextCapabilityId() {
+      return FIXED_CAPABILITY_ID;
+    },
+    nextAuditEventId() {
+      return "audit:00000000-0000-4000-8000-000000000099";
+    },
+    nextDecisionId() {
+      return "decision:00000000-0000-4000-8000-000000000001";
+    },
+    scheduleTimeout() {
+      return () => {};
+    },
+    scheduleInterval() {
+      return { unref() {}, cancel() {} };
+    }
+  };
+
+  const baseProjector = getProjector();
+  const audit_projector: SandboxSecurityAuditProjector = {
+    ...baseProjector,
+    auditRead(value) {
+      state.read_inputs.push({ ...value });
+      if (state.projector_error !== undefined) throw state.projector_error;
+      const event = baseProjector.auditRead(value);
+      state.read_events.push(event);
+      return event;
+    },
+    auditPurged(value) {
+      state.purge_projector_inputs.push({ ...value });
+      if (state.projector_error !== undefined) throw state.projector_error;
+      const event = baseProjector.auditPurged(value);
+      state.purge_events.push(event);
+      return event;
+    }
+  };
+
+  const repository: SandboxSecurityAuditRepository = {
+    append() {},
+    listAndRecordRead(value) {
+      state.list_inputs.push({
+        visibility_subject_id: value.visibility_subject_id,
+        after: value.after === null ? null : { ...value.after },
+        limit: value.limit
+      });
+      state.call_order.push("list:page-selected");
+      const selected = state.events
+        .filter((event) => {
+          if (event.subject_id !== value.visibility_subject_id) return false;
+          if (value.after === null) return true;
+          return (
+            event.occurred_at < value.after.occurred_at ||
+            (event.occurred_at === value.after.occurred_at &&
+              event.event_id < value.after.event_id)
+          );
+        })
+        .slice(0, value.limit);
+      const hasMore = state.events.filter((event) => {
+        if (event.subject_id !== value.visibility_subject_id) return false;
+        if (value.after === null) return true;
+        return (
+          event.occurred_at < value.after.occurred_at ||
+          (event.occurred_at === value.after.occurred_at &&
+            event.event_id < value.after.event_id)
+        );
+      }).length > value.limit;
+      const readEvent = value.create_event({
+        returned_count: selected.length,
+        next_cursor_present: hasMore
+      });
+      state.call_order.push("list:read-audit-created");
+      if (state.list_error !== undefined) throw state.list_error;
+      const returnedEvents = state.over_limit_events
+        ? state.events.filter((event) => event.subject_id === value.visibility_subject_id)
+        : selected;
+      return { events: returnedEvents.map(cloneEvent), has_more: hasMore };
+    },
+    purgeExpiredWithAudit(value) {
+      state.purge_inputs.push({ cutoff: value.cutoff, limit: value.limit });
+      state.call_order.push("purge:rows-selected");
+      if (state.purge_error !== undefined) throw state.purge_error;
+      const event = value.create_event(
+        state.purge_deleted_count,
+        state.purge_has_more
+      );
+      state.call_order.push("purge:audit-created");
+      state.purge_events.push(event);
+      return {
+        deleted_count: state.purge_deleted_count,
+        has_more: state.purge_has_more
+      };
+    }
+  };
+
+  const maintenance: SandboxSecurityIdempotencyMaintenance = {
+    state() {
+      return state.maintenance_state;
+    },
+    assertEvaluationAvailable() {},
+    claim() {
+      throw new Error("unsupported maintenance method");
+    },
+    runHourlyCleanup() {},
+    runPurgePreCleanup() {
+      state.pre_cleanup_calls += 1;
+      if (state.pre_cleanup_error !== undefined) throw state.pre_cleanup_error;
+      if (state.maintenance_state === "degraded") state.maintenance_state = "healthy";
+    },
+    close() {
+      state.maintenance_state = "closed";
+    }
+  };
+
+  const create = (boundary as unknown as Record<string, unknown>)
+    .createSandboxSecurityAuditService as ((value: Readonly<{
+      repository: SandboxSecurityAuditRepository;
+      hmac: SandboxSecurityHmacService;
+      maintenance: SandboxSecurityIdempotencyMaintenance;
+      runtime: SandboxSecurityRuntimePort;
+      audit_projector: SandboxSecurityAuditProjector;
+    }>) => SandboxSecurityAuditService);
+  assert.equal(typeof create, "function");
+  const service = create({
+    repository,
+    hmac,
+    maintenance,
+    runtime,
+    audit_projector
+  });
+  return { service, state, repository, hmac, maintenance, runtime, audit_projector };
 }
 
 test("REQ-SBX-GENERAL-003 projects completed decisions with exact content-free counts", () => {
@@ -559,4 +813,224 @@ test("REQ-SBX-GENERAL-003 rejects non-number elapsed values before coercion", ()
   assert.equal(readWithElapsed(Number.NaN).elapsed_ms, 0);
   assert.equal(readWithElapsed(Number.NEGATIVE_INFINITY).elapsed_ms, 0);
   assert.equal(readWithElapsed(Number.POSITIVE_INFINITY).elapsed_ms, 60000);
+});
+
+test("REQ-SBX-GENERAL-003 binds audit cursors to subject and authorization scope", () => {
+  const fixture = makeAuditServiceFixture();
+  const first = fixture.service.list({ capability: SUBJECT_A_CAPABILITY, limit: 1 });
+  assert.equal(first.events.length, 1);
+  assert.equal(first.next_cursor !== null, true);
+  const decoded = fixture.hmac.decodeAuditCursor(first.next_cursor!, {
+    subject_id: SUBJECT_A_CAPABILITY.subject_id,
+    authorization_scope_id: SUBJECT_A_CAPABILITY.authorization_scope_id
+  });
+  assert.deepEqual(decoded, {
+    subject_id: SUBJECT_A_CAPABILITY.subject_id,
+    authorization_scope_id: SUBJECT_A_CAPABILITY.authorization_scope_id,
+    occurred_at: "2026-08-05T11:00:00.000Z",
+    event_id: "audit:00000000-0000-4000-8000-000000000003"
+  });
+  assert.throws(
+    () => fixture.service.list({
+      capability: SUBJECT_B_CAPABILITY,
+      cursor: first.next_cursor!,
+      limit: 1
+    }),
+    (error: any) =>
+      error?.code === "SANDBOX_SECURITY_AUDIT_CURSOR_INVALID" &&
+      error?.audit_rejection_code === "invalid_request"
+  );
+  assert.equal(fixture.state.list_inputs.length, 1);
+});
+
+test("REQ-SBX-GENERAL-003 paginates audit ties through the last returned event", () => {
+  const fixture = makeAuditServiceFixture();
+  const first = fixture.service.list({ capability: SUBJECT_A_CAPABILITY, limit: 1 });
+  const second = fixture.service.list({
+    capability: SUBJECT_A_CAPABILITY,
+    cursor: first.next_cursor!,
+    limit: 1
+  });
+  assert.equal(first.events[0]?.event_id, "audit:00000000-0000-4000-8000-000000000003");
+  assert.equal(second.events[0]?.event_id, "audit:00000000-0000-4000-8000-000000000002");
+  assert.equal(fixture.state.list_inputs[0] && (fixture.state.list_inputs[0] as any).after, null);
+  assert.deepEqual((fixture.state.list_inputs[1] as any).after, {
+    occurred_at: "2026-08-05T11:00:00.000Z",
+    event_id: "audit:00000000-0000-4000-8000-000000000003"
+  });
+  assert.deepEqual(fixture.state.read_inputs.map((value: any) => ({
+    returned_count: value.returned_count,
+    next_cursor_present: value.next_cursor_present
+  })), [
+    { returned_count: 1, next_cursor_present: true },
+    { returned_count: 1, next_cursor_present: true }
+  ]);
+  assert.deepEqual(fixture.state.call_order.slice(0, 4), [
+    "list:page-selected",
+    "list:read-audit-created",
+    "list:page-selected",
+    "list:read-audit-created"
+  ]);
+});
+
+test("REQ-SBX-GENERAL-003 returns no page when the read audit write fails", () => {
+  const fixture = makeAuditServiceFixture({ list_error: new Error("audit write failed") });
+  assert.throws(
+    () => fixture.service.list({ capability: SUBJECT_A_CAPABILITY, limit: 1 }),
+    (error: any) => error?.code === "SANDBOX_SECURITY_INTERNAL_ERROR"
+  );
+  assert.equal(fixture.state.read_events.length, 1);
+});
+
+test("REQ-SBX-GENERAL-003 returns defensive copies and suppresses the read event from the page", () => {
+  const issued = getProjector().capabilityIssued({
+    event_id: "audit:00000000-0000-4000-8000-000000000010",
+    occurred_at: "2026-08-05T11:00:00.000Z",
+    subject_id: SUBJECT_A_CAPABILITY.subject_id,
+    authorization_scope_id: SUBJECT_A_CAPABILITY.authorization_scope_id,
+    capability_id: FIXED_CAPABILITY_ID,
+    scopes: ["sandbox_security:evaluate"],
+    allowed_stages: ["user_input"],
+    allowed_policy_profile_ids: ["sandbox-security-strict.v1"],
+    issued_at: "2026-08-05T10:00:00.000Z",
+    expires_at: "2026-08-05T12:00:00.000Z"
+  });
+  const fixture = makeAuditServiceFixture({ events: [issued] });
+  const page = fixture.service.list({ capability: SUBJECT_A_CAPABILITY, limit: 1 });
+  assert.equal(page.schema_version, "sandbox-security-audit-page.v1");
+  assert.equal(page.events.length, 1);
+  assert.equal(page.events.some((event) => event.event_type === "audit_read"), false);
+  assert.notStrictEqual(page.events[0], fixture.state.events[0]);
+  const returned = page.events[0] as Extract<
+    SandboxSecurityAuditEvent,
+    { event_type: "capability_issued" }
+  >;
+  returned.scopes.push("sandbox_security:audit:read");
+  assert.deepEqual(
+    (fixture.state.events[0] as Extract<
+      SandboxSecurityAuditEvent,
+      { event_type: "capability_issued" }
+    >).scopes,
+    ["sandbox_security:evaluate"]
+  );
+});
+
+test("REQ-SBX-GENERAL-003 purges with fixed ninety-day retention and a 1000-row bound", () => {
+  const fixture = makeAuditServiceFixture({
+    now: FIXED_NOW,
+    purge_deleted_count: 1000,
+    purge_has_more: true
+  });
+  const result = fixture.service.purgeExpired();
+  assert.deepEqual(result, {
+    schema_version: "sandbox-security-audit-purge-result.v1",
+    retention_days: 90,
+    deleted_count: 1000,
+    has_more: true
+  });
+  assert.deepEqual(fixture.state.purge_inputs, [{
+    cutoff: "2026-05-07T12:00:00.000Z",
+    limit: 1000
+  }]);
+  assert.equal(fixture.state.pre_cleanup_calls, 1);
+  assert.equal(fixture.state.purge_projector_inputs.length, 1);
+  assert.deepEqual(fixture.state.purge_projector_inputs[0], {
+    event_id: "audit:00000000-0000-4000-8000-000000000099",
+    occurred_at: FIXED_NOW,
+    subject_id: "system:bootstrap-admin",
+    retention_days: 90,
+    deleted_count: 1000,
+    has_more: true,
+    elapsed_ms: 5
+  });
+  assert.equal(fixture.state.purge_events[0]?.authorization_scope_id, null);
+  assert.equal(fixture.state.purge_events[0]?.capability_id, null);
+});
+
+test("REQ-SBX-GENERAL-003 runs purge pre-cleanup recovery before the audit purge", () => {
+  const fixture = makeAuditServiceFixture({ maintenance_state: "degraded" });
+  fixture.service.purgeExpired();
+  assert.equal(fixture.state.maintenance_state, "healthy");
+  assert.equal(fixture.state.pre_cleanup_calls, 1);
+  assert.equal(fixture.state.purge_inputs.length, 1);
+});
+
+test("REQ-SBX-GENERAL-003 maps purge pre-cleanup failure to storage unavailable without purging", () => {
+  const storageUnavailable = createSandboxSecurityServiceError({
+    code: "SANDBOX_SECURITY_STORAGE_UNAVAILABLE",
+    audit_rejection_code: "storage_unavailable"
+  });
+  const fixture = makeAuditServiceFixture({ pre_cleanup_error: storageUnavailable });
+  assert.throws(
+    () => fixture.service.purgeExpired(),
+    (error: any) =>
+      error?.code === "SANDBOX_SECURITY_STORAGE_UNAVAILABLE" &&
+      error?.retry_after_seconds === 60
+  );
+  assert.equal(fixture.state.purge_inputs.length, 0);
+  assert.equal(fixture.state.pre_cleanup_calls, 1);
+});
+
+test("REQ-SBX-GENERAL-003 maps repository storage errors during purge to internal", () => {
+  const storageUnavailable = createSandboxSecurityServiceError({
+    code: "SANDBOX_SECURITY_STORAGE_UNAVAILABLE",
+    audit_rejection_code: "storage_unavailable"
+  });
+  const fixture = makeAuditServiceFixture({ purge_error: storageUnavailable });
+  assert.throws(
+    () => fixture.service.purgeExpired(),
+    (error: any) => error?.code === "SANDBOX_SECURITY_INTERNAL_ERROR"
+  );
+});
+
+test("REQ-SBX-GENERAL-003 classifies cursor decode exceptions as invalid cursors", () => {
+  const errors = [
+    new Error("decode failed"),
+    createSandboxSecurityServiceError({
+      code: "SANDBOX_SECURITY_AUDIT_CURSOR_INVALID",
+      audit_rejection_code: "invalid_request"
+    }),
+    createSandboxSecurityServiceError({
+      code: "SANDBOX_SECURITY_STORAGE_UNAVAILABLE",
+      audit_rejection_code: "storage_unavailable"
+    })
+  ];
+  for (const hmac_error of errors) {
+    const fixture = makeAuditServiceFixture({ hmac_error });
+    assert.throws(
+      () => fixture.service.list({ capability: SUBJECT_A_CAPABILITY, cursor: "bad", limit: 1 }),
+      (error: any) =>
+        error?.code === "SANDBOX_SECURITY_AUDIT_CURSOR_INVALID" &&
+        error?.audit_rejection_code === "invalid_request"
+    );
+    assert.equal(fixture.state.list_inputs.length, 0);
+  }
+});
+
+test("REQ-SBX-GENERAL-003 rejects a repository page larger than the normalized limit", () => {
+  const fixture = makeAuditServiceFixture({ over_limit_events: true });
+  assert.throws(
+    () => fixture.service.list({ capability: SUBJECT_A_CAPABILITY, limit: 1 }),
+    (error: any) => error?.code === "SANDBOX_SECURITY_INTERNAL_ERROR"
+  );
+});
+
+test("REQ-SBX-GENERAL-003 maps audit repository, cursor, and projector failures to tagged errors", () => {
+  const repositoryFailure = makeAuditServiceFixture({ list_error: new Error("read failed") });
+  assert.throws(
+    () => repositoryFailure.service.list({ capability: SUBJECT_A_CAPABILITY, limit: 1 }),
+    (error: any) => error?.code === "SANDBOX_SECURITY_INTERNAL_ERROR"
+  );
+  const invalidCursor = makeAuditServiceFixture();
+  assert.throws(
+    () => invalidCursor.service.list({ capability: SUBJECT_A_CAPABILITY, cursor: "bad", limit: 1 }),
+    (error: any) =>
+      error?.code === "SANDBOX_SECURITY_AUDIT_CURSOR_INVALID" &&
+      error?.audit_rejection_code === "invalid_request"
+  );
+  const projectorFailure = makeAuditServiceFixture({ projector_error: new Error("projection failed") });
+  assert.throws(
+    () => projectorFailure.service.list({ capability: SUBJECT_A_CAPABILITY, limit: 1 }),
+    (error: any) => error?.code === "SANDBOX_SECURITY_INTERNAL_ERROR"
+  );
 });

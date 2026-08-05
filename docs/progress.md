@@ -1,3 +1,47 @@
+## 2026-08-05 - REQ-SBX-GENERAL-003 P4-T2 subject-scoped audit service
+
+- phase/task: Phase 4 / P4-T2 Subject-Scoped Audit List and Fixed Retention
+  Service
+- status: `IMPLEMENTED_PENDING_INDEPENDENT_REVIEW`
+- implementation:
+  - added the typed audit service factory behind the sandbox-security module
+    boundary; list accepts an already authorized capability and required
+    normalized limit without HTTP parsing or expiry admission
+  - verifies cursor subject and authorization-scope binding before repository
+    selection, passes the authenticated subject predicate and exclusive tie
+    cursor to the repository, and encodes the next cursor from the last page
+    event only when `has_more` is true
+  - projects the read audit event through the injected projector after page
+    selection, rejects self-read leakage, normalizes returned events into
+    defensive copies, and fails closed on repository pages exceeding limit
+  - runs idempotency pre-cleanup before purge, preserves only its tagged
+    storage-unavailable failure, computes the fixed 90-day cutoff, enforces a
+    literal 1000-row purge bound, and projects the fixed system purge subject
+  - maps repository/projector/runtime/HMAC failures to the tagged internal
+    error; malformed or throwing cursor decodes map to cursor-invalid
+- files:
+  - `backend/src/modules/sandbox-security/audit.service.ts`
+  - `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+  - `backend/tests/sandbox-security-audit.spec.ts`
+- tests:
+  - factory and service RED first failed on the missing factory export; the
+    focused audit suite is green (`20/20`)
+  - specification-review regressions for repository storage-code spoofing,
+    throwing cursor decoders, and over-limit repository pages each failed RED
+    before their targeted fixes and now pass
+  - `npm run test:backend` is `356/358`; the two failures remain the existing
+    Semgrep `ENOENT` and task-engine asset expectation drift, unrelated to
+    P4-T2
+  - `npm run typecheck:backend` reports no P4-T2 sandbox-security source or
+    test error; existing campaign/task-center/test baseline errors remain
+  - `git diff --check` passes
+- boundary:
+  - HTTP query defaults/maximum admission, capability expiry, evaluation
+    orchestration, and production composition remain later P4/P5/P6 tasks
+  - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
+    GENERAL-003 is not `VERIFIED`
+- next: independent specification and quality review, then proceed to P4-T3
+
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P4-T1 capability issue and revoke service
 
 - phase/task: Phase 4 / P4-T1 Capability Issue and Revoke Service
