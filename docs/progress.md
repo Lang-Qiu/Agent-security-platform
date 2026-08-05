@@ -1,3 +1,31 @@
+## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T1 shared audit API contract
+
+- phase/task: Phase 1 / P1-T1; implementation remains one task at a time after
+  the explicit plan approval
+- TDD RED: focused `shared/tests/sandbox-security-api-contract.spec.ts` failed
+  `10/10` with the intended `AssertionError` because the two new normalizers
+  were not yet exported; no import, syntax, or environment error occurred
+- GREEN: the exact eight-variant audit event union, page envelope, strict
+  own-data normalizers, canonical cursor validation, dense arrays, catalog
+  ordering, route/rejection matrix, bounds, timestamp grammar, and defensive
+  copies are implemented. The existing shared detector-status type now also
+  exposes its frozen runtime catalog in canonical order.
+- changed: `shared/types/sandbox-security-api.ts`,
+  `shared/contracts/sandbox-security-api.ts`,
+  `shared/tests/sandbox-security-api-contract.spec.ts`,
+  `shared/types/sandbox-security.ts`, `shared/index.ts`, root `package.json`,
+  `docs/api-contract.md`
+- validation: focused suite `10/10`; shared TypeScript check passed;
+  `npm run test:shared` passed `217/217`; `git diff --check` passed
+- review-prep: no capability DTO, repository record, cursor codec, HMAC
+  service, Engine-private type, or content-bearing audit field was exported
+  from `shared/`; docs link to the canonical specification for the full matrix
+- dependency: GENERAL-002 remains
+  `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`; neither GENERAL-002 nor
+  GENERAL-003 is `VERIFIED`
+- next: independent review and exact commit for P1-T1, then P1-T2 route
+  boundaries
+
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T0 requirement and status gate
 
 - stage: repository workflow/configuration exception to business-logic TDD; no

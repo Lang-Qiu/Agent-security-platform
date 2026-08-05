@@ -2124,3 +2124,49 @@ for the final action.
 The Track1 adapter uses fixed confidence `0.80` and maps existing rule evidence
 into the same decision boundary. The balanced harness is test-only and is not a
 production detector or a public runtime profile.
+
+## REQ-SBX-GENERAL-003 Shared Audit API Contract
+
+The authenticated sandbox backend exposes the content-free audit projection
+through the shared `SandboxSecurityAuditEvent` discriminated union and the
+`SandboxSecurityAuditPage` envelope. The complete field matrix is maintained in
+the [canonical GENERAL-003 specification](superpowers/specs/2026-08-05-sandbox-security-backend-api-design.md#durable-audit-contract);
+this document records the stable cross-package boundary:
+
+- Event types are exactly `evaluation_completed`, `evaluation_replayed`,
+  `evaluation_interrupted`, `request_rejected`, `capability_issued`,
+  `capability_revoked`, `audit_read`, and `audit_purged`.
+- Every event has schema version `sandbox-security-audit-event.v1`, an audit
+  UUID, a strict UTC millisecond timestamp (`YYYY-MM-DDTHH:mm:ss.sssZ`), a
+  subject ID, and the exact variant keys defined by the specification. Unknown,
+  inherited, accessor, symbol, or content-bearing fields are rejected.
+- Evaluation events use the closed stage catalog
+  `user_input`, `model_output`, `tool_request`, the two closed policy profiles,
+  the fixed production-composition binding, and elapsed milliseconds bounded to
+  `0..60000`. Completed/replayed events contain all nine risk-category counts
+  and all six detector-run-status counts as safe non-negative integers in their
+  catalog order. The detector status order is `matched`, `no_match`, `failed`,
+  `timeout`, `invalid_result`, `skipped`.
+- Rejection events enforce the route/nullability matrix: `audit_read` always
+  has null request/stage/profile and only its five read-route rejection codes;
+  evaluation-only codes require the `evaluation` route.
+- Capability issue/revoke, audit-read, and purge variants retain only their
+  exact closed fields. Arrays and count records are dense, ordered, and copied
+  defensively.
+
+The page envelope is exactly:
+
+```ts
+interface SandboxSecurityAuditPage {
+  schema_version: "sandbox-security-audit-page.v1";
+  events: SandboxSecurityAuditEvent[]; // 0..100
+  next_cursor: string | null;
+}
+```
+
+`next_cursor` is either null or a canonical, unpadded base64url cursor with the
+grammar `sbxcur_v1.<payload>.<mac>`. The shared strict normalizers
+`normalizeSandboxSecurityAuditEvent` and `normalizeSandboxSecurityAuditPage`
+return fresh values or `null`; they perform all exact-key, catalog, bounds,
+timestamp, cursor, and defensive-copy checks before a value crosses the shared
+boundary.
