@@ -8583,3 +8583,26 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
     chain, seal, and actual P7 hermetic replay
   - this temporary release does not authorize reuse of the rejected v8 root or
     promotion of `retry-merge-proposal.json`
+
+## 2026-08-05 - REQ-SBX-GENERAL-003 P2-T3 capability authorization
+
+- phase/task: Phase 2 / P2-T3 capability DTO, authentication, and authorization
+- status: `IMPLEMENTED_PENDING_REVIEW`
+- implementation:
+  - added strict capability issue normalization with catalog ordering, exact
+    own-data checks, dense arrays, grant matrix enforcement, and 60..3600
+    second TTL bounds with the 900 second default
+  - added restart-durable capability authentication through SHA-256 token
+    digests and the P1 deployment HMAC authorization-scope service
+  - added content-free `unknown`/`known_denied`/`authorized` projections,
+    scope-before-stage/profile authorization, and fixed-width bootstrap admin
+    digest comparison
+- tests:
+  - focused P2-T3 capability suite is green (`7/7`)
+  - `npm run test:backend` includes the focused capability suite; existing
+    repository typecheck and semgrep-related failures remain unrelated
+- boundary:
+  - HTTP mapping, revoke side effects, limiter removal, and capability
+    persistence stay with their later planned Phase 4/5 tasks
+  - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
+    GENERAL-003 is not `VERIFIED`

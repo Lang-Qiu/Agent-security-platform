@@ -24,6 +24,10 @@ export {
   createSandboxSecurityHmacService,
   createSandboxSecurityOpaqueCapability
 } from "./hmac.ts";
+export { normalizeSandboxSecurityCapabilityIssueRequest } from "./dto/capability.ts";
+export {
+  createSandboxSecurityCapabilityAuthenticator
+} from "./capability-authorizer.ts";
 
 export { toSandboxSecurityEngineRuntime } from "./ports/runtime.ts";
 export {
