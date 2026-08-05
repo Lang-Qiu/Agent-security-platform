@@ -25,7 +25,6 @@
 **Files:**
 - Modify: `scripts/benchmark/sandbox-security/contracts.ts`
 - Test: `tests/benchmark/sandbox-security-contracts.spec.ts`
-- Test: `tests/repository/sandbox-security-production-spec.spec.ts`
 
 - [ ] **Step 1: Write the failing contract tests.**
 
@@ -53,14 +52,14 @@ assert.deepEqual(
 );
 ```
 
-Also add cases for: a third attempt, a two-attempt sequence whose first item is not `connection_failed`, an embedded `not_called`, a final failure rejected by `assertSandboxSecurityBenchmarkAcceptedProviderOutcomes`, a valid two-attempt sequence accepted, and a v1 cassette rejected. Update the repository spec assertions from one outcome per slot to the v2 sequence rule.
+Also add cases for: a third attempt, a two-attempt sequence whose first item is not `connection_failed`, an embedded `not_called`, a final failure rejected by `assertSandboxSecurityBenchmarkAcceptedProviderOutcomes`, a valid two-attempt sequence accepted, and a v1 cassette rejected.
 
 - [ ] **Step 2: Run the focused tests and verify the failure is contractual.**
 
 Run:
 
 ```bash
-node --experimental-strip-types --experimental-test-isolation=none --test tests/benchmark/sandbox-security-contracts.spec.ts tests/repository/sandbox-security-production-spec.spec.ts
+node --experimental-strip-types --experimental-test-isolation=none --test tests/benchmark/sandbox-security-contracts.spec.ts
 ```
 
 Expected: FAIL because the v2 schema and sequence validators do not exist; do not proceed if the failure is only a syntax, import, or environment error.
@@ -85,7 +84,7 @@ Run the command from Step 2. Expected: PASS for the new sequence cases and the e
 - [ ] **Step 5: Commit the contract slice.**
 
 ```bash
-git add scripts/benchmark/sandbox-security/contracts.ts tests/benchmark/sandbox-security-contracts.spec.ts tests/repository/sandbox-security-production-spec.spec.ts
+git add scripts/benchmark/sandbox-security/contracts.ts tests/benchmark/sandbox-security-contracts.spec.ts
 git commit -m "feat(sandbox): define P6 retry attempt sequences"
 ```
 
