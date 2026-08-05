@@ -30,9 +30,15 @@ function extractSection(text: string, heading: string): string {
 }
 
 function currentStatus(sprint: string): string {
-  const match = /^## Status\s*\n+([A-Z][A-Z0-9_]*)\s*$/m.exec(sprint);
-  assert.ok(match, "sprint-current.md must expose one uppercase Status value");
-  return match[1]!;
+  const matches = [
+    ...sprint.matchAll(/^## Status\s*\n+([A-Z][A-Z0-9_]*)\s*$/gm)
+  ];
+  assert.equal(
+    matches.length,
+    1,
+    "sprint-current.md must expose exactly one uppercase Status value"
+  );
+  return matches[0]![1]!;
 }
 
 function assertNoVerifiedClaims(sprint: string): void {
@@ -70,7 +76,12 @@ test("REQ-SBX-GENERAL-003 repository gate enforces canonical identity and depend
   };
 
   assert.match(sprint, /\bREQ-SBX-GENERAL-003\b/);
-  assert.match(sprint, /docs\/superpowers\/specs\/2026-08-05-sandbox-security-backend-api-design\.md/);
+  const canonicalSpec = readText(CANONICAL_SPEC_PATH);
+  assert.ok(canonicalSpec.length > 0, `canonical spec is empty: ${CANONICAL_SPEC_PATH}`);
+  assert.ok(
+    sprint.includes(CANONICAL_SPEC_PATH),
+    `sprint-current.md must reference ${CANONICAL_SPEC_PATH}`
+  );
 
   const status = currentStatus(sprint);
   assert.ok(
