@@ -8790,3 +8790,46 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
     GENERAL-003 is not `VERIFIED`
 - commit: `feat(backend): persist sandbox security capabilities`
 - next: P3-T3 idempotency state machine, recovery, and maintenance health
+
+## 2026-08-05 - REQ-SBX-GENERAL-003 P3-T3 idempotency persistence and maintenance
+
+- phase/task: Phase 3 / P3-T3
+- status: `COMPLETE_PENDING_P3_T4`
+- implementation:
+  - added the SQLite idempotency repository with bounded expired-row cleanup,
+    target-expiry deletion before lookup, claim/replay/conflict/interrupted
+    transitions, normalized Decision replay, 16 MiB response bound, and
+    authorization-scope separation
+  - paired completion, interruption, concurrency rejection, replay, and startup
+    recovery updates with content-free audit events in `BEGIN IMMEDIATE`
+  - added startup recovery and 4096-row cleanup, one unref'ed hourly timer,
+    `healthy`/`degraded`/`closed` maintenance state, exact storage/internal
+    error mapping, and close ownership without closing SQLite
+- files:
+  - `backend/src/modules/sandbox-security/adapters/sqlite/sqlite-idempotency.repository.ts`
+  - `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+  - `backend/tests/sandbox-security-idempotency.spec.ts`
+  - `backend/tests/sandbox-security-sqlite.spec.ts`
+  - `package.json`
+- tests:
+  - initial repository boundary RED was verified before implementation (`11/11`
+    expected factory-boundary failures); focused idempotency plus SQLite suites
+    are green (`42/42`)
+  - review regressions for target expiry beyond the 100-row batch and row-bound
+    Decision correlation were run RED then GREEN
+  - `npm run typecheck:backend` still reports only pre-existing campaign,
+    task-center, and test baseline errors; no P3-T3 sandbox-security source
+    error remains
+  - `git diff --check` passes
+- boundary:
+  - P4 application services, Engine interruption orchestration, audit read/purge,
+    HTTP, and production composition remain later tasks
+  - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
+    GENERAL-003 is not `VERIFIED`
+- reviews:
+  - independent specification review and re-review: PASS with `0 Critical / 0
+    Important / 0 Minor`
+  - independent quality review and re-review: PASS with `0 Critical / 0
+    Important / 0 Minor`
+- commit: `feat(backend): persist sandbox security idempotency`
+- next: P3-T4 subject-scoped audit read and retention repository

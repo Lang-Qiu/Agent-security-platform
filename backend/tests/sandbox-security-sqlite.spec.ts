@@ -863,3 +863,62 @@ test("REQ-SBX-GENERAL-003 wraps an ordinary same-message revoke error as a tagge
     }
   );
 });
+
+test("REQ-SBX-GENERAL-003 keeps idempotency rows durable across SQLite reopen", (t) => {
+  assert.equal(typeof boundary.createSqliteSandboxSecurityIdempotencyRepository, "function");
+  const fixture = createPrivateDatabaseFixture();
+  const first = boundary.openSandboxSecuritySqliteDatabase!({
+    path: fixture.databasePath,
+    deployment_key_id: FIXED_DEPLOYMENT_KEY_ID,
+    now: () => "2026-08-05T00:00:00.000Z"
+  });
+  first.transaction((db) => {
+    db.prepare(
+      `INSERT INTO sandbox_security_capabilities(
+        capability_id, subject_id, token_digest, scope_seed, issued_at, expires_at, revoked_at
+      ) VALUES (?, ?, ?, ?, ?, ?, NULL)`
+    ).run(
+      CAPABILITY_ID,
+      "subject-a",
+      TOKEN_DIGEST,
+      SCOPE_SEED,
+      ISSUED_AT,
+      EXPIRES_AT
+    );
+    db.prepare(
+      `INSERT INTO sandbox_security_idempotency_records(
+        authorization_scope_id, idempotency_key_hmac, request_fingerprint,
+        capability_id, subject_id, request_id, stage, policy_profile_id,
+        composition_binding, status, response_json, created_at, updated_at, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'interrupted', NULL, ?, ?, ?)`
+    ).run(
+      "authscope:hmac-sha256:" + "a".repeat(64),
+      "idem-key:hmac-sha256:" + "a".repeat(64),
+      "hmac-sha256:" + "a".repeat(64),
+      CAPABILITY_ID,
+      "subject-a",
+      "request-001",
+      "user_input",
+      "sandbox-security-balanced.v1",
+      "sandbox-security-production-composition.v1:rule_only",
+      ISSUED_AT,
+      ISSUED_AT,
+      EXPIRES_AT
+    );
+  });
+  first.checkpointAndClose();
+  const reopened = boundary.openSandboxSecuritySqliteDatabase!({
+    path: fixture.databasePath,
+    deployment_key_id: FIXED_DEPLOYMENT_KEY_ID,
+    now: () => "2026-08-05T00:00:00.000Z"
+  });
+  t.after(() => closeAndRemove(fixture.parentPath, reopened));
+  assert.equal(
+    reopened.read((db) =>
+      (db
+        .prepare("SELECT COUNT(*) AS count FROM sandbox_security_idempotency_records")
+        .get() as { count: number }).count
+    ),
+    1
+  );
+});
