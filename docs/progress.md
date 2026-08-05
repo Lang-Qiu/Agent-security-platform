@@ -8837,7 +8837,7 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P3-T4 subject-scoped audit persistence
 
 - phase/task: Phase 3 / P3-T4
-- status: `IMPLEMENTATION_COMPLETE_PENDING_COMMIT`
+- status: `IMPLEMENTED`
 - implementation:
   - added the SQLite audit repository factory with mandatory named subject
     selection, descending `(occurred_at,event_id)` pagination, tie cursor
@@ -8870,10 +8870,8 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   - independent quality review and re-review: PASS with `0 Critical / 0
     Important / 0 Minor`
 - boundary:
-  - P3-T4 is not committed yet; P4 services, HTTP, and production composition
-    remain later tasks
+  - P3-T4 commit: `1a6f182` (`feat(backend): persist sandbox security audit repository`)
+  - P4 services, HTTP, and production composition remain later tasks
   - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
     GENERAL-003 is not `VERIFIED`
-- next: selectively stage and commit
-  `feat(backend): persist sandbox security audit repository`, then proceed to
-  P4-T1
+- next: proceed to P4-T1
