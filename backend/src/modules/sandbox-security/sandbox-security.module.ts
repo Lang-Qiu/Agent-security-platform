@@ -28,6 +28,13 @@ export { normalizeSandboxSecurityCapabilityIssueRequest } from "./dto/capability
 export {
   createSandboxSecurityCapabilityAuthenticator
 } from "./capability-authorizer.ts";
+export {
+  createSandboxSecurityCapabilityLimiterRegistry,
+  createSandboxSecurityTokenBucket
+} from "./token-bucket.ts";
+export {
+  createSandboxSecurityEngineConcurrencyLimiter
+} from "./engine-concurrency.ts";
 
 export { toSandboxSecurityEngineRuntime } from "./ports/runtime.ts";
 export {

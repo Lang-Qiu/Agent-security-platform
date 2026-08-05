@@ -8618,3 +8618,42 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   - GENERAL-003 remains below `IMPLEMENTED_PENDING_GLOBAL_P6_GATE` until the
     independent GENERAL-002 P6 evidence gate closes
 - next: P2-T4 monotonic token buckets and Engine concurrency slots
+
+## 2026-08-05 - REQ-SBX-GENERAL-003 P2-T4 monotonic limits and Engine slots
+
+- phase/task: Phase 2 / P2-T4
+- status: `COMPLETE_PENDING_P2_T5`
+- implementation:
+  - added a monotonic token bucket with fixed-capacity validation, lazy refill,
+    backward/nonfinite clock rejection, exact next-token timing, and bounded
+    `Retry-After` values using ceil of remaining seconds
+  - added the four-slot Engine concurrency limiter with idempotent lease release
+  - added the authenticated-capability keyed limiter registry with fixed
+    capability limits, revoke removal, injected wall/monotonic clock sweeping,
+    and 256-admission idle/expiry cleanup
+- tests:
+  - focused P2-T4 limits suite is green (`14/14`); capability plus HMAC and
+    limits suites are green (`31/31`)
+  - `npm run test:engine:sandbox` passed (`1030/1030`)
+  - `npm run test:backend` remains `274/276`; the two failures are existing
+    task-engine asset expectation drift and missing Semgrep (`spawn semgrep
+    ENOENT`), unrelated to P2-T4
+  - `git diff --check` passed
+- TDD evidence:
+  - RED first failed on the missing factory exports, then GREEN after the
+    minimal bucket, concurrency, registry, and module-boundary implementation
+  - review regressions were added for fractional near-boundary Retry-After,
+    exact-token readiness, denied-admission clock rollback, and fixed registry
+    construction inputs before their fixes
+- reviews:
+  - specification review: PASS with `0 Critical / 0 Important / 0 Minor`
+  - quality review: PASS with `0 Critical / 0 Important / 0 Minor`
+  - `npm run typecheck:backend` still reports only the existing
+    campaign/task-center/test baseline errors; no P2-T4 source error was added
+- boundary:
+  - slow-body admission, replay/conflict slot ownership, Engine exception
+    orchestration, HTTP, and SQLite remain with later planned tasks
+  - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
+    GENERAL-003 is not `VERIFIED`
+- commit: `feat(backend): limit sandbox security evaluations`
+- next: P2-T5 exact content-free audit projection
