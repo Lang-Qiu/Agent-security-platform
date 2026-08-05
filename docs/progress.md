@@ -305,6 +305,53 @@
     GENERAL-003 is not `VERIFIED`
 - next: proceed to P6-T4 durable documentation and final verification
 
+## 2026-08-06 - REQ-SBX-GENERAL-003 P6-T4 durable documentation and final verification
+
+- phase/task: Phase 6 / P6-T4 Durable Documentation and Final Verification
+- status: `IMPLEMENTED_PENDING_GLOBAL_P6_GATE`
+- documentation:
+  - cross-checked README startup/configuration prerequisites, architecture
+    composition/lifecycle boundaries, and API-contract route ownership,
+    admission, retention, and shutdown rules
+  - added the five-route matrix, exact request/response DTO matrix,
+    status/error table, and concrete HTTP/JSON examples to
+    `docs/api-contract.md`
+  - synchronized `docs/sprint-current.md` with the completed P6-T4 boundary
+    while retaining the GENERAL-002 dependency and no `VERIFIED` claim
+- final verification sequence:
+  - `npm run test:shared`: `218/218` pass
+  - `npm run typecheck:shared`: pass
+  - `npm run test:backend`: `487/489` pass; the two existing failures are
+    Semgrep `ENOENT` and task-engine asset expectation drift
+  - `npm run typecheck:backend`: existing campaign/task-center/test baseline
+    errors only; no GENERAL-003 P6 error
+  - `npm run test:engine:sandbox`: `1030/1030` pass
+  - `npm run test:engine:sandbox:production`: `439/439` pass
+  - `npm run test:repo`: `333/333` pass
+  - `npm run typecheck:benchmark:sandbox-security`: pass
+  - `npm run test:frontend`: `15` files, `221` tests pass
+  - `git diff --check`: pass
+  - `npm run test:all`: expected exit `1` at
+    `sandbox_security_hermetic_replay_reject:failed_closed` because no formally
+    accepted GENERAL-002 P6 root exists; corpus validation before replay
+    reports the canonical 300-input counts
+  - post-document focused GENERAL-003 repository/integration/privacy suite:
+    `30/30` pass
+- closing review:
+  - independent review verified routes, DTO/status documentation, HTTP order,
+    crypto vectors, SQLite and idempotency boundaries, audit/privacy, startup/
+    shutdown, Engine import isolation, tests, and dependency-safe status
+  - initial documentation gap was corrected before final re-review; final
+    verdict `PASS` with `0 Critical / 0 Important / 0 Minor`
+- acceptance boundary:
+  - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`; its fresh
+    full 300-input capture, accepted seal/receipt chain, and hermetic replay are
+    still required before any global `VERIFIED` transition
+  - GENERAL-003 is complete only at `IMPLEMENTED_PENDING_GLOBAL_P6_GATE` and
+    must not be reported as `VERIFIED`
+- commits: P6-T3 `ac1f4a5`; this entry is finalized by the P6-T4
+  documentation checkpoint commit
+
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P4-T3 evaluation orchestration and idempotency
 
 - phase/task: Phase 4 / P4-T3 Evaluation Orchestration and Idempotency

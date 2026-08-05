@@ -2125,6 +2125,146 @@ The Track1 adapter uses fixed confidence `0.80` and maps existing rule evidence
 into the same decision boundary. The balanced harness is test-only and is not a
 production detector or a public runtime profile.
 
+## REQ-SBX-GENERAL-003 Authenticated Backend API
+
+GENERAL-003 exposes exactly five routes. The public listener accepts simulation
+evaluation and subject-scoped audit reads; the internal listener accepts only
+bootstrap-administrator capability and retention operations.
+
+### Route Matrix
+
+| Listener | Method and path | Authentication | Input boundary | Success envelope |
+| --- | --- | --- | --- | --- |
+| public | `POST /api/sandbox/security/evaluations` | `Authorization: Bearer <capability>` plus `Idempotency-Key` | JSON `SandboxSecurityRequest`; 786432 raw bytes; 5000 ms body deadline | `200 ApiResponse<SandboxSecurityDecision>` |
+| public | `GET /api/sandbox/security/audit-events` | `Authorization: Bearer <capability>` with `sandbox_security:audit:read` | only `cursor` and `limit` query keys; bodyless | `200 ApiResponse<SandboxSecurityAuditPage>` |
+| internal | `POST /internal/sandbox/security/capabilities` | `Authorization: Bearer <bootstrap-admin-token>` | JSON issue DTO; 65536 raw bytes; 5000 ms body deadline | `201 ApiResponse<SandboxSecurityCapabilityIssueResult>` |
+| internal | `POST /internal/sandbox/security/capabilities/:capabilityId/revoke` | `Authorization: Bearer <bootstrap-admin-token>` | bodyless; one percent-decode of the path ID | `200 ApiResponse<SandboxSecurityCapabilityPublicRecord>` |
+| internal | `POST /internal/sandbox/security/audit-events/purge` | `Authorization: Bearer <bootstrap-admin-token>` | bodyless; fixed 90-day retention and 1000-row batch | `200 ApiResponse<SandboxSecurityAuditPurgeResult>` |
+
+Public capabilities are opaque `sbxcap_v1.<43 base64url characters>` values and
+are never returned by audit routes. Internal routes are not dispatched by the
+public listener. Every response uses the repository envelope below; the
+`request_id` is the HTTP correlation ID and is not persisted as audit content:
+
+```ts
+interface ApiResponse<T> {
+  success: boolean;
+  message: string;
+  data: T;
+  error_code: string | null;
+  request_id: string;
+}
+```
+
+### DTO Matrix
+
+The evaluation body is the exact shared request contract. Unknown, inherited,
+accessor, symbol, duplicate, or content-bearing fields are rejected.
+
+```ts
+interface SandboxSecurityRequest {
+  schema_version: "sandbox-security-request.v1";
+  request_id: string;
+  stage: "user_input" | "model_output" | "tool_request";
+  policy_profile_id:
+    | "sandbox-security-balanced.v1"
+    | "sandbox-security-strict.v1";
+  content_items: SandboxSecuritySubmittedContentItem[]; // 1..64
+  tool_request?: SandboxSecurityToolRequest;
+}
+
+interface SandboxSecurityDecision {
+  schema_version: "sandbox-security-decision.v1";
+  decision_id: string;
+  request_id: string;
+  evaluation_mode: "simulation";
+  stage: SandboxSecurityStage;
+  policy_profile_id: SandboxSecurityPolicyProfileId;
+  verdict: "no_detected_risk" | "risk_detected" | "indeterminate";
+  action: "allow" | "alert" | "ask" | "deny";
+  risk_level: "info" | "low" | "medium" | "high" | "critical";
+  findings: SandboxSecurityFinding[];
+  detector_runs: SandboxDetectorRun[];
+  evidence_refs: string[];
+  created_at: string;
+}
+```
+
+| DTO | Exact fields and constraints |
+| --- | --- |
+| `SandboxSecuritySubmittedContentItem` | `source_id`, `claimed_source_type`, `media_type` (`text/plain` or `application/json`), `value`, `provenance_ref`; text and JSON values use the shared byte/depth/node limits. |
+| `SandboxSecurityToolRequest` | `call_id`, `tool_name`, `arguments`, optional `target`; no caller-selected provider, model, endpoint, timeout, retry, fallback, policy, or production mode. |
+| `SandboxSecurityCapabilityIssueRequest` | `schema_version: "sandbox-security-capability-issue-request.v1"`, `subject_id`, `scopes`, `allowed_stages`, `allowed_policy_profile_ids`, optional `ttl_seconds`; TTL defaults to 900 and is bounded to 60..3600 seconds. Evaluation scope requires at least one stage and profile; audit-only grants require both arrays empty. |
+| `SandboxSecurityCapabilityIssueResult` | `schema_version: "sandbox-security-capability-issue-result.v1"`, `capability_id`, `subject_id`, `scopes`, `allowed_stages`, `allowed_policy_profile_ids`, `bearer_token`, `issued_at`, `expires_at`, `revoked_at: null`; the bearer token appears only in this successful 201 response. |
+| `SandboxSecurityCapabilityPublicRecord` | `schema_version: "sandbox-security-capability-record.v1"`, `capability_id`, `subject_id`, `scopes`, `allowed_stages`, `allowed_policy_profile_ids`, `issued_at`, `expires_at`, `revoked_at`; it never contains a token digest or scope seed. |
+| `SandboxSecurityAuditPage` | `schema_version: "sandbox-security-audit-page.v1"`, `events` (0..100 content-free events), `next_cursor` (null or canonical `sbxcur_v1.<payload>.<mac>`). |
+| `SandboxSecurityAuditPurgeResult` | `schema_version: "sandbox-security-audit-purge-result.v1"`, `retention_days: 90`, `deleted_count`, `has_more`; the cutoff and batch size are not caller inputs. |
+
+### Status And Error Table
+
+| HTTP | `error_code` | Meaning |
+| --- | --- | --- |
+| 400 | `SANDBOX_SECURITY_INVALID_REQUEST` | malformed non-credential headers, query, JSON, or DTO |
+| 400 | `SANDBOX_SECURITY_AUDIT_CURSOR_INVALID` | malformed, tampered, wrong-scope, or wrong-subject cursor |
+| 401 | `SANDBOX_SECURITY_UNAUTHORIZED` | public capability is absent, malformed, unknown, expired, or revoked |
+| 401 | `SANDBOX_SECURITY_ADMIN_UNAUTHORIZED` | bootstrap administrator credential is absent or invalid |
+| 403 | `SANDBOX_SECURITY_FORBIDDEN` | scope, stage, or profile is not granted |
+| 404 | `SANDBOX_SECURITY_CAPABILITY_NOT_FOUND` | revoke target does not exist |
+| 408 | `SANDBOX_SECURITY_REQUEST_TIMEOUT` | authenticated body did not complete within 5000 ms |
+| 409 | `SANDBOX_SECURITY_IDEMPOTENCY_CONFLICT` | same authorization scope and key have a different fingerprint |
+| 409 | `SANDBOX_SECURITY_IDEMPOTENCY_IN_PROGRESS` | same authorization scope, key, and fingerprint is executing |
+| 413 | `SANDBOX_SECURITY_BODY_TOO_LARGE` | route-specific raw body limit was exceeded |
+| 415 | `SANDBOX_SECURITY_UNSUPPORTED_MEDIA_TYPE` | media type is not canonical `application/json` |
+| 429 | `SANDBOX_SECURITY_RATE_LIMITED` | a public or administrator token bucket rejected the request |
+| 429 | `SANDBOX_SECURITY_CONCURRENCY_LIMITED` | all four Engine slots are occupied |
+| 500 | `SANDBOX_SECURITY_INTERNAL_ERROR` | Engine, crypto, persistence, or invariant failure |
+| 503 | `SANDBOX_SECURITY_STORAGE_UNAVAILABLE` | idempotency maintenance is degraded or closed |
+
+Error responses never include bearer tokens, raw request content,
+`Idempotency-Key`, fingerprints, canonical bytes, SQLite details, causes,
+stacks, provider messages, or Engine diagnostics. In-progress/concurrency
+errors include `Retry-After: 1`; rate-limit errors include their monotonic
+bucket deficit clamped to `1..60`; storage-unavailable includes
+`Retry-After: 60`. Server-detected 408/413 responses also include
+`Connection: close` and destroy the request only after response `finish`.
+
+### Examples
+
+Minimal simulation evaluation:
+
+```http
+POST /api/sandbox/security/evaluations HTTP/1.1
+Authorization: Bearer <capability>
+Idempotency-Key: eval-20260806-0001
+Content-Type: application/json
+
+{"schema_version":"sandbox-security-request.v1","request_id":"req-0001","stage":"user_input","policy_profile_id":"sandbox-security-balanced.v1","content_items":[{"source_id":"src-1","claimed_source_type":"user_input","media_type":"text/plain","value":"hello","provenance_ref":"source://client/1"}]}
+```
+
+```json
+{"success":true,"message":"Sandbox security evaluation completed","data":{"schema_version":"sandbox-security-decision.v1","decision_id":"decision:...","request_id":"req-0001","evaluation_mode":"simulation","stage":"user_input","policy_profile_id":"sandbox-security-balanced.v1","verdict":"no_detected_risk","action":"allow","risk_level":"info","findings":[],"detector_runs":[],"evidence_refs":[],"created_at":"2026-08-06T00:00:00.000Z"},"error_code":null,"request_id":"http:..."}
+```
+
+Issue a capability and read its public audit page:
+
+```http
+POST /internal/sandbox/security/capabilities HTTP/1.1
+Authorization: Bearer <bootstrap-admin-token>
+Content-Type: application/json
+
+{"schema_version":"sandbox-security-capability-issue-request.v1","subject_id":"subject-1","scopes":["sandbox_security:evaluate","sandbox_security:audit:read"],"allowed_stages":["user_input"],"allowed_policy_profile_ids":["sandbox-security-balanced.v1"],"ttl_seconds":900}
+```
+
+```http
+GET /api/sandbox/security/audit-events?limit=50 HTTP/1.1
+Authorization: Bearer <capability>
+```
+
+The audit response is `ApiResponse<SandboxSecurityAuditPage>`; its event
+variants contain only IDs, timestamps, closed catalog values, counts, and
+rejection metadata. Raw content, provider data, tokens, locator text, and
+finding evidence are never part of the page.
+
 ## REQ-SBX-GENERAL-003 Shared Audit API Contract
 
 The authenticated sandbox backend exposes the content-free audit projection

@@ -10,7 +10,7 @@ Sandbox Security Authenticated Backend API
 
 ## Status
 
-IMPLEMENTATION_IN_PROGRESS
+IMPLEMENTED_PENDING_GLOBAL_P6_GATE
 
 ## Transition Authority
 
@@ -26,8 +26,10 @@ re-review each returned `FAIL` with two Critical and five Important findings.
 Three later re-reviews returned `FAIL` while successively closing one Important
 and two Minor findings, one Critical finding, and one final Important finding.
 The final independent plan re-review returned `PASS` with zero Critical,
-Important, or Minor findings. The user has now explicitly approved execution of
-that reviewed plan, so implementation is active one task at a time.
+Important, or Minor findings. The user explicitly approved execution of that
+reviewed plan. P6-T4 closing review also returned `PASS` with zero Critical,
+Important, or Minor findings; implementation is complete up to the dependency
+bounded global P6 gate.
 
 ## Canonical Inputs
 
@@ -122,7 +124,7 @@ attempted and its expected hermetic fail-closed result reported honestly.
 - The written specification is approved after independent review.
 - The Master and six Phase implementation plans passed final independent review
   with zero Critical, Important, or Minor findings after iterative correction.
-- Implementation has completed Phase 6 / P6-T2 and P6-T1 and Phase 5 / P5-T4,
+- Implementation has completed Phase 6 / P6-T1 through P6-T4 and Phase 5 / P5-T4,
   including validated production configuration/lifecycle, the production
   evaluation gateway, strict HTTP admission, normal/abnormal close handling,
   response-safe cleanup, the
@@ -133,12 +135,13 @@ attempted and its expected hermetic fail-closed result reported honestly.
   orchestration, idempotency replay/conflict handling, Engine-slot lifecycle,
   interruption convergence, and the necessary changed-correlation SQLite
   conflict correction.
-- P5-T1 through P5-T4 and P6-T1 through P6-T2 focused and independent review
-  gates are green; P6-T3 is next.
+- P5-T1 through P5-T4 and P6-T1 through P6-T4 focused and independent review
+  gates are green; the remaining gate is the GENERAL-002-dependent global P6
+  acceptance.
 - The P6 retry amendment is complete through Task 6 documentation and
   repository gates, but no fresh full 300-input P6 capture has been run.
 - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`; neither
   GENERAL-002 nor GENERAL-003 is `VERIFIED`.
-- Continue exactly one Phase/task at a time using RED -> GREEN -> review ->
-  fix/re-review -> document evidence -> exact commit -> stop. P6-T3 is next
-  after the P6-T2 commit.
+- The GENERAL-003 plan group is complete at
+  `IMPLEMENTED_PENDING_GLOBAL_P6_GATE`; do not claim `VERIFIED` until the
+  GENERAL-002 signed P6 recapture and hermetic replay are accepted.
