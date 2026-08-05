@@ -10,6 +10,14 @@ export interface RuntimeDependencies {
   campaignRepository: InMemoryCampaignRepository;
 }
 
+// Sandbox security's Node-only clock, entropy, UUID, and timer boundary lives
+// beside the platform composition root so production startup and tests share
+// the same explicit runtime contract.
+export {
+  createSandboxSecurityNodeRuntimePort,
+  loadSandboxSecurityConfiguration
+} from "./modules/sandbox-security/sandbox-security.config.ts";
+
 export function createRuntimeDependencies(): RuntimeDependencies {
   return {
     taskRepository: new InMemoryTaskRepository(),

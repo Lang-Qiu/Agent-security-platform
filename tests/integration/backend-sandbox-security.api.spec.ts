@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { connect, type Socket } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import { AppModule, createAppModule } from "../../backend/src/app.module.ts";
@@ -8,6 +11,7 @@ import {
   createInternalAppServer,
   createAppServer,
   createProductionServers,
+  startProductionServers,
   startServer
 } from "../../backend/src/main.ts";
 import { createRuntimeDependencies } from "../../backend/src/runtime-dependencies.ts";
@@ -34,6 +38,10 @@ import type { SandboxSecurityRequest, SandboxSecurityDecision } from "../../back
 
 const PUBLIC_TOKEN = `sbxcap_v1.${"a".repeat(43)}`;
 const ADMIN_TOKEN = "admin-test-token";
+const PRODUCTION_ADMIN_TOKEN = Buffer.from(
+  "0123456789abcdef0123456789abcdef",
+  "ascii"
+).toString("base64url");
 const CAPABILITY_ID = "capability:123e4567-e89b-42d3-a456-426614174000";
 const COMPOSITION_BINDING = "sandbox-security-production-composition.v1:rule_only";
 const MAX_PUBLIC_BODY_BYTES = 786432;
@@ -400,6 +408,61 @@ function evaluationBodyRequest(
     ""
   ].join("\r\n");
   return sendRawHttpRequest(port, requestHeaders + body);
+}
+
+function productionEvaluationBodyRequest(
+  port: number,
+  token: string,
+  idempotencyKey: string
+): Promise<RawHttpResponse> {
+  const body = JSON.stringify(VALID_EVALUATION);
+  return sendRawHttpRequest(
+    port,
+    [
+      "POST /api/sandbox/security/evaluations HTTP/1.1",
+      "Host: 127.0.0.1",
+      `Authorization: Bearer ${token}`,
+      "Content-Type: application/json",
+      `Idempotency-Key: ${idempotencyKey}`,
+      `Content-Length: ${Buffer.byteLength(body)}`,
+      "Connection: close",
+      "",
+      body
+    ].join("\r\n")
+  );
+}
+
+async function issueProductionCapability(
+  port: number
+): Promise<Readonly<{ capabilityId: string; bearerToken: string }>> {
+  const body = JSON.stringify({
+    schema_version: "sandbox-security-capability-issue-request.v1",
+    subject_id: "subject-restart",
+    scopes: ["sandbox_security:evaluate", "sandbox_security:audit:read"],
+    allowed_stages: ["user_input"],
+    allowed_policy_profile_ids: ["sandbox-security-balanced.v1"],
+    ttl_seconds: 900
+  });
+  const response = await sendRawHttpRequest(
+    port,
+    [
+      "POST /internal/sandbox/security/capabilities HTTP/1.1",
+      "Host: 127.0.0.1",
+      `Authorization: Bearer ${PRODUCTION_ADMIN_TOKEN}`,
+      "Content-Type: application/json",
+      `Content-Length: ${Buffer.byteLength(body)}`,
+      "Connection: close",
+      "",
+      body
+    ].join("\r\n")
+  );
+  assert.equal(response.statusCode, 201);
+  assert.equal(typeof response.json?.data?.capability_id, "string");
+  assert.equal(typeof response.json?.data?.bearer_token, "string");
+  return {
+    capabilityId: response.json.data.capability_id,
+    bearerToken: response.json.data.bearer_token
+  };
 }
 
 test("REQ-SBX-GENERAL-003 all five sandbox security routes succeed through injected services", async () => {
@@ -889,5 +952,146 @@ test("REQ-SBX-GENERAL-003 public bind failure closes an injected module", async 
   } finally {
     await new Promise<void>((resolve) => blocker.close(() => resolve()));
     await module.close();
+  }
+});
+
+test("REQ-SBX-GENERAL-003 production rule_only capability and idempotency survive restart and revoke", async () => {
+  const parent = mkdtempSync(join(tmpdir(), "sandbox-security-p6-t2-"));
+  const databasePath = join(parent, "sandbox-security.sqlite");
+  const environment = {
+    SANDBOX_SECURITY_STORAGE_PATH: databasePath,
+    SANDBOX_SECURITY_DEPLOYMENT_HMAC_KEY: Buffer.from(
+      "0123456789abcdef0123456789abcdef",
+      "ascii"
+    ).toString("base64url"),
+    SANDBOX_SECURITY_ADMIN_BOOTSTRAP_TOKEN: PRODUCTION_ADMIN_TOKEN,
+    SANDBOX_SECURITY_PRODUCTION_MODE: "rule_only"
+  } as const;
+  let first: Awaited<ReturnType<typeof startProductionServers>> | null = null;
+  let second: Awaited<ReturnType<typeof startProductionServers>> | null = null;
+  let third: Awaited<ReturnType<typeof startProductionServers>> | null = null;
+  try {
+    first = await startProductionServers({
+      publicPort: 0,
+      internalPort: 0,
+      publicBindHost: "127.0.0.1",
+      internalBindHost: "127.0.0.1",
+      ingestToken: "a".repeat(64),
+      environment
+    });
+    const firstPublicPort = (first.publicServer.address() as { port: number }).port;
+    const firstInternalPort = (first.internalServer.address() as { port: number }).port;
+    const capability = await issueProductionCapability(firstInternalPort);
+    const initial = await productionEvaluationBodyRequest(
+      firstPublicPort,
+      capability.bearerToken,
+      "restart-idempotency-key-001"
+    );
+    assert.equal(initial.statusCode, 200);
+    await first.close();
+    first = null;
+
+    second = await startProductionServers({
+      publicPort: 0,
+      internalPort: 0,
+      publicBindHost: "127.0.0.1",
+      internalBindHost: "127.0.0.1",
+      ingestToken: "a".repeat(64),
+      environment
+    });
+    const secondPublicPort = (second.publicServer.address() as { port: number }).port;
+    const secondInternalPort = (second.internalServer.address() as { port: number }).port;
+    const replay = await productionEvaluationBodyRequest(
+      secondPublicPort,
+      capability.bearerToken,
+      "restart-idempotency-key-001"
+    );
+    assert.equal(replay.statusCode, 200);
+    assert.deepEqual(replay.json?.data, initial.json?.data);
+
+    const revoke = await sendRawHttpRequest(
+      secondInternalPort,
+      [
+        `POST /internal/sandbox/security/capabilities/${encodeURIComponent(capability.capabilityId)}/revoke HTTP/1.1`,
+        "Host: 127.0.0.1",
+        `Authorization: Bearer ${PRODUCTION_ADMIN_TOKEN}`,
+        "Content-Length: 0",
+        "Connection: close",
+        "",
+        ""
+      ].join("\r\n")
+    );
+    assert.equal(revoke.statusCode, 200);
+    await second.close();
+    second = null;
+
+    third = await startProductionServers({
+      publicPort: 0,
+      internalPort: 0,
+      publicBindHost: "127.0.0.1",
+      internalBindHost: "127.0.0.1",
+      ingestToken: "a".repeat(64),
+      environment
+    });
+    const thirdPublicPort = (third.publicServer.address() as { port: number }).port;
+    const revoked = await productionEvaluationBodyRequest(
+      thirdPublicPort,
+      capability.bearerToken,
+      "restart-idempotency-key-001"
+    );
+    assert.equal(revoked.statusCode, 401);
+  } finally {
+    await first?.close().catch(() => undefined);
+    await second?.close().catch(() => undefined);
+    await third?.close().catch(() => undefined);
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("REQ-SBX-GENERAL-003 production startup rejects a deployment HMAC key mismatch before bind", async () => {
+  const parent = mkdtempSync(join(tmpdir(), "sandbox-security-key-mismatch-"));
+  const databasePath = join(parent, "sandbox-security.sqlite");
+  const baseEnvironment = {
+    SANDBOX_SECURITY_STORAGE_PATH: databasePath,
+    SANDBOX_SECURITY_DEPLOYMENT_HMAC_KEY: Buffer.from(
+      "0123456789abcdef0123456789abcdef",
+      "ascii"
+    ).toString("base64url"),
+    SANDBOX_SECURITY_ADMIN_BOOTSTRAP_TOKEN: PRODUCTION_ADMIN_TOKEN,
+    SANDBOX_SECURITY_PRODUCTION_MODE: "rule_only"
+  } as const;
+  let first: Awaited<ReturnType<typeof startProductionServers>> | null = null;
+  try {
+    first = await startProductionServers({
+      publicPort: 0,
+      internalPort: 0,
+      publicBindHost: "127.0.0.1",
+      internalBindHost: "127.0.0.1",
+      ingestToken: "a".repeat(64),
+      environment: baseEnvironment
+    });
+    await first.close();
+    first = null;
+    const mismatchedEnvironment = {
+      ...baseEnvironment,
+      SANDBOX_SECURITY_DEPLOYMENT_HMAC_KEY: Buffer.from(
+        "fedcba9876543210fedcba9876543210",
+        "ascii"
+      ).toString("base64url")
+    } as const;
+    await assert.rejects(
+      () => startProductionServers({
+        publicPort: 0,
+        internalPort: 0,
+        publicBindHost: "127.0.0.1",
+        internalBindHost: "127.0.0.1",
+        ingestToken: "a".repeat(64),
+        environment: mismatchedEnvironment
+      }),
+      /SANDBOX_SECURITY_STARTUP_FAILED/
+    );
+  } finally {
+    await first?.close().catch(() => undefined);
+    rmSync(parent, { recursive: true, force: true });
   }
 });

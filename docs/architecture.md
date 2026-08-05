@@ -278,6 +278,40 @@ v1 migration 的表、catalog CHECK 约束和三个 retention/ordering indexes �
 `sqlite-migrations.ts`；migration 记录只允许版本 1，metadata 只允许
 `deployment_key_id`。该边界只提供 schema/owner 生命周期，本阶段不实现 capability、
 idempotency 或 audit repository；后续 adapter 通过同一 database port 组合。
+
+### GENERAL-003 P6-T2 production composition and lifecycle
+
+`loadSandboxSecurityConfiguration` 是 GENERAL-003 唯一的四变量规范化入口：
+`SANDBOX_SECURITY_STORAGE_PATH` 必须是绝对路径，HMAC key 是 canonical、无填充
+base64url 且解码为 32 字节，administrator bootstrap token 是 32 个随机字节的
+canonical 无填充 base64url 表示，production mode 只能是
+`rule_only | local | local_and_judge`。规范化
+结果及其 credential copies 不进入日志；mode 在 process lifetime 内保持固定。
+
+真实启动由 `startProductionServers` 负责 fail-before-bind。它先构造 Node runtime
+port（UTC wall clock、monotonic clock、32-byte random copy、UUID v4 IDs、
+cancel-once timeout/interval），然后按以下顺序组合：
+
+1. HMAC service 与单一 audit projector；
+2. SQLite owner 的 WAL、migration、deployment-key metadata 和 quick-check；
+3. capability/idempotency/audit 三个 repository；
+4. maintenance 的 in-progress recovery、startup cleanup 与一个 unref hourly timer；
+5. production gateway。gateway 自己通过 GENERAL-001/002 两个公开 index 构造
+   canonical fingerprint service 和 Engine，composition root 不深导入 Engine 内部；
+6. services/controllers 与一个共享 `SandboxSecurityModule`，将 gateway 的
+   `composition_binding` 原样传入 admission/audit graph；
+7. public 与 internal listener bind。
+
+传给 GENERAL-002 的 runtime 是 `toSandboxSecurityEngineRuntime(runtime)` 生成的
+冻结四键投影（`now`、`nextDecisionId`、`monotonicNowMs`、`scheduleTimeout`），
+不会泄漏 backend-only entropy、capability IDs 或 interval controls。SQLite owner 和
+maintenance 由 module 唯一持有；module close 先取消 maintenance，再 checkpoint/close
+数据库，即使第一步抛错也会继续第二步并聚合错误。
+
+partial startup 同样遵循清理边界：public bind 成功而 internal bind 失败时先停止
+public listener，再关闭 module/database；public bind 失败或 Engine/migration/recovery
+失败时不留下任何 listener、timer 或数据库句柄。正常 shutdown 先停止两个 listener
+接收并等待 in-flight handlers，最后执行 maintenance -> database 的 reverse order。
 ## REQ-07 Backend Engine Adapter Baseline
 
 当前 backend 在 `task-center` 内新增了一层稳定的引擎接入边界：

@@ -363,6 +363,46 @@ Monitor 与 Track1 兼容适配器，以及 fail-closed 的 finding qualificatio
 Sandbox Security Core 当前仍未包含生产级通用 detector、sanitizer 和 external Judge；
 这些 GENERAL-002 能力由相邻的 `security-production/` 模块
 组合，冻结 Core 仅通过既有契约被调用。
+
+### GENERAL-003 production startup
+
+生产后端启动前必须提供且只读取以下四个 GENERAL-003 配置项：
+
+- `SANDBOX_SECURITY_STORAGE_PATH`：绝对路径；父目录必须预先存在、为真实的
+  `0700`（或更严格）目录，数据库及 `-wal`/`-shm` 文件必须是 `0600` 普通文件。
+- `SANDBOX_SECURITY_DEPLOYMENT_HMAC_KEY`：无填充 canonical base64url，解码后
+  必须正好 32 字节。
+- `SANDBOX_SECURITY_ADMIN_BOOTSTRAP_TOKEN`：32 个随机字节的无填充 canonical
+  base64url 表示；该值只用于管理员认证，不会写入日志或数据库。
+- `SANDBOX_SECURITY_PRODUCTION_MODE`：固定为 `rule_only`、`local` 或
+  `local_and_judge`，进程生命周期内不可切换。
+
+`startProductionServers` 先完成配置规范化、HMAC/projector、SQLite migration 和
+完整性检查、repository/maintenance recovery，再由 production gateway 构造
+GENERAL-002 Engine，最后才绑定 public/internal listener。任何缺失值、相对路径、
+HMAC/database identity mismatch、migration/recovery/Engine 构造失败都会在 bind 前
+fail-closed；`local` 与 `local_and_judge` 还必须满足 GENERAL-002 的私有 provider
+配置先决条件。普通测试通过 `createProductionServers` 显式注入同一个 module，不能
+借用隐式 test/default module。
+
+关闭时两个 listener 先停止接收并等待 in-flight handler 完成，随后按
+maintenance -> SQLite checkpoint/close 的逆序释放资源；partial bind 和任意 close
+错误都会继续执行其余清理并以聚合错误报告。重复 close 不会重复释放资源。
+
+配置与启动验证：
+
+```bash
+SANDBOX_SECURITY_STORAGE_PATH=/var/lib/agent-security/sandbox-security.sqlite \
+SANDBOX_SECURITY_DEPLOYMENT_HMAC_KEY='<43-char-unpadded-base64url>' \
+SANDBOX_SECURITY_ADMIN_BOOTSTRAP_TOKEN='<43-char-unpadded-base64url>' \
+SANDBOX_SECURITY_PRODUCTION_MODE=rule_only \
+TRACK1_INGEST_TOKEN='<ingest-token>' \
+node --experimental-strip-types backend/src/main.ts
+
+npm run test:shared
+npm run test:backend
+npm run typecheck:backend
+```
 # Track 1 OpenClaw Evidence Workflow
 
 The Track 1 path uses Node.js `>=22.19.0`, `pnpm@10.0.0`, OpenClaw

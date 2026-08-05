@@ -3,7 +3,13 @@ import { pathToFileURL } from "node:url";
 
 import { AppModule, createAppModule } from "./app.module.ts";
 import { InternalAppModule } from "./internal-app.module.ts";
-import type { SandboxSecurityModule } from "./modules/sandbox-security/sandbox-security.module.ts";
+import {
+  createSandboxSecurityProductionModule,
+  type SandboxSecurityModule
+} from "./modules/sandbox-security/sandbox-security.module.ts";
+import {
+  loadSandboxSecurityConfiguration
+} from "./modules/sandbox-security/sandbox-security.config.ts";
 import {
   createRuntimeDependencies,
   type RuntimeDependencies
@@ -39,53 +45,57 @@ export interface ProductionServers {
   close: () => Promise<void>;
 }
 
-export function createProductionServers(options?: {
-  deps?: RuntimeDependencies;
-  ingestToken?: string;
-  sandboxSecurityModule?: SandboxSecurityModule;
-}): ProductionServers {
-  const deps = options?.deps ?? createRuntimeDependencies();
-  // R14 (Phase 2 rework review P1 #5): read TRACK1_INGEST_TOKEN (the env var
-  // mandated by the deployment contract and Phase 4/7 plans). Do NOT fall
-  // back to the legacy CAMPAIGN_INGEST_TOKEN — the drift caused production
-  // deployments to run with an empty token, silently bypassing auth.
-  const ingestToken =
-    options?.ingestToken ??
-    process.env.TRACK1_INGEST_TOKEN ??
-    "";
-
-  const appModule = createAppModule(deps, options?.sandboxSecurityModule);
+export function createProductionServers(input: Readonly<{
+  deps: RuntimeDependencies;
+  ingestToken: string;
+  sandboxSecurityModule: SandboxSecurityModule;
+}>): ProductionServers {
+  const deps = input.deps;
+  const appModule = createAppModule(deps, input.sandboxSecurityModule);
   const internalAppModule = new InternalAppModule({
     campaignRepository: deps.campaignRepository,
-    ingestToken,
+    ingestToken: input.ingestToken,
     taskRepository: deps.taskRepository,
-    sandboxSecurityModule: options?.sandboxSecurityModule
+    sandboxSecurityModule: input.sandboxSecurityModule
   });
 
   const publicServer = createAppServer(appModule);
   const internalServer = createInternalAppServer(internalAppModule);
-
-  let moduleClosed = false;
-  const closeSandboxSecurityModule = async (): Promise<void> => {
-    if (moduleClosed || options?.sandboxSecurityModule === undefined) return;
-    moduleClosed = true;
-    await options.sandboxSecurityModule.close();
-  };
+  let closePromise: Promise<void> | null = null;
 
   return {
     publicServer,
     internalServer,
     internalAppModule,
     deps,
-    close: () =>
-      Promise.all([
-        new Promise<void>((resolve, reject) => {
-          publicServer.close((err) => (err ? reject(err) : resolve()));
-        }),
-        new Promise<void>((resolve, reject) => {
-          internalServer.close((err) => (err ? reject(err) : resolve()));
-        })
-      ]).then(closeSandboxSecurityModule)
+    close: () => {
+      if (closePromise !== null) return closePromise;
+      closePromise = (async () => {
+        const errors: unknown[] = [];
+        const closeServer = (server: Server): Promise<void> => {
+          if (!server.listening) return Promise.resolve();
+          return new Promise<void>((resolve, reject) => {
+            server.close((error) => (error ? reject(error) : resolve()));
+          });
+        };
+        const listenerResults = await Promise.allSettled([
+          closeServer(publicServer),
+          closeServer(internalServer)
+        ]);
+        for (const result of listenerResults) {
+          if (result.status === "rejected") errors.push(result.reason);
+        }
+        try {
+          await input.sandboxSecurityModule.close();
+        } catch (error) {
+          errors.push(error);
+        }
+        if (errors.length > 0) {
+          throw new AggregateError(errors, "production server close failed");
+        }
+      })();
+      return closePromise;
+    }
   };
 }
 
@@ -139,6 +149,7 @@ export async function startProductionServers(options: {
   deps?: RuntimeDependencies;
   ingestToken?: string;
   sandboxSecurityModule?: SandboxSecurityModule;
+  environment?: Readonly<Record<string, string | undefined>>;
 } = {}): Promise<ProductionServerHandles> {
   const publicPort = options.publicPort ?? Number(process.env.PORT ?? 3000);
   const internalPort =
@@ -153,57 +164,70 @@ export async function startProductionServers(options: {
   const internalBindHost =
     options.internalBindHost ?? process.env.INTERNAL_BIND_HOST ?? "0.0.0.0";
 
-  const servers = createProductionServers({
-    deps: options.deps,
-    ingestToken: options.ingestToken,
-    sandboxSecurityModule: options.sandboxSecurityModule
-  });
-  let sandboxSecurityModuleClosed = false;
-  const closeInjectedSandboxSecurityModule = async (): Promise<void> => {
-    if (
-      sandboxSecurityModuleClosed ||
-      options.sandboxSecurityModule === undefined
-    ) {
-      return;
-    }
-    sandboxSecurityModuleClosed = true;
+  const deps = options.deps ?? createRuntimeDependencies();
+  const ingestToken =
+    options.ingestToken ?? process.env.TRACK1_INGEST_TOKEN ?? "";
+  let sandboxSecurityModule = options.sandboxSecurityModule;
+  if (sandboxSecurityModule === undefined) {
+    const configuration = loadSandboxSecurityConfiguration(
+      options.environment ?? process.env
+    );
+    sandboxSecurityModule = await createSandboxSecurityProductionModule({
+      configuration
+    });
+  }
+  let servers: ProductionServers;
+  try {
+    servers = createProductionServers({
+      deps,
+      ingestToken,
+      sandboxSecurityModule
+    });
+  } catch (error) {
     try {
-      await options.sandboxSecurityModule.close();
+      await sandboxSecurityModule.close();
     } catch {
-      // Preserve the startup bind error while attempting best-effort cleanup.
+      // Preserve the composition error while attempting module cleanup.
     }
-  };
+    throw error;
+  }
+
+  const bind = (server: Server, port: number, host: string): Promise<void> =>
+    new Promise<void>((resolve, reject) => {
+      const onError = (error: Error) => {
+        server.removeListener("error", onError);
+        reject(error);
+      };
+      server.once("error", onError);
+      server.listen(port, host, () => {
+        server.removeListener("error", onError);
+        resolve();
+      });
+    });
 
   // Await both listen calls so the servers are fully bound before returning.
   try {
-    await new Promise<void>((resolve, reject) => {
-      servers.publicServer.once("error", reject);
-      servers.publicServer.listen(publicPort, publicBindHost, () => {
-        servers.publicServer.removeListener("error", reject);
-        resolve();
-      });
-    });
+    await bind(servers.publicServer, publicPort, publicBindHost);
   } catch (err) {
-    await closeInjectedSandboxSecurityModule();
+    try {
+      await servers.close();
+    } catch {
+      // Preserve the bind error while attempting every cleanup step.
+    }
     throw err;
   }
   try {
-    await new Promise<void>((resolve, reject) => {
-      servers.internalServer.once("error", reject);
-      servers.internalServer.listen(internalPort, internalBindHost, () => {
-        servers.internalServer.removeListener("error", reject);
-        resolve();
-      });
-    });
+    await bind(servers.internalServer, internalPort, internalBindHost);
   } catch (err) {
     // R29 (Phase 2 rework review 3 P2 #5): close the already-started public
     // server before rethrowing so the caller does not leak a listening
     // socket. Without this, an EADDRINUSE on the internal port leaves the
     // public server bound with no handle for the caller to close it.
-    await new Promise<void>((resolve) => {
-      servers.publicServer.close(() => resolve());
-    });
-    await closeInjectedSandboxSecurityModule();
+    try {
+      await servers.close();
+    } catch {
+      // Preserve the bind error while attempting every cleanup step.
+    }
     throw err;
   }
 

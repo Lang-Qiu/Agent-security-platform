@@ -18,6 +18,66 @@ import type {
   SandboxSecurityIdempotencyMaintenance,
   SandboxSecurityTokenBucket
 } from "./sandbox-security.types.ts";
+import {
+  createSandboxSecurityCapabilityAuthenticator
+} from "./capability-authorizer.ts";
+import {
+  createSandboxSecurityCapabilityService
+} from "./capability.service.ts";
+import {
+  createSandboxSecurityEvaluationService
+} from "./evaluation.service.ts";
+import { createSandboxSecurityAuditService } from "./audit.service.ts";
+import {
+  createSandboxSecurityCapabilityLimiterRegistry,
+  createSandboxSecurityTokenBucket
+} from "./token-bucket.ts";
+import { createSandboxSecurityEngineConcurrencyLimiter } from "./engine-concurrency.ts";
+import {
+  createSandboxSecurityHmacService
+} from "./hmac.ts";
+import {
+  createSandboxSecurityProductionEvaluationGateway
+} from "./adapters/production-evaluation.gateway.ts";
+import {
+  openSandboxSecuritySqliteDatabase
+} from "./adapters/sqlite/sqlite-database.ts";
+import {
+  createSqliteSandboxSecurityCapabilityRepository
+} from "./adapters/sqlite/sqlite-capability.repository.ts";
+import {
+  createSqliteSandboxSecurityIdempotencyRepository,
+  createSandboxSecurityIdempotencyMaintenance
+} from "./adapters/sqlite/sqlite-idempotency.repository.ts";
+import {
+  createSqliteSandboxSecurityAuditRepository
+} from "./adapters/sqlite/sqlite-audit.repository.ts";
+import {
+  createSandboxSecurityAuditProjector
+} from "./audit-projector.ts";
+import {
+  toSandboxSecurityEngineRuntime
+} from "./ports/runtime.ts";
+import type { SandboxSecurityConfiguration } from "./sandbox-security.config.ts";
+import { createSandboxSecurityNodeRuntimePort } from "./sandbox-security.config.ts";
+
+const STARTUP_ERROR = "SANDBOX_SECURITY_STARTUP_FAILED";
+const CONFIGURATION_ERROR = "SANDBOX_SECURITY_CONFIGURATION_INVALID";
+const ENGINE_CONFIGURATION_ERROR = "sandbox_security_production_config_invalid";
+
+function boundedStartupError(cause: unknown): Error {
+  const causeName =
+    cause !== null && typeof cause === "object" && "name" in cause
+      ? (cause as { name?: unknown }).name
+      : undefined;
+  const code = causeName === ENGINE_CONFIGURATION_ERROR
+    ? CONFIGURATION_ERROR
+    : STARTUP_ERROR;
+  const error = new Error(code, { cause });
+  error.name = code;
+  (error as Error & { code: string }).code = code;
+  return error;
+}
 
 export {
   createSandboxSecuritySimulationEvaluationRequest
@@ -110,6 +170,146 @@ export interface SandboxSecurityModule {
   close(): Promise<void>;
 }
 
+export async function createSandboxSecurityProductionModule(input: Readonly<{
+  configuration: SandboxSecurityConfiguration;
+  runtime?: SandboxSecurityRuntimePort;
+}>): Promise<SandboxSecurityModule> {
+  if (
+    input === null ||
+    typeof input !== "object" ||
+    input.configuration === null ||
+    typeof input.configuration !== "object"
+  ) {
+    throw boundedStartupError(new TypeError("sandbox security production configuration is required"));
+  }
+
+  const runtime = input.runtime ?? createSandboxSecurityNodeRuntimePort();
+  const configuration = input.configuration;
+  const hmac = createSandboxSecurityHmacService(
+    new Uint8Array(configuration.deployment_hmac_key)
+  );
+  const auditProjector = createSandboxSecurityAuditProjector();
+  let database: SqliteSandboxSecurityDatabase | null = null;
+  let maintenance: SandboxSecurityIdempotencyMaintenance | null = null;
+
+  const cleanup = async (): Promise<void> => {
+    const errors: unknown[] = [];
+    if (maintenance !== null) {
+      try {
+        maintenance.close();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (database !== null) {
+      try {
+        database.checkpointAndClose();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    if (errors.length > 0) {
+      throw new AggregateError(errors, "sandbox security production cleanup failed");
+    }
+  };
+
+  try {
+    database = openSandboxSecuritySqliteDatabase({
+      path: configuration.storage_path,
+      deployment_key_id: hmac.deploymentKeyId(),
+      now: () => runtime.now()
+    });
+    const capabilityRepository = createSqliteSandboxSecurityCapabilityRepository({
+      database
+    });
+    const idempotencyRepository = createSqliteSandboxSecurityIdempotencyRepository({
+      database
+    });
+    const auditRepository = createSqliteSandboxSecurityAuditRepository({ database });
+    maintenance = createSandboxSecurityIdempotencyMaintenance({
+      repository: idempotencyRepository,
+      runtime,
+      audit_projector: auditProjector
+    });
+    const gateway = await createSandboxSecurityProductionEvaluationGateway({
+      runtime: toSandboxSecurityEngineRuntime(runtime),
+      production_mode: configuration.production_mode,
+      hmac
+    });
+    const capabilityLimiters = createSandboxSecurityCapabilityLimiterRegistry({
+      runtime,
+      capacity: 3,
+      refill_tokens_per_second: 0.2,
+      sweep_every_admissions: 256,
+      idle_expiry_ms: 3_600_000
+    });
+    const authenticator = createSandboxSecurityCapabilityAuthenticator({
+      repository: capabilityRepository,
+      hmac,
+      production_mode: configuration.production_mode,
+      bootstrap_admin_token: configuration.admin_bootstrap_token,
+      now: () => runtime.now()
+    });
+    const capabilityService = createSandboxSecurityCapabilityService({
+      repository: capabilityRepository,
+      hmac,
+      production_mode: configuration.production_mode,
+      runtime,
+      audit_projector: auditProjector,
+      capability_limiters: capabilityLimiters
+    });
+    const auditService = createSandboxSecurityAuditService({
+      repository: auditRepository,
+      hmac,
+      maintenance,
+      runtime,
+      audit_projector: auditProjector
+    });
+    const evaluationService = createSandboxSecurityEvaluationService({
+      authorizer: authenticator,
+      hmac,
+      idempotency_repository: idempotencyRepository,
+      maintenance,
+      concurrency: createSandboxSecurityEngineConcurrencyLimiter(4),
+      gateway,
+      runtime,
+      audit_projector: auditProjector
+    });
+    const globalBucket = createSandboxSecurityTokenBucket({
+      capacity: 10,
+      refill_tokens_per_second: 1,
+      initial_monotonic_ms: runtime.monotonicNowMs()
+    });
+    const administratorBucket = createSandboxSecurityTokenBucket({
+      capacity: 10,
+      refill_tokens_per_second: 1,
+      initial_monotonic_ms: runtime.monotonicNowMs()
+    });
+    return createSandboxSecurityModule({
+      database,
+      composition_binding: gateway.composition_binding,
+      maintenance,
+      authenticator,
+      evaluation_service: evaluationService,
+      capability_service: capabilityService,
+      audit_service: auditService,
+      audit_repository: auditRepository,
+      audit_projector: auditProjector,
+      global_bucket: globalBucket,
+      administrator_bucket: administratorBucket,
+      capability_limiters: capabilityLimiters,
+      runtime
+    });
+  } catch (error) {
+    try {
+      await cleanup();
+    } catch {
+      // Preserve the bounded startup error while continuing all cleanup.
+    }
+    throw boundedStartupError(error);
+  }
+}
+
 export interface SandboxSecurityModuleDependencies {
   database: SqliteSandboxSecurityDatabase;
   composition_binding: string;
@@ -163,9 +363,21 @@ export function createSandboxSecurityModule(
     adminController,
     async close(): Promise<void> {
       if (closed) return;
+      const errors: unknown[] = [];
+      try {
+        dependencies.maintenance.close();
+      } catch (error) {
+        errors.push(error);
+      }
+      try {
+        dependencies.database.checkpointAndClose();
+      } catch (error) {
+        errors.push(error);
+      }
+      if (errors.length > 0) {
+        throw new AggregateError(errors, "sandbox security module close failed");
+      }
       closed = true;
-      dependencies.maintenance.close();
-      dependencies.database.checkpointAndClose();
     }
   };
 }

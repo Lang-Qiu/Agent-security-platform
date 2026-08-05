@@ -122,9 +122,10 @@ attempted and its expected hermetic fail-closed result reported honestly.
 - The written specification is approved after independent review.
 - The Master and six Phase implementation plans passed final independent review
   with zero Critical, Important, or Minor findings after iterative correction.
-- Implementation has completed Phase 6 / P6-T1 and Phase 5 / P5-T4, including
-  the production evaluation gateway, strict HTTP admission, normal/abnormal
-  close handling, response-safe cleanup, the
+- Implementation has completed Phase 6 / P6-T2 and P6-T1 and Phase 5 / P5-T4,
+  including validated production configuration/lifecycle, the production
+  evaluation gateway, strict HTTP admission, normal/abnormal close handling,
+  response-safe cleanup, the
   ordered public and administrator controller gates, one injected module
   instance shared by both listeners, and real HTTP integration coverage.
   Phase 4 / P4-T3
@@ -132,12 +133,12 @@ attempted and its expected hermetic fail-closed result reported honestly.
   orchestration, idempotency replay/conflict handling, Engine-slot lifecycle,
   interruption convergence, and the necessary changed-correlation SQLite
   conflict correction.
-- P5-T1 through P5-T4 and P6-T1 focused and independent review gates are
-  green; P6-T2 is next.
+- P5-T1 through P5-T4 and P6-T1 through P6-T2 focused and independent review
+  gates are green; P6-T3 is next.
 - The P6 retry amendment is complete through Task 6 documentation and
   repository gates, but no fresh full 300-input P6 capture has been run.
 - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`; neither
   GENERAL-002 nor GENERAL-003 is `VERIFIED`.
 - Continue exactly one Phase/task at a time using RED -> GREEN -> review ->
-  fix/re-review -> document evidence -> exact commit -> stop. P6-T2 is next
-  after the P6-T1 commit.
+  fix/re-review -> document evidence -> exact commit -> stop. P6-T3 is next
+  after the P6-T2 commit.

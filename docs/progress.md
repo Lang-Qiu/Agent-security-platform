@@ -210,6 +210,61 @@
     GENERAL-003 is not `VERIFIED`
 - next: proceed to P6-T2 validated configuration and production lifecycle
 
+## 2026-08-06 - REQ-SBX-GENERAL-003 P6-T2 validated configuration and production lifecycle
+
+- phase/task: Phase 6 / P6-T2 Validated Configuration and Production Lifecycle
+- status: `COMPLETE_PENDING_P6_T3`
+- implementation:
+  - added strict four-variable configuration loading for absolute private
+    SQLite paths, canonical unpadded 32-byte HMAC/admin credentials, and the
+    fixed `rule_only | local | local_and_judge` mode set
+  - added the Node runtime port for UTC/monotonic clocks, defensive entropy,
+    UUID v4 IDs, cancel-once timeouts, and one unref'ed cancel-once interval
+  - composed HMAC, projector, SQLite owner, repositories, maintenance
+    recovery/cleanup, production gateway, services, and controllers in the
+    approved order with bounded startup errors and complete failure cleanup
+  - refactored startup to validate and compose before either listener binds;
+    explicit injected `createProductionServers` keeps tests free of hidden
+    defaults, while partial bind and close paths drain listeners and aggregate
+    cleanup errors
+  - documented configuration, local startup prerequisites, database
+    permissions, production composition, and reverse shutdown order
+- files:
+  - `backend/src/modules/sandbox-security/sandbox-security.config.ts`
+  - `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+  - `backend/src/runtime-dependencies.ts`
+  - `backend/src/main.ts`
+  - `backend/tests/runtime-dependencies.spec.ts`
+  - `backend/tests/main.spec.ts`
+  - `tests/integration/backend-sandbox-security.api.spec.ts`
+  - `README.md`
+  - `docs/architecture.md`
+- tests:
+  - runtime/configuration suite is green (`8/8`)
+  - main startup/lifecycle suite is green (`15/15`)
+  - real HTTP/restart integration suite is green (`16/16`)
+  - combined main/runtime focused regression is green (`23/23`)
+  - shared suite is green (`218/218`); Engine suites are green (`1030/1030`
+    core, `439/439` production)
+  - `npm run test:backend` is `485/487`; the two failures remain the existing
+    Semgrep `ENOENT` and task-engine asset expectation drift
+  - backend typecheck reports only existing campaign/task-center/test baseline
+    errors; no P6-T2 sandbox-security error
+  - `git diff --check` passes
+- TDD/reviews:
+  - fail-before-bind, canonical credential, runtime, lifecycle, restart, and
+    close-aggregation RED cases were verified before implementation; the
+    zero-argument and close-error review regressions were run RED before their
+    fixes and are now GREEN
+  - independent specification and quality re-review: PASS with `0 Critical / 0
+    Important / 0 Minor`
+- boundary:
+  - privacy/static repository gates and final durable-document cross-check
+    remain P6-T3/P6-T4
+  - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
+    GENERAL-003 is not `VERIFIED`
+- next: proceed to P6-T3 privacy sentinel and permanent repository gates
+
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P4-T3 evaluation orchestration and idempotency
 
 - phase/task: Phase 4 / P4-T3 Evaluation Orchestration and Idempotency
