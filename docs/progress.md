@@ -8587,7 +8587,7 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P2-T3 capability authorization
 
 - phase/task: Phase 2 / P2-T3 capability DTO, authentication, and authorization
-- status: `IMPLEMENTED_PENDING_REVIEW`
+- status: `COMPLETE_PENDING_P2_T4`
 - implementation:
   - added strict capability issue normalization with catalog ordering, exact
     own-data checks, dense arrays, grant matrix enforcement, and 60..3600
@@ -8599,10 +8599,22 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
     digest comparison
 - tests:
   - focused P2-T3 capability suite is green (`7/7`)
-  - `npm run test:backend` includes the focused capability suite; existing
-    repository typecheck and semgrep-related failures remain unrelated
+  - `npm run test:repo` passed `321/321`; focused capability plus HMAC suites
+    passed `17/17`
+  - `npm run test:backend` includes the focused capability suite; its two
+    existing Semgrep/asset-scan expectation failures remain unrelated
+- TDD evidence: the focused suite was run RED against the missing module
+  exports, then GREEN after the minimal DTO/authenticator implementation.
+- specification review: PASS with `0 Critical / 0 Important / 0 Minor`.
+- quality review: PASS with `0 Critical / 0 Important / 0 Minor`.
+- typecheck boundary: `npm run typecheck:backend` still reports only existing
+  campaign/task-center/test baseline errors; no P2-T3 source error was added.
+- commit: `018f1cc feat(backend): authorize sandbox security capabilities`
 - boundary:
   - HTTP mapping, revoke side effects, limiter removal, and capability
     persistence stay with their later planned Phase 4/5 tasks
   - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
     GENERAL-003 is not `VERIFIED`
+  - GENERAL-003 remains below `IMPLEMENTED_PENDING_GLOBAL_P6_GATE` until the
+    independent GENERAL-002 P6 evidence gate closes
+- next: P2-T4 monotonic token buckets and Engine concurrency slots
