@@ -265,6 +265,46 @@
     GENERAL-003 is not `VERIFIED`
 - next: proceed to P6-T3 privacy sentinel and permanent repository gates
 
+## 2026-08-06 - REQ-SBX-GENERAL-003 P6-T3 privacy sentinel and permanent repository gates
+
+- phase/task: Phase 6 / P6-T3 Privacy Sentinel and Permanent Repository Gates
+- status: `COMPLETE_PENDING_P6_T4`
+- implementation:
+  - added a real `rule_only` HTTP privacy sentinel that submits raw content,
+    exercises successful, audit, and malformed responses, then scans response
+    logs, SQLite, WAL/SHM, and every temporary artifact for literal, base64,
+    base64url, hex, NFKC, and case-folded leakage
+  - extended the permanent backend repository gate with exact public Engine
+    import allowlists, listener ownership, registration coverage, audit-key and
+    cleanup boundaries, caller-option rejection, and exact SQLite table/index/
+    ordered CHECK catalogs
+  - added one-forbidden-mutation regressions for every static boundary,
+    including shared/backend/integration spec registration and `policy_rules`
+- files:
+  - `tests/repository/sandbox-security-backend-spec.spec.ts`
+  - `tests/integration/backend-sandbox-security.api.spec.ts`
+- tests:
+  - focused repository/integration/privacy suite is green (`30/30`;
+    repository `13/13`, integration `17/17`, privacy `1/1`)
+  - `npm run test:repo` is green (`333/333`)
+  - `npm run test:shared` is green (`218/218`)
+  - Engine suites are green (`1030/1030` core, `439/439` production)
+  - `npm run test:backend` is `487/489`; the two failures remain the existing
+    Semgrep `ENOENT` and task-engine asset expectation drift
+  - shared typecheck is green; backend typecheck retains only existing
+    campaign/task-center/test baseline errors
+  - `git diff --check` passes
+- TDD/reviews:
+  - each registration, index-definition, exact-CHECK, and `policy_rules`
+    mutation was run RED before the minimal gate correction and GREEN after it
+  - independent specification re-review and quality review: PASS with `0
+    Critical / 0 Important / 0 Minor`
+- boundary:
+  - final durable-document cross-check and global P6 verification remain P6-T4
+  - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
+    GENERAL-003 is not `VERIFIED`
+- next: proceed to P6-T4 durable documentation and final verification
+
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P4-T3 evaluation orchestration and idempotency
 
 - phase/task: Phase 4 / P4-T3 Evaluation Orchestration and Idempotency

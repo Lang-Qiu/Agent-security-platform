@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -416,6 +416,15 @@ function productionEvaluationBodyRequest(
   idempotencyKey: string
 ): Promise<RawHttpResponse> {
   const body = JSON.stringify(VALID_EVALUATION);
+  return productionEvaluationRawBodyRequest(port, token, idempotencyKey, body);
+}
+
+function productionEvaluationRawBodyRequest(
+  port: number,
+  token: string,
+  idempotencyKey: string,
+  body: string
+): Promise<RawHttpResponse> {
   return sendRawHttpRequest(
     port,
     [
@@ -433,13 +442,14 @@ function productionEvaluationBodyRequest(
 }
 
 async function issueProductionCapability(
-  port: number
+  port: number,
+  allowedStages: readonly string[] = ["user_input"]
 ): Promise<Readonly<{ capabilityId: string; bearerToken: string }>> {
   const body = JSON.stringify({
     schema_version: "sandbox-security-capability-issue-request.v1",
     subject_id: "subject-restart",
     scopes: ["sandbox_security:evaluate", "sandbox_security:audit:read"],
-    allowed_stages: ["user_input"],
+    allowed_stages: [...allowedStages],
     allowed_policy_profile_ids: ["sandbox-security-balanced.v1"],
     ttl_seconds: 900
   });
@@ -463,6 +473,73 @@ async function issueProductionCapability(
     capabilityId: response.json.data.capability_id,
     bearerToken: response.json.data.bearer_token
   };
+}
+
+function sentinelSubmission(sentinel: string): Readonly<Record<string, unknown>> {
+  return {
+    schema_version: "sandbox-security-request.v1",
+    request_id: "privacy-sentinel-request-001",
+    stage: "tool_request",
+    policy_profile_id: "sandbox-security-balanced.v1",
+    content_items: [
+      {
+        source_id: `model-${sentinel}`,
+        claimed_source_type: "model_output",
+        media_type: "application/json",
+        value: { message: sentinel },
+        provenance_ref: `source://client/${sentinel}/output`
+      },
+      {
+        source_id: `user-${sentinel}`,
+        claimed_source_type: "user_input",
+        media_type: "text/plain",
+        value: sentinel,
+        provenance_ref: `source://client/${sentinel}/input`
+      }
+    ],
+    tool_request: {
+      call_id: `call-${sentinel}`,
+      tool_name: "read_file",
+      target: `target-${sentinel}`,
+      arguments: { payload: sentinel }
+    }
+  };
+}
+
+function assertSentinelAbsent(bytes: Uint8Array, sentinel: string): void {
+  const source = Buffer.from(bytes);
+  const literal = Buffer.from(sentinel, "utf8");
+  const base64 = Buffer.from(sentinel, "utf8").toString("base64");
+  const base64url = Buffer.from(sentinel, "utf8").toString("base64url");
+  const hex = Buffer.from(sentinel, "utf8").toString("hex");
+  for (const [label, encoded] of [
+    ["literal", literal],
+    ["base64", Buffer.from(base64)],
+    ["base64url", Buffer.from(base64url)],
+    ["hex", Buffer.from(hex)]
+  ] as const) {
+    assert.equal(source.includes(encoded), false, `raw sentinel ${label} leaked to a managed surface`);
+  }
+  const text = source.toString("utf8");
+  const foldedSentinel = sentinel.normalize("NFKC").toLocaleLowerCase();
+  assert.equal(
+    text.normalize("NFKC").toLocaleLowerCase().includes(foldedSentinel),
+    false,
+    "case-folded/NFKC raw sentinel leaked to a managed surface"
+  );
+}
+
+function readSandboxSecurityArtifactBytes(parent: string): Buffer[] {
+  const bytes: Buffer[] = [];
+  for (const entry of readdirSync(parent, { withFileTypes: true })) {
+    const path = join(parent, entry.name);
+    if (entry.isDirectory()) {
+      bytes.push(...readSandboxSecurityArtifactBytes(path));
+    } else if (entry.isFile()) {
+      bytes.push(readFileSync(path));
+    }
+  }
+  return bytes;
 }
 
 test("REQ-SBX-GENERAL-003 all five sandbox security routes succeed through injected services", async () => {
@@ -1044,6 +1121,89 @@ test("REQ-SBX-GENERAL-003 production rule_only capability and idempotency surviv
     await first?.close().catch(() => undefined);
     await second?.close().catch(() => undefined);
     await third?.close().catch(() => undefined);
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
+test("REQ-SBX-GENERAL-003 raw sentinels never enter managed durable surfaces", async () => {
+  const sentinel = "General003-Raw-Secret-9f4b";
+  const parent = mkdtempSync(join(tmpdir(), "sandbox-security-p6-t3-privacy-"));
+  const databasePath = join(parent, "sandbox-security.sqlite");
+  const environment = {
+    SANDBOX_SECURITY_STORAGE_PATH: databasePath,
+    SANDBOX_SECURITY_DEPLOYMENT_HMAC_KEY: Buffer.from(
+      "0123456789abcdef0123456789abcdef",
+      "ascii"
+    ).toString("base64url"),
+    SANDBOX_SECURITY_ADMIN_BOOTSTRAP_TOKEN: PRODUCTION_ADMIN_TOKEN,
+    SANDBOX_SECURITY_PRODUCTION_MODE: "rule_only"
+  } as const;
+  let production: Awaited<ReturnType<typeof startProductionServers>> | null = null;
+  const responseLogs: Buffer[] = [];
+  try {
+    production = await startProductionServers({
+      publicPort: 0,
+      internalPort: 0,
+      publicBindHost: "127.0.0.1",
+      internalBindHost: "127.0.0.1",
+      ingestToken: "a".repeat(64),
+      environment
+    });
+    const publicPort = (production.publicServer.address() as { port: number }).port;
+    const internalPort = (production.internalServer.address() as { port: number }).port;
+    const capability = await issueProductionCapability(
+      internalPort,
+      ["user_input", "model_output", "tool_request"]
+    );
+
+    const valid = await productionEvaluationRawBodyRequest(
+      publicPort,
+      capability.bearerToken,
+      "privacy-sentinel-valid-001",
+      JSON.stringify(sentinelSubmission(sentinel))
+    );
+    responseLogs.push(Buffer.from(JSON.stringify(valid), "utf8"));
+    assert.equal(valid.statusCode, 200);
+
+    const audit = await sendRawHttpRequest(
+      publicPort,
+      [
+        "GET /api/sandbox/security/audit-events HTTP/1.1",
+        "Host: 127.0.0.1",
+        `Authorization: Bearer ${capability.bearerToken}`,
+        "Connection: close",
+        "",
+        ""
+      ].join("\r\n")
+    );
+    responseLogs.push(Buffer.from(JSON.stringify(audit), "utf8"));
+    assert.equal(audit.statusCode, 200);
+
+    const malformed = JSON.stringify({
+      schema_version: "sandbox-security-request.v1",
+      request_id: "privacy-sentinel-malformed-001",
+      content_items: [{ value: sentinel }]
+    }).slice(0, -1);
+    const failed = await productionEvaluationRawBodyRequest(
+      publicPort,
+      capability.bearerToken,
+      "privacy-sentinel-malformed-001",
+      malformed
+    );
+    responseLogs.push(Buffer.from(JSON.stringify(failed), "utf8"));
+    assert.equal(failed.statusCode, 400);
+
+    await production.close();
+    production = null;
+
+    for (const bytes of responseLogs) {
+      assertSentinelAbsent(bytes, sentinel);
+    }
+    for (const bytes of readSandboxSecurityArtifactBytes(parent)) {
+      assertSentinelAbsent(bytes, sentinel);
+    }
+  } finally {
+    await production?.close().catch(() => undefined);
     rmSync(parent, { recursive: true, force: true });
   }
 });
