@@ -158,6 +158,7 @@ export interface SandboxSecurityBenchmarkJudgeProtocolDispatch {
 }
 
 const INVALID = "sandbox_security_benchmark_composition_invalid";
+const MAX_PROVIDER_ATTEMPTS = 2;
 const NORMALIZED_DIGEST = /^sha256:[a-f0-9]{64}$/;
 const LOCAL_SCHEMA_VERSION = "sandbox-security-local-model.v1";
 const JUDGE_SCHEMA_VERSION = "sandbox-security-judge.v1";
@@ -965,34 +966,47 @@ function createCaptureTransport(
   return Object.freeze({
     async request(input: Readonly<SandboxSecurityHttpRequest>) {
       const phase = capturePhase(state, input, judgeDispatch);
-      let response: Readonly<SandboxSecurityHttpResponse>;
-      try {
-        response = await Reflect.apply(request, transport, [input]) as Readonly<
-          SandboxSecurityHttpResponse
-        >;
-      } catch (error) {
-        const outcome = failureOutcome(input, error, phase);
-        if (outcome !== null) {
-          try {
-            Reflect.apply(sink.record, sink.value, [
-              capturedRecord(phase, input, outcome)
-            ]);
-          } catch {
-            // A capture failure cannot replace the provider failure semantics.
+      for (let attempt = 1; attempt <= MAX_PROVIDER_ATTEMPTS; attempt += 1) {
+        let response: Readonly<SandboxSecurityHttpResponse>;
+        try {
+          response = await Reflect.apply(request, transport, [input]) as Readonly<
+            SandboxSecurityHttpResponse
+          >;
+        } catch (error) {
+          const outcome = failureOutcome(input, error, phase);
+          if (outcome !== null) {
+            try {
+              Reflect.apply(sink.record, sink.value, [
+                capturedRecord(phase, input, outcome)
+              ]);
+            } catch {
+              // Preserve the original provider failure and stop retrying.
+              throw error;
+            }
           }
+          if (
+            attempt < MAX_PROVIDER_ATTEMPTS &&
+            errorName(error) === "sandbox_security_transport_connection_failed"
+          ) {
+            continue;
+          }
+          throw error;
         }
-        throw error;
+        const outcome = responseOutcome(input, response, judgeDispatch);
+        Reflect.apply(sink.record, sink.value, [
+          capturedRecord(phase, input, outcome)
+        ]);
+        if (outcome.status !== "response") {
+          return response;
+        }
+        if (state === "qualification_inventory") {
+          state = "qualification_prewarm";
+        } else if (state === "qualification_prewarm") {
+          state = "evaluation";
+        }
+        return response;
       }
-      const outcome = responseOutcome(input, response, judgeDispatch);
-      Reflect.apply(sink.record, sink.value, [
-        capturedRecord(phase, input, outcome)
-      ]);
-      if (state === "qualification_inventory") {
-        state = "qualification_prewarm";
-      } else if (state === "qualification_prewarm") {
-        state = "evaluation";
-      }
-      return response;
+      return invalid();
     }
   });
 }

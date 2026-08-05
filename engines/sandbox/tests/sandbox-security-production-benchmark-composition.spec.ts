@@ -357,6 +357,8 @@ test("REQ-SBX-GENERAL-002 replay accepts Chat sealed config and rejects cross-pr
 
 function runtimeHarness(options: Readonly<{
   fire_qualification_timeout?: boolean;
+  fire_evaluation_timeout_at?: number;
+  force_work_budget_at_schedule?: number;
 }> = {}) {
   const delays: number[] = [];
   let cancellationCount = 0;
@@ -371,6 +373,12 @@ function runtimeHarness(options: Readonly<{
       delays.push(delayMs);
       scheduledCount += 1;
       if (options.fire_qualification_timeout === true && scheduledCount === 1) {
+        callback();
+      }
+      if (options.fire_evaluation_timeout_at === scheduledCount) {
+        if (options.force_work_budget_at_schedule === scheduledCount) {
+          monotonic = 1_000_000;
+        }
         callback();
       }
       let cancelled = false;
@@ -389,6 +397,40 @@ function runtimeHarness(options: Readonly<{
       return cancellationCount;
     }
   };
+}
+
+function liveCaptureInput(
+  runtime: SandboxSecurityRuntimePorts,
+  capture_sink: CaptureSink,
+  transport: SandboxSecurityHttpTransport
+): Parameters<CreateLiveCaptureEngine>[0] {
+  return {
+    runtime,
+    capture_sink,
+    transport,
+    judge_protocol_id: "openai_responses_v1",
+    ollama_digest: DIGEST,
+    judge_endpoint_policy_id: "operator_https_fqdn_v1",
+    judge_base_url: "https://unused.example.test/v1",
+    judge_endpoint_url: "https://unused.example.test/v1/responses",
+    judge_requested_model: "gpt-5.4-mini"
+  };
+}
+
+function createRecordingCaptureSink(): Readonly<{
+  sink: CaptureSink;
+  events: readonly CapturedProviderOutcome[];
+}> {
+  const events: CapturedProviderOutcome[] = [];
+  const sink: CaptureSink = Object.freeze({
+    beginInput() {},
+    record(value: Readonly<CapturedProviderOutcome>) {
+      events.push(value);
+    },
+    endInput() {},
+    assertDrained() {}
+  });
+  return { sink, events };
 }
 
 function evaluationRequest(value = "ordinary benign request") {
@@ -503,6 +545,33 @@ function responseOutcome<T>(
   );
 }
 
+function namedTransportError(name: string): Error {
+  const error = new Error(name);
+  error.name = name;
+  return error;
+}
+
+function liveResponse(
+  input: Readonly<SandboxSecurityHttpRequest>
+): Readonly<SandboxSecurityHttpResponse> {
+  if (input.provider === "ollama" && input.operation === "model_inventory") {
+    return inventoryWire(inventoryNormalized());
+  }
+  if (input.provider === "ollama" && input.operation === "chat") {
+    return ollamaWire(ollamaNormalized());
+  }
+  if (input.provider === "openai") {
+    return openAiWire(openAiNormalized(7), input.body);
+  }
+  throw new Error("unexpected_provider_request");
+}
+
+function requestBody(
+  input: Readonly<SandboxSecurityHttpRequest>
+): Uint8Array | undefined {
+  return "body" in input ? input.body : undefined;
+}
+
 function exactRecord(
   value: unknown,
   expectedKeys: readonly string[],
@@ -549,8 +618,10 @@ function createConformingCaptureSink(expectedInputs = 1): Readonly<{
     | "input"
     | "failed" = "qualification_inventory";
   let closedInputs = 0;
-  let localSeen = false;
-  let judgeSeen = false;
+  let qualificationInventoryAttempts = 0;
+  let qualificationPrewarmAttempts = 0;
+  let localAttempts = 0;
+  let judgeAttempts = 0;
   const events: CapturedProviderOutcome[] = [];
   const fail = (): never => {
     phase = "failed";
@@ -560,8 +631,8 @@ function createConformingCaptureSink(expectedInputs = 1): Readonly<{
     beginInput() {
       if (phase !== "ready" || closedInputs >= expectedInputs) fail();
       phase = "input";
-      localSeen = false;
-      judgeSeen = false;
+      localAttempts = 0;
+      judgeAttempts = 0;
     },
     record(value: Readonly<CapturedProviderOutcome>) {
       const values = exactRecord(
@@ -604,7 +675,16 @@ function createConformingCaptureSink(expectedInputs = 1): Readonly<{
         operation === "model_inventory"
       ) {
         events.push(normalized);
+        const attempt = qualificationInventoryAttempts;
+        qualificationInventoryAttempts += 1;
         if (outcome.status !== "response") {
+          if (
+            attempt === 0 &&
+            outcome.status === "transport_error" &&
+            outcome.error_code === "connection_failed"
+          ) {
+            return;
+          }
           phase = "failed";
           return;
         }
@@ -618,7 +698,16 @@ function createConformingCaptureSink(expectedInputs = 1): Readonly<{
         operation === "chat"
       ) {
         events.push(normalized);
+        const attempt = qualificationPrewarmAttempts;
+        qualificationPrewarmAttempts += 1;
         if (outcome.status !== "response") {
+          if (
+            attempt === 0 &&
+            outcome.status === "transport_error" &&
+            outcome.error_code === "connection_failed"
+          ) {
+            return;
+          }
           phase = "failed";
           return;
         }
@@ -627,19 +716,60 @@ function createConformingCaptureSink(expectedInputs = 1): Readonly<{
       }
       if (phase !== "input" || capturePhase !== "evaluation") fail();
       if (provider === "ollama" && operation === "chat") {
-        if (localSeen) fail();
-        localSeen = true;
+        const attempt = localAttempts;
+        const previous = events[events.length - 1]?.outcome;
+        if (
+          attempt >= 2 ||
+          (attempt === 1 &&
+            !(
+              previous?.status === "transport_error" &&
+              previous.error_code === "connection_failed"
+            ))
+        ) {
+          fail();
+        }
+        localAttempts += 1;
+        events.push(normalized);
+        if (
+          attempt === 0 &&
+          outcome.status === "transport_error" &&
+          outcome.error_code === "connection_failed"
+        ) {
+          return;
+        }
+        if (outcome.status !== "response") phase = "failed";
+        return;
       } else if (provider === "openai" && operation === "responses") {
-        if (judgeSeen) fail();
-        judgeSeen = true;
+        const attempt = judgeAttempts;
+        const previous = events[events.length - 1]?.outcome;
+        if (
+          attempt >= 2 ||
+          (attempt === 1 &&
+            !(
+              previous?.status === "transport_error" &&
+              previous.error_code === "connection_failed"
+            ))
+        ) {
+          fail();
+        }
+        judgeAttempts += 1;
+        events.push(normalized);
+        if (
+          attempt === 0 &&
+          outcome.status === "transport_error" &&
+          outcome.error_code === "connection_failed"
+        ) {
+          return;
+        }
+        if (outcome.status !== "response") phase = "failed";
+        return;
       } else {
         fail();
       }
-      events.push(normalized);
     },
     endInput() {
       if (phase !== "input") fail();
-      if (!localSeen) {
+      if (localAttempts === 0) {
         events.push(Object.freeze({
           capture_phase: "evaluation",
           provider: "ollama",
@@ -647,7 +777,7 @@ function createConformingCaptureSink(expectedInputs = 1): Readonly<{
           outcome: Object.freeze({ status: "not_called" })
         }));
       }
-      if (!judgeSeen) {
+      if (judgeAttempts === 0) {
         events.push(Object.freeze({
           capture_phase: "evaluation",
           provider: "openai",
@@ -969,6 +1099,372 @@ function withProductionEnvironment(action: () => Promise<void>): Promise<void> {
   });
 }
 
+test("REQ-SBX-GENERAL-002 P6 retries qualification inventory connection failure once without advancing the stage", async () => {
+  const requests: SandboxSecurityHttpRequest[] = [];
+  let inventoryAttempts = 0;
+  const transport: SandboxSecurityHttpTransport = Object.freeze({
+    async request(input: Readonly<SandboxSecurityHttpRequest>) {
+      requests.push(input);
+      if (input.provider === "ollama" && input.operation === "model_inventory") {
+        inventoryAttempts += 1;
+        if (inventoryAttempts === 1) {
+          throw namedTransportError(
+            "sandbox_security_transport_connection_failed"
+          );
+        }
+      }
+      return liveResponse(input);
+    }
+  });
+  const capture = createConformingCaptureSink();
+  const runtime = runtimeHarness();
+
+  await createLiveCaptureEngine(
+    liveCaptureInput(runtime.runtime, capture.sink, transport)
+  );
+
+  assert.deepEqual(
+    requests.map((request) => `${request.provider}:${request.operation}`),
+    [
+      "ollama:model_inventory",
+      "ollama:model_inventory",
+      "ollama:chat"
+    ]
+  );
+  assert.equal(requests[0], requests[1]);
+  assert.deepEqual(
+    capture.events.map((event) => [
+      event.capture_phase,
+      event.provider,
+      event.operation,
+      event.outcome.status
+    ]),
+    [
+      ["qualification", "ollama", "model_inventory", "transport_error"],
+      ["qualification", "ollama", "model_inventory", "response"],
+      ["qualification", "ollama", "chat", "response"]
+    ]
+  );
+});
+
+test("REQ-SBX-GENERAL-002 P6 retries each transient qualification, local, and Judge connection failure sequentially with the same request", async () => {
+  const retryKeys = new Set([
+    "ollama:model_inventory",
+    "ollama:chat",
+    "openai:responses"
+  ]);
+  const requests = new Map<string, SandboxSecurityHttpRequest[]>();
+  const attempts = new Map<string, number>();
+  const logicalAttempts = new Map<Readonly<SandboxSecurityHttpRequest>, number>();
+  const inFlight = new Map<string, number>();
+  const maxInFlight = new Map<string, number>();
+  const transport: SandboxSecurityHttpTransport = Object.freeze({
+    async request(input: Readonly<SandboxSecurityHttpRequest>) {
+      const key = `${input.provider}:${input.operation}`;
+      const keyRequests = requests.get(key) ?? [];
+      keyRequests.push(input);
+      requests.set(key, keyRequests);
+      const logicalAttempt = (logicalAttempts.get(input) ?? 0) + 1;
+      logicalAttempts.set(input, logicalAttempt);
+      attempts.set(key, (attempts.get(key) ?? 0) + 1);
+      const active = (inFlight.get(key) ?? 0) + 1;
+      inFlight.set(key, active);
+      maxInFlight.set(key, Math.max(maxInFlight.get(key) ?? 0, active));
+      try {
+        await Promise.resolve();
+        if (logicalAttempt === 1 && retryKeys.has(key)) {
+          throw namedTransportError(
+            "sandbox_security_transport_connection_failed"
+          );
+        }
+        return liveResponse(input);
+      } finally {
+        inFlight.set(key, active - 1);
+      }
+    }
+  });
+  const capture = createConformingCaptureSink();
+  const runtime = runtimeHarness();
+  const engine = await createLiveCaptureEngine(
+    liveCaptureInput(runtime.runtime, capture.sink, transport)
+  );
+
+  capture.sink.beginInput();
+  await engine.evaluate(evaluationRequest());
+  capture.sink.endInput();
+  capture.sink.assertDrained();
+
+  assert.deepEqual([...attempts.entries()], [
+    ["ollama:model_inventory", 2],
+    ["ollama:chat", 4],
+    ["openai:responses", 2]
+  ]);
+  for (const key of retryKeys) {
+    const keyRequests = requests.get(key)!;
+    assert.equal(keyRequests[0], keyRequests[1], key);
+    assert.equal(maxInFlight.get(key), 1, key);
+    if (key === "ollama:chat") {
+      assert.equal(keyRequests[2], keyRequests[3], key);
+      assert.equal(
+        requestBody(keyRequests[0]!),
+        requestBody(keyRequests[1]!),
+        key
+      );
+      assert.equal(
+        requestBody(keyRequests[2]!),
+        requestBody(keyRequests[3]!),
+        key
+      );
+    } else if (key === "openai:responses") {
+      assert.equal(
+        requestBody(keyRequests[0]!),
+        requestBody(keyRequests[1]!),
+        key
+      );
+    }
+  }
+  assert.deepEqual(
+    capture.events.map((event) => [
+      event.capture_phase,
+      event.provider,
+      event.operation,
+      event.outcome.status
+    ]),
+    [
+      ["qualification", "ollama", "model_inventory", "transport_error"],
+      ["qualification", "ollama", "model_inventory", "response"],
+      ["qualification", "ollama", "chat", "transport_error"],
+      ["qualification", "ollama", "chat", "response"],
+      ["evaluation", "ollama", "chat", "transport_error"],
+      ["evaluation", "ollama", "chat", "response"],
+      ["evaluation", "openai", "responses", "transport_error"],
+      ["evaluation", "openai", "responses", "response"]
+    ]
+  );
+});
+
+test("REQ-SBX-GENERAL-002 P6 records the second connection failure and preserves its original provider error after two calls", async () => {
+  const failure = namedTransportError(
+    "sandbox_security_transport_connection_failed"
+  );
+  let calls = 0;
+  const transport: SandboxSecurityHttpTransport = Object.freeze({
+    async request() {
+      calls += 1;
+      throw failure;
+    }
+  });
+  const capture = createConformingCaptureSink();
+
+  await assert.rejects(
+    () =>
+      createLiveCaptureEngine(
+        liveCaptureInput(runtimeHarness().runtime, capture.sink, transport)
+      ),
+    (error: unknown) => {
+      assert.equal(error, failure);
+      return true;
+    }
+  );
+
+  assert.equal(calls, 2);
+  assert.deepEqual(capture.events.map((event) => event.outcome), [
+    { status: "transport_error", error_code: "connection_failed" },
+    { status: "transport_error", error_code: "connection_failed" }
+  ]);
+});
+
+test("REQ-SBX-GENERAL-002 P6 does not retry HTTP, malformed, oversized, or timed-out provider failures", async () => {
+  const cases: readonly Readonly<{
+    name: string;
+    request(input: Readonly<SandboxSecurityHttpRequest>): Promise<Readonly<SandboxSecurityHttpResponse>>;
+    outcome: Readonly<Record<string, unknown>>;
+  }>[] = [
+    {
+      name: "http_non_200",
+      async request() {
+        return Object.freeze({
+          status: 503,
+          content_type: "application/json",
+          body: ENCODER.encode("{}")
+        });
+      },
+      outcome: { status: "http_error", http_status: 503 }
+    },
+    {
+      name: "provider_response_invalid",
+      async request() {
+        return Object.freeze({
+          status: 200,
+          content_type: "application/json",
+          body: ENCODER.encode("{")
+        });
+      },
+      outcome: {
+        status: "transport_error",
+        error_code: "provider_response_invalid"
+      }
+    },
+    {
+      name: "response_too_large",
+      async request() {
+        throw namedTransportError(
+          "sandbox_security_transport_response_too_large"
+        );
+      },
+      outcome: {
+        status: "transport_error",
+        error_code: "response_too_large"
+      }
+    },
+    {
+      name: "slot_timeout",
+      async request() {
+        throw namedTransportError("sandbox_security_transport_aborted");
+      },
+      outcome: {
+        status: "signal_termination",
+        termination_reason: "slot_timeout"
+      }
+    }
+  ];
+
+  for (const scenario of cases) {
+    let calls = 0;
+    const transport: SandboxSecurityHttpTransport = Object.freeze({
+      async request(input: Readonly<SandboxSecurityHttpRequest>) {
+        calls += 1;
+        return scenario.request(input);
+      }
+    });
+    const capture = createRecordingCaptureSink();
+
+    await assert.rejects(() =>
+      createLiveCaptureEngine(
+        liveCaptureInput(runtimeHarness().runtime, capture.sink, transport)
+      )
+    );
+
+    assert.equal(calls, 1, scenario.name);
+    assert.deepEqual(capture.events.map((event) => event.outcome), [
+      scenario.outcome
+    ], scenario.name);
+  }
+});
+
+test("REQ-SBX-GENERAL-002 P6 does not retry qualification digest or semantic failures after a normalized response", async () => {
+  const otherDigest = `sha256:${"b".repeat(64)}`;
+    const transport: SandboxSecurityHttpTransport = Object.freeze({
+    async request(input: Readonly<SandboxSecurityHttpRequest>) {
+      if (input.provider === "ollama" && input.operation === "model_inventory") {
+        return inventoryWire(
+          normalizeSandboxSecurityReplayOllamaInventoryResponse({
+            model: "qwen3:8b",
+            digest: otherDigest
+          })
+        );
+      }
+      throw new Error("unexpected_provider_request");
+    }
+  });
+  const capture = createRecordingCaptureSink();
+  let calls = 0;
+  const countedTransport: SandboxSecurityHttpTransport = Object.freeze({
+    async request(input: Readonly<SandboxSecurityHttpRequest>) {
+      calls += 1;
+      return transport.request(input);
+    }
+  });
+
+  await assert.rejects(() =>
+    createLiveCaptureEngine(
+      liveCaptureInput(runtimeHarness().runtime, capture.sink, countedTransport)
+    )
+  );
+
+  assert.equal(calls, 1);
+  assert.deepEqual(capture.events.map((event) => event.outcome.status), [
+    "response"
+  ]);
+});
+
+test("REQ-SBX-GENERAL-002 P6 does not retry slot timeout, work budget, or caller cancellation", async () => {
+  const cases: readonly Readonly<{
+    name: "slot_timeout" | "work_budget" | "caller_cancelled";
+    runtime: ReturnType<typeof runtimeHarness>;
+    caller?: AbortController;
+  }>[] = [
+    {
+      name: "slot_timeout",
+      runtime: runtimeHarness({ fire_evaluation_timeout_at: 3 })
+    },
+    {
+      name: "work_budget",
+      runtime: runtimeHarness({
+        fire_evaluation_timeout_at: 3,
+        force_work_budget_at_schedule: 3
+      })
+    },
+    {
+      name: "caller_cancelled",
+      runtime: runtimeHarness(),
+      caller: new AbortController()
+    }
+  ];
+
+  for (const scenario of cases) {
+    let chatCalls = 0;
+    const transport: SandboxSecurityHttpTransport = Object.freeze({
+      async request(input: Readonly<SandboxSecurityHttpRequest>) {
+        if (input.provider === "ollama" && input.operation === "chat") {
+          chatCalls += 1;
+          if (chatCalls === 1) return liveResponse(input);
+          if (scenario.name === "caller_cancelled") {
+            scenario.caller!.abort("caller_cancelled");
+          }
+          if (input.signal.aborted) {
+            throw namedTransportError("sandbox_security_transport_aborted");
+          }
+          return liveResponse(input);
+        }
+        return liveResponse(input);
+      }
+    });
+    const capture = createRecordingCaptureSink();
+    const engine = await createLiveCaptureEngine(
+      liveCaptureInput(scenario.runtime.runtime, capture.sink, transport)
+    );
+
+    try {
+      await engine.evaluate(
+        evaluationRequest(),
+        scenario.caller?.signal
+      );
+    } catch {
+      // Caller cancellation is expected to reject; timeout outcomes are
+      // converted into the engine's content-free decision state.
+    }
+
+    assert.equal(chatCalls, 2, scenario.name);
+    const localEvents = capture.events.filter(
+      (event) =>
+        event.capture_phase === "evaluation" &&
+        event.provider === "ollama" &&
+        event.operation === "chat"
+    );
+    if (scenario.name === "caller_cancelled") {
+      assert.deepEqual(localEvents, [], scenario.name);
+    } else {
+      assert.deepEqual(localEvents.map((event) => event.outcome), [
+        {
+          status: "signal_termination",
+          termination_reason: scenario.name
+        }
+      ], scenario.name);
+    }
+  }
+});
+
 test("REQ-SBX-GENERAL-002 live composition captures qualification before return then anonymous evaluation slots", async () => {
   const operations: string[] = [];
   let judgeCategories: string[] = [];
@@ -1247,6 +1743,15 @@ test("REQ-SBX-GENERAL-002 live transport failure records content-free outcome an
   assert.ok(thrown instanceof Error);
   assert.equal(thrown.name, "sandbox_security_transport_connection_failed");
   assert.deepEqual(capture.events, [
+    {
+      capture_phase: "qualification",
+      provider: "ollama",
+      operation: "model_inventory",
+      outcome: {
+        status: "transport_error",
+        error_code: "connection_failed"
+      }
+    },
     {
       capture_phase: "qualification",
       provider: "ollama",
