@@ -2,7 +2,7 @@
 
 - phase/task: Phase 4 / P4-T2 Subject-Scoped Audit List and Fixed Retention
   Service
-- status: `IMPLEMENTED_PENDING_INDEPENDENT_REVIEW`
+- status: `IMPLEMENTED`
 - implementation:
   - added the typed audit service factory behind the sandbox-security module
     boundary; list accepts an already authorized capability and required
@@ -35,12 +35,17 @@
   - `npm run typecheck:backend` reports no P4-T2 sandbox-security source or
     test error; existing campaign/task-center/test baseline errors remain
   - `git diff --check` passes
+- reviews:
+  - independent specification review and re-review: PASS with `0 Critical / 0
+    Important / 0 Minor`
+  - independent quality review: PASS with `0 Critical / 0 Important / 0 Minor`
 - boundary:
   - HTTP query defaults/maximum admission, capability expiry, evaluation
     orchestration, and production composition remain later P4/P5/P6 tasks
+  - commit: `6f1242e` (`feat(backend): serve sandbox security audit pages`)
   - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
     GENERAL-003 is not `VERIFIED`
-- next: independent specification and quality review, then proceed to P4-T3
+- next: proceed to P4-T3
 
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P4-T1 capability issue and revoke service
 
