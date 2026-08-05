@@ -13,7 +13,10 @@
   TypeScript check, `npm run test:repo` `319/319`, and `git diff --check` passed
 - changed: `shared/contracts/sandbox-security-api.ts`,
   `shared/tests/sandbox-security-api-contract.spec.ts`, `docs/progress.md`
-- next: independent re-review of this latest P1-T1 correction; no P1-T2 work
+- final independent re-review: PASS with `0 Critical / 0 Important / 0 Minor`;
+  commit `9c46a63` closes the prototype-key finding and preserves the prior
+  reviewed commit `d608ae4`
+- next: P1-T2 exact public and internal route matches
 
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T1 review correction
 
@@ -37,8 +40,10 @@
 - GREEN: focused shared API suite `10/10`; shared TypeScript check passed;
   GENERAL-001 core gate `131/131`; `npm run test:repo` `319/319`;
   `npm run test:shared` `217/217`; `git diff --check` passed
-- next: independent P1-T1 review of the corrected public surface and gate
-  compatibility, then exact review-fix commit
+- final independent re-review: PASS with `0 Critical / 0 Important / 0 Minor`;
+  commit `d608ae4` closes the public-surface, expiry, provenance, and scope
+  findings
+- next: P1-T2 exact public and internal route matches
 
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T1 shared audit API contract
 
