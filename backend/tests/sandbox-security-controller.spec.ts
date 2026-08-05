@@ -1792,3 +1792,907 @@ test("REQ-SBX-GENERAL-003 preserves generic internal errors after request destru
     "CAMPAIGN_INGEST_UNAUTHORIZED"
   );
 });
+
+test("REQ-SBX-GENERAL-003 public controller factory is available at the module boundary", () => {
+  const boundary = sandboxSecurityBoundary as unknown as {
+    createSandboxSecurityController?: unknown;
+  };
+  assert.equal(typeof boundary.createSandboxSecurityController, "function");
+});
+
+test("REQ-SBX-GENERAL-003 rejects a non-production composition binding at the controller boundary", () => {
+  const boundary = sandboxSecurityBoundary as unknown as {
+    createSandboxSecurityController: (input: Record<string, unknown>) => unknown;
+  };
+  assert.throws(
+    () => boundary.createSandboxSecurityController({
+      ...makePublicControllerDependencies([], makePublicControllerCapability()),
+      composition_binding: "sandbox-security-production-composition.v1:untrusted"
+    }),
+    TypeError
+  );
+});
+
+test("REQ-SBX-GENERAL-003 denies evaluation scope before reading the body", async () => {
+  const boundary = sandboxSecurityBoundary as unknown as {
+    createSandboxSecurityController: (input: Record<string, unknown>) => {
+      evaluate(request: IncomingMessage, requestId: string): Promise<unknown>;
+    };
+  };
+  const calls: string[] = [];
+  const bodyRead = { count: 0 };
+  const capability = makePublicControllerCapability();
+  const fixture = makePublicControllerDependencies(calls, capability, {
+    requireEvaluationScopeError: true
+  });
+  const controller = boundary.createSandboxSecurityController(fixture);
+  await assert.rejects(
+    () => controller.evaluate(makeUnreadControllerRequest(() => { bodyRead.count += 1; }), "http-request-1"),
+    hasHttpError(403, "SANDBOX_SECURITY_FORBIDDEN")
+  );
+  assert.deepEqual(calls, [
+    "global_bucket",
+    "authenticate",
+    "require_evaluate_scope",
+    "record_rejection"
+  ]);
+  assert.equal(bodyRead.count, 0);
+});
+
+test("REQ-SBX-GENERAL-003 evaluates only after ordered public admission gates", async () => {
+  const boundary = sandboxSecurityBoundary as unknown as {
+    createSandboxSecurityController: (input: Record<string, unknown>) => {
+      evaluate(request: IncomingMessage, requestId: string): Promise<any>;
+    };
+  };
+  const calls: string[] = [];
+  const fixture = makePublicControllerDependencies(calls, makePublicControllerCapability());
+  const controller = boundary.createSandboxSecurityController(fixture);
+  const body = JSON.stringify(makePublicEvaluationSubmission());
+  const response = await controller.evaluate(
+    makeRawRequest({
+      rawHeaders: [
+        "Authorization",
+        `Bearer sbxcap_v1.${"a".repeat(43)}`,
+        "Idempotency-Key",
+        "request-key-0001",
+        "Content-Type",
+        "application/json",
+        "Content-Length",
+        String(Buffer.byteLength(body))
+      ],
+      chunks: [body]
+    }),
+    "http-request-2"
+  );
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.body, {
+    success: true,
+    message: "Sandbox security evaluation completed",
+    data: {},
+    error_code: null,
+    request_id: "http-request-2"
+  });
+  assert.deepEqual(calls, [
+    "global_bucket",
+    "authenticate",
+    "require_evaluate_scope",
+    "maintenance",
+    "capability_bucket",
+    "stage_profile_grant",
+    "evaluation_service"
+  ]);
+});
+
+test("REQ-SBX-GENERAL-003 awaits bodyless audit admission and defaults limit to fifty", async () => {
+  const boundary = sandboxSecurityBoundary as unknown as {
+    createSandboxSecurityController: (input: Record<string, unknown>) => {
+      listAuditEvents(request: IncomingMessage, url: URL, requestId: string): Promise<any>;
+    };
+  };
+  const calls: string[] = [];
+  let auditQuery: Record<string, unknown> | undefined;
+  const fixture = makePublicControllerDependencies(calls, makePublicControllerCapability());
+  (fixture.audit_service as { list(input: Record<string, unknown>): unknown }).list = (input) => {
+    auditQuery = input;
+    calls.push("audit_service");
+    return { schema_version: "sandbox-security-audit-page.v1", events: [], next_cursor: null };
+  };
+  const controller = boundary.createSandboxSecurityController(fixture);
+  const response = await controller.listAuditEvents(
+    makeRawRequest({
+      rawHeaders: [
+        "Authorization",
+        `Bearer sbxcap_v1.${"a".repeat(43)}`,
+        "Content-Length",
+        "0"
+      ]
+    }),
+    new URL("http://127.0.0.1/api/sandbox/security/audit-events"),
+    "http-request-3"
+  );
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(auditQuery, {
+    capability: makePublicControllerCapability(),
+    limit: 50
+  });
+  assert.deepEqual(calls, [
+    "global_bucket",
+    "authenticate",
+    "require_audit_scope",
+    "capability_bucket",
+    "audit_service"
+  ]);
+});
+
+test("REQ-SBX-GENERAL-003 does not write an audit_read event for unsupported bodyless encoding", async () => {
+  const boundary = sandboxSecurityBoundary as unknown as {
+    createSandboxSecurityController: (input: Record<string, unknown>) => {
+      listAuditEvents(request: IncomingMessage, url: URL, requestId: string): Promise<unknown>;
+    };
+  };
+  const calls: string[] = [];
+  const fixture = makePublicControllerDependencies(calls, makePublicControllerCapability());
+  const controller = boundary.createSandboxSecurityController(fixture);
+  await assert.rejects(
+    () => controller.listAuditEvents(
+      makeRawRequest({
+        rawHeaders: [
+          "Authorization",
+          `Bearer sbxcap_v1.${"a".repeat(43)}`,
+          "Content-Length",
+          "0",
+          "Content-Encoding",
+          "identity"
+        ]
+      }),
+      new URL("http://127.0.0.1/api/sandbox/security/audit-events"),
+      "http-request-unsupported-bodyless"
+    ),
+    hasHttpError(415, "SANDBOX_SECURITY_UNSUPPORTED_MEDIA_TYPE")
+  );
+  assert.deepEqual(calls, [
+    "global_bucket",
+    "authenticate",
+    "require_audit_scope",
+    "capability_bucket"
+  ]);
+});
+
+test("REQ-SBX-GENERAL-003 global rate rejection and unknown capability write no audit", async () => {
+  const boundary = sandboxSecurityBoundary as unknown as {
+    createSandboxSecurityController: (input: Record<string, unknown>) => {
+      evaluate(request: IncomingMessage, requestId: string): Promise<unknown>;
+    };
+  };
+  const globalCalls: string[] = [];
+  const globalFixture = makePublicControllerDependencies(
+    globalCalls,
+    makePublicControllerCapability()
+  );
+  (globalFixture.global_bucket as { consume(): unknown }).consume = () => {
+    globalCalls.push("global_bucket");
+    return { allowed: false, retry_after_seconds: 4 };
+  };
+  const globalController = boundary.createSandboxSecurityController(globalFixture);
+  await assert.rejects(
+    () => globalController.evaluate(makeUnreadControllerRequest(() => {
+      globalCalls.push("body");
+    }), "http-request-global-rate"),
+    hasHttpError(429, "SANDBOX_SECURITY_RATE_LIMITED")
+  );
+  assert.deepEqual(globalCalls, ["global_bucket"]);
+
+  const unknownCalls: string[] = [];
+  const unknownFixture = makePublicControllerDependencies(
+    unknownCalls,
+    makePublicControllerCapability()
+  );
+  (unknownFixture.authenticator as { authenticateToken(): unknown }).authenticateToken = () => {
+    unknownCalls.push("authenticate");
+    return { kind: "unknown" };
+  };
+  const unknownController = boundary.createSandboxSecurityController(unknownFixture);
+  await assert.rejects(
+    () => unknownController.evaluate(makeUnreadControllerRequest(() => {
+      unknownCalls.push("body");
+    }), "http-request-unknown"),
+    hasHttpError(401, "SANDBOX_SECURITY_UNAUTHORIZED")
+  );
+  assert.deepEqual(unknownCalls, ["global_bucket", "authenticate"]);
+});
+
+test("REQ-SBX-GENERAL-003 known capability rejection audits the exact injected composition", async () => {
+  const boundary = sandboxSecurityBoundary as unknown as {
+    createSandboxSecurityController: (input: Record<string, unknown>) => {
+      evaluate(request: IncomingMessage, requestId: string): Promise<unknown>;
+    };
+  };
+  const calls: string[] = [];
+  const fixture = makePublicControllerDependencies(calls, makePublicControllerCapability());
+  let rejection: Record<string, unknown> | undefined;
+  (fixture.authenticator as { authenticateToken(): unknown }).authenticateToken = () => {
+    calls.push("authenticate");
+    return {
+      kind: "known_denied",
+      rejection_code: "capability_expired",
+      audit_identity: makePublicControllerCapability()
+    };
+  };
+  (fixture.audit_projector as { requestRejected(input: Record<string, unknown>): unknown }).requestRejected = (input) => {
+    calls.push("record_rejection");
+    rejection = input;
+    return {};
+  };
+  const controller = boundary.createSandboxSecurityController(fixture);
+  await assert.rejects(
+    () => controller.evaluate(makeUnreadControllerRequest(() => {
+      calls.push("body");
+    }), "http-request-expired"),
+    hasHttpError(401, "SANDBOX_SECURITY_UNAUTHORIZED")
+  );
+  assert.equal(rejection?.composition_binding, "sandbox-security-production-composition.v1:rule_only");
+  assert.equal(rejection?.route_id, "evaluation");
+  assert.equal(rejection?.rejection_code, "capability_expired");
+  assert.deepEqual(calls, ["global_bucket", "authenticate", "record_rejection"]);
+});
+
+test("REQ-SBX-GENERAL-003 capability rate rejection is audited before body admission", async () => {
+  const boundary = sandboxSecurityBoundary as unknown as {
+    createSandboxSecurityController: (input: Record<string, unknown>) => {
+      evaluate(request: IncomingMessage, requestId: string): Promise<unknown>;
+    };
+  };
+  const calls: string[] = [];
+  const fixture = makePublicControllerDependencies(calls, makePublicControllerCapability());
+  (fixture.capability_limiters as { consume(): unknown }).consume = () => {
+    calls.push("capability_bucket");
+    return { allowed: false, retry_after_seconds: 7 };
+  };
+  let rejection: Record<string, unknown> | undefined;
+  (fixture.audit_projector as { requestRejected(input: Record<string, unknown>): unknown }).requestRejected = (input) => {
+    calls.push("record_rejection");
+    rejection = input;
+    return {};
+  };
+  const controller = boundary.createSandboxSecurityController(fixture);
+  await assert.rejects(
+    () => controller.evaluate(makeUnreadControllerRequest(() => {
+      calls.push("body");
+    }), "http-request-rate"),
+    hasHttpError(429, "SANDBOX_SECURITY_RATE_LIMITED")
+  );
+  assert.equal(rejection?.composition_binding, "sandbox-security-production-composition.v1:rule_only");
+  assert.equal(rejection?.rejection_code, "capability_rate_limited");
+  assert.deepEqual(calls, [
+    "global_bucket",
+    "authenticate",
+    "require_evaluate_scope",
+    "maintenance",
+    "capability_bucket",
+    "record_rejection"
+  ]);
+});
+
+test("REQ-SBX-GENERAL-003 audit scope denial precedes malformed query and bodyless admission", async () => {
+  const boundary = sandboxSecurityBoundary as unknown as {
+    createSandboxSecurityController: (input: Record<string, unknown>) => {
+      listAuditEvents(request: IncomingMessage, url: URL, requestId: string): Promise<unknown>;
+    };
+  };
+  const calls: string[] = [];
+  const fixture = makePublicControllerDependencies(calls, makePublicControllerCapability());
+  (fixture.authenticator as { requireScope(_capability: unknown, scope: string): void }).requireScope = (_capability, scope) => {
+    calls.push(scope === "sandbox_security:audit:read" ? "require_audit_scope" : "require_evaluate_scope");
+    if (scope === "sandbox_security:audit:read") {
+      throw createSandboxSecurityServiceError({
+        code: "SANDBOX_SECURITY_FORBIDDEN",
+        audit_rejection_code: "scope_forbidden"
+      });
+    }
+  };
+  const controller = boundary.createSandboxSecurityController(fixture);
+  await assert.rejects(
+    () => controller.listAuditEvents(
+      makeUnreadControllerRequest(() => {
+        calls.push("body");
+      }),
+      new URL("http://127.0.0.1/api/sandbox/security/audit-events?unknown=value"),
+      "http-request-audit-scope"
+    ),
+    hasHttpError(403, "SANDBOX_SECURITY_FORBIDDEN")
+  );
+  assert.deepEqual(calls, [
+    "global_bucket",
+    "authenticate",
+    "require_audit_scope",
+    "record_rejection"
+  ]);
+});
+
+test("REQ-SBX-GENERAL-003 slow body timeout occurs before evaluation service", async () => {
+  const boundary = sandboxSecurityBoundary as unknown as {
+    createSandboxSecurityController: (input: Record<string, unknown>) => {
+      evaluate(request: IncomingMessage, requestId: string): Promise<unknown>;
+    };
+  };
+  const calls: string[] = [];
+  const fixture = makePublicControllerDependencies(calls, makePublicControllerCapability());
+  let evaluationCalls = 0;
+  (fixture.evaluation_service as { evaluate(): Promise<unknown> }).evaluate = async () => {
+    evaluationCalls += 1;
+    return {};
+  };
+  const request = new EventEmitter() as unknown as StreamFixture;
+  request.rawHeaders = [
+    "Authorization", `Bearer sbxcap_v1.${"a".repeat(43)}`,
+    "Idempotency-Key", "request-key-0001",
+    "Content-Type", "application/json",
+    "Transfer-Encoding", "chunked"
+  ];
+  request.headers = {};
+  request.complete = false;
+  request.aborted = false;
+  request.destroyed = false;
+  request[Symbol.asyncIterator] = () => ({
+    next: () => new Promise<IteratorResult<Buffer, undefined>>(() => {}),
+    return: async () => ({ done: true, value: undefined })
+  });
+  const attempt = boundary.createSandboxSecurityController(fixture).evaluate(
+    request as unknown as IncomingMessage,
+    "http-request-timeout"
+  );
+  request.aborted = true;
+  request.emit("aborted");
+  await assert.rejects(
+    attempt,
+    hasHttpError(408, "SANDBOX_SECURITY_REQUEST_TIMEOUT")
+  );
+  assert.equal(evaluationCalls, 0);
+});
+
+test("REQ-SBX-GENERAL-003 invalid normalized body is audited without invoking evaluation", async () => {
+  const boundary = sandboxSecurityBoundary as unknown as {
+    createSandboxSecurityController: (input: Record<string, unknown>) => {
+      evaluate(request: IncomingMessage, requestId: string): Promise<unknown>;
+    };
+  };
+  const calls: string[] = [];
+  const fixture = makePublicControllerDependencies(calls, makePublicControllerCapability());
+  let rejection: Record<string, unknown> | undefined;
+  (fixture.audit_projector as { requestRejected(input: Record<string, unknown>): unknown }).requestRejected = (input) => {
+    calls.push("record_rejection");
+    rejection = input;
+    return {};
+  };
+  const controller = boundary.createSandboxSecurityController(fixture);
+  await assert.rejects(
+    () => controller.evaluate(
+      makeRawRequest({
+        rawHeaders: [
+          "Authorization", `Bearer sbxcap_v1.${"a".repeat(43)}`,
+          "Idempotency-Key", "request-key-0001",
+          "Content-Type", "application/json",
+          "Content-Length", "2"
+        ],
+        chunks: ["{}"]
+      }),
+      "http-request-invalid-body"
+    ),
+    hasHttpError(400, "SANDBOX_SECURITY_INVALID_REQUEST")
+  );
+  assert.equal(rejection?.rejection_code, "invalid_request");
+  assert.equal(rejection?.composition_binding, "sandbox-security-production-composition.v1:rule_only");
+  assert.deepEqual(calls, [
+    "global_bucket",
+    "authenticate",
+    "require_evaluate_scope",
+    "maintenance",
+    "capability_bucket",
+    "record_rejection"
+  ]);
+});
+
+test("REQ-SBX-GENERAL-003 stage and profile denials are audited after normalization", async () => {
+  const boundary = sandboxSecurityBoundary as unknown as {
+    createSandboxSecurityController: (input: Record<string, unknown>) => {
+      evaluate(request: IncomingMessage, requestId: string): Promise<unknown>;
+    };
+  };
+  for (const auditRejectionCode of ["stage_forbidden", "profile_forbidden"] as const) {
+    const calls: string[] = [];
+    const fixture = makePublicControllerDependencies(calls, makePublicControllerCapability());
+    let rejection: Record<string, unknown> | undefined;
+    (fixture.authenticator as { requireEvaluationGrant(): void }).requireEvaluationGrant = () => {
+      calls.push("stage_profile_grant");
+      throw createSandboxSecurityServiceError({
+        code: "SANDBOX_SECURITY_FORBIDDEN",
+        audit_rejection_code: auditRejectionCode
+      });
+    };
+    (fixture.audit_projector as { requestRejected(input: Record<string, unknown>): unknown }).requestRejected = (input) => {
+      calls.push("record_rejection");
+      rejection = input;
+      return {};
+    };
+    const controller = boundary.createSandboxSecurityController(fixture);
+    await assert.rejects(
+      () => controller.evaluate(
+        makeRawRequest({
+          rawHeaders: [
+            "Authorization", `Bearer sbxcap_v1.${"a".repeat(43)}`,
+            "Idempotency-Key", "request-key-0001",
+            "Content-Type", "application/json",
+            "Content-Length", String(Buffer.byteLength(JSON.stringify(makePublicEvaluationSubmission())))
+          ],
+          chunks: [JSON.stringify(makePublicEvaluationSubmission())]
+        }),
+        `http-request-${auditRejectionCode}`
+      ),
+      hasHttpError(403, "SANDBOX_SECURITY_FORBIDDEN")
+    );
+    assert.equal(rejection?.rejection_code, auditRejectionCode);
+    assert.equal(rejection?.request_id, "request-001");
+    assert.equal(rejection?.composition_binding, "sandbox-security-production-composition.v1:rule_only");
+    assert.equal(calls.at(-1), "record_rejection");
+  }
+});
+
+test("REQ-SBX-GENERAL-003 maintenance storage rejection is audited and body admission is skipped", async () => {
+  const boundary = sandboxSecurityBoundary as unknown as {
+    createSandboxSecurityController: (input: Record<string, unknown>) => {
+      evaluate(request: IncomingMessage, requestId: string): Promise<unknown>;
+    };
+  };
+  const calls: string[] = [];
+  const fixture = makePublicControllerDependencies(calls, makePublicControllerCapability());
+  (fixture.maintenance as { assertEvaluationAvailable(): void }).assertEvaluationAvailable = () => {
+    calls.push("maintenance");
+    throw createSandboxSecurityServiceError({
+      code: "SANDBOX_SECURITY_STORAGE_UNAVAILABLE",
+      audit_rejection_code: "storage_unavailable"
+    });
+  };
+  let rejection: Record<string, unknown> | undefined;
+  (fixture.audit_projector as { requestRejected(input: Record<string, unknown>): unknown }).requestRejected = (input) => {
+    calls.push("record_rejection");
+    rejection = input;
+    return {};
+  };
+  const controller = boundary.createSandboxSecurityController(fixture);
+  await assert.rejects(
+    () => controller.evaluate(makeUnreadControllerRequest(() => {
+      calls.push("body");
+    }), "http-request-storage"),
+    hasHttpError(503, "SANDBOX_SECURITY_STORAGE_UNAVAILABLE")
+  );
+  assert.equal(rejection?.rejection_code, "storage_unavailable");
+  assert.equal(rejection?.composition_binding, "sandbox-security-production-composition.v1:rule_only");
+  assert.deepEqual(calls, [
+    "global_bucket",
+    "authenticate",
+    "require_evaluate_scope",
+    "maintenance",
+    "record_rejection"
+  ]);
+});
+
+test("REQ-SBX-GENERAL-003 idempotency conflict is mapped without duplicate controller audit", async () => {
+  const boundary = sandboxSecurityBoundary as unknown as {
+    createSandboxSecurityController: (input: Record<string, unknown>) => {
+      evaluate(request: IncomingMessage, requestId: string): Promise<unknown>;
+    };
+  };
+  const calls: string[] = [];
+  const fixture = makePublicControllerDependencies(calls, makePublicControllerCapability());
+  (fixture.evaluation_service as { evaluate(): Promise<unknown> }).evaluate = async () => {
+    calls.push("evaluation_service");
+    throw createSandboxSecurityServiceError({
+      code: "SANDBOX_SECURITY_IDEMPOTENCY_CONFLICT",
+      audit_rejection_code: "idempotency_conflict"
+    });
+  };
+  const controller = boundary.createSandboxSecurityController(fixture);
+  await assert.rejects(
+    () => controller.evaluate(
+      makeRawRequest({
+        rawHeaders: [
+          "Authorization", `Bearer sbxcap_v1.${"a".repeat(43)}`,
+          "Idempotency-Key", "request-key-0001",
+          "Content-Type", "application/json",
+          "Content-Length", String(Buffer.byteLength(JSON.stringify(makePublicEvaluationSubmission())))
+        ],
+        chunks: [JSON.stringify(makePublicEvaluationSubmission())]
+      }),
+      "http-request-conflict"
+    ),
+    hasHttpError(409, "SANDBOX_SECURITY_IDEMPOTENCY_CONFLICT")
+  );
+  assert.equal(calls.includes("record_rejection"), false);
+  assert.equal(calls.at(-1), "evaluation_service");
+});
+
+test("REQ-SBX-GENERAL-003 invalid audit limit is audited only after bodyless completion", async () => {
+  const boundary = sandboxSecurityBoundary as unknown as {
+    createSandboxSecurityController: (input: Record<string, unknown>) => {
+      listAuditEvents(request: IncomingMessage, url: URL, requestId: string): Promise<unknown>;
+    };
+  };
+  const calls: string[] = [];
+  const fixture = makePublicControllerDependencies(calls, makePublicControllerCapability());
+  let rejection: Record<string, unknown> | undefined;
+  (fixture.audit_projector as { requestRejected(input: Record<string, unknown>): unknown }).requestRejected = (input) => {
+    calls.push("record_rejection");
+    rejection = input;
+    return {};
+  };
+  const controller = boundary.createSandboxSecurityController(fixture);
+  await assert.rejects(
+    () => controller.listAuditEvents(
+      makeRawRequest({
+        rawHeaders: [
+          "Authorization", `Bearer sbxcap_v1.${"a".repeat(43)}`,
+          "Content-Length", "0"
+        ]
+      }),
+      new URL("http://127.0.0.1/api/sandbox/security/audit-events?limit=101"),
+      "http-request-invalid-limit"
+    ),
+    hasHttpError(400, "SANDBOX_SECURITY_INVALID_REQUEST")
+  );
+  assert.equal(rejection?.route_id, "audit_read");
+  assert.equal(rejection?.rejection_code, "invalid_request");
+  assert.deepEqual(calls, [
+    "global_bucket",
+    "authenticate",
+    "require_audit_scope",
+    "capability_bucket",
+    "record_rejection"
+  ]);
+});
+
+test("REQ-SBX-GENERAL-003 known revoked capability is audited without body admission", async () => {
+  const boundary = sandboxSecurityBoundary as unknown as {
+    createSandboxSecurityController: (input: Record<string, unknown>) => {
+      evaluate(request: IncomingMessage, requestId: string): Promise<unknown>;
+    };
+  };
+  const calls: string[] = [];
+  const fixture = makePublicControllerDependencies(calls, makePublicControllerCapability());
+  let rejection: Record<string, unknown> | undefined;
+  (fixture.authenticator as { authenticateToken(): unknown }).authenticateToken = () => {
+    calls.push("authenticate");
+    return {
+      kind: "known_denied",
+      rejection_code: "capability_revoked",
+      audit_identity: makePublicControllerCapability()
+    };
+  };
+  (fixture.audit_projector as { requestRejected(input: Record<string, unknown>): unknown }).requestRejected = (input) => {
+    calls.push("record_rejection");
+    rejection = input;
+    return {};
+  };
+  const controller = boundary.createSandboxSecurityController(fixture);
+  await assert.rejects(
+    () => controller.evaluate(makeUnreadControllerRequest(() => {
+      calls.push("body");
+    }), "http-request-revoked"),
+    hasHttpError(401, "SANDBOX_SECURITY_UNAUTHORIZED")
+  );
+  assert.equal(rejection?.rejection_code, "capability_revoked");
+  assert.equal(rejection?.composition_binding, "sandbox-security-production-composition.v1:rule_only");
+  assert.deepEqual(calls, ["global_bucket", "authenticate", "record_rejection"]);
+});
+
+test("REQ-SBX-GENERAL-003 idempotency in-progress and concurrency rejection are transaction-owned", async () => {
+  const boundary = sandboxSecurityBoundary as unknown as {
+    createSandboxSecurityController: (input: Record<string, unknown>) => {
+      evaluate(request: IncomingMessage, requestId: string): Promise<unknown>;
+    };
+  };
+  const body = JSON.stringify(makePublicEvaluationSubmission());
+  for (const [serviceCode, auditCode, statusCode] of [
+    ["SANDBOX_SECURITY_IDEMPOTENCY_IN_PROGRESS", "idempotency_in_progress", 409],
+    ["SANDBOX_SECURITY_CONCURRENCY_LIMITED", "concurrency_limited", 429]
+  ] as const) {
+    const calls: string[] = [];
+    const fixture = makePublicControllerDependencies(calls, makePublicControllerCapability());
+    (fixture.evaluation_service as { evaluate(): Promise<unknown> }).evaluate = async () => {
+      calls.push("evaluation_service");
+      if (serviceCode === "SANDBOX_SECURITY_IDEMPOTENCY_IN_PROGRESS") {
+        throw createSandboxSecurityServiceError({
+          code: serviceCode,
+          audit_rejection_code: "idempotency_in_progress"
+        });
+      }
+      throw createSandboxSecurityServiceError({
+        code: "SANDBOX_SECURITY_CONCURRENCY_LIMITED",
+        audit_rejection_code: "concurrency_limited"
+      });
+    };
+    const controller = boundary.createSandboxSecurityController(fixture);
+    await assert.rejects(
+      () => controller.evaluate(
+        makeRawRequest({
+          rawHeaders: [
+            "Authorization", `Bearer sbxcap_v1.${"a".repeat(43)}`,
+            "Idempotency-Key", "request-key-0001",
+            "Content-Type", "application/json",
+            "Content-Length", String(Buffer.byteLength(body))
+          ],
+          chunks: [body]
+        }),
+        `http-request-${auditCode}`
+      ),
+      hasHttpError(statusCode, serviceCode, {
+        close_after_response: false
+      })
+    );
+    assert.equal(calls.includes("record_rejection"), false);
+    assert.equal(calls.at(-1), "evaluation_service");
+  }
+});
+
+test("REQ-SBX-GENERAL-003 audit limit 100 succeeds and limit 0 is rejected", async () => {
+  const boundary = sandboxSecurityBoundary as unknown as {
+    createSandboxSecurityController: (input: Record<string, unknown>) => {
+      listAuditEvents(request: IncomingMessage, url: URL, requestId: string): Promise<any>;
+    };
+  };
+  const calls: string[] = [];
+  let receivedLimit = 0;
+  const fixture = makePublicControllerDependencies(calls, makePublicControllerCapability());
+  (fixture.audit_service as { list(input: { limit: number }): unknown }).list = (input) => {
+    receivedLimit = input.limit;
+    calls.push("audit_service");
+    return { schema_version: "sandbox-security-audit-page.v1", events: [], next_cursor: null };
+  };
+  const controller = boundary.createSandboxSecurityController(fixture);
+  const success = await controller.listAuditEvents(
+    makeRawRequest({
+      rawHeaders: [
+        "Authorization", `Bearer sbxcap_v1.${"a".repeat(43)}`,
+        "Content-Length", "0"
+      ]
+    }),
+    new URL("http://127.0.0.1/api/sandbox/security/audit-events?limit=100"),
+    "http-request-limit-100"
+  );
+  assert.equal(success.statusCode, 200);
+  assert.equal(receivedLimit, 100);
+
+  calls.length = 0;
+  await assert.rejects(
+    () => controller.listAuditEvents(
+      makeRawRequest({
+        rawHeaders: [
+          "Authorization", `Bearer sbxcap_v1.${"a".repeat(43)}`,
+          "Content-Length", "0"
+        ]
+      }),
+      new URL("http://127.0.0.1/api/sandbox/security/audit-events?limit=0"),
+      "http-request-limit-0"
+    ),
+    hasHttpError(400, "SANDBOX_SECURITY_INVALID_REQUEST")
+  );
+  assert.equal(calls.includes("audit_service"), false);
+});
+
+test("REQ-SBX-GENERAL-003 controller body admission audits actual 413 and 408 failures", async () => {
+  const boundary = sandboxSecurityBoundary as unknown as {
+    createSandboxSecurityController: (input: Record<string, unknown>) => {
+      evaluate(request: IncomingMessage, requestId: string): Promise<unknown>;
+    };
+  };
+  const bodyCases = [
+    {
+      name: "too-large",
+      headers: [
+        "Authorization", `Bearer sbxcap_v1.${"a".repeat(43)}`,
+        "Idempotency-Key", "request-key-0001",
+        "Content-Type", "application/json",
+        "Content-Length", "786433"
+      ],
+      expectedStatus: 413,
+      expectedHttpCode: "SANDBOX_SECURITY_BODY_TOO_LARGE",
+      expectedAuditCode: "body_too_large"
+    },
+    {
+      name: "timeout",
+      headers: [
+        "Authorization", `Bearer sbxcap_v1.${"a".repeat(43)}`,
+        "Idempotency-Key", "request-key-0001",
+        "Content-Type", "application/json",
+        "Transfer-Encoding", "chunked"
+      ],
+      expectedStatus: 408,
+      expectedHttpCode: "SANDBOX_SECURITY_REQUEST_TIMEOUT",
+      expectedAuditCode: "body_timeout"
+    }
+  ] as const;
+
+  for (const bodyCase of bodyCases) {
+    const calls: string[] = [];
+    const fixture = makePublicControllerDependencies(calls, makePublicControllerCapability());
+    let rejection: Record<string, unknown> | undefined;
+    (fixture.audit_projector as { requestRejected(input: Record<string, unknown>): unknown }).requestRejected = (input) => {
+      calls.push("record_rejection");
+      rejection = input;
+      return {};
+    };
+    const controller = boundary.createSandboxSecurityController(fixture);
+    const request = bodyCase.name === "timeout"
+      ? (() => {
+          const hanging = new EventEmitter() as unknown as StreamFixture;
+          hanging.rawHeaders = [...bodyCase.headers];
+          hanging.headers = {};
+          hanging.complete = false;
+          hanging.aborted = false;
+          hanging.destroyed = false;
+          hanging[Symbol.asyncIterator] = () => ({
+            next: () => new Promise<IteratorResult<Buffer, undefined>>(() => {}),
+            return: async () => ({ done: true, value: undefined })
+          });
+          return hanging as unknown as IncomingMessage;
+        })()
+      : makeRawRequest({ rawHeaders: bodyCase.headers });
+    const attempt = controller.evaluate(request, `http-request-${bodyCase.name}`);
+    await assert.rejects(
+      attempt,
+      hasHttpError(bodyCase.expectedStatus, bodyCase.expectedHttpCode, {
+        close_after_response: true
+      })
+    );
+    assert.equal(rejection?.rejection_code, bodyCase.expectedAuditCode);
+    assert.equal(rejection?.composition_binding, "sandbox-security-production-composition.v1:rule_only");
+    assert.equal(calls.includes("evaluation_service"), false);
+  }
+});
+
+function makePublicControllerCapability(): Record<string, unknown> {
+  return {
+    capability_id: "capability:00000000-0000-4000-8000-000000000001",
+    subject_id: "subject-a",
+    authorization_scope_id: `authscope:hmac-sha256:${"a".repeat(64)}`,
+    scopes: ["sandbox_security:evaluate", "sandbox_security:audit:read"],
+    allowed_stages: ["user_input"],
+    allowed_policy_profile_ids: ["sandbox-security-balanced.v1"],
+    issued_at: "2026-08-01T00:00:00.000Z",
+    expires_at: "2026-08-01T01:00:00.000Z"
+  };
+}
+
+function makePublicEvaluationSubmission(): Record<string, unknown> {
+  return {
+    schema_version: "sandbox-security-request.v1",
+    request_id: "request-001",
+    stage: "user_input",
+    policy_profile_id: "sandbox-security-balanced.v1",
+    content_items: [
+      {
+        source_id: "source-001",
+        claimed_source_type: "user_input",
+        media_type: "text/plain",
+        value: "hello",
+        provenance_ref: "source://sandbox/security/source-001/0001"
+      }
+    ]
+  };
+}
+
+function makeUnreadControllerRequest(onRead: () => void): IncomingMessage {
+  const request = new EventEmitter() as unknown as FakeIncomingMessage;
+  request.rawHeaders = [
+    "Authorization",
+    `Bearer sbxcap_v1.${"a".repeat(43)}`
+  ];
+  request.headers = {};
+  request.complete = false;
+  request.aborted = false;
+  request.destroyed = false;
+  request.pause = () => undefined;
+  request[Symbol.asyncIterator] = () => {
+    onRead();
+    return {
+      next: async () => ({ done: true, value: undefined })
+    } as AsyncIterator<Buffer | string, undefined>;
+  };
+  return request as unknown as IncomingMessage;
+}
+
+function makePublicControllerDependencies(
+  calls: string[],
+  capability: Record<string, unknown>,
+  options: Readonly<{
+    requireEvaluationScopeError?: boolean;
+  }> = {}
+): Record<string, unknown> {
+  return {
+    composition_binding: "sandbox-security-production-composition.v1:rule_only",
+    authenticator: {
+      authenticateToken() {
+        calls.push("authenticate");
+        return { kind: "authorized", capability };
+      },
+      requireScope(_capability: unknown, scope: string) {
+        calls.push(scope === "sandbox_security:audit:read" ? "require_audit_scope" : "require_evaluate_scope");
+        if (options.requireEvaluationScopeError === true) {
+          throw createSandboxSecurityServiceError({
+            code: "SANDBOX_SECURITY_FORBIDDEN",
+            audit_rejection_code: "scope_forbidden"
+          });
+        }
+      },
+      requireEvaluationGrant() {
+        calls.push("stage_profile_grant");
+      },
+      authenticateAdministrator() {}
+    },
+    evaluation_service: {
+      async evaluate() {
+        calls.push("evaluation_service");
+        return {};
+      }
+    },
+    audit_service: {
+      list() {
+        calls.push("audit_service");
+        return { schema_version: "sandbox-security-audit-page.v1", events: [], next_cursor: null };
+      },
+      purgeExpired() {
+        return { schema_version: "sandbox-security-audit-purge-result.v1", retention_days: 90, deleted_count: 0, has_more: false };
+      }
+    },
+    maintenance: {
+      state: () => "healthy",
+      assertEvaluationAvailable() {
+        calls.push("maintenance");
+      },
+      claim: () => ({ kind: "claimed" }),
+      runHourlyCleanup() {},
+      runPurgePreCleanup() {},
+      close() {}
+    },
+    global_bucket: {
+      consume() {
+        calls.push("global_bucket");
+        return { allowed: true };
+      }
+    },
+    capability_limiters: {
+      consume() {
+        calls.push("capability_bucket");
+        return { allowed: true };
+      },
+      remove() {},
+      size: () => 1
+    },
+    audit_projector: {
+      requestRejected() {
+        calls.push("record_rejection");
+        return {};
+      },
+      evaluationCompleted: () => ({}),
+      evaluationReplayed: () => ({}),
+      evaluationInterrupted: () => ({}),
+      capabilityIssued: () => ({}),
+      capabilityRevoked: () => ({}),
+      auditRead: () => ({}),
+      auditPurged: () => ({})
+    },
+    audit_repository: {
+      append() {}
+    },
+    runtime: {
+      now: () => "2026-08-01T00:00:00.000Z",
+      monotonicNowMs: () => 0,
+      randomBytes: () => new Uint8Array(32),
+      nextCapabilityId: () => "capability:00000000-0000-4000-8000-000000000001",
+      nextAuditEventId: () => "audit:00000000-0000-4000-8000-000000000001",
+      nextDecisionId: () => "decision:00000000-0000-4000-8000-000000000001",
+      scheduleTimeout: () => () => undefined,
+      scheduleInterval: () => ({ unref() {}, cancel() {} })
+    }
+  };
+}

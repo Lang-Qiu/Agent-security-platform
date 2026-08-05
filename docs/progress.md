@@ -44,6 +44,45 @@
     GENERAL-003 is not `VERIFIED`
 - next: proceed to P5-T2 public evaluation and audit controllers
 
+## 2026-08-06 - REQ-SBX-GENERAL-003 P5-T2 public evaluation and audit controllers
+
+- phase/task: Phase 5 / P5-T2 Public Evaluation and Audit Controllers
+- status: `IMPLEMENTED_PENDING_P5_T3`
+- implementation:
+  - added the public controller factory behind the sandbox-security module
+    boundary for evaluation and subject-scoped audit reads
+  - enforces the fixed global/authentication/scope/maintenance/capability,
+    body, normalization, grant, and service admission orders
+  - records controller-owned known-capability rejection events with the exact
+    injected production composition binding, while leaving transaction-owned
+    idempotency and concurrency events to the evaluation service
+  - validates the production composition binding and avoids projecting an
+    unsupported bodyless audit rejection code into the shared read-event union
+- files:
+  - `backend/src/modules/sandbox-security/sandbox-security.controller.ts`
+  - `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+  - `backend/tests/sandbox-security-controller.spec.ts`
+  - `docs/api-contract.md`
+- tests:
+  - controller/admission and public rejection matrix is green (`70/70`)
+  - route and app dispatch regressions are green (`16/16`)
+  - controller source/test typecheck filtering reports no new
+    sandbox-security errors; repository baseline campaign/task-center/test
+    errors remain
+  - `git diff --check` passes
+- TDD/reviews:
+  - RED first failed for the missing controller factory, then for the
+    composition-binding and bodyless-audit edge cases before targeted fixes
+  - independent specification review plus re-reviews closed all Critical,
+    Important, and Minor findings after the full public rejection matrix was
+    added
+- boundary:
+  - administrator controllers and injected module assembly remain P5-T3/P5-T4;
+    production gateway and lifecycle remain Phase 6
+  - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
+    GENERAL-003 is not `VERIFIED`
+- next: proceed to P5-T3 internal capability and purge controller
+
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P4-T3 evaluation orchestration and idempotency
 
 - phase/task: Phase 4 / P4-T3 Evaluation Orchestration and Idempotency

@@ -2213,3 +2213,29 @@ Server-detected `408` and `413` responses include `Connection: close`; the
 request and socket are destroyed only from the response `finish` callback.
 When the caller has already aborted or the response is not writable, no second
 headers/body/end/destroy operation is attempted.
+
+### P5-T2 public controller contract
+
+The public controller accepts only the injected production composition binding
+`sandbox-security-production-composition.v1:{rule_only|local|local_and_judge}`.
+It returns success `ApiResponse` values from the two public routes and throws
+typed `SandboxSecurityHttpError` values for all failures; app modules are the
+only error-envelope writers.
+
+Evaluation admission is ordered as global bucket, bearer authentication,
+`sandbox_security:evaluate` scope, maintenance health, capability bucket,
+`Idempotency-Key`, JSON body admission and shared normalization, then stage and
+profile grant checks before the evaluation service. Audit reads use the same
+global/authentication prefix, require `sandbox_security:audit:read`, consume
+the capability bucket, await bodyless completion, parse the bounded query, and
+only then call the subject-scoped audit service. Audit `limit` defaults to 50
+and accepts only canonical values from 1 through 100.
+
+Known-capability controller-owned rejections append one content-free
+`request_rejected` event using the exact injected composition binding. Global
+bucket and unknown-credential failures create no audit. Idempotency conflict,
+in-progress, and concurrency failures are transaction-owned by the evaluation
+service and are mapped without a second controller event. Body admission
+errors on evaluation use their evaluation rejection codes; an unsupported
+media error on a bodyless audit route is returned to the caller but is not
+projected as an invalid `audit_read` rejection variant.
