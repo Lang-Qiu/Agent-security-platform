@@ -124,6 +124,52 @@
     GENERAL-003 is not `VERIFIED`
 - next: proceed to P5-T4 complete injected module and real HTTP admission
 
+## 2026-08-06 - REQ-SBX-GENERAL-003 P5-T4 injected module and real HTTP admission
+
+- phase/task: Phase 5 / P5-T4 Complete Injected Module and Real HTTP Admission
+- status: `COMPLETE_PENDING_P6_T1`
+- implementation:
+  - assembled the public and administrator controllers from one injected
+    sandbox-security module dependency graph without reading environment or
+    opening another database
+  - injected the same module instance into the public and internal listeners;
+    public and internal route ownership remains disjoint while health routes
+    remain unchanged
+  - made module shutdown idempotent and ordered maintenance cancellation
+    before SQLite checkpoint/close; startup bind failures close the injected
+    module after listener cleanup
+  - added real HTTP coverage for complete 413/408 JSON responses,
+    `Connection: close`, finish-before-socket-close ordering, caller aborts,
+    all five route successes, listener ownership, health, and admission
+    boundaries
+- files:
+  - `backend/src/main.ts`
+  - `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+  - `tests/integration/backend-sandbox-security.api.spec.ts`
+  - `package.json`
+  - `docs/api-contract.md`
+- tests:
+  - focused real HTTP integration suite is green (`14/14`)
+  - combined main/routes/controllers/integration regression is green (`121/121`)
+  - `npm run test:backend` is `470/472`; the two failures remain the existing
+    Semgrep `ENOENT` and task-engine asset expectation drift, unrelated to
+    P5-T4
+  - backend typecheck reports only existing campaign/task-center/test baseline
+    errors; no P5-T4 sandbox-security source error
+  - `git diff --check` passes
+- TDD/reviews:
+  - real HTTP RED first failed on the incomplete injected module/listener
+    boundary; targeted close-order and caller-abort regressions were each run
+    RED before their minimal fixes and are now GREEN
+  - independent specification review and quality re-review: PASS with `0
+    Critical / 0 Important / 0 Minor`
+- boundary:
+  - production Engine gateway, validated configuration, lifecycle, privacy
+    gates, and final documentation remain Phase 6
+  - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
+    GENERAL-003 is not `VERIFIED`
+- next: proceed to P6-T1 production evaluation gateway
+
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P4-T3 evaluation orchestration and idempotency
 
 - phase/task: Phase 4 / P4-T3 Evaluation Orchestration and Idempotency

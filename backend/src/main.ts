@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 
 import { AppModule, createAppModule } from "./app.module.ts";
 import { InternalAppModule } from "./internal-app.module.ts";
+import type { SandboxSecurityModule } from "./modules/sandbox-security/sandbox-security.module.ts";
 import {
   createRuntimeDependencies,
   type RuntimeDependencies
@@ -41,6 +42,7 @@ export interface ProductionServers {
 export function createProductionServers(options?: {
   deps?: RuntimeDependencies;
   ingestToken?: string;
+  sandboxSecurityModule?: SandboxSecurityModule;
 }): ProductionServers {
   const deps = options?.deps ?? createRuntimeDependencies();
   // R14 (Phase 2 rework review P1 #5): read TRACK1_INGEST_TOKEN (the env var
@@ -52,15 +54,23 @@ export function createProductionServers(options?: {
     process.env.TRACK1_INGEST_TOKEN ??
     "";
 
-  const appModule = createAppModule(deps);
+  const appModule = createAppModule(deps, options?.sandboxSecurityModule);
   const internalAppModule = new InternalAppModule({
     campaignRepository: deps.campaignRepository,
     ingestToken,
-    taskRepository: deps.taskRepository
+    taskRepository: deps.taskRepository,
+    sandboxSecurityModule: options?.sandboxSecurityModule
   });
 
   const publicServer = createAppServer(appModule);
   const internalServer = createInternalAppServer(internalAppModule);
+
+  let moduleClosed = false;
+  const closeSandboxSecurityModule = async (): Promise<void> => {
+    if (moduleClosed || options?.sandboxSecurityModule === undefined) return;
+    moduleClosed = true;
+    await options.sandboxSecurityModule.close();
+  };
 
   return {
     publicServer,
@@ -75,7 +85,7 @@ export function createProductionServers(options?: {
         new Promise<void>((resolve, reject) => {
           internalServer.close((err) => (err ? reject(err) : resolve()));
         })
-      ]).then(() => undefined)
+      ]).then(closeSandboxSecurityModule)
   };
 }
 
@@ -128,6 +138,7 @@ export async function startProductionServers(options: {
   internalBindHost?: string;
   deps?: RuntimeDependencies;
   ingestToken?: string;
+  sandboxSecurityModule?: SandboxSecurityModule;
 } = {}): Promise<ProductionServerHandles> {
   const publicPort = options.publicPort ?? Number(process.env.PORT ?? 3000);
   const internalPort =
@@ -144,17 +155,38 @@ export async function startProductionServers(options: {
 
   const servers = createProductionServers({
     deps: options.deps,
-    ingestToken: options.ingestToken
+    ingestToken: options.ingestToken,
+    sandboxSecurityModule: options.sandboxSecurityModule
   });
+  let sandboxSecurityModuleClosed = false;
+  const closeInjectedSandboxSecurityModule = async (): Promise<void> => {
+    if (
+      sandboxSecurityModuleClosed ||
+      options.sandboxSecurityModule === undefined
+    ) {
+      return;
+    }
+    sandboxSecurityModuleClosed = true;
+    try {
+      await options.sandboxSecurityModule.close();
+    } catch {
+      // Preserve the startup bind error while attempting best-effort cleanup.
+    }
+  };
 
   // Await both listen calls so the servers are fully bound before returning.
-  await new Promise<void>((resolve, reject) => {
-    servers.publicServer.once("error", reject);
-    servers.publicServer.listen(publicPort, publicBindHost, () => {
-      servers.publicServer.removeListener("error", reject);
-      resolve();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      servers.publicServer.once("error", reject);
+      servers.publicServer.listen(publicPort, publicBindHost, () => {
+        servers.publicServer.removeListener("error", reject);
+        resolve();
+      });
     });
-  });
+  } catch (err) {
+    await closeInjectedSandboxSecurityModule();
+    throw err;
+  }
   try {
     await new Promise<void>((resolve, reject) => {
       servers.internalServer.once("error", reject);
@@ -171,6 +203,7 @@ export async function startProductionServers(options: {
     await new Promise<void>((resolve) => {
       servers.publicServer.close(() => resolve());
     });
+    await closeInjectedSandboxSecurityModule();
     throw err;
   }
 

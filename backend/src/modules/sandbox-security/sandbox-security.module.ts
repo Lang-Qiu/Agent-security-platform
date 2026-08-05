@@ -1,6 +1,8 @@
 import type { IncomingMessage } from "node:http";
 
 import type { HttpResponse } from "../../common/http/http-response.ts";
+import { createSandboxSecurityAdminController } from "./sandbox-security-admin.controller.ts";
+import { createSandboxSecurityController } from "./sandbox-security.controller.ts";
 import type { SandboxSecurityAuditRepository } from "./ports/audit.repository.ts";
 import type { SandboxSecurityEvaluationGateway } from "./ports/evaluation.gateway.ts";
 import type { SandboxSecurityRuntimePort } from "./ports/runtime.ts";
@@ -121,8 +123,52 @@ export interface SandboxSecurityModuleDependencies {
   runtime: SandboxSecurityRuntimePort;
 }
 
-// Keep the module boundary type-only in Phase 1. Concrete service/controller
-// factories are added by their owning later tasks.
+/**
+ * Assemble the sandbox-security boundary from already constructed services.
+ *
+ * Environment/configuration and persistence construction belong to the
+ * composition root. Keeping this factory injection-only makes the public and
+ * internal listeners share one controller/service graph and gives the module
+ * one explicit resource owner for shutdown.
+ */
+export function createSandboxSecurityModule(
+  dependencies: Readonly<SandboxSecurityModuleDependencies>
+): SandboxSecurityModule {
+  const publicController = createSandboxSecurityController({
+    composition_binding: dependencies.composition_binding,
+    authenticator: dependencies.authenticator,
+    evaluation_service: dependencies.evaluation_service,
+    audit_service: dependencies.audit_service,
+    maintenance: dependencies.maintenance,
+    global_bucket: dependencies.global_bucket,
+    capability_limiters: dependencies.capability_limiters,
+    audit_projector: dependencies.audit_projector,
+    audit_repository: dependencies.audit_repository,
+    runtime: dependencies.runtime
+  });
+  const adminController = createSandboxSecurityAdminController({
+    authenticator: dependencies.authenticator,
+    capability_service: dependencies.capability_service,
+    audit_service: dependencies.audit_service,
+    administrator_bucket: dependencies.administrator_bucket,
+    runtime: dependencies.runtime
+  });
+
+  let closed = false;
+  return {
+    publicController,
+    adminController,
+    async close(): Promise<void> {
+      if (closed) return;
+      closed = true;
+      dependencies.maintenance.close();
+      dependencies.database.checkpointAndClose();
+    }
+  };
+}
+
+// Re-export the boundary contracts so composition roots and tests can assemble
+// the module without importing concrete adapter implementations.
 export type {
   SandboxSecurityAuditProjector,
   SandboxSecurityAuditService,

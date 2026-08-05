@@ -1,0 +1,893 @@
+import assert from "node:assert/strict";
+import { createServer, type Server } from "node:http";
+import { connect, type Socket } from "node:net";
+import { test } from "node:test";
+
+import { AppModule, createAppModule } from "../../backend/src/app.module.ts";
+import {
+  createInternalAppServer,
+  createAppServer,
+  createProductionServers,
+  startServer
+} from "../../backend/src/main.ts";
+import { createRuntimeDependencies } from "../../backend/src/runtime-dependencies.ts";
+import {
+  createSandboxSecurityModule,
+  type SandboxSecurityModule
+} from "../../backend/src/modules/sandbox-security/sandbox-security.module.ts";
+import { createSandboxSecurityServiceError } from "../../backend/src/modules/sandbox-security/sandbox-security.errors.ts";
+import type { SandboxSecurityRuntimePort } from "../../backend/src/modules/sandbox-security/ports/runtime.ts";
+import type { SqliteSandboxSecurityDatabase } from "../../backend/src/modules/sandbox-security/ports/sqlite-database.ts";
+import type {
+  SandboxSecurityAuthorizedCapability,
+  SandboxSecurityCapabilityAuthenticationResult,
+  SandboxSecurityCapabilityLimiterRegistry,
+  SandboxSecurityCapabilityService,
+  SandboxSecurityEvaluationService,
+  SandboxSecurityIdempotencyMaintenance,
+  SandboxSecurityTokenBucket,
+  SandboxSecurityAuditService,
+  SandboxSecurityAuditProjector
+} from "../../backend/src/modules/sandbox-security/sandbox-security.types.ts";
+import type { SandboxSecurityAuditRepository } from "../../backend/src/modules/sandbox-security/ports/audit.repository.ts";
+import type { SandboxSecurityRequest, SandboxSecurityDecision } from "../../backend/src/modules/sandbox-security/sandbox-security.types.ts";
+
+const PUBLIC_TOKEN = `sbxcap_v1.${"a".repeat(43)}`;
+const ADMIN_TOKEN = "admin-test-token";
+const CAPABILITY_ID = "capability:123e4567-e89b-42d3-a456-426614174000";
+const COMPOSITION_BINDING = "sandbox-security-production-composition.v1:rule_only";
+const MAX_PUBLIC_BODY_BYTES = 786432;
+
+const VALID_EVALUATION = {
+  schema_version: "sandbox-security-request.v1",
+  request_id: "request-http-1",
+  stage: "user_input",
+  policy_profile_id: "sandbox-security-balanced.v1",
+  content_items: [
+    {
+      source_id: "source-1",
+      claimed_source_type: "user_input",
+      media_type: "text/plain",
+      value: "hello",
+      provenance_ref: "source://client/input"
+    }
+  ]
+} as const;
+
+type RawHttpResponse = Readonly<{
+  statusCode: number;
+  headers: Readonly<Record<string, string>>;
+  body: string;
+  json: any;
+  complete: boolean;
+}>;
+
+interface TestFixture {
+  publicServer: Server;
+  internalServer: Server;
+  publicPort: number;
+  internalPort: number;
+  module: SandboxSecurityModule;
+  calls: string[];
+  responseEvents: string[];
+  close(): Promise<void>;
+}
+
+function createRuntime(): SandboxSecurityRuntimePort {
+  let sequence = 0;
+  return {
+    now: () => "2026-08-06T00:00:00.000Z",
+    monotonicNowMs: () => 1000,
+    randomBytes: (length) => new Uint8Array(length),
+    nextCapabilityId: () => CAPABILITY_ID,
+    nextAuditEventId: () => `audit-${++sequence}`,
+    nextDecisionId: () => `decision-${++sequence}`,
+    scheduleTimeout: (_delay, callback) => {
+      const timer = setTimeout(callback, 0);
+      return () => clearTimeout(timer);
+    },
+    scheduleInterval: () => ({
+      unref() {},
+      cancel() {}
+    })
+  };
+}
+
+function createAllowedBucket(): SandboxSecurityTokenBucket {
+  return { consume: () => ({ allowed: true }) };
+}
+
+function createAllowedCapabilityLimiter(): SandboxSecurityCapabilityLimiterRegistry {
+  return {
+    consume: () => ({ allowed: true }),
+    remove: () => undefined,
+    size: () => 0
+  };
+}
+
+function createCapability(): SandboxSecurityAuthorizedCapability {
+  return {
+    capability_id: CAPABILITY_ID,
+    subject_id: "subject-http-test",
+    authorization_scope_id: "scope-http-test",
+    scopes: ["sandbox_security:evaluate", "sandbox_security:audit:read"],
+    allowed_stages: ["user_input", "model_output", "tool_request"],
+    allowed_policy_profile_ids: [
+      "sandbox-security-balanced.v1",
+      "sandbox-security-strict.v1"
+    ],
+    issued_at: "2026-08-06T00:00:00.000Z",
+    expires_at: "2026-08-06T01:00:00.000Z"
+  };
+}
+
+function createDecision(): SandboxSecurityDecision {
+  return {
+    schema_version: "sandbox-security-decision.v1",
+    decision_id: "decision-http-1",
+    request_id: "request-http-1",
+    evaluation_mode: "simulation",
+    stage: "user_input",
+    policy_profile_id: "sandbox-security-balanced.v1",
+    verdict: "no_detected_risk",
+    action: "allow",
+    risk_level: "info",
+    findings: [],
+    detector_runs: [],
+    evidence_refs: [],
+    created_at: "2026-08-06T00:00:00.000Z"
+  };
+}
+
+function createDependencies(calls: string[], options: Readonly<{
+  auditScope?: boolean;
+  slowEvaluation?: boolean;
+}> = {}) {
+  const capability = createCapability();
+  const runtime = createRuntime();
+  const authenticator = {
+    authenticateToken(token: string): SandboxSecurityCapabilityAuthenticationResult {
+      calls.push(`authenticate:${token}`);
+      if (token !== PUBLIC_TOKEN) return { kind: "unknown" };
+      return { kind: "authorized", capability };
+    },
+    requireScope(_capability: SandboxSecurityAuthorizedCapability, scope: string): void {
+      calls.push(`scope:${scope}`);
+      if (scope === "sandbox_security:audit:read" && options.auditScope === false) {
+        throw createSandboxSecurityServiceError({
+          code: "SANDBOX_SECURITY_FORBIDDEN",
+          audit_rejection_code: "scope_forbidden"
+        });
+      }
+    },
+    requireEvaluationGrant: (
+      _capability: SandboxSecurityAuthorizedCapability,
+      _submission: SandboxSecurityRequest
+    ) => {
+      calls.push("evaluation_grant");
+    },
+    authenticateAdministrator(token: string): void {
+      calls.push(`authenticate_admin:${token}`);
+      if (token !== ADMIN_TOKEN) {
+        throw createSandboxSecurityServiceError({
+          code: "SANDBOX_SECURITY_ADMIN_UNAUTHORIZED"
+        });
+      }
+    }
+  };
+
+  const evaluationService: SandboxSecurityEvaluationService = {
+    async evaluate(input) {
+      calls.push(`evaluate:${input.idempotency_key}`);
+      if (options.slowEvaluation === true) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      }
+      return createDecision();
+    }
+  };
+
+  const auditService: SandboxSecurityAuditService = {
+    list(input) {
+      calls.push(`audit-list:${input.limit}`);
+      return {
+        schema_version: "sandbox-security-audit-page.v1",
+        events: [],
+        next_cursor: null
+      };
+    },
+    purgeExpired() {
+      calls.push("audit-purge");
+      return {
+        schema_version: "sandbox-security-audit-purge-result.v1",
+        retention_days: 90,
+        deleted_count: 0,
+        has_more: false
+      };
+    }
+  };
+
+  const capabilityService: SandboxSecurityCapabilityService = {
+    issue(input) {
+      calls.push(`capability-issue:${input.ttl_seconds}`);
+      return {
+        schema_version: "sandbox-security-capability-issue-result.v1",
+        capability_id: CAPABILITY_ID,
+        subject_id: input.subject_id,
+        scopes: input.scopes,
+        allowed_stages: input.allowed_stages,
+        allowed_policy_profile_ids: input.allowed_policy_profile_ids,
+        bearer_token: PUBLIC_TOKEN,
+        issued_at: "2026-08-06T00:00:00.000Z",
+        expires_at: "2026-08-06T01:00:00.000Z",
+        revoked_at: null
+      };
+    },
+    revoke(capabilityId) {
+      calls.push(`capability-revoke:${capabilityId}`);
+      return {
+        schema_version: "sandbox-security-capability-record.v1",
+        capability_id: capabilityId,
+        subject_id: "subject-http-test",
+        scopes: ["sandbox_security:evaluate"],
+        allowed_stages: ["user_input"],
+        allowed_policy_profile_ids: ["sandbox-security-balanced.v1"],
+        issued_at: "2026-08-06T00:00:00.000Z",
+        expires_at: "2026-08-06T01:00:00.000Z",
+        revoked_at: "2026-08-06T00:00:01.000Z"
+      };
+    }
+  };
+
+  const maintenance: SandboxSecurityIdempotencyMaintenance = {
+    state: () => "healthy",
+    assertEvaluationAvailable: () => calls.push("maintenance"),
+    claim: () => ({ kind: "claimed" }),
+    runHourlyCleanup: () => undefined,
+    runPurgePreCleanup: () => undefined,
+    close: () => calls.push("maintenance-close")
+  };
+
+  const projector: SandboxSecurityAuditProjector = {
+    evaluationCompleted: () => ({} as never),
+    evaluationReplayed: () => ({} as never),
+    evaluationInterrupted: () => ({} as never),
+    requestRejected: () => ({} as never),
+    capabilityIssued: () => ({} as never),
+    capabilityRevoked: () => ({} as never),
+    auditRead: () => ({} as never),
+    auditPurged: () => ({} as never)
+  };
+  const auditRepository: SandboxSecurityAuditRepository = {
+    append: () => undefined,
+    list: () => ({ events: [], next_cursor: null }),
+    purgeExpired: () => ({ deleted_count: 0, has_more: false })
+  } as unknown as SandboxSecurityAuditRepository;
+  const database: SqliteSandboxSecurityDatabase = {
+    state: "open",
+    transaction: (operation) => operation({} as never),
+    read: (operation) => operation({} as never),
+    checkpointAndClose: () => calls.push("database-close")
+  };
+
+  return {
+    database,
+    composition_binding: COMPOSITION_BINDING,
+    maintenance,
+    authenticator,
+    evaluation_service: evaluationService,
+    capability_service: capabilityService,
+    audit_service: auditService,
+    audit_repository: auditRepository,
+    audit_projector: projector,
+    global_bucket: createAllowedBucket(),
+    administrator_bucket: createAllowedBucket(),
+    capability_limiters: createAllowedCapabilityLimiter(),
+    runtime
+  };
+}
+
+async function startInjectedSandboxSecurityServers(
+  options: Readonly<{ auditScope?: boolean; slowEvaluation?: boolean }> = {}
+): Promise<TestFixture> {
+  const calls: string[] = [];
+  const module = createSandboxSecurityModule(createDependencies(calls, options));
+  const runtime = createRuntimeDependencies();
+  const app = createAppModule(runtime, module);
+  const internalApp = new (await import("../../backend/src/internal-app.module.ts")).InternalAppModule({
+    campaignRepository: runtime.campaignRepository,
+    taskRepository: runtime.taskRepository,
+    ingestToken: "a".repeat(64),
+    sandboxSecurityModule: module
+  });
+  const publicServer = createAppServer(app);
+  const internalServer = createInternalAppServer(internalApp);
+  const responseEvents: string[] = [];
+  publicServer.on("request", (request, response) => {
+    response.once("finish", () => responseEvents.push("finish"));
+    request.socket.once("close", () => responseEvents.push("socket-close"));
+  });
+  const publicHandle = await startServer(publicServer);
+  const internalHandle = await startServer(internalServer);
+  const publicPort = Number(new URL(publicHandle.baseUrl).port);
+  const internalPort = Number(new URL(internalHandle.baseUrl).port);
+  return {
+    publicServer,
+    internalServer,
+    publicPort,
+    internalPort,
+    module,
+    calls,
+    responseEvents,
+    async close() {
+      await Promise.all([publicHandle.close(), internalHandle.close()]);
+      await module.close();
+    }
+  };
+}
+
+function parseResponse(buffer: Buffer): RawHttpResponse | null {
+  const separator = buffer.indexOf("\r\n\r\n");
+  if (separator < 0) return null;
+  const headerText = buffer.subarray(0, separator).toString("latin1");
+  const lines = headerText.split("\r\n");
+  const statusCode = Number(lines.shift()?.split(" ")[1]);
+  const headers: Record<string, string> = {};
+  for (const line of lines) {
+    const colon = line.indexOf(":");
+    if (colon > 0) headers[line.slice(0, colon).toLowerCase()] = line.slice(colon + 1).trim();
+  }
+  const body = buffer.subarray(separator + 4);
+  const contentLength = headers["content-length"] === undefined
+    ? null
+    : Number(headers["content-length"]);
+  if (contentLength !== null && body.length < contentLength) return null;
+  return {
+    statusCode,
+    headers,
+    body: body.subarray(0, contentLength ?? body.length).toString("utf8"),
+    json: (() => {
+      try {
+        return JSON.parse(body.subarray(0, contentLength ?? body.length).toString("utf8"));
+      } catch {
+        return undefined;
+      }
+    })(),
+    complete: contentLength === null || body.length >= contentLength
+  };
+}
+
+function sendRawHttpRequest(port: number, rawRequest: string | Buffer): Promise<RawHttpResponse> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(port, "127.0.0.1");
+    const chunks: Buffer[] = [];
+    let settled = false;
+    const settle = () => {
+      if (settled) return;
+      const response = parseResponse(Buffer.concat(chunks));
+      if (response === null) return;
+      settled = true;
+      socket.destroy();
+      resolve(response);
+    };
+    socket.on("connect", () => socket.write(rawRequest));
+    socket.on("data", (chunk) => {
+      chunks.push(Buffer.from(chunk));
+      settle();
+    });
+    socket.on("end", settle);
+    socket.on("close", settle);
+    socket.on("error", (error) => {
+      if (!settled) reject(error);
+    });
+  });
+}
+
+function evaluationBodyRequest(
+  port: number,
+  body: string,
+  headers: readonly string[] = []
+): Promise<RawHttpResponse> {
+  const requestHeaders = [
+    "POST /api/sandbox/security/evaluations HTTP/1.1",
+    "Host: 127.0.0.1",
+    `Authorization: Bearer ${PUBLIC_TOKEN}`,
+    "Content-Type: application/json",
+    "Idempotency-Key: idempotency-http-1",
+    `Content-Length: ${Buffer.byteLength(body)}`,
+    "Connection: close",
+    ...headers,
+    "",
+    ""
+  ].join("\r\n");
+  return sendRawHttpRequest(port, requestHeaders + body);
+}
+
+test("REQ-SBX-GENERAL-003 all five sandbox security routes succeed through injected services", async () => {
+  const fixture = await startInjectedSandboxSecurityServers();
+  try {
+    const evaluation = await evaluationBodyRequest(
+      fixture.publicPort,
+      JSON.stringify(VALID_EVALUATION)
+    );
+    const audit = await sendRawHttpRequest(
+      fixture.publicPort,
+      [
+        "GET /api/sandbox/security/audit-events HTTP/1.1",
+        "Host: 127.0.0.1",
+        `Authorization: Bearer ${PUBLIC_TOKEN}`,
+        "Connection: close",
+        "",
+        ""
+      ].join("\r\n")
+    );
+    const issueBody = JSON.stringify({
+      schema_version: "sandbox-security-capability-issue-request.v1",
+      subject_id: "subject-http-test",
+      scopes: ["sandbox_security:evaluate"],
+      allowed_stages: ["user_input"],
+      allowed_policy_profile_ids: ["sandbox-security-balanced.v1"],
+      ttl_seconds: 900
+    });
+    const issue = await sendRawHttpRequest(
+      fixture.internalPort,
+      [
+        "POST /internal/sandbox/security/capabilities HTTP/1.1",
+        "Host: 127.0.0.1",
+        `Authorization: Bearer ${ADMIN_TOKEN}`,
+        "Content-Type: application/json",
+        `Content-Length: ${Buffer.byteLength(issueBody)}`,
+        "Connection: close",
+        "",
+        issueBody
+      ].join("\r\n")
+    );
+    const revoke = await sendRawHttpRequest(
+      fixture.internalPort,
+      [
+        `POST /internal/sandbox/security/capabilities/${encodeURIComponent(CAPABILITY_ID)}/revoke HTTP/1.1`,
+        "Host: 127.0.0.1",
+        `Authorization: Bearer ${ADMIN_TOKEN}`,
+        "Content-Length: 0",
+        "Connection: close",
+        "",
+        ""
+      ].join("\r\n")
+    );
+    const purge = await sendRawHttpRequest(
+      fixture.internalPort,
+      [
+        "POST /internal/sandbox/security/audit-events/purge HTTP/1.1",
+        "Host: 127.0.0.1",
+        `Authorization: Bearer ${ADMIN_TOKEN}`,
+        "Content-Length: 0",
+        "Connection: close",
+        "",
+        ""
+      ].join("\r\n")
+    );
+
+    assert.equal(evaluation.statusCode, 200);
+    assert.equal(audit.statusCode, 200);
+    assert.equal(issue.statusCode, 201);
+    assert.equal(revoke.statusCode, 200);
+    assert.equal(purge.statusCode, 200);
+    assert.deepEqual(
+      fixture.calls.filter((call) => call.startsWith("capability-") || call.startsWith("audit-") || call === "evaluate:idempotency-http-1"),
+      [
+        "evaluate:idempotency-http-1",
+        "audit-list:50",
+        "capability-issue:900",
+        `capability-revoke:${CAPABILITY_ID}`,
+        "audit-purge"
+      ]
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("REQ-SBX-GENERAL-003 public and internal listeners keep route ownership and health contracts", async () => {
+  const fixture = await startInjectedSandboxSecurityServers();
+  try {
+    const publicInternalPath = await sendRawHttpRequest(
+      fixture.publicPort,
+      [
+        "POST /internal/sandbox/security/capabilities HTTP/1.1",
+        "Host: 127.0.0.1",
+        "Connection: close",
+        "",
+        ""
+      ].join("\r\n")
+    );
+    const internalPublicPath = await sendRawHttpRequest(
+      fixture.internalPort,
+      [
+        "GET /api/sandbox/security/audit-events HTTP/1.1",
+        "Host: 127.0.0.1",
+        "Connection: close",
+        "",
+        ""
+      ].join("\r\n")
+    );
+    const publicHealth = await sendRawHttpRequest(
+      fixture.publicPort,
+      "GET /health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+    );
+    const internalHealth = await sendRawHttpRequest(
+      fixture.internalPort,
+      "GET /internal/health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+    );
+    assert.equal(publicInternalPath.statusCode, 404);
+    assert.equal(internalPublicPath.statusCode, 404);
+    assert.equal(publicHealth.statusCode, 200);
+    assert.equal(publicHealth.json?.data?.status, "ok");
+    assert.equal(internalHealth.statusCode, 200);
+    assert.equal(internalHealth.json?.data?.status, "ok");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("REQ-SBX-GENERAL-003 authenticates before reading malformed evaluation body", async () => {
+  const fixture = await startInjectedSandboxSecurityServers();
+  try {
+    const body = "not-json";
+    const response = await sendRawHttpRequest(
+      fixture.publicPort,
+      [
+        "POST /api/sandbox/security/evaluations HTTP/1.1",
+        "Host: 127.0.0.1",
+        "Content-Type: application/json",
+        `Content-Length: ${Buffer.byteLength(body)}`,
+        "Connection: close",
+        "",
+        body
+      ].join("\r\n")
+    );
+    assert.equal(response.statusCode, 401);
+    assert.equal(response.json?.error_code, "SANDBOX_SECURITY_UNAUTHORIZED");
+    assert.equal(fixture.calls.some((call) => call === "maintenance"), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("REQ-SBX-GENERAL-003 checks audit scope before malformed query parsing", async () => {
+  const fixture = await startInjectedSandboxSecurityServers({ auditScope: false });
+  try {
+    const response = await sendRawHttpRequest(
+      fixture.publicPort,
+      [
+        "GET /api/sandbox/security/audit-events?limit=0&limit=101 HTTP/1.1",
+        "Host: 127.0.0.1",
+        `Authorization: Bearer ${PUBLIC_TOKEN}`,
+        "Connection: close",
+        "",
+        ""
+      ].join("\r\n")
+    );
+    assert.equal(response.statusCode, 403);
+    assert.equal(response.json?.error_code, "SANDBOX_SECURITY_FORBIDDEN");
+    assert.equal(fixture.calls.includes("audit-list:50"), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("REQ-SBX-GENERAL-003 accepts exactly 786432 UTF-8 bytes", async () => {
+  const fixture = await startInjectedSandboxSecurityServers();
+  try {
+    const fixedArguments = Array.from({ length: 7 }, () => "x".repeat(95000));
+    const bodyWithEmptyTail = JSON.stringify({
+      ...VALID_EVALUATION,
+      request_id: "request-max-body",
+      stage: "tool_request",
+      content_items: [
+        {
+          ...VALID_EVALUATION.content_items[0],
+          claimed_source_type: "user_input",
+        },
+        {
+          source_id: "source-2",
+          claimed_source_type: "model_output",
+          media_type: "text/plain",
+          value: "model",
+          provenance_ref: "source://client/model"
+        }
+      ],
+      tool_request: {
+        call_id: "call-1",
+        tool_name: "lookup",
+        arguments: [...fixedArguments, ""]
+      }
+    });
+    const tailLength = MAX_PUBLIC_BODY_BYTES - Buffer.byteLength(bodyWithEmptyTail);
+    assert.ok(tailLength > 0 && tailLength <= 128000);
+    const body = JSON.stringify({
+      ...JSON.parse(bodyWithEmptyTail),
+      tool_request: {
+        ...JSON.parse(bodyWithEmptyTail).tool_request,
+        arguments: [...fixedArguments, "x".repeat(tailLength)]
+      }
+    });
+    assert.equal(Buffer.byteLength(body), MAX_PUBLIC_BODY_BYTES);
+    const response = await evaluationBodyRequest(fixture.publicPort, body);
+    assert.equal(response.statusCode, 200);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("REQ-SBX-GENERAL-003 rejects duplicate raw Authorization headers", async () => {
+  const fixture = await startInjectedSandboxSecurityServers();
+  try {
+    const body = JSON.stringify(VALID_EVALUATION);
+    const response = await evaluationBodyRequest(
+      fixture.publicPort,
+      body,
+      [`Authorization: Bearer ${PUBLIC_TOKEN}`]
+    );
+    assert.equal(response.statusCode, 401);
+    assert.equal(response.json?.error_code, "SANDBOX_SECURITY_UNAUTHORIZED");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("REQ-SBX-GENERAL-003 bodyless declared byte is rejected on the real HTTP path", async () => {
+  const fixture = await startInjectedSandboxSecurityServers();
+  try {
+    const response = await sendRawHttpRequest(
+      fixture.publicPort,
+      [
+        "GET /api/sandbox/security/audit-events HTTP/1.1",
+        "Host: 127.0.0.1",
+        `Authorization: Bearer ${PUBLIC_TOKEN}`,
+        "Content-Length: 1",
+        "Connection: close",
+        "",
+        "x"
+      ].join("\r\n")
+    );
+    assert.equal(response.statusCode, 400);
+    assert.equal(response.json?.error_code, "SANDBOX_SECURITY_INVALID_REQUEST");
+    assert.equal(fixture.calls.some((call) => call.startsWith("audit-list")), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("REQ-SBX-GENERAL-003 oversized client receives complete JSON 413 before socket close", async () => {
+  const fixture = await startInjectedSandboxSecurityServers();
+  try {
+    const response = await sendRawHttpRequest(
+      fixture.publicPort,
+      [
+        "POST /api/sandbox/security/evaluations HTTP/1.1",
+        "Host: 127.0.0.1",
+        `Authorization: Bearer ${PUBLIC_TOKEN}`,
+        "Content-Type: application/json",
+        `Content-Length: ${MAX_PUBLIC_BODY_BYTES + 1}`,
+        "Idempotency-Key: idempotency-http-oversized",
+        "Connection: close",
+        "",
+        ""
+      ].join("\r\n")
+    );
+    assert.equal(response.statusCode, 413);
+    assert.equal(response.headers.connection, "close");
+    assert.equal(response.json?.error_code, "SANDBOX_SECURITY_BODY_TOO_LARGE");
+    assert.equal(response.complete, true);
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    const finishIndex = fixture.responseEvents.indexOf("finish");
+    const socketCloseIndex = fixture.responseEvents.indexOf("socket-close");
+    assert.ok(finishIndex >= 0 && socketCloseIndex >= 0);
+    assert.ok(finishIndex < socketCloseIndex);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("REQ-SBX-GENERAL-003 slow client receives complete JSON 408 before socket close", { timeout: 8000 }, async () => {
+  const fixture = await startInjectedSandboxSecurityServers();
+  try {
+    const response = await new Promise<RawHttpResponse>((resolve, reject) => {
+      const socket = connect(fixture.publicPort, "127.0.0.1");
+      const chunks: Buffer[] = [];
+      let settled = false;
+      const settle = () => {
+        if (settled) return;
+        const parsed = parseResponse(Buffer.concat(chunks));
+        if (parsed === null) return;
+        settled = true;
+        socket.destroy();
+        resolve(parsed);
+      };
+      socket.on("connect", () => {
+        socket.write([
+          "POST /api/sandbox/security/evaluations HTTP/1.1",
+          "Host: 127.0.0.1",
+          `Authorization: Bearer ${PUBLIC_TOKEN}`,
+          "Content-Type: application/json",
+          "Content-Length: 2",
+          "Idempotency-Key: idempotency-http-slow",
+          "Connection: close",
+          "",
+          ""
+        ].join("\r\n"));
+      });
+      socket.on("data", (chunk) => {
+        chunks.push(Buffer.from(chunk));
+        settle();
+      });
+      socket.on("end", settle);
+      socket.on("close", settle);
+      socket.on("error", (error) => {
+        if (!settled) reject(error);
+      });
+    });
+    assert.equal(response.statusCode, 408);
+    assert.equal(response.headers.connection, "close");
+    assert.equal(response.json?.error_code, "SANDBOX_SECURITY_REQUEST_TIMEOUT");
+    assert.equal(response.complete, true);
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    const finishIndex = fixture.responseEvents.indexOf("finish");
+    const socketCloseIndex = fixture.responseEvents.indexOf("socket-close");
+    assert.ok(finishIndex >= 0 && socketCloseIndex >= 0);
+    assert.ok(finishIndex < socketCloseIndex);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("REQ-SBX-GENERAL-003 caller abort does not attempt a response write", async () => {
+  const fixture = await startInjectedSandboxSecurityServers();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const socket = connect(fixture.publicPort, "127.0.0.1");
+      let dataSeen = false;
+      socket.on("connect", () => {
+        socket.write([
+          "POST /api/sandbox/security/evaluations HTTP/1.1",
+          "Host: 127.0.0.1",
+          `Authorization: Bearer ${PUBLIC_TOKEN}`,
+          "Content-Type: application/json",
+          "Content-Length: 100",
+          "Idempotency-Key: idempotency-http-abort",
+          "Connection: close",
+          "",
+          ""
+        ].join("\r\n"));
+        setTimeout(() => socket.destroy(), 30);
+      });
+      socket.on("data", () => {
+        dataSeen = true;
+      });
+      socket.on("close", () => {
+        try {
+          assert.equal(dataSeen, false);
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
+      socket.on("error", () => undefined);
+    });
+    assert.equal(fixture.calls.some((call) => call.startsWith("evaluate:")), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("REQ-SBX-GENERAL-003 module close cancels maintenance before closing database", async () => {
+  const calls: string[] = [];
+  const dependencies = createDependencies(calls);
+  const module = createSandboxSecurityModule(dependencies);
+  await module.close();
+  assert.deepEqual(calls.slice(-2), ["maintenance-close", "database-close"]);
+  const afterFirstClose = [...calls];
+  await module.close();
+  assert.deepEqual(calls, afterFirstClose);
+});
+
+test("REQ-SBX-GENERAL-003 production composition injects one module into both listeners", async () => {
+  const calls: string[] = [];
+  const module = createSandboxSecurityModule(createDependencies(calls));
+  const production = createProductionServers({
+    deps: createRuntimeDependencies(),
+    ingestToken: "a".repeat(64),
+    sandboxSecurityModule: module
+  });
+  const publicHandle = await startServer(production.publicServer);
+  const internalHandle = await startServer(production.internalServer);
+  try {
+    const publicResponse = await evaluationBodyRequest(
+      Number(new URL(publicHandle.baseUrl).port),
+      JSON.stringify(VALID_EVALUATION)
+    );
+    const issueBody = JSON.stringify({
+      schema_version: "sandbox-security-capability-issue-request.v1",
+      subject_id: "subject-http-test",
+      scopes: ["sandbox_security:evaluate"],
+      allowed_stages: ["user_input"],
+      allowed_policy_profile_ids: ["sandbox-security-balanced.v1"],
+      ttl_seconds: 900
+    });
+    const internalResponse = await sendRawHttpRequest(
+      Number(new URL(internalHandle.baseUrl).port),
+      [
+        "POST /internal/sandbox/security/capabilities HTTP/1.1",
+        "Host: 127.0.0.1",
+        `Authorization: Bearer ${ADMIN_TOKEN}`,
+        "Content-Type: application/json",
+        `Content-Length: ${Buffer.byteLength(issueBody)}`,
+        "Connection: close",
+        "",
+        issueBody
+      ].join("\r\n")
+    );
+    assert.equal(publicResponse.statusCode, 200);
+    assert.equal(internalResponse.statusCode, 201);
+  } finally {
+    await production.close();
+  }
+  assert.deepEqual(calls.slice(-2), ["maintenance-close", "database-close"]);
+});
+
+test("REQ-SBX-GENERAL-003 startup failure closes an injected module after public cleanup", async () => {
+  const blocker = createServer();
+  await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", resolve));
+  const blockerAddress = blocker.address();
+  assert.ok(blockerAddress && typeof blockerAddress === "object");
+
+  const calls: string[] = [];
+  const module = createSandboxSecurityModule(createDependencies(calls));
+  try {
+    await assert.rejects(() =>
+      import("../../backend/src/main.ts").then(({ startProductionServers }) =>
+        startProductionServers({
+          publicPort: 0,
+          internalPort: blockerAddress.port,
+          publicBindHost: "127.0.0.1",
+          internalBindHost: "127.0.0.1",
+          deps: createRuntimeDependencies(),
+          ingestToken: "a".repeat(64),
+          sandboxSecurityModule: module
+        })
+      )
+    );
+    assert.deepEqual(calls.slice(-2), ["maintenance-close", "database-close"]);
+  } finally {
+    await new Promise<void>((resolve) => blocker.close(() => resolve()));
+    await module.close();
+  }
+});
+
+test("REQ-SBX-GENERAL-003 public bind failure closes an injected module", async () => {
+  const blocker = createServer();
+  await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", resolve));
+  const blockerAddress = blocker.address();
+  assert.ok(blockerAddress && typeof blockerAddress === "object");
+
+  const calls: string[] = [];
+  const module = createSandboxSecurityModule(createDependencies(calls));
+  try {
+    await assert.rejects(() =>
+      import("../../backend/src/main.ts").then(({ startProductionServers }) =>
+        startProductionServers({
+          publicPort: blockerAddress.port,
+          internalPort: 0,
+          publicBindHost: "127.0.0.1",
+          internalBindHost: "127.0.0.1",
+          deps: createRuntimeDependencies(),
+          ingestToken: "a".repeat(64),
+          sandboxSecurityModule: module
+        })
+      )
+    );
+    assert.deepEqual(calls.slice(-2), ["maintenance-close", "database-close"]);
+  } finally {
+    await new Promise<void>((resolve) => blocker.close(() => resolve()));
+    await module.close();
+  }
+});

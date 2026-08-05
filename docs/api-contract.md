@@ -2264,3 +2264,21 @@ audit service and returns the exact purge result. Storage degradation maps to
 are not durably audited. Unknown stream/iterator failures at the controller
 boundary are normalized to the stable `400 SANDBOX_SECURITY_INVALID_REQUEST`
 without leaking implementation details.
+
+### P5-T4 injected module and listener boundary
+
+`createSandboxSecurityModule` accepts only already constructed ports, services,
+limiters, runtime, composition binding, and the single SQLite database owner.
+It creates both controllers without reading environment variables or opening a
+second database. The same module instance is injected into the public and
+internal app modules, so public evaluation/audit routes and internal
+capability/revoke/purge routes share one service graph while remaining on their
+respective listeners. A module close cancels idempotency maintenance before it
+checkpoints and closes the database; repeated close calls are no-ops.
+
+The public listener returns `404` for internal sandbox paths, and the internal
+listener returns `404` for public sandbox paths. Existing `/health` and
+`/internal/health` success envelopes are unchanged. Real HTTP admission keeps
+the complete `408`/`413` JSON envelope on the wire with `Connection: close`; a
+caller-aborted request is never written after its response or socket becomes
+non-writable.
