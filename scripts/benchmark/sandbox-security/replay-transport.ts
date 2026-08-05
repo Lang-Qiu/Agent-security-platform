@@ -101,14 +101,14 @@ function namedError(name: string): Error {
 function plainRecord(value: unknown): Record<string, unknown> {
   if (
     value === null ||
-    typeof value !== "object" ||
-    Array.isArray(value)
+    typeof value !== "object"
   ) {
     return fail("record_invalid");
   }
   let keys: PropertyKey[];
   try {
     if (
+      Array.isArray(value) ||
       utilTypes.isProxy(value) ||
       Object.getPrototypeOf(value) !== Object.prototype
     ) {
@@ -233,11 +233,11 @@ function strictDenseArray(
     maxLength: number;
   }>
 ): readonly unknown[] {
-  if (!Array.isArray(value)) return fail(options.errorCode);
   let lengthDescriptor: PropertyDescriptor | undefined;
   let keys: PropertyKey[];
   try {
     if (
+      !Array.isArray(value) ||
       utilTypes.isProxy(value) ||
       Object.getPrototypeOf(value) !== Array.prototype
     ) {

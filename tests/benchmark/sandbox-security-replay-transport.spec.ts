@@ -633,6 +633,51 @@ test("REQ-SBX-GENERAL-002 replay rejects descriptor-unsafe records and outer inp
   assert.equal(customMapCalled, false);
 });
 
+test("REQ-SBX-GENERAL-002 replay normalizes revoked record attempt and input proxies", async () => {
+  const factory = await replayFactory();
+  const validInputs = Array.from({ length: 300 }, () => outcomeUnit());
+  const baseInput = {
+    qualification: successfulQualification(),
+    inputs: validInputs,
+    sealed_config: sealedConfig()
+  };
+  const revokedRecord = Proxy.revocable({ ...sealedConfig() }, {});
+  revokedRecord.revoke();
+
+  const response = responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse);
+  const revokedAttempt = Proxy.revocable([response], {});
+  revokedAttempt.revoke();
+  const revokedAttemptInputs = [
+    { ollama: revokedAttempt.proxy, judge: [] },
+    ...validInputs.slice(1)
+  ];
+
+  const revokedInputs = Proxy.revocable([...validInputs], {});
+  revokedInputs.revoke();
+
+  const cases: readonly [string, unknown, RegExp][] = [
+    [
+      "revoked record",
+      { ...baseInput, sealed_config: revokedRecord.proxy },
+      /sandbox_security_replay_transport_invalid:record_invalid/
+    ],
+    [
+      "revoked attempt",
+      { ...baseInput, inputs: revokedAttemptInputs },
+      /sandbox_security_replay_transport_invalid:attempt_sequence_invalid/
+    ],
+    [
+      "revoked input list",
+      { ...baseInput, inputs: revokedInputs.proxy },
+      /sandbox_security_replay_transport_invalid:input_count_invalid/
+    ]
+  ];
+
+  for (const [label, input, expected] of cases) {
+    assert.throws(() => factory(input as never), expected, label);
+  }
+});
+
 test("REQ-SBX-GENERAL-002 replay validates length descriptor flags and accepts frozen sequences", async () => {
   const factory = await replayFactory();
   const response = responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse);
