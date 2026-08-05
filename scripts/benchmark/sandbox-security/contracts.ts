@@ -179,9 +179,9 @@ export const SANDBOX_SECURITY_BENCHMARK_REQUEST_IDS_SCHEMA_VERSION =
 export const SANDBOX_SECURITY_BENCHMARK_MANIFEST_SCHEMA_VERSION =
   "sandbox-security-benchmark-manifest.v1" as const;
 export const SANDBOX_SECURITY_BENCHMARK_REPLAY_SCHEMA_VERSION =
-  "sandbox-security-benchmark-replay.v1" as const;
+  "sandbox-security-benchmark-replay.v2" as const;
 export const SANDBOX_SECURITY_BENCHMARK_CAPTURE_SCHEMA_VERSION =
-  "sandbox-security-benchmark-capture.v1" as const;
+  "sandbox-security-benchmark-capture.v2" as const;
 export const SANDBOX_SECURITY_BENCHMARK_SEAL_SCHEMA_VERSION =
   "sandbox-security-benchmark-seal.v1" as const;
 export const SANDBOX_SECURITY_BENCHMARK_ACCEPTED_METRICS_SCHEMA_VERSION =
@@ -444,11 +444,24 @@ export type SandboxSecurityReplayTransportOutcome<TResponse> =
       readonly termination_reason: "slot_timeout" | "work_budget";
     }>;
 
+export type SandboxSecurityReplayAttemptOutcome<TResponse> = Exclude<
+  SandboxSecurityReplayTransportOutcome<TResponse>,
+  Readonly<{ readonly status: "not_called" }>
+>;
+
+export type SandboxSecurityReplayAttemptSequence<TResponse> =
+  | readonly []
+  | readonly [SandboxSecurityReplayAttemptOutcome<TResponse>]
+  | readonly [
+      SandboxSecurityReplayAttemptOutcome<TResponse>,
+      SandboxSecurityReplayAttemptOutcome<TResponse>
+    ];
+
 export interface SandboxSecurityBenchmarkReplayEnvelope {
   readonly schema_version: typeof SANDBOX_SECURITY_BENCHMARK_REPLAY_SCHEMA_VERSION;
   readonly fixture_id: string;
-  readonly ollama: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse>;
-  readonly judge: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOpenAIResponse>;
+  readonly ollama: SandboxSecurityReplayAttemptSequence<SandboxSecurityReplayOllamaResponse>;
+  readonly judge: SandboxSecurityReplayAttemptSequence<SandboxSecurityReplayOpenAIResponse>;
   readonly decision_projection_sha256: SandboxSecurityBenchmarkSha256;
   readonly judge_binding_sha256: SandboxSecurityBenchmarkSha256;
 }
@@ -463,12 +476,12 @@ export interface SandboxSecurityBenchmarkJudgeBinding {
 }
 
 export interface SandboxSecurityBenchmarkCandidateCassette {
-  readonly schema_version: "sandbox-security-benchmark-candidate-cassette.v1";
+  readonly schema_version: "sandbox-security-benchmark-candidate-cassette.v2";
   readonly judge_binding_sha256: SandboxSecurityBenchmarkSha256;
   readonly inputs: readonly Readonly<{
     readonly fixture_id: string;
-    readonly ollama: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse>;
-    readonly judge: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOpenAIResponse>;
+    readonly ollama: SandboxSecurityReplayAttemptSequence<SandboxSecurityReplayOllamaResponse>;
+    readonly judge: SandboxSecurityReplayAttemptSequence<SandboxSecurityReplayOpenAIResponse>;
     readonly decision_projection_sha256: SandboxSecurityBenchmarkSha256;
     readonly judge_binding_sha256: SandboxSecurityBenchmarkSha256;
   }>[];
@@ -501,8 +514,8 @@ export interface SandboxSecurityBenchmarkCandidateCaptureManifest {
   readonly ollama_model: "qwen3:8b";
   readonly ollama_digest: SandboxSecurityBenchmarkDigest;
   readonly ollama_qualification: Readonly<{
-    readonly inventory: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaInventoryResponse>;
-    readonly prewarm: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse>;
+    readonly inventory: SandboxSecurityReplayAttemptSequence<SandboxSecurityReplayOllamaInventoryResponse>;
+    readonly prewarm: SandboxSecurityReplayAttemptSequence<SandboxSecurityReplayOllamaResponse>;
   }>;
   readonly judge_protocol_id: SandboxSecurityJudgeProtocolId;
   readonly judge_endpoint_policy_id: typeof SANDBOX_SECURITY_OPERATOR_HTTPS_FQDN_ENDPOINT_POLICY_ID;
@@ -573,8 +586,8 @@ export interface SandboxSecurityBenchmarkAcceptedMetrics {
 }
 
 export interface SandboxSecurityReplayInputUnit {
-  readonly ollama: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse>;
-  readonly judge: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOpenAIResponse>;
+  readonly ollama: SandboxSecurityReplayAttemptSequence<SandboxSecurityReplayOllamaResponse>;
+  readonly judge: SandboxSecurityReplayAttemptSequence<SandboxSecurityReplayOpenAIResponse>;
 }
 
 export interface SandboxSecurityBenchmarkCaptureManifest {
@@ -593,8 +606,8 @@ export interface SandboxSecurityBenchmarkCaptureManifest {
   readonly ollama_model: "qwen3:8b";
   readonly ollama_digest: SandboxSecurityBenchmarkDigest;
   readonly ollama_qualification: Readonly<{
-    readonly inventory: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaInventoryResponse>;
-    readonly prewarm: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse>;
+    readonly inventory: SandboxSecurityReplayAttemptSequence<SandboxSecurityReplayOllamaInventoryResponse>;
+    readonly prewarm: SandboxSecurityReplayAttemptSequence<SandboxSecurityReplayOllamaResponse>;
   }>;
   readonly judge_protocol_id: SandboxSecurityJudgeProtocolId;
   readonly judge_endpoint_policy_id: typeof SANDBOX_SECURITY_OPERATOR_HTTPS_FQDN_ENDPOINT_POLICY_ID;
@@ -653,9 +666,9 @@ const MAX_OUTCOMES = 32;
 const CANDIDATE_PACKAGE_SCHEMA_VERSION =
   "sandbox-security-benchmark-candidate-package.v1" as const;
 const CANDIDATE_CASSETTE_SCHEMA_VERSION =
-  "sandbox-security-benchmark-candidate-cassette.v1" as const;
+  "sandbox-security-benchmark-candidate-cassette.v2" as const;
 const CANDIDATE_CASSETTE_HASH_SCHEMA_VERSION =
-  "sandbox-security-benchmark-candidate-cassette-hash.v1" as const;
+  "sandbox-security-benchmark-candidate-cassette-hash.v2" as const;
 const CANDIDATE_DECISION_ENVELOPE_SCHEMA_VERSION =
   "sandbox-security-benchmark-decision-projection.v1" as const;
 const CANDIDATE_DECISION_SCHEMA_VERSION =
@@ -1523,6 +1536,31 @@ function normalizeOutcome<T>(value: unknown, response: (value: unknown) => T): S
   return invalid();
 }
 
+function isConnectionFailedAttempt<T>(
+  value: SandboxSecurityReplayAttemptOutcome<T>
+): boolean {
+  return value.status === "transport_error" && value.error_code === "connection_failed";
+}
+
+export function normalizeSandboxSecurityReplayAttemptSequence<TResponse>(
+  value: unknown,
+  response: (value: unknown) => TResponse
+): SandboxSecurityReplayAttemptSequence<TResponse> {
+  const attempts: SandboxSecurityReplayAttemptOutcome<TResponse>[] = denseArray(
+    value,
+    0,
+    2
+  ).map((item) => {
+    const outcome = normalizeOutcome(item, response);
+    if (outcome.status === "not_called") return invalid();
+    return outcome;
+  });
+  if (attempts.length === 2 && !isConnectionFailedAttempt(attempts[0]!)) {
+    return invalid();
+  }
+  return deepFreeze(attempts) as unknown as SandboxSecurityReplayAttemptSequence<TResponse>;
+}
+
 export function normalizeSandboxSecurityBenchmarkReplayEnvelope(value: unknown): Readonly<SandboxSecurityBenchmarkReplayEnvelope> {
   return safeCall(() => {
     const root = exact(value, [
@@ -1537,8 +1575,8 @@ export function normalizeSandboxSecurityBenchmarkReplayEnvelope(value: unknown):
     return deepFreeze({
       schema_version: SANDBOX_SECURITY_BENCHMARK_REPLAY_SCHEMA_VERSION,
       fixture_id: fixtureId(root.fixture_id),
-      ollama: normalizeOutcome(root.ollama, normalizeLocal),
-      judge: normalizeOutcome(root.judge, normalizeJudge),
+      ollama: normalizeSandboxSecurityReplayAttemptSequence(root.ollama, normalizeLocal),
+      judge: normalizeSandboxSecurityReplayAttemptSequence(root.judge, normalizeJudge),
       decision_projection_sha256: sha(root.decision_projection_sha256),
       judge_binding_sha256: sha(root.judge_binding_sha256)
     });
@@ -1595,17 +1633,18 @@ export function assertSandboxSecurityBenchmarkAcceptedProviderOutcomes(
 ): void {
   const normalized = normalizeSandboxSecurityBenchmarkCandidateCassette(cassette);
   for (const unit of normalized.inputs) {
-    // Qualification already forces inventory/prewarm success in capture-manifest.
-    // Evaluation slots: any invoked failure outcome is acceptance-blocking.
-    if (unit.ollama.status !== "response" && unit.ollama.status !== "not_called") {
+    const ollamaFinal = unit.ollama.at(-1);
+    const judgeFinal = unit.judge.at(-1);
+    if (
+      (unit.ollama.length > 0 && ollamaFinal?.status !== "response") ||
+      (unit.judge.length > 0 && judgeFinal?.status !== "response")
+    ) {
       invalid();
     }
-    if (unit.judge.status !== "response" && unit.judge.status !== "not_called") {
-      invalid();
-    }
-    // A Judge response requires a successful local response first in live capture
-    // semantics; allow not_called/not_called and response/* patterns only.
-    if (unit.judge.status === "response" && unit.ollama.status === "not_called") {
+    if (
+      unit.judge.length > 0 &&
+      (unit.ollama.length === 0 || ollamaFinal?.status !== "response")
+    ) {
       invalid();
     }
   }
@@ -1648,17 +1687,31 @@ function normalizeOllamaQualification(
   value: unknown,
   ollamaDigest: SandboxSecurityBenchmarkDigest
 ): Readonly<{
-  readonly inventory: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaInventoryResponse>;
-  readonly prewarm: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse>;
+  readonly inventory: SandboxSecurityReplayAttemptSequence<SandboxSecurityReplayOllamaInventoryResponse>;
+  readonly prewarm: SandboxSecurityReplayAttemptSequence<SandboxSecurityReplayOllamaResponse>;
 }> {
   const qualification = exact(value, ["inventory", "prewarm"]);
-  const inventory = normalizeOutcome(qualification.inventory, normalizeInventory);
-  const prewarm = normalizeOutcome(qualification.prewarm, normalizeLocal);
+  const inventory = normalizeSandboxSecurityReplayAttemptSequence(
+    qualification.inventory,
+    normalizeInventory
+  );
+  const prewarm = normalizeSandboxSecurityReplayAttemptSequence(
+    qualification.prewarm,
+    normalizeLocal
+  );
+  const inventoryFinal = inventory.at(-1);
+  const prewarmFinal = prewarm.at(-1);
   if (
-    inventory.status !== "response" ||
-    prewarm.status !== "response" ||
-    inventory.normalized_response.digest !== ollamaDigest ||
-    prewarm.normalized_response.verified_ollama_digest !== ollamaDigest
+    inventoryFinal === undefined ||
+    inventoryFinal.status !== "response" ||
+    prewarmFinal === undefined ||
+    prewarmFinal.status !== "response"
+  ) {
+    return invalid();
+  }
+  if (
+    inventoryFinal.normalized_response.digest !== ollamaDigest ||
+    prewarmFinal.normalized_response.verified_ollama_digest !== ollamaDigest
   ) {
     return invalid();
   }

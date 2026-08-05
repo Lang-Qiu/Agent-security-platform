@@ -266,38 +266,57 @@ function sourcesLock() {
 
 function replayEnvelope() {
   return {
-    schema_version: "sandbox-security-benchmark-replay.v1",
+    schema_version: "sandbox-security-benchmark-replay.v2",
     fixture_id: FIXTURE_ID,
-    ollama: {
+    ollama: [{
       status: "response",
       http_status: 200,
       content_type: "application/json",
       normalized_response: {
-        model: "qwen3:8b",
-        verified_ollama_digest: `sha256:${A}`,
-        done: true,
-        message: {
-          role: "assistant",
-          parsed: {
-            schema_version: "sandbox-security-local-model.v1",
-            status: "matched",
-            candidates: [{
-              category: "prompt_injection",
-              severity: "high",
-              confidence: "probable",
-              subject_refs: [{
-                kind: "content_source",
-                source_ordinal: 1,
-                component: "whole_source"
+          model: "qwen3:8b",
+          verified_ollama_digest: `sha256:${A}`,
+          done: true,
+          message: {
+            role: "assistant",
+            parsed: {
+              schema_version: "sandbox-security-local-model.v1",
+              status: "matched",
+              candidates: [{
+                category: "prompt_injection",
+                severity: "high",
+                confidence: "probable",
+                subject_refs: [{
+                  kind: "content_source",
+                  source_ordinal: 1,
+                  component: "whole_source"
+                }]
               }]
-            }]
+            }
           }
         }
       }
-    },
-    judge: { status: "not_called" },
+    ],
+    judge: [],
     decision_projection_sha256: B,
     judge_binding_sha256: judgeBindingSha256()
+  };
+}
+
+function validV2RetryCassette() {
+  const replay = replayEnvelope();
+  return {
+    schema_version: "sandbox-security-benchmark-candidate-cassette.v2",
+    judge_binding_sha256: replay.judge_binding_sha256,
+    inputs: [{
+      fixture_id: replay.fixture_id,
+      ollama: [
+        { status: "transport_error", error_code: "connection_failed" },
+        structuredClone(replay.ollama[0])
+      ],
+      judge: [],
+      decision_projection_sha256: replay.decision_projection_sha256,
+      judge_binding_sha256: replay.judge_binding_sha256
+    }]
   };
 }
 
@@ -331,7 +350,7 @@ function judgeBindingSha256(
 
 function captureManifest() {
   return {
-    schema_version: "sandbox-security-benchmark-capture.v1",
+    schema_version: "sandbox-security-benchmark-capture.v2",
     benchmark_manifest_sha256: A,
     sources_lock_sha256: B,
     inputs_tree_sha256: C,
@@ -341,13 +360,13 @@ function captureManifest() {
     ollama_model: "qwen3:8b",
     ollama_digest: `sha256:${B}`,
     ollama_qualification: {
-      inventory: {
+      inventory: [{
         status: "response",
         http_status: 200,
         content_type: "application/json",
         normalized_response: { model: "qwen3:8b", digest: `sha256:${B}` }
-      },
-      prewarm: {
+      }],
+      prewarm: [{
         status: "response",
         http_status: 200,
         content_type: "application/json",
@@ -364,7 +383,7 @@ function captureManifest() {
             }
           }
         }
-      }
+      }]
     },
     ...judgeBinding(),
     judge_binding_sha256: judgeBindingSha256(),
@@ -616,7 +635,7 @@ test("REQ-SBX-GENERAL-002 candidate artifacts bind protocol evidence and capture
   };
   const replay = replayEnvelope();
   const cassette = {
-    schema_version: "sandbox-security-benchmark-candidate-cassette.v1",
+    schema_version: "sandbox-security-benchmark-candidate-cassette.v2",
     judge_binding_sha256: judgeBindingSha256,
     inputs: [{
       fixture_id: replay.fixture_id,
@@ -988,39 +1007,39 @@ test("REQ-SBX-GENERAL-002 replay envelope is content-free and validates ordinal 
     assert.throws(() => normalizeReplay({ ...value, ...extra }));
   }
   const invalidOrdinal = structuredClone(value);
-  invalidOrdinal.ollama.normalized_response.message.parsed.candidates[0]
+  invalidOrdinal.ollama[0].normalized_response.message.parsed.candidates[0]
     .subject_refs[0].source_ordinal = 0;
   assert.throws(() => normalizeReplay(invalidOrdinal));
 });
 
 test("REQ-SBX-GENERAL-002 replay normalization matches provider duplicate and HTTP outcome rules", () => {
   const sourceOrdinal64 = structuredClone(replayEnvelope());
-  sourceOrdinal64.ollama.normalized_response.message.parsed.candidates[0]
+  sourceOrdinal64.ollama[0].normalized_response.message.parsed.candidates[0]
     .subject_refs[0].source_ordinal = 64;
   assert.doesNotThrow(() => normalizeReplay(sourceOrdinal64));
   const sourceOrdinal65 = structuredClone(replayEnvelope());
-  sourceOrdinal65.ollama.normalized_response.message.parsed.candidates[0]
+  sourceOrdinal65.ollama[0].normalized_response.message.parsed.candidates[0]
     .subject_refs[0].source_ordinal = 65;
   assert.throws(() => normalizeReplay(sourceOrdinal65));
   const duplicateRef = structuredClone(replayEnvelope());
-  duplicateRef.ollama.normalized_response.message.parsed.candidates[0]
+  duplicateRef.ollama[0].normalized_response.message.parsed.candidates[0]
     .subject_refs.push({ kind: "content_source", source_ordinal: 1, component: "whole_source" });
   assert.throws(() => normalizeReplay(duplicateRef));
   const duplicateCandidate = structuredClone(replayEnvelope());
-  duplicateCandidate.ollama.normalized_response.message.parsed.candidates.push(
-    structuredClone(duplicateCandidate.ollama.normalized_response.message.parsed.candidates[0])
+  duplicateCandidate.ollama[0].normalized_response.message.parsed.candidates.push(
+    structuredClone(duplicateCandidate.ollama[0].normalized_response.message.parsed.candidates[0])
   );
   assert.throws(() => normalizeReplay(duplicateCandidate));
   for (const status of [100, 302, 599]) {
     const nonSuccess: Record<string, unknown> = structuredClone(replayEnvelope());
-    nonSuccess.ollama = { status: "http_error", http_status: status };
+    nonSuccess.ollama = [{ status: "http_error", http_status: status }];
     assert.doesNotThrow(() => normalizeReplay(nonSuccess));
   }
   const invalidStatus: Record<string, unknown> = structuredClone(replayEnvelope());
   invalidStatus.ollama = { status: "http_error", http_status: 99 };
   assert.throws(() => normalizeReplay(invalidStatus));
   const judgeResponse: Record<string, unknown> = structuredClone(replayEnvelope());
-  judgeResponse.judge = {
+  judgeResponse.judge = [{
     status: "response",
     http_status: 200,
     content_type: "application/json",
@@ -1037,7 +1056,7 @@ test("REQ-SBX-GENERAL-002 replay normalization matches provider duplicate and HT
         }]
       }
     }
-  };
+  }];
   assert.doesNotThrow(() => normalizeReplay(judgeResponse));
   for (const outcome of [
     { status: "transport_error", error_code: "connection_failed" },
@@ -1047,9 +1066,99 @@ test("REQ-SBX-GENERAL-002 replay normalization matches provider duplicate and HT
     { status: "signal_termination", termination_reason: "work_budget" }
   ]) {
     const closedOutcome: Record<string, unknown> = structuredClone(replayEnvelope());
-    closedOutcome.judge = outcome;
+    closedOutcome.judge = [outcome];
     assert.doesNotThrow(() => normalizeReplay(closedOutcome));
   }
+});
+
+test("REQ-SBX-P6-RETRY v2 candidate cassette accepts ordered Ollama retry and empty Judge sequences", () => {
+  const normalizeCandidateCassette = requiredNormalizer(
+    "normalizeSandboxSecurityBenchmarkCandidateCassette"
+  );
+  const cassette = validV2RetryCassette();
+
+  const normalized = normalizeCandidateCassette(cassette);
+
+  assert.deepEqual(normalized, cassette);
+  assertDeeplyFrozen(normalized);
+});
+
+test("REQ-SBX-P6-RETRY rejects provider attempt sequences longer than two", () => {
+  const normalizeCandidateCassette = requiredNormalizer(
+    "normalizeSandboxSecurityBenchmarkCandidateCassette"
+  );
+  const cassette = validV2RetryCassette();
+  cassette.inputs[0]!.ollama.push(structuredClone(cassette.inputs[0]!.ollama[1]));
+
+  assert.throws(() => normalizeCandidateCassette(cassette), {
+    message: /^benchmark_contract_invalid$/u
+  });
+});
+
+test("REQ-SBX-P6-RETRY rejects a two-attempt sequence without an exact connection_failed first attempt", () => {
+  const normalizeCandidateCassette = requiredNormalizer(
+    "normalizeSandboxSecurityBenchmarkCandidateCassette"
+  );
+  const cassette = validV2RetryCassette();
+  cassette.inputs[0]!.ollama[0] = {
+    status: "transport_error",
+    error_code: "response_too_large"
+  };
+
+  assert.throws(() => normalizeCandidateCassette(cassette), {
+    message: /^benchmark_contract_invalid$/u
+  });
+});
+
+test("REQ-SBX-P6-RETRY rejects embedded not_called attempt outcomes", () => {
+  const normalizeCandidateCassette = requiredNormalizer(
+    "normalizeSandboxSecurityBenchmarkCandidateCassette"
+  );
+  const cassette = validV2RetryCassette();
+  (cassette.inputs[0]!.ollama as unknown[])[1] = { status: "not_called" };
+
+  assert.throws(() => normalizeCandidateCassette(cassette), {
+    message: /^benchmark_contract_invalid$/u
+  });
+});
+
+test("REQ-SBX-P6-RETRY rejects a final provider failure at accepted-outcome assertion", () => {
+  const normalizeCandidateCassette = requiredNormalizer(
+    "normalizeSandboxSecurityBenchmarkCandidateCassette"
+  );
+  const assertAccepted = contracts.assertSandboxSecurityBenchmarkAcceptedProviderOutcomes;
+  assert.equal(typeof assertAccepted, "function");
+  const cassette = validV2RetryCassette();
+  (cassette.inputs[0]!.ollama as unknown[])[1] = {
+    status: "http_error",
+    http_status: 503
+  };
+
+  assert.doesNotThrow(() => normalizeCandidateCassette(cassette));
+  assert.throws(() => (assertAccepted as (value: unknown) => void)(cassette), {
+    message: /^benchmark_contract_invalid$/u
+  });
+});
+
+test("REQ-SBX-P6-RETRY accepts a valid two-attempt sequence ending in response", () => {
+  const assertAccepted = contracts.assertSandboxSecurityBenchmarkAcceptedProviderOutcomes;
+  assert.equal(typeof assertAccepted, "function");
+
+  assert.doesNotThrow(() =>
+    (assertAccepted as (value: unknown) => void)(validV2RetryCassette())
+  );
+});
+
+test("REQ-SBX-P6-RETRY rejects a v1 candidate cassette without a compatibility path", () => {
+  const normalizeCandidateCassette = requiredNormalizer(
+    "normalizeSandboxSecurityBenchmarkCandidateCassette"
+  );
+  const cassette = validV2RetryCassette();
+  cassette.schema_version = "sandbox-security-benchmark-candidate-cassette.v1";
+
+  assert.throws(() => normalizeCandidateCassette(cassette), {
+    message: /^benchmark_contract_invalid$/u
+  });
 });
 
 test("REQ-SBX-GENERAL-002 capture manifest and seal admit only exact content-free hashes", () => {
@@ -1083,17 +1192,17 @@ test("REQ-SBX-GENERAL-002 capture manifest binds exact versions and Ollama quali
   wrongVersion.local_prompt_version = "wrong.prompt.v1";
   assert.throws(() => normalizeCapture(wrongVersion));
   const wrongDigest = captureManifest();
-  wrongDigest.ollama_qualification.inventory.normalized_response.digest = `sha256:${A}`;
+  wrongDigest.ollama_qualification.inventory[0].normalized_response.digest = `sha256:${A}`;
   assert.throws(() => normalizeCapture(wrongDigest));
   const wrongPrewarmDigest = captureManifest();
-  wrongPrewarmDigest.ollama_qualification.prewarm.normalized_response.verified_ollama_digest = `sha256:${A}`;
+  wrongPrewarmDigest.ollama_qualification.prewarm[0].normalized_response.verified_ollama_digest = `sha256:${A}`;
   assert.throws(() => normalizeCapture(wrongPrewarmDigest));
   assert.throws(() =>
     normalizeCapture({
       ...captureManifest(),
       ollama_qualification: {
         ...captureManifest().ollama_qualification,
-        inventory: { status: "not_called" }
+        inventory: []
       }
     })
   );
@@ -1165,13 +1274,13 @@ test("REQ-SBX-GENERAL-002 candidate capture manifest rejects unclosed, malformed
     { message: /^benchmark_contract_invalid$/u }
   );
   const mismatchedInventoryDigest = candidateCaptureManifest();
-  mismatchedInventoryDigest.ollama_qualification.inventory.normalized_response.digest =
+  mismatchedInventoryDigest.ollama_qualification.inventory[0].normalized_response.digest =
     `sha256:${A}`;
   assert.throws(() => normalizeCandidateCapture(mismatchedInventoryDigest), {
     message: /^benchmark_contract_invalid$/u
   });
   const mismatchedPrewarmDigest = candidateCaptureManifest();
-  mismatchedPrewarmDigest.ollama_qualification.prewarm.normalized_response.verified_ollama_digest =
+  mismatchedPrewarmDigest.ollama_qualification.prewarm[0].normalized_response.verified_ollama_digest =
     `sha256:${A}`;
   assert.throws(() => normalizeCandidateCapture(mismatchedPrewarmDigest), {
     message: /^benchmark_contract_invalid$/u
@@ -1181,7 +1290,7 @@ test("REQ-SBX-GENERAL-002 candidate capture manifest rejects unclosed, malformed
       ...candidateCaptureManifest(),
       ollama_qualification: {
         ...candidateCaptureManifest().ollama_qualification,
-        inventory: { status: "not_called" }
+        inventory: []
       }
     })
   );
@@ -1190,7 +1299,7 @@ test("REQ-SBX-GENERAL-002 candidate capture manifest rejects unclosed, malformed
       ...candidateCaptureManifest(),
       ollama_qualification: {
         ...candidateCaptureManifest().ollama_qualification,
-        prewarm: { status: "http_error", http_status: 503 }
+        prewarm: [{ status: "http_error", http_status: 503 }]
       }
     })
   );
@@ -1426,7 +1535,7 @@ test("REQ-SBX-GENERAL-002 candidate cassette hashing supports 300 bounded replay
       ? contracts.hashSandboxSecurityBenchmarkCandidateCassette as (value: unknown) => string
       : () => "";
   const cassette = {
-    schema_version: "sandbox-security-benchmark-candidate-cassette.v1",
+    schema_version: "sandbox-security-benchmark-candidate-cassette.v2",
     judge_binding_sha256: judgeBindingSha256(),
     inputs: Array.from({ length: 300 }, (_value, index) => {
       const replay = replayEnvelope();
@@ -1498,13 +1607,13 @@ test("REQ-SBX-GENERAL-002 accepted provider outcomes reject invoked failures and
   const judgeBindingSha256 = hashBinding(binding);
   const baseUnit = {
     fixture_id: "ssb-v1-0001",
-    ollama: { status: "not_called" },
-    judge: { status: "not_called" },
+    ollama: [],
+    judge: [],
     decision_projection_sha256: A,
     judge_binding_sha256: judgeBindingSha256
   };
   const cassette = {
-    schema_version: "sandbox-security-benchmark-candidate-cassette.v1",
+    schema_version: "sandbox-security-benchmark-candidate-cassette.v2",
     judge_binding_sha256: judgeBindingSha256,
     inputs: [baseUnit]
   };
@@ -1515,7 +1624,7 @@ test("REQ-SBX-GENERAL-002 accepted provider outcomes reject invoked failures and
     judge_binding_sha256: string;
     inputs: Array<Record<string, unknown>>;
   };
-  localThenJudge.inputs[0]!.ollama = {
+  localThenJudge.inputs[0]!.ollama = [{
     status: "response",
     http_status: 200,
     content_type: "application/json",
@@ -1532,8 +1641,8 @@ test("REQ-SBX-GENERAL-002 accepted provider outcomes reject invoked failures and
         }
       }
     }
-  };
-  localThenJudge.inputs[0]!.judge = {
+  }];
+  localThenJudge.inputs[0]!.judge = [{
     status: "response",
     http_status: 200,
     content_type: "application/json",
@@ -1550,7 +1659,7 @@ test("REQ-SBX-GENERAL-002 accepted provider outcomes reject invoked failures and
         }]
       }
     }
-  };
+  }];
   assert.doesNotThrow(() => assertFn(localThenJudge));
 
   const judgeWithoutLocal = structuredClone(cassette) as {
@@ -1571,14 +1680,14 @@ test("REQ-SBX-GENERAL-002 accepted provider outcomes reject invoked failures and
       judge_binding_sha256: string;
       inputs: Array<Record<string, unknown>>;
     };
-    ollamaFail.inputs[0]!.ollama = outcome;
+    ollamaFail.inputs[0]!.ollama = [outcome];
     assert.throws(() => assertFn(ollamaFail), { message: /^benchmark_contract_invalid$/u });
     const judgeFail = structuredClone(localThenJudge) as {
       schema_version: string;
       judge_binding_sha256: string;
       inputs: Array<Record<string, unknown>>;
     };
-    judgeFail.inputs[0]!.judge = outcome;
+    judgeFail.inputs[0]!.judge = [outcome];
     assert.throws(() => assertFn(judgeFail), { message: /^benchmark_contract_invalid$/u });
   }
 });
