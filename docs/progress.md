@@ -1,7 +1,7 @@
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P2-T1 simulation-only authority builder
 
 - phase/task: Phase 2 / P2-T1 Simulation-Only Authoritative Context Builder
-- status: `COMPLETE_PENDING_REVIEW`
+- status: `COMPLETE_PENDING_P2_T2`
 - TDD RED: focused `backend/tests/sandbox-security-simulation-authority.spec.ts`
   failed in all four scenarios with the intended `AssertionError` because the
   module boundary did not yet expose the builder; the module loaded without
@@ -25,10 +25,10 @@
 - dependency: GENERAL-002 remains
   `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`; neither GENERAL-002 nor
   GENERAL-003 is `VERIFIED`
-- specification review: pending independent review.
-- quality review: pending independent review.
-- next: complete the two reviews, then continue to P2-T2 only after this task
-  is committed and accepted.
+- specification review: PASS with `0 Critical / 0 Important / 0 Minor`.
+- quality review: PASS with `0 Critical / 0 Important / 0 Minor`.
+- commit: `0092e0c feat(backend): build sandbox simulation authority`
+- next: P2-T2 domain-separated HMACs, cursor codec, and opaque tokens
 
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T4 mandatory typecheck script registration
 
