@@ -1,7 +1,7 @@
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P4-T1 capability issue and revoke service
 
 - phase/task: Phase 4 / P4-T1 Capability Issue and Revoke Service
-- status: `IMPLEMENTED_PENDING_INDEPENDENT_REVIEW`
+- status: `IMPLEMENTED`
 - implementation:
   - added the typed capability service factory behind the sandbox-security
     module boundary; it accepts only the normalized issue request and never
@@ -34,13 +34,18 @@
   - `npm run typecheck:backend` reports no P4-T1 sandbox-security source or
     test error; existing campaign/task-center/test baseline errors remain
   - `git diff --check` passes
+- reviews:
+  - independent specification review and re-review: PASS with `0 Critical / 0
+    Important / 0 Minor`
+  - independent quality review: PASS with `0 Critical / 0 Important / 0 Minor`
 - boundary:
   - HTTP parsing/mapping, audit list/purge, evaluation orchestration, and
     production composition remain later P4/P5/P6 tasks
+  - commit: `ab571fd` (`feat(backend): manage sandbox security capabilities`)
   - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
     GENERAL-003 is not `VERIFIED`
-- next: independent specification and quality review, then commit only the
-  exact P4-T1 files
+- next: proceed to P4-T2
+
 
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P2-T1 simulation-only authority builder
 
