@@ -137,7 +137,7 @@ function evaluationOllama(
           role: "assistant",
           parsed: Object.freeze({
             schema_version: "sandbox-security-local-model.v1",
-            status: "matched",
+            status: "no_match",
             candidates: Object.freeze([])
           })
         })
@@ -202,6 +202,43 @@ function evaluationJudgeConnectionFailed(
       error_code: "connection_failed"
     })
   });
+}
+
+function evaluationJudgeTransportError(
+  error_code:
+    | "connection_failed"
+    | "response_too_large"
+    | "provider_response_invalid",
+  operation: "responses" | "chat_completions" = "responses"
+): SandboxSecurityCapturedProviderOutcome {
+  return Object.freeze({
+    capture_phase: "evaluation",
+    provider: "openai",
+    operation,
+    outcome: Object.freeze({
+      status: "transport_error",
+      error_code
+    })
+  });
+}
+
+function withNormalizedResponseField(
+  record: SandboxSecurityCapturedProviderOutcome,
+  field: "text" | "prose"
+): SandboxSecurityCapturedProviderOutcome {
+  if (record.outcome.status !== "response") {
+    throw new Error("test fixture must be a response");
+  }
+  return {
+    ...record,
+    outcome: {
+      ...record.outcome,
+      normalized_response: {
+        ...record.outcome.normalized_response,
+        [field]: "raw provider prose"
+      }
+    }
+  } as SandboxSecurityCapturedProviderOutcome;
 }
 
 function readySink() {
@@ -352,15 +389,15 @@ test("REQ-SBX-P6-RETRY sink rejects a second response when the first attempt is 
   );
 });
 
-test("REQ-SBX-P6-RETRY sink rejects a second attempt after a non-connection transport error", () => {
+test("REQ-SBX-P6-RETRY sink rejects a non-retryable first transport failure after retaining it", () => {
   const sink = readySink();
+  const failure = evaluationOllamaTransportError("response_too_large");
   sink.beginInput();
-  sink.record(evaluationOllamaTransportError("response_too_large"));
 
-  assert.throws(
-    () => sink.record(evaluationOllama()),
-    /sandbox_security_capture_sink_reject:duplicate_ollama/u
-  );
+  assert.throws(() => sink.record(failure));
+  const snap = sink.snapshot();
+  assert.equal(snap.state, "failed");
+  assert.deepEqual(snap.inputs[0]?.ollama, [failure.outcome]);
 });
 
 test("REQ-SBX-P6-RETRY sink rejects a third attempt", () => {
@@ -384,6 +421,140 @@ test("REQ-SBX-GENERAL-002 sink records evaluation slots as one-item attempt arra
   const unit = sink.snapshot().inputs[0]!;
   assert.equal(unit.ollama[0]?.status, "response");
   assert.equal(unit.judge[0]?.status, "response");
+});
+
+test("REQ-SBX-P6-RETRY sink retains a local non-retryable first failure before failing closed", () => {
+  const sink = readySink();
+  const failure = evaluationOllama("http_error");
+  sink.beginInput();
+
+  assert.throws(() => sink.record(failure));
+  const snap = sink.snapshot();
+  assert.equal(snap.state, "failed");
+  assert.deepEqual(snap.inputs[0]?.ollama, [failure.outcome]);
+  assert.deepEqual(snap.inputs[0]?.judge, []);
+  assert.throws(() => sink.endInput());
+  assert.throws(() => sink.assertDrained());
+});
+
+test("REQ-SBX-P6-RETRY sink retains both local attempts when the second connection_failed fails closed", () => {
+  const sink = readySink();
+  const firstAttempt = evaluationOllamaConnectionFailed();
+  const secondAttempt = evaluationOllamaConnectionFailed();
+  sink.beginInput();
+  sink.record(firstAttempt);
+
+  assert.throws(() => sink.record(secondAttempt));
+  const snap = sink.snapshot();
+  assert.equal(snap.state, "failed");
+  assert.deepEqual(snap.inputs[0]?.ollama, [
+    firstAttempt.outcome,
+    secondAttempt.outcome
+  ]);
+  assert.throws(() => sink.endInput());
+  assert.throws(() => sink.assertDrained());
+});
+
+test("REQ-SBX-P6-RETRY sink retains a Judge non-retryable first failure before failing closed", () => {
+  const sink = readySink();
+  const failure = evaluationJudgeTransportError("response_too_large");
+  sink.beginInput();
+
+  assert.throws(() => sink.record(failure));
+  const snap = sink.snapshot();
+  assert.equal(snap.state, "failed");
+  assert.deepEqual(snap.inputs[0]?.ollama, []);
+  assert.deepEqual(snap.inputs[0]?.judge, [failure.outcome]);
+  assert.throws(() => sink.endInput());
+  assert.throws(() => sink.assertDrained());
+});
+
+test("REQ-SBX-P6-RETRY sink retains both Judge attempts when the second connection_failed fails closed", () => {
+  const sink = readySink();
+  const firstAttempt = evaluationJudgeConnectionFailed("responses");
+  const secondAttempt = evaluationJudgeConnectionFailed("responses");
+  sink.beginInput();
+  sink.record(firstAttempt);
+
+  assert.throws(() => sink.record(secondAttempt));
+  const snap = sink.snapshot();
+  assert.equal(snap.state, "failed");
+  assert.deepEqual(snap.inputs[0]?.judge, [
+    firstAttempt.outcome,
+    secondAttempt.outcome
+  ]);
+  assert.throws(() => sink.endInput());
+  assert.throws(() => sink.assertDrained());
+});
+
+test("REQ-SBX-GENERAL-002 sink rejects arbitrary normalized response text and prose", () => {
+  const cases: Array<{
+    readonly record: SandboxSecurityCapturedProviderOutcome;
+    readonly prepare: (sink: ReturnType<typeof createSandboxSecurityCaptureSink>) => void;
+  }> = [
+    { record: successInventory(), prepare: () => undefined },
+    {
+      record: successPrewarm(),
+      prepare: (sink) => sink.record(successInventory())
+    },
+    {
+      record: evaluationOllama(),
+      prepare: (sink) => {
+        sink.record(successInventory());
+        sink.record(successPrewarm());
+        sink.beginInput();
+      }
+    },
+    {
+      record: evaluationJudge(),
+      prepare: (sink) => {
+        sink.record(successInventory());
+        sink.record(successPrewarm());
+        sink.beginInput();
+      }
+    }
+  ];
+
+  for (const field of ["text", "prose"] as const) {
+    for (const candidate of cases) {
+      const sink = createSandboxSecurityCaptureSink();
+      candidate.prepare(sink);
+      assert.throws(() => sink.record(withNormalizedResponseField(candidate.record, field)));
+    }
+  }
+});
+
+test("REQ-SBX-P6-RETRY sink snapshots keep independent attempt arrays", () => {
+  const sink = readySink();
+  sink.beginInput();
+  sink.record(evaluationOllamaConnectionFailed());
+  sink.endInput();
+  const firstSnapshot = sink.snapshot();
+
+  sink.beginInput();
+  sink.endInput();
+  const secondSnapshot = sink.snapshot();
+
+  assert.notEqual(firstSnapshot.inputs, secondSnapshot.inputs);
+  assert.notEqual(firstSnapshot.inputs[0]?.ollama, secondSnapshot.inputs[0]?.ollama);
+  assert.deepEqual(firstSnapshot.inputs[0]?.ollama, [
+    { status: "transport_error", error_code: "connection_failed" }
+  ]);
+});
+
+test("REQ-SBX-P6-RETRY sink accepts a same-operation Judge retry ending in response", () => {
+  const sink = readySink();
+  const firstAttempt = evaluationJudgeConnectionFailed("responses");
+  const secondAttempt = evaluationJudge("responses");
+  sink.beginInput();
+  sink.record(firstAttempt);
+  sink.record(secondAttempt);
+  sink.endInput();
+
+  assert.deepEqual(sink.snapshot().inputs[0]?.judge, [
+    firstAttempt.outcome,
+    secondAttempt.outcome
+  ]);
 });
 
 test("REQ-SBX-GENERAL-002 ready sink accepts Chat completions Judge outcome and stores the closed Judge slot", () => {
@@ -501,7 +672,7 @@ test("REQ-SBX-GENERAL-002 sink freezes snapshot and omits oracle fields", () => 
   const sink = readySink();
   sink.beginInput();
   sink.record(evaluationOllamaConnectionFailed());
-  sink.record(evaluationOllama("http_error"));
+  sink.record(evaluationOllama());
   sink.endInput();
   const snap: SandboxSecurityCaptureAccumulator = sink.snapshot();
   assert.equal(Object.isFrozen(snap), true);

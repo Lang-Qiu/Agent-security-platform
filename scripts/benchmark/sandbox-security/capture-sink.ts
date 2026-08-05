@@ -5,13 +5,16 @@
  * severity, verdict, action, metric, or raw provider prose.
  */
 
+import {
+  normalizeSandboxSecurityReplayOllamaInventoryResponse,
+  normalizeSandboxSecurityReplayOllamaResponse,
+  normalizeSandboxSecurityReplayOpenAIResponse,
+  type SandboxSecurityReplayTransportOutcome
+} from "../../../engines/sandbox/src/security-production/provider-outcomes.ts";
 import type {
   SandboxSecurityCapturedProviderOutcome,
   SandboxSecurityCaptureSink
 } from "../../../engines/sandbox/src/security-production/benchmark-composition.ts";
-import type {
-  SandboxSecurityReplayTransportOutcome
-} from "../../../engines/sandbox/src/security-production/provider-outcomes.ts";
 
 export const SANDBOX_SECURITY_CAPTURE_INPUT_COUNT = 300 as const;
 
@@ -95,6 +98,27 @@ function isRetryableFirstAttempt(
     outcome.error_code === "connection_failed";
 }
 
+type SandboxSecurityResponseNormalizer = (value: unknown) => unknown;
+
+function selectResponseNormalizer(
+  provider: unknown,
+  operation: unknown
+): SandboxSecurityResponseNormalizer | undefined {
+  if (provider === "ollama" && operation === "model_inventory") {
+    return normalizeSandboxSecurityReplayOllamaInventoryResponse;
+  }
+  if (provider === "ollama" && operation === "chat") {
+    return normalizeSandboxSecurityReplayOllamaResponse;
+  }
+  if (
+    provider === "openai" &&
+    (operation === "responses" || operation === "chat_completions")
+  ) {
+    return normalizeSandboxSecurityReplayOpenAIResponse;
+  }
+  return undefined;
+}
+
 type SandboxSecurityNormalizedCapturedProviderOutcome =
   | Readonly<{
       capture_phase: "qualification";
@@ -115,7 +139,10 @@ type SandboxSecurityNormalizedCapturedProviderOutcome =
       outcome: SandboxSecurityCaptureSlotOutcome;
     }>;
 
-function normalizeSlotOutcome(outcome: unknown): SandboxSecurityCaptureSlotOutcome {
+function normalizeSlotOutcome(
+  outcome: unknown,
+  responseNormalizer?: SandboxSecurityResponseNormalizer
+): SandboxSecurityCaptureSlotOutcome {
   if (!isPlainObject(outcome)) fail();
   const status = outcome.status;
   if (status === "not_called") {
@@ -131,23 +158,13 @@ function normalizeSlotOutcome(outcome: unknown): SandboxSecurityCaptureSlotOutco
     ]);
     if (outcome.http_status !== 200) fail();
     if (outcome.content_type !== "application/json") fail();
-    if (!isPlainObject(outcome.normalized_response) && !Array.isArray(outcome.normalized_response)) {
-      // normalized_response must be a frozen data object; reject primitives/functions
-      if (
-        outcome.normalized_response === null ||
-        typeof outcome.normalized_response !== "object"
-      ) {
-        fail();
-      }
-    }
-    // Content-free sink: accept structure but freeze a shallow copy without
-    // retaining unexpected methods.
+    if (responseNormalizer === undefined) fail();
     return deepFreeze({
       status: "response" as const,
       http_status: 200 as const,
       content_type: "application/json" as const,
       normalized_response: deepFreeze(
-        JSON.parse(JSON.stringify(outcome.normalized_response)) as unknown
+        responseNormalizer(outcome.normalized_response)
       )
     });
   }
@@ -232,7 +249,8 @@ function normalizeCapturedOutcome(
   const capture_phase = value.capture_phase;
   const provider = value.provider;
   const operation = value.operation;
-  const outcome = normalizeSlotOutcome(value.outcome);
+  const responseNormalizer = selectResponseNormalizer(provider, operation);
+  const outcome = normalizeSlotOutcome(value.outcome, responseNormalizer);
 
   if (
     capture_phase === "qualification" &&
@@ -294,6 +312,20 @@ export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
     state = "failed";
     open = null;
     fail(code);
+  }
+
+  function materializeOpenInput(input: Readonly<OpenInput>): SandboxSecurityCaptureInputUnit {
+    return deepFreeze({
+      ollama: [...input.ollama],
+      judge: [...input.judge]
+    });
+  }
+
+  function markFailedAfterRecording(code: string): never {
+    if (open !== null) {
+      inputs.push(materializeOpenInput(open));
+    }
+    markFailed(code);
   }
 
   function snapshot(): Readonly<SandboxSecurityCaptureAccumulator> {
@@ -407,9 +439,10 @@ export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
         outcome.provider === "ollama" &&
         outcome.operation === "chat"
       ) {
+        const attemptIndex = open.ollama.length;
         if (
-          open.ollama.length >= 2 ||
-          (open.ollama.length === 1 &&
+          attemptIndex >= 2 ||
+          (attemptIndex === 1 &&
             !isRetryableFirstAttempt(open.ollama[0]!))
         ) {
           markFailed("sandbox_security_capture_sink_reject:duplicate_ollama");
@@ -422,6 +455,17 @@ export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
         }
         open.ollama_operation = outcome.operation;
         open.ollama.push(outcome.outcome);
+        if (
+          attemptIndex === 0 &&
+          isRetryableFirstAttempt(outcome.outcome)
+        ) {
+          return;
+        }
+        if (outcome.outcome.status !== "response") {
+          markFailedAfterRecording(
+            "sandbox_security_capture_sink_reject:ollama_attempt_failed"
+          );
+        }
         return;
       }
 
@@ -431,6 +475,7 @@ export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
           outcome.operation === "chat_completions"
         )
       ) {
+        const attemptIndex = open.judge.length;
         if (
           open.judge_operation !== null &&
           open.judge_operation !== outcome.operation
@@ -438,14 +483,25 @@ export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
           markFailed("sandbox_security_capture_sink_reject:judge_operation_mismatch");
         }
         if (
-          open.judge.length >= 2 ||
-          (open.judge.length === 1 &&
+          attemptIndex >= 2 ||
+          (attemptIndex === 1 &&
             !isRetryableFirstAttempt(open.judge[0]!))
         ) {
           markFailed("sandbox_security_capture_sink_reject:duplicate_judge");
         }
         open.judge_operation = outcome.operation;
         open.judge.push(outcome.outcome);
+        if (
+          attemptIndex === 0 &&
+          isRetryableFirstAttempt(outcome.outcome)
+        ) {
+          return;
+        }
+        if (outcome.outcome.status !== "response") {
+          markFailedAfterRecording(
+            "sandbox_security_capture_sink_reject:judge_attempt_failed"
+          );
+        }
         return;
       }
 
@@ -457,11 +513,7 @@ export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
       if (state !== "input_open" || open === null) {
         markFailed("sandbox_security_capture_sink_reject:end_without_open");
       }
-      const unit = deepFreeze({
-        ollama: [...open.ollama],
-        judge: [...open.judge]
-      });
-      inputs.push(unit);
+      inputs.push(materializeOpenInput(open));
       open = null;
       state = "ready";
     },
