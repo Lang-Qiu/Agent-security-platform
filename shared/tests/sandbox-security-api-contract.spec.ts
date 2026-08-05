@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as shared from "../index.ts";
 import {
-  SANDBOX_DETECTOR_RUN_STATUSES,
   SANDBOX_SECURITY_POLICY_PROFILE_IDS,
   SANDBOX_SECURITY_RISK_CATEGORIES,
   SANDBOX_SECURITY_STAGES
@@ -11,6 +10,15 @@ import type {
   SandboxSecurityAuditEvent,
   SandboxSecurityAuditPage
 } from "../types/sandbox-security-api.ts";
+
+const EXPECTED_DETECTOR_RUN_STATUSES = [
+  "matched",
+  "no_match",
+  "failed",
+  "timeout",
+  "invalid_result",
+  "skipped"
+] as const;
 
 const VALID_EVENT_ID = "audit:00000000-0000-4000-8000-000000000000";
 const VALID_TIMESTAMP = "2026-08-05T00:00:00.000Z";
@@ -42,7 +50,7 @@ function categoryCounts(value = 1): Record<string, number> {
 
 function detectorRunStatusCounts(value = 1): Record<string, number> {
   return Object.fromEntries(
-    SANDBOX_DETECTOR_RUN_STATUSES.map((status) => [status, value])
+    EXPECTED_DETECTOR_RUN_STATUSES.map((status) => [status, value])
   );
 }
 
@@ -167,14 +175,6 @@ function clone<T>(value: T): T {
 test("REQ-SBX-GENERAL-003 shared index exposes strict audit normalizers", () => {
   assert.equal(typeof shared.normalizeSandboxSecurityAuditEvent, "function");
   assert.equal(typeof shared.normalizeSandboxSecurityAuditPage, "function");
-  assert.deepEqual(shared.SANDBOX_DETECTOR_RUN_STATUSES, [
-    "matched",
-    "no_match",
-    "failed",
-    "timeout",
-    "invalid_result",
-    "skipped"
-  ]);
 });
 
 test("REQ-SBX-GENERAL-003 normalizes every exact audit event variant", () => {
@@ -332,6 +332,10 @@ test("REQ-SBX-GENERAL-003 normalizes capability and purge array fields in catalo
   const invalidExpiry = makeIssuedEvent();
   invalidExpiry.expires_at = "2026-08-04T23:59:59.000Z";
   assert.equal(normalizeEvent(invalidExpiry), null);
+
+  const equalExpiry = makeIssuedEvent();
+  equalExpiry.expires_at = equalExpiry.issued_at;
+  assert.equal(normalizeEvent(equalExpiry), null);
 
   const auditOnlyGrant = makeIssuedEvent();
   auditOnlyGrant.scopes = ["sandbox_security:audit:read"];

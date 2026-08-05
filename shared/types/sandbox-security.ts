@@ -148,15 +148,6 @@ export type SandboxDetectorRunStatus =
   | "invalid_result"
   | "skipped";
 
-export const SANDBOX_DETECTOR_RUN_STATUSES = [
-  "matched",
-  "no_match",
-  "failed",
-  "timeout",
-  "invalid_result",
-  "skipped"
-] as const satisfies readonly SandboxDetectorRunStatus[];
-
 export type SandboxDetectorSkipReason =
   | "optional_not_configured"
   | "optional_not_selected"

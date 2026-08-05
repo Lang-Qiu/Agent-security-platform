@@ -95,8 +95,7 @@ export {
   SANDBOX_SECURITY_MAX_REQUEST_BYTES,
   SANDBOX_SECURITY_MAX_CONTENT_ITEMS,
   SANDBOX_SECURITY_MAX_JSON_DEPTH,
-  SANDBOX_SECURITY_MAX_JSON_NODES,
-  SANDBOX_DETECTOR_RUN_STATUSES
+  SANDBOX_SECURITY_MAX_JSON_NODES
 } from "./types/sandbox-security.ts";
 
 export type {
@@ -125,12 +124,9 @@ export type {
 } from "./types/sandbox-security.ts";
 
 export type {
-  SandboxSecurityCapabilityScope,
   SandboxSecurityAuditEventType,
   SandboxSecurityAuditCategoryCounts,
   SandboxSecurityAuditRunStatusCounts,
-  SandboxSecurityAuditEventBase,
-  SandboxSecurityEvaluationAuditFields,
   SandboxSecurityAuditEvent,
   SandboxSecurityAuditPage
 } from "./types/sandbox-security-api.ts";

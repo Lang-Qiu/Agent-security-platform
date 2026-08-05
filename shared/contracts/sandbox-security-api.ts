@@ -5,13 +5,13 @@ import {
   type SandboxSecurityCapabilityScope
 } from "../types/sandbox-security-api.ts";
 import {
-  SANDBOX_DETECTOR_RUN_STATUSES,
   SANDBOX_SECURITY_ACTIONS,
   SANDBOX_SECURITY_POLICY_PROFILE_IDS as POLICY_PROFILE_CATALOG,
   SANDBOX_SECURITY_RISK_CATEGORIES as RISK_CATEGORY_CATALOG,
   SANDBOX_SECURITY_SEVERITIES,
   SANDBOX_SECURITY_STAGES as STAGE_CATALOG,
-  SANDBOX_SECURITY_VERDICTS
+  SANDBOX_SECURITY_VERDICTS,
+  type SandboxDetectorRunStatus
 } from "../types/sandbox-security.ts";
 
 type PlainRecord = Record<string, unknown>;
@@ -20,6 +20,14 @@ const SCOPES = [
   "sandbox_security:evaluate",
   "sandbox_security:audit:read"
 ] as const satisfies readonly SandboxSecurityCapabilityScope[];
+const AUDIT_RUN_STATUS_CATALOG = [
+  "matched",
+  "no_match",
+  "failed",
+  "timeout",
+  "invalid_result",
+  "skipped"
+] as const satisfies readonly SandboxDetectorRunStatus[];
 const EVENT_SCHEMA_VERSION = "sandbox-security-audit-event.v1";
 const PAGE_SCHEMA_VERSION = "sandbox-security-audit-page.v1";
 const EVENT_ID_PATTERN =
@@ -307,7 +315,10 @@ function normalizeCompleted(value: PlainRecord): SandboxSecurityAuditEvent | nul
   const base = normalizeBase(value, value.event_type as string);
   const evaluation = normalizeEvaluationFields(value);
   const categories = normalizeCounts(value.category_counts, RISK_CATEGORY_CATALOG);
-  const statuses = normalizeCounts(value.detector_run_status_counts, SANDBOX_DETECTOR_RUN_STATUSES);
+  const statuses = normalizeCounts(
+    value.detector_run_status_counts,
+    AUDIT_RUN_STATUS_CATALOG
+  );
   if (
     base === null ||
     evaluation === null ||
@@ -409,7 +420,7 @@ function normalizeIssued(value: PlainRecord): SandboxSecurityAuditEvent | null {
     (!hasEvaluationScope && (stages.length !== 0 || profiles.length !== 0)) ||
     !isStrictUtcMillisecondTimestamp(value.issued_at) ||
     !isStrictUtcMillisecondTimestamp(value.expires_at) ||
-    Date.parse(value.expires_at) < Date.parse(value.issued_at)
+    Date.parse(value.expires_at) <= Date.parse(value.issued_at)
   ) {
     return null;
   }

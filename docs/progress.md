@@ -1,3 +1,28 @@
+## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T1 review correction
+
+- stage: P1-T1 review-fix cycle; no backend or P1-T2 work started
+- review findings closed:
+  - `shared/index.ts` now exposes only the two audit normalizers and the five
+    locked public API types (`AuditEventType`, `CategoryCounts`,
+    `RunStatusCounts`, `AuditEvent`, and `AuditPage`); capability-scope,
+    base/evaluation helper types, and the detector-status catalog remain
+    direct-module/internal only
+  - capability issue expiry must be strictly later than issuance; a new RED
+    regression rejected equal timestamps before the minimal `<=` correction
+  - GENERAL-001 provenance and exact export gates now recognize the two
+    canonical P1-T1 modules through independent allowlists without widening
+    the old module exact sets
+  - the detector-run-status order is a private frozen catalog inside the P1-T1
+    normalizer; the GENERAL-001 shared sandbox type module remains unchanged
+- TDD RED: the equal-expiry regression produced the intended single
+  `AssertionError` (`9/10` focused tests passed, one failed); no import,
+  syntax, or environment error occurred
+- GREEN: focused shared API suite `10/10`; shared TypeScript check passed;
+  GENERAL-001 core gate `131/131`; `npm run test:repo` `319/319`;
+  `npm run test:shared` `217/217`; `git diff --check` passed
+- next: independent P1-T1 review of the corrected public surface and gate
+  compatibility, then exact review-fix commit
+
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T1 shared audit API contract
 
 - phase/task: Phase 1 / P1-T1; implementation remains one task at a time after
@@ -8,13 +33,14 @@
 - GREEN: the exact eight-variant audit event union, page envelope, strict
   own-data normalizers, canonical cursor validation, dense arrays, catalog
   ordering, route/rejection matrix, bounds, timestamp grammar, and defensive
-  copies are implemented. The existing shared detector-status type now also
-  exposes its frozen runtime catalog in canonical order.
+  copies are implemented. The P1-T1 normalizer owns its private frozen
+  detector-status catalog in canonical order.
 - changed: `shared/types/sandbox-security-api.ts`,
   `shared/contracts/sandbox-security-api.ts`,
   `shared/tests/sandbox-security-api-contract.spec.ts`,
-  `shared/types/sandbox-security.ts`, `shared/index.ts`, root `package.json`,
-  `docs/api-contract.md`
+  `shared/index.ts`, root `package.json`, `docs/api-contract.md`,
+  `tests/repository/helpers/sandbox-security-export-provenance.ts`,
+  `tests/repository/sandbox-security-core.spec.ts`
 - validation: focused suite `10/10`; shared TypeScript check passed;
   `npm run test:shared` passed `217/217`; `git diff --check` passed
 - review-prep: no capability DTO, repository record, cursor codec, HMAC

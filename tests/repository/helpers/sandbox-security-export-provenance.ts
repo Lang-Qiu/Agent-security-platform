@@ -581,6 +581,12 @@ export function analyzeSandboxSecurityExportProvenance(
     ),
     host.canonicalPath(
       resolve(repositoryRoot, "shared/contracts/sandbox-security.ts")
+    ),
+    host.canonicalPath(
+      resolve(repositoryRoot, "shared/types/sandbox-security-api.ts")
+    ),
+    host.canonicalPath(
+      resolve(repositoryRoot, "shared/contracts/sandbox-security-api.ts")
     )
   ]);
   const moduleResolutionCache = ts.createModuleResolutionCache(

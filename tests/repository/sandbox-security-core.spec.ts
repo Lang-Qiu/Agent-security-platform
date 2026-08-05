@@ -29,6 +29,26 @@ const MASTER_A_RUNTIME = [
   "normalizeSandboxSecurityDecision"
 ] as const;
 
+const P1_T1_SHARED_RUNTIME = [
+  "normalizeSandboxSecurityAuditEvent",
+  "normalizeSandboxSecurityAuditPage"
+] as const;
+
+const P1_T1_SHARED_TYPES = [
+  "SandboxSecurityAuditEventType",
+  "SandboxSecurityAuditCategoryCounts",
+  "SandboxSecurityAuditRunStatusCounts",
+  "SandboxSecurityAuditEvent",
+  "SandboxSecurityAuditPage"
+] as const;
+
+const P1_T1_API_TYPES = [
+  "SandboxSecurityCapabilityScope",
+  ...P1_T1_SHARED_TYPES,
+  "SandboxSecurityAuditEventBase",
+  "SandboxSecurityEvaluationAuditFields"
+] as const;
+
 const MASTER_B_TYPES = [
   "SandboxSecurityStage",
   "SandboxSecurityClaimedSourceType",
@@ -254,6 +274,14 @@ const SANDBOX_SECURITY_CONTRACTS_PATH = resolve(
   REPO_ROOT,
   "shared/contracts/sandbox-security.ts"
 );
+const SANDBOX_SECURITY_API_TYPES_PATH = resolve(
+  REPO_ROOT,
+  "shared/types/sandbox-security-api.ts"
+);
+const SANDBOX_SECURITY_API_CONTRACTS_PATH = resolve(
+  REPO_ROOT,
+  "shared/contracts/sandbox-security-api.ts"
+);
 const ENGINES_PATH = resolve(REPO_ROOT, "engines");
 const SECURITY_INDEX_RELATIVE_PATH = "engines/sandbox/src/security/index.ts";
 const SECURITY_INDEX_PATH = resolve(REPO_ROOT, SECURITY_INDEX_RELATIVE_PATH);
@@ -346,8 +374,14 @@ function analyzeSharedExportProvenance(
   return analyzeSandboxSecurityExportProvenance({
     repositoryRoot: REPO_ROOT,
     overlay,
-    canonicalTypeExportNames: new Set<string>(MASTER_B_TYPES),
-    canonicalValueExportNames: new Set<string>(MASTER_A_RUNTIME)
+    canonicalTypeExportNames: new Set<string>([
+      ...MASTER_B_TYPES,
+      ...P1_T1_SHARED_TYPES
+    ]),
+    canonicalValueExportNames: new Set<string>([
+      ...MASTER_A_RUNTIME,
+      ...P1_T1_SHARED_RUNTIME
+    ])
   });
 }
 
@@ -396,7 +430,9 @@ function isEngineModule(reference: ModuleReference): boolean {
 function isCanonicalSandboxModule(reference: ModuleReference): boolean {
   return (
     reference.resolvedPath === SANDBOX_SECURITY_TYPES_PATH ||
-    reference.resolvedPath === SANDBOX_SECURITY_CONTRACTS_PATH
+    reference.resolvedPath === SANDBOX_SECURITY_CONTRACTS_PATH ||
+    reference.resolvedPath === SANDBOX_SECURITY_API_TYPES_PATH ||
+    reference.resolvedPath === SANDBOX_SECURITY_API_CONTRACTS_PATH
   );
 }
 
@@ -2064,6 +2100,61 @@ test("REQ-SBX-GENERAL-001 shared package exports all Master A and B symbols", ()
   }
 });
 
+test("REQ-SBX-GENERAL-003 shared API exports use exact canonical modules", () => {
+  const indexInventory = enumerateDirectExports(
+    "shared/index.ts",
+    readText("shared/index.ts")
+  );
+  const apiTypesInventory = enumerateDirectExports(
+    "shared/types/sandbox-security-api.ts",
+    readText("shared/types/sandbox-security-api.ts")
+  );
+  const apiContractsInventory = enumerateDirectExports(
+    "shared/contracts/sandbox-security-api.ts",
+    readText("shared/contracts/sandbox-security-api.ts")
+  );
+
+  assert.deepEqual(
+    sortedNames(namesByKind(apiTypesInventory, "value")),
+    [],
+    "P1-T1 API types module must not expose runtime values"
+  );
+  assert.deepEqual(
+    sortedNames(namesByKind(apiTypesInventory, "type")),
+    sortedNames(P1_T1_API_TYPES),
+    "P1-T1 API types module must expose only its closed type surface"
+  );
+  assert.deepEqual(
+    sortedNames(namesByKind(apiContractsInventory, "value")),
+    sortedNames(P1_T1_SHARED_RUNTIME),
+    "P1-T1 API contract module must expose only its two normalizers"
+  );
+  assert.deepEqual(
+    namesByKind(apiContractsInventory, "type"),
+    [],
+    "P1-T1 API contract module must not export types"
+  );
+
+  for (const exportedName of P1_T1_SHARED_RUNTIME) {
+    const row = indexInventory.named.find(
+      (entry) => entry.exportedName === exportedName
+    );
+    assert.ok(row, `missing P1-T1 runtime export ${exportedName}`);
+    assert.equal(row?.sourceName, exportedName);
+    assert.equal(row?.kind, "value");
+    assert.equal(row?.resolvedModulePath, SANDBOX_SECURITY_API_CONTRACTS_PATH);
+  }
+  for (const exportedName of P1_T1_SHARED_TYPES) {
+    const row = indexInventory.named.find(
+      (entry) => entry.exportedName === exportedName
+    );
+    assert.ok(row, `missing P1-T1 type export ${exportedName}`);
+    assert.equal(row?.sourceName, exportedName);
+    assert.equal(row?.kind, "type");
+    assert.equal(row?.resolvedModulePath, SANDBOX_SECURITY_API_TYPES_PATH);
+  }
+});
+
 test("REQ-SBX-GENERAL-001 shared package retains historical non-GENERAL-001 exports", () => {
   assert.equal(sharedPackage.TRACK1_OPENCLAW_VERSION, "2026.6.10");
   const historical = analyzePositiveVirtualExports().exports.find(
@@ -2419,7 +2510,9 @@ test("REQ-SBX-GENERAL-001 keeps shared contracts engine independent", () => {
   );
   const allowedSandboxSecurityNames = new Set<string>([
     ...MASTER_A_RUNTIME,
-    ...MASTER_B_TYPES
+    ...MASTER_B_TYPES,
+    ...P1_T1_SHARED_RUNTIME,
+    ...P1_T1_SHARED_TYPES
   ]);
 
   for (const identifier of FORBIDDEN_SHARED_ENGINE_EXPORTS) {
