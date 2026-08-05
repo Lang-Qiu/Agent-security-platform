@@ -42,6 +42,8 @@ import {
 } from "./contracts.ts";
 
 const INVALID = "sandbox_security_replay_transport_invalid";
+const FINAL_CONNECTION_FAILURE =
+  "sandbox_security_transport_connection_failed_final";
 const ENCODER = new TextEncoder();
 const DECODER = new TextDecoder("utf-8", { fatal: true });
 const DIGEST = /^sha256:[a-f0-9]{64}$/u;
@@ -100,20 +102,46 @@ function plainRecord(value: unknown): Record<string, unknown> {
   if (
     value === null ||
     typeof value !== "object" ||
-    Array.isArray(value) ||
-    Object.getPrototypeOf(value) !== Object.prototype
+    Array.isArray(value)
   ) {
     return fail("record_invalid");
+  }
+  let keys: PropertyKey[];
+  try {
+    if (
+      utilTypes.isProxy(value) ||
+      Object.getPrototypeOf(value) !== Object.prototype
+    ) {
+      return fail("record_invalid");
+    }
+    keys = Reflect.ownKeys(value);
+  } catch {
+    return fail("record_invalid");
+  }
+  for (const key of keys) {
+    if (typeof key !== "string") return fail("record_invalid");
+    let descriptor: PropertyDescriptor | undefined;
+    try {
+      descriptor = Object.getOwnPropertyDescriptor(value, key);
+    } catch {
+      return fail("record_invalid");
+    }
+    if (
+      descriptor === undefined ||
+      !("value" in descriptor) ||
+      descriptor.enumerable !== true
+    ) {
+      return fail("record_invalid");
+    }
   }
   return value as Record<string, unknown>;
 }
 
 function exactKeys(value: Record<string, unknown>, keys: readonly string[]): void {
-  const actual = Object.keys(value).sort();
-  const expected = [...keys].sort();
+  const actual = Reflect.ownKeys(value);
   if (
-    actual.length !== expected.length ||
-    actual.some((key, index) => key !== expected[index])
+    actual.length !== keys.length ||
+    keys.some((key) => !actual.includes(key))
   ) {
     fail("record_keys_invalid");
   }
@@ -160,7 +188,23 @@ function validateSealedConfig(
   if (hashSandboxSecurityBenchmarkJudgeBinding(binding) !== record.judge_binding_sha256) {
     fail("sealed_config_binding_mismatch");
   }
-  return value;
+  return Object.freeze({
+    judge_base_url: record.judge_base_url,
+    judge_binding_sha256: record.judge_binding_sha256,
+    judge_endpoint_policy_id: record.judge_endpoint_policy_id,
+    judge_endpoint_url: record.judge_endpoint_url,
+    judge_protocol_id: record.judge_protocol_id,
+    judge_prompt_version: record.judge_prompt_version,
+    judge_requested_model: record.judge_requested_model,
+    judge_resolved_model: record.judge_resolved_model,
+    judge_schema_version: record.judge_schema_version,
+    local_prompt_version: record.local_prompt_version,
+    local_schema_version: record.local_schema_version,
+    ollama_digest: record.ollama_digest,
+    ollama_model: record.ollama_model,
+    rule_catalog_version: record.rule_catalog_version,
+    sanitizer_version: record.sanitizer_version
+  }) as Readonly<SandboxSecuritySealedProviderConfig>;
 }
 
 function normalizeOutcome<T>(
@@ -181,18 +225,29 @@ function isRetryableFirstAttempt<T>(
     outcome.error_code === "connection_failed";
 }
 
-function normalizeAttemptSequence<T>(
+function strictDenseArray(
   value: unknown,
-  normalizer: (value: unknown) => T
-): SandboxSecurityReplayAttemptSequence<T> {
-  if (
-    !Array.isArray(value) ||
-    utilTypes.isProxy(value) ||
-    Object.getPrototypeOf(value) !== Array.prototype
-  ) {
-    return fail("attempt_sequence_invalid");
+  options: Readonly<{
+    errorCode: string;
+    exactLength?: number;
+    maxLength: number;
+  }>
+): readonly unknown[] {
+  if (!Array.isArray(value)) return fail(options.errorCode);
+  let lengthDescriptor: PropertyDescriptor | undefined;
+  let keys: PropertyKey[];
+  try {
+    if (
+      utilTypes.isProxy(value) ||
+      Object.getPrototypeOf(value) !== Array.prototype
+    ) {
+      return fail(options.errorCode);
+    }
+    lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+    keys = Reflect.ownKeys(value);
+  } catch {
+    return fail(options.errorCode);
   }
-  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
   if (
     lengthDescriptor === undefined ||
     !("value" in lengthDescriptor) ||
@@ -203,23 +258,24 @@ function normalizeAttemptSequence<T>(
     typeof lengthDescriptor.writable !== "boolean" ||
     !Number.isInteger(lengthDescriptor.value) ||
     lengthDescriptor.value < 0 ||
-    lengthDescriptor.value > 2
+    lengthDescriptor.value > options.maxLength ||
+    (options.exactLength !== undefined &&
+      lengthDescriptor.value !== options.exactLength)
   ) {
-    return fail("attempt_sequence_invalid");
+    return fail(options.errorCode);
   }
   const length = lengthDescriptor.value;
-  const keys = Reflect.ownKeys(value);
   if (keys.length !== length + 1 || !keys.includes("length")) {
-    return fail("attempt_sequence_invalid");
+    return fail(options.errorCode);
   }
   for (let index = 0; index < length; index += 1) {
     const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
     if (
       descriptor === undefined ||
-      !descriptor.enumerable ||
+      descriptor.enumerable !== true ||
       !("value" in descriptor)
     ) {
-      return fail("attempt_sequence_invalid");
+      return fail(options.errorCode);
     }
   }
   for (const key of keys) {
@@ -229,12 +285,24 @@ function normalizeAttemptSequence<T>(
       !/^(0|[1-9][0-9]*)$/u.test(key) ||
       Number(key) >= length
     ) {
-      return fail("attempt_sequence_invalid");
+      return fail(options.errorCode);
     }
   }
+  return value as readonly unknown[];
+}
+
+function normalizeAttemptSequence<T>(
+  value: unknown,
+  normalizer: (value: unknown) => T
+): SandboxSecurityReplayAttemptSequence<T> {
+  const array = strictDenseArray(value, {
+    errorCode: "attempt_sequence_invalid",
+    maxLength: 2
+  });
+  const length = array.length;
   const attempts: ReplayAttemptOutcome<T>[] = [];
   for (let index = 0; index < length; index += 1) {
-    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    const descriptor = Object.getOwnPropertyDescriptor(array, String(index));
     const attempt = normalizeOutcome(descriptor!.value, normalizer);
     if (attempt.status === "not_called") {
       return fail("attempt_not_called_invalid");
@@ -351,6 +419,7 @@ interface ReplayRequestRecord {
   readonly request: Readonly<SandboxSecurityHttpRequest>;
   readonly provider: Readonly<SandboxSecurityHttpRequest>["provider"];
   readonly operation: Readonly<SandboxSecurityHttpRequest>["operation"];
+  readonly signal: AbortSignal;
   readonly body: Uint8Array | undefined;
 }
 
@@ -362,6 +431,7 @@ function recordRequest(
     request,
     provider: request.provider,
     operation: request.operation,
+    signal: request.signal,
     body: body === undefined ? undefined : new Uint8Array(body)
   });
 }
@@ -387,6 +457,9 @@ function validateRetryRequest(
   }
   if (!sameBytes(firstRequest.body, requestBody(retryRequest))) {
     fail("retry_body_invalid");
+  }
+  if (firstRequest.signal !== retryRequest.signal) {
+    fail("retry_signal_invalid");
   }
   if (firstRequest.request !== retryRequest) {
     fail("retry_request_identity_invalid");
@@ -582,13 +655,18 @@ export function createSandboxSecurityReplayTransport(input: Readonly<{
     inventory: unknown;
     prewarm: unknown;
   });
-  const rawInputs = root.inputs;
-  if (!Array.isArray(rawInputs) || rawInputs.length !== INPUT_COUNT) {
-    return fail("input_count_invalid");
+  const rawInputs = strictDenseArray(root.inputs, {
+    errorCode: "input_count_invalid",
+    exactLength: INPUT_COUNT,
+    maxLength: INPUT_COUNT
+  });
+  const normalizedInputs: SandboxSecurityReplayInputUnit[] = [];
+  for (let index = 0; index < INPUT_COUNT; index += 1) {
+    normalizedInputs.push(
+      normalizeInputUnit(rawInputs[index] as SandboxSecurityReplayInputUnit)
+    );
   }
-  const inputs = Object.freeze(
-    rawInputs.map((value) => normalizeInputUnit(value as SandboxSecurityReplayInputUnit))
-  );
+  const inputs = Object.freeze(normalizedInputs);
   requireQualificationResponse(qualification.inventory, "inventory", config);
   requireQualificationResponse(qualification.prewarm, "local", config);
   for (const inputUnit of inputs) {
@@ -656,6 +734,10 @@ export function createSandboxSecurityReplayTransport(input: Readonly<{
       }
       return response;
     } catch (error) {
+      if (attemptCount === 1 && isRetryableFirstAttempt(attempt)) {
+        state = "failed";
+        throw namedError(FINAL_CONNECTION_FAILURE);
+      }
       if (!retryableFirstAttempt) state = "failed";
       throw error;
     }

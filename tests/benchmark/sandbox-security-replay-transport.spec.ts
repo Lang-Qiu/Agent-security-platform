@@ -42,6 +42,8 @@ import type {
 const ENCODER = new TextEncoder();
 const DIGEST = `sha256:${"a".repeat(64)}`;
 const JUDGE_MODEL = "deepseek-v4-flash";
+const FINAL_CONNECTION_FAILURE =
+  "sandbox_security_transport_connection_failed_final";
 type ReplayAttemptOutcome<T> = Exclude<
   SandboxSecurityReplayTransportOutcome<T>,
   { readonly status: "not_called" }
@@ -312,7 +314,7 @@ test("REQ-SBX-GENERAL-002 replay treats a singleton local connection failure as 
   transport.beginInput();
   await assert.rejects(
     transport.request(requests(new AbortController().signal, "chat")),
-    { name: "sandbox_security_transport_connection_failed" }
+    { name: FINAL_CONNECTION_FAILURE }
   );
   assert.throws(() => transport.endInput(), /failed|state|replay/i);
   assert.throws(() => transport.assertDrained(), /failed|state|replay/i);
@@ -518,6 +520,119 @@ test("REQ-SBX-GENERAL-002 replay rejects non-dense or extended attempt arrays", 
   }
 });
 
+test("REQ-SBX-GENERAL-002 replay rejects descriptor-unsafe records and outer input arrays before lifecycle effects", async () => {
+  const factory = await replayFactory();
+  const validInputs = Array.from({ length: 300 }, () => outcomeUnit());
+  const baseInput = {
+    qualification: successfulQualification(),
+    inputs: validInputs,
+    sealed_config: sealedConfig()
+  };
+
+  const accessorConfig = { ...sealedConfig() } as Record<string, unknown>;
+  Object.defineProperty(accessorConfig, "ollama_digest", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      throw new Error("raw_config_accessor");
+    }
+  });
+  const configSymbol = {
+    ...sealedConfig(),
+    [Symbol("config_extra")]: true
+  };
+  const configExtra = { ...sealedConfig() } as Record<string, unknown>;
+  Object.defineProperty(configExtra, "extra", {
+    configurable: true,
+    enumerable: false,
+    value: true,
+    writable: true
+  });
+  const configProxy = new Proxy({ ...sealedConfig() }, {});
+  const configCustomPrototype = Object.assign(
+    Object.create({ inherited: true }),
+    sealedConfig()
+  );
+
+  const unitExtra = { ...outcomeUnit() } as Record<string, unknown>;
+  Object.defineProperty(unitExtra, "extra", {
+    configurable: true,
+    enumerable: false,
+    value: true,
+    writable: true
+  });
+  const qualificationSymbol = {
+    ...successfulQualification(),
+    [Symbol("qualification_extra")]: true
+  };
+
+  const sparseInputs = new Array(300);
+  const customPrototypeInputs = [...validInputs];
+  Object.setPrototypeOf(customPrototypeInputs, Object.create(Array.prototype));
+  const symbolInputs = [...validInputs];
+  Object.defineProperty(symbolInputs, Symbol("inputs_extra"), {
+    configurable: true,
+    enumerable: false,
+    value: true,
+    writable: true
+  });
+  const hiddenInputs = [...validInputs];
+  Object.defineProperty(hiddenInputs, "extra", {
+    configurable: true,
+    enumerable: false,
+    value: true,
+    writable: true
+  });
+  const accessorInputs = [...validInputs];
+  Object.defineProperty(accessorInputs, "0", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      throw new Error("raw_input_accessor");
+    }
+  });
+  const proxyInputs = new Proxy([...validInputs], {});
+  let customMapCalled = false;
+  const customMapInputs = [...validInputs] as unknown as {
+    map: () => never;
+  } & unknown[];
+  Object.defineProperty(customMapInputs, "map", {
+    configurable: true,
+    enumerable: true,
+    value() {
+      customMapCalled = true;
+      throw new Error("custom_map_called");
+    },
+    writable: true
+  });
+
+  const cases: readonly [string, unknown][] = [
+    ["accessor config", { ...baseInput, sealed_config: accessorConfig }],
+    ["symbol config", { ...baseInput, sealed_config: configSymbol }],
+    ["hidden config", { ...baseInput, sealed_config: configExtra }],
+    ["proxy config", { ...baseInput, sealed_config: configProxy }],
+    ["custom config prototype", { ...baseInput, sealed_config: configCustomPrototype }],
+    ["hidden input unit", { ...baseInput, inputs: [unitExtra, ...validInputs.slice(1)] }],
+    ["symbol qualification", { ...baseInput, qualification: qualificationSymbol }],
+    ["sparse inputs", { ...baseInput, inputs: sparseInputs }],
+    ["custom inputs prototype", { ...baseInput, inputs: customPrototypeInputs }],
+    ["symbol inputs", { ...baseInput, inputs: symbolInputs }],
+    ["hidden inputs", { ...baseInput, inputs: hiddenInputs }],
+    ["accessor inputs", { ...baseInput, inputs: accessorInputs }],
+    ["proxy inputs", { ...baseInput, inputs: proxyInputs }],
+    ["custom map inputs", { ...baseInput, inputs: customMapInputs }]
+  ];
+
+  for (const [label, input] of cases) {
+    assert.throws(
+      () => factory(input as never),
+      /sandbox_security_replay_transport_invalid:(record|record_keys|input_count)/,
+      label
+    );
+  }
+  assert.equal(customMapCalled, false);
+});
+
 test("REQ-SBX-GENERAL-002 replay validates length descriptor flags and accepts frozen sequences", async () => {
   const factory = await replayFactory();
   const response = responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse);
@@ -588,6 +703,23 @@ test("REQ-SBX-GENERAL-002 replay validates length descriptor flags and accepts f
   }
 });
 
+test("REQ-SBX-GENERAL-002 replay snapshots sealed config values at construction", async () => {
+  const factory = await replayFactory();
+  const mutableConfig = { ...sealedConfig() } as unknown as Record<string, unknown>;
+  const transport = createTransport(factory, {
+    sealed_config: mutableConfig as unknown as SandboxSecuritySealedProviderConfig
+  });
+  mutableConfig.ollama_digest = `sha256:${"b".repeat(64)}`;
+
+  await qualify(transport);
+  transport.beginInput();
+  assert.equal(
+    (await transport.request(requests(new AbortController().signal, "chat"))).status,
+    200
+  );
+  transport.endInput();
+});
+
 test("REQ-SBX-GENERAL-002 replay rejects endInput with an unconsumed retry and rejects a changed retry operation", async () => {
   const factory = await replayFactory();
   const transport = createTransport(factory, {
@@ -645,6 +777,31 @@ test("REQ-SBX-GENERAL-002 replay rejects a changed retry body or request identit
   await assert.rejects(
     transport.request(changedRequest),
     /body|identity|request|retry|replay/i
+  );
+  assert.throws(() => transport.endInput(), /failed|state|replay/i);
+});
+
+test("REQ-SBX-GENERAL-002 replay rejects a retry after the same request object receives a new signal", async () => {
+  const factory = await replayFactory();
+  const transport = createTransport(factory, {
+    inputs: [outcomeUnit([
+      { status: "transport_error", error_code: "connection_failed" },
+      responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse)
+    ])]
+  });
+  await qualify(transport);
+  transport.beginInput();
+  const firstRequest = requests(new AbortController().signal, "chat");
+  await assert.rejects(transport.request(firstRequest), /connection_failed/);
+  Object.defineProperty(firstRequest, "signal", {
+    configurable: true,
+    enumerable: true,
+    value: new AbortController().signal,
+    writable: true
+  });
+  await assert.rejects(
+    transport.request(firstRequest),
+    /signal|identity|retry|replay/i
   );
   assert.throws(() => transport.endInput(), /failed|state|replay/i);
 });
@@ -757,7 +914,7 @@ test("REQ-SBX-GENERAL-002 replay treats a singleton Judge connection failure as 
   await transport.request(requests(signal, "chat"));
   await assert.rejects(
     transport.request(requests(signal, "responses")),
-    { name: "sandbox_security_transport_connection_failed" }
+    { name: FINAL_CONNECTION_FAILURE }
   );
   assert.throws(() => transport.endInput(), /failed|state|replay/i);
   assert.throws(() => transport.assertDrained(), /failed|state|replay/i);

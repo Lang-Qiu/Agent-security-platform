@@ -177,6 +177,8 @@ if (existsSync(BENCHMARK_MODULE_URL)) {
 }
 
 const DIGEST = `sha256:${"a".repeat(64)}`;
+const FINAL_CONNECTION_FAILURE =
+  "sandbox_security_transport_connection_failed_final";
 const ENCODER = new TextEncoder();
 const DECODER = new TextDecoder("utf-8", { fatal: true });
 const PRODUCTION_ROOT = fileURLToPath(
@@ -1850,6 +1852,32 @@ test("REQ-SBX-GENERAL-002 hermetic replay facade retries one recorded local conn
     requestBody(localRequests[0]!),
     requestBody(localRequests[1]!)
   );
+});
+
+test("REQ-SBX-GENERAL-002 hermetic replay facade does not retry a final singleton qualification connection failure", async () => {
+  const finalError = namedTransportError(FINAL_CONNECTION_FAILURE);
+  let calls = 0;
+  const replay: ReplayTransport = Object.freeze({
+    async request() {
+      calls += 1;
+      throw finalError;
+    },
+    beginInput() {},
+    endInput() {},
+    assertDrained() {}
+  });
+  await assert.rejects(
+    () => createHermeticReplayEngine({
+      runtime: runtimeHarness().runtime,
+      replay_transport: replay,
+      sealed_config: sealedConfig()
+    }),
+    (error: unknown) => {
+      assert.equal(error, finalError);
+      return true;
+    }
+  );
+  assert.equal(calls, 1);
 });
 
 test("REQ-SBX-GENERAL-002 replay routes matched local and Judge through one original runner state", async () => {

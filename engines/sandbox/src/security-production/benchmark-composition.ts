@@ -159,6 +159,8 @@ export interface SandboxSecurityBenchmarkJudgeProtocolDispatch {
 
 const INVALID = "sandbox_security_benchmark_composition_invalid";
 const MAX_PROVIDER_ATTEMPTS = 2;
+const RETRYABLE_CONNECTION_FAILURE_ERROR =
+  "sandbox_security_transport_connection_failed";
 const NORMALIZED_DIGEST = /^sha256:[a-f0-9]{64}$/;
 const LOCAL_SCHEMA_VERSION = "sandbox-security-local-model.v1";
 const JUDGE_SCHEMA_VERSION = "sandbox-security-judge.v1";
@@ -832,6 +834,17 @@ function errorName(value: unknown): string | null {
   }
 }
 
+function isRetryableConnectionFailureOutcome(
+  outcome: SandboxSecurityReplayTransportOutcome<unknown> | null
+): boolean {
+  return outcome?.status === "transport_error" &&
+    outcome.error_code === "connection_failed";
+}
+
+function isRetryableConnectionFailureError(error: unknown): boolean {
+  return errorName(error) === RETRYABLE_CONNECTION_FAILURE_ERROR;
+}
+
 function signalReason(signal: AbortSignal): unknown {
   try {
     return ABORT_SIGNAL_REASON_GETTER === undefined
@@ -853,7 +866,7 @@ function failureOutcome(
 > | null {
   const name = errorName(error);
   let outcome: unknown;
-  if (name === "sandbox_security_transport_connection_failed") {
+  if (name === RETRYABLE_CONNECTION_FAILURE_ERROR) {
     outcome = { status: "transport_error", error_code: "connection_failed" };
   } else if (name === "sandbox_security_transport_response_too_large") {
     outcome = { status: "transport_error", error_code: "response_too_large" };
@@ -986,8 +999,7 @@ function createCaptureTransport(
           }
           if (
             attempt === 1 &&
-            outcome?.status === "transport_error" &&
-            outcome.error_code === "connection_failed"
+            isRetryableConnectionFailureOutcome(outcome)
           ) {
             continue;
           }
@@ -1153,7 +1165,7 @@ function replayPorts(
         } catch (error) {
           if (
             attempt === 1 &&
-            errorName(error) === "sandbox_security_transport_connection_failed"
+            isRetryableConnectionFailureError(error)
           ) {
             continue;
           }
