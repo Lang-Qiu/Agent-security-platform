@@ -255,6 +255,29 @@ timer 由 idempotency maintenance 拥有，模块 close 负责先取消维护再
 后端扩展 runtime 不能直接传入 GENERAL-002。`toSandboxSecurityEngineRuntime`
 每次生成冻结的普通对象，且只包含 Engine 要求顺序的
 `now`、`nextDecisionId`、`monotonicNowMs`、`scheduleTimeout` 四个可枚举键。
+
+### GENERAL-003 SQLite 持久化边界（P3-T1）
+
+P3-T1 将单节点持久化实现收敛在一个 `SqliteSandboxSecurityDatabase` owner
+中。只有该 owner 持有 Node 22 `DatabaseSync`；调用方只能通过
+`transaction(callback)`、`read(callback)` 和 `checkpointAndClose()` 使用数据库，
+不能保留或传递 SQL handle。事务统一使用 `BEGIN IMMEDIATE`，拒绝嵌套事务，
+并在 callback、提交或回滚后清理 owner 的事务状态。关闭由 owner 统一执行
+`wal_checkpoint(TRUNCATE)` 后关闭，关闭后所有读写调用都会失败且关闭操作可重复。
+
+数据库路径必须是绝对路径，父目录必须预先存在、是真实目录并且没有 group/other
+权限（`0700` 或更严格）。主数据库和 `-wal`/`-shm` sidecar 必须位于该父目录，
+拒绝符号链接、非普通文件和越界 sidecar；每次 WAL 创建和迁移前后都复核并设置
+文件权限为 `0600`。启动顺序固定为校验路径、打开数据库、启用
+`journal_mode=WAL`、`foreign_keys=ON` 与 `busy_timeout=5000`，再在
+`BEGIN IMMEDIATE` 内执行固定 v1 migration、deployment-key metadata binding 和
+`PRAGMA quick_check`。版本高于当前二进制、schema 不完整、绑定不匹配、权限检查或
+迁移/完整性检查失败时会回滚并关闭数据库，不绑定监听器。
+
+v1 migration 的表、catalog CHECK 约束和三个 retention/ordering indexes 固定在
+`sqlite-migrations.ts`；migration 记录只允许版本 1，metadata 只允许
+`deployment_key_id`。该边界只提供 schema/owner 生命周期，本阶段不实现 capability、
+idempotency 或 audit repository；后续 adapter 通过同一 database port 组合。
 ## REQ-07 Backend Engine Adapter Baseline
 
 当前 backend 在 `task-center` 内新增了一层稳定的引擎接入边界：

@@ -8696,3 +8696,54 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
     GENERAL-003 is not `VERIFIED`
 - next: Phase 3 SQLite persistence
+
+## 2026-08-05 - REQ-SBX-GENERAL-003 P3-T1 SQLite owner and v1 migration
+
+- phase/task: Phase 3 / P3-T1
+- status: `COMPLETE_PENDING_P3_T2`
+- implementation:
+  - added the single `DatabaseSync` owner and exported
+    `openSandboxSecuritySqliteDatabase` factory under the sandbox-security
+    module boundary
+  - added real-filesystem validation for absolute paths, private parents,
+    regular non-symlink database/WAL/SHM files, and mode `0600` normalization
+  - enabled WAL, foreign keys, and `busy_timeout=5000`; migrations and
+    `quick_check` run in `BEGIN IMMEDIATE` with deployment-key metadata binding,
+    rollback, close-on-failure, and newer/incomplete schema rejection
+  - fixed the exact v1 table/catalog CHECK constraints and retention/order
+    indexes from the approved design; canonical sqlite_master definitions are
+    compared against a generated v1 reference so writable-schema CHECK changes
+    fail closed; transaction/read/checkpoint lifecycle does not leak a database
+    handle outside callbacks
+- files:
+  - `backend/src/modules/sandbox-security/adapters/sqlite/sqlite-database.ts`
+  - `backend/src/modules/sandbox-security/adapters/sqlite/sqlite-migrations.ts`
+  - `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+  - `backend/tests/sandbox-security-sqlite.spec.ts`
+  - `package.json`
+  - `docs/architecture.md`
+- tests:
+  - focused SQLite suite is green (`13/13`), including writable-schema
+    definition/catalog-literal tampering and failed fresh-migration
+    rollback/reopen
+  - `npm run typecheck:backend` reports only the pre-existing campaign/task-center
+    baseline errors; no P3-T1 source or test error remains
+  - `npm run test:backend` remains `294/296`; the two existing failures are
+    Semgrep `ENOENT` and task-engine asset expectation drift, unrelated to P3-T1
+  - `git diff --check` passes
+- TDD evidence: focused suite first failed because the module boundary lacked
+  `openSandboxSecuritySqliteDatabase`, then passed after the minimal owner and
+  migration implementation; specification review identified and closed the
+  SQLite `SQLInputValue` test-helper type error. A later quality regression
+  failed on writable-schema CHECK/literal mutations and passed after canonical
+  v1 sqlite_master definition comparison.
+- reviews:
+  - specification review: PASS with `0 Critical / 0 Important / 0 Minor`
+  - quality review and re-review: PASS with `0 Critical / 0 Important / 0 Minor`
+- boundary:
+  - capability, idempotency, audit repositories, recovery cleanup, and HTTP
+    composition remain later Phase 3/4/5 tasks
+  - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
+    GENERAL-003 is not `VERIFIED`
+- next: complete independent specification and quality reviews, then proceed
+  to P3-T2 only after this task's exact commit
