@@ -1,3 +1,20 @@
+## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T1 prototype-key review correction
+
+- stage: P1-T1 review-fix cycle; no backend or P1-T2 work started
+- finding: `normalizeSandboxSecurityAuditEvent` indexed a plain
+  `expectedKeys` record before proving that `event_type` was an own catalog
+  key; prototype names such as `constructor` could therefore reach
+  `hasExactKeys` as functions and throw instead of returning `null`
+- TDD RED: the focused regression used minimal objects with
+  `constructor`, `hasOwnProperty`, and `toString` event types; the suite failed
+  `10/11` with the intended `TypeError: keys.every is not a function`
+- GREEN: an `Object.hasOwn` guard now rejects prototype-name event types before
+  indexing; focused API suite `11/11`, `npm run test:shared` `218/218`, shared
+  TypeScript check, `npm run test:repo` `319/319`, and `git diff --check` passed
+- changed: `shared/contracts/sandbox-security-api.ts`,
+  `shared/tests/sandbox-security-api-contract.spec.ts`, `docs/progress.md`
+- next: independent re-review of this latest P1-T1 correction; no P1-T2 work
+
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T1 review correction
 
 - stage: P1-T1 review-fix cycle; no backend or P1-T2 work started

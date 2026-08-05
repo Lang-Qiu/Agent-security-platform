@@ -211,6 +211,14 @@ test("REQ-SBX-GENERAL-003 rejects unknown, inherited, accessor, and symbol field
   assert.equal(normalizeEvent(symbolField), null);
 });
 
+test("REQ-SBX-GENERAL-003 rejects prototype-name event types without throwing", () => {
+  const { normalizeEvent } = getNormalizers();
+  for (const eventType of ["constructor", "hasOwnProperty", "toString"]) {
+    const invalid = { event_type: eventType };
+    assert.equal(normalizeEvent(invalid), null, `${eventType} should be rejected`);
+  }
+});
+
 test("REQ-SBX-GENERAL-003 enforces event UUID and strict UTC millisecond timestamps", () => {
   const { normalizeEvent } = getNormalizers();
   for (const [field, value] of [

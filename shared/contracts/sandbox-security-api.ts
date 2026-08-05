@@ -549,8 +549,9 @@ export function normalizeSandboxSecurityAuditEvent(
       "has_more", "elapsed_ms"
     ]
   };
+  if (!Object.hasOwn(expectedKeys, value.event_type)) return null;
   const keys = expectedKeys[value.event_type];
-  if (keys === undefined || !hasExactKeys(value, keys)) return null;
+  if (!hasExactKeys(value, keys)) return null;
   switch (value.event_type) {
     case "evaluation_completed":
     case "evaluation_replayed":
