@@ -29,6 +29,9 @@ export {
   createSandboxSecurityCapabilityAuthenticator
 } from "./capability-authorizer.ts";
 export {
+  createSandboxSecurityCapabilityService
+} from "./capability.service.ts";
+export {
   createSandboxSecurityCapabilityLimiterRegistry,
   createSandboxSecurityTokenBucket
 } from "./token-bucket.ts";

@@ -1,3 +1,47 @@
+## 2026-08-05 - REQ-SBX-GENERAL-003 P4-T1 capability issue and revoke service
+
+- phase/task: Phase 4 / P4-T1 Capability Issue and Revoke Service
+- status: `IMPLEMENTED_PENDING_INDEPENDENT_REVIEW`
+- implementation:
+  - added the typed capability service factory behind the sandbox-security
+    module boundary; it accepts only the normalized issue request and never
+    applies a second TTL default
+  - issues a v4 capability ID, two independent 32-byte entropy values, a
+    deployment-mode-bound authorization scope, and a digest-only persistence
+    record; the raw opaque bearer token is returned only after the atomic
+    repository plus `capability_issued` audit operation succeeds
+  - maps runtime, HMAC, projector, repository, and limiter failures to the
+    tagged `SANDBOX_SECURITY_INTERNAL_ERROR` without exposing bearer material
+  - revokes through the repository callback with content-free
+    `capability_revoked` projection, preserves the first timestamp on repeated
+    revokes, removes known capability limiter entries only after repository
+    success, and returns the exact public record without digest or scope seed
+  - keeps scope seeds, grant arrays, projector inputs, and returned DTO arrays
+    defensively copied
+- files:
+  - `backend/src/modules/sandbox-security/capability.service.ts`
+  - `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+  - `backend/tests/sandbox-security-capability.spec.ts`
+- tests:
+  - service factory and issue/revoke RED first failed on the missing factory
+    export; the focused capability suite is now green (`15/15`)
+  - the specification-review regression first failed because a dependency
+    could spoof the not-found code; a private sentinel now distinguishes the
+    repository's `null` result, and the focused suite remains green (`15/15`)
+  - `npm run test:backend` is `344/346`; the two failures remain the existing
+    Semgrep `ENOENT` and task-engine asset expectation drift, unrelated to
+    P4-T1
+  - `npm run typecheck:backend` reports no P4-T1 sandbox-security source or
+    test error; existing campaign/task-center/test baseline errors remain
+  - `git diff --check` passes
+- boundary:
+  - HTTP parsing/mapping, audit list/purge, evaluation orchestration, and
+    production composition remain later P4/P5/P6 tasks
+  - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
+    GENERAL-003 is not `VERIFIED`
+- next: independent specification and quality review, then commit only the
+  exact P4-T1 files
+
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P2-T1 simulation-only authority builder
 
 - phase/task: Phase 2 / P2-T1 Simulation-Only Authoritative Context Builder
