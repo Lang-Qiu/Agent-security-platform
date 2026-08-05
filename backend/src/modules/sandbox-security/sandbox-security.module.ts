@@ -47,6 +47,9 @@ export {
   createSandboxSecurityEngineConcurrencyLimiter
 } from "./engine-concurrency.ts";
 export {
+  createSandboxSecurityProductionEvaluationGateway
+} from "./adapters/production-evaluation.gateway.ts";
+export {
   createSandboxSecurityAuditProjector
 } from "./audit-projector.ts";
 export { openSandboxSecuritySqliteDatabase } from "./adapters/sqlite/sqlite-database.ts";

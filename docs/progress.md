@@ -170,6 +170,46 @@
     GENERAL-003 is not `VERIFIED`
 - next: proceed to P6-T1 production evaluation gateway
 
+## 2026-08-06 - REQ-SBX-GENERAL-003 P6-T1 production evaluation gateway
+
+- phase/task: Phase 6 / P6-T1 Production Evaluation Gateway
+- status: `COMPLETE_PENDING_P6_T2`
+- implementation:
+  - added the production evaluation gateway behind the sandbox-security module
+    boundary; the public factory constructs the canonical fingerprint service
+    and GENERAL-002 production Engine through their approved public indexes
+  - binds `rule_only`, `local`, and `local_and_judge` to the exact immutable
+    `sandbox-security-production-composition.v1:<mode>` value
+  - fingerprints the Engine canonical projection with the deployment HMAC,
+    passes caller AbortSignal unchanged, converts Engine/fingerprint failures
+    to the fixed internal service error, and defensively normalizes Decisions
+  - keeps the WithPorts test seam private to the adapter file and exposes only
+    the public factory from `sandbox-security.module.ts`
+- files:
+  - `backend/src/modules/sandbox-security/adapters/production-evaluation.gateway.ts`
+  - `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+  - `backend/tests/sandbox-security-evaluation.service.spec.ts`
+- tests:
+  - production-gateway focused suite is green (`6/6`)
+  - complete evaluation-service suite is green (`21/21`)
+  - `npm run test:engine:sandbox` is green (`1030/1030`)
+  - `npm run test:engine:sandbox:production` is green (`439/439`)
+  - backend typecheck reports only existing campaign/task-center/test baseline
+    errors; no P6-T1 sandbox-security error
+  - `git diff --check` passes
+- TDD/reviews:
+  - module-boundary RED and adapter behavior RED were verified before the
+    minimal gateway implementation; the shared-index and caller-abort review
+    regressions were each run RED before their fixes and are now GREEN
+  - independent specification and quality reviews: PASS with `0 Critical / 0
+    Important / 0 Minor`
+- boundary:
+  - validated configuration, production startup/shutdown, privacy gates, and
+    final documentation remain P6-T2/P6-T3/P6-T4
+  - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
+    GENERAL-003 is not `VERIFIED`
+- next: proceed to P6-T2 validated configuration and production lifecycle
+
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P4-T3 evaluation orchestration and idempotency
 
 - phase/task: Phase 4 / P4-T3 Evaluation Orchestration and Idempotency

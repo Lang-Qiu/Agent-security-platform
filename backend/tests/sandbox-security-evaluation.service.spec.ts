@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import test from "node:test";
 
 import { normalizeSandboxSecurityRequest } from "../../shared/contracts/sandbox-security-request.ts";
@@ -8,6 +9,10 @@ import type { SandboxSecurityRequest, SandboxSecurityDecision } from "../../shar
 import type { SandboxSecurityAuditEvent } from "../../shared/types/sandbox-security-api.ts";
 import * as boundary from "../src/modules/sandbox-security/sandbox-security.module.ts";
 import type { SandboxSecurityEvaluationGateway } from "../src/modules/sandbox-security/ports/evaluation.gateway.ts";
+import {
+  createSandboxSecurityProductionEvaluationGatewayWithPorts,
+  type SandboxSecurityProductionEvaluationGatewayPorts
+} from "../src/modules/sandbox-security/adapters/production-evaluation.gateway.ts";
 import type { SandboxSecurityIdempotencyRepository } from "../src/modules/sandbox-security/ports/idempotency.repository.ts";
 import type { SandboxSecurityRuntimePort } from "../src/modules/sandbox-security/ports/runtime.ts";
 import type {
@@ -32,6 +37,282 @@ test("REQ-SBX-GENERAL-003 exposes the evaluation orchestration service factory",
     .createSandboxSecurityEvaluationService;
   assert.equal(typeof value, "function");
 });
+
+const FIXED_DEPLOYMENT_KEY = Uint8Array.from(
+  { length: 32 },
+  (_, index) => index + 1
+);
+
+const FIXED_ENGINE_RUNTIME = {
+  now: () => "2026-08-05T12:00:00.000Z",
+  nextDecisionId: () =>
+    "decision:00000000-0000-4000-8000-000000000002",
+  monotonicNowMs: () => 1000,
+  scheduleTimeout: () => () => {}
+};
+
+const FIXED_EVALUATION_REQUEST: SandboxSecurityEvaluationRequest = {
+  submission: {
+    schema_version: "sandbox-security-request.v1",
+    request_id: "request-001",
+    stage: "user_input",
+    policy_profile_id: "sandbox-security-balanced.v1",
+    content_items: [
+      {
+        source_id: "user-001",
+        claimed_source_type: "user_input",
+        media_type: "text/plain",
+        value: "hello",
+        provenance_ref: "source://fixture/user-001"
+      }
+    ]
+  },
+  authoritative_context: {
+    schema_version: "sandbox-security-authoritative-context.v1",
+    evaluation_mode: "simulation",
+    stage: "user_input",
+    policy_profile_id: "sandbox-security-balanced.v1",
+    sources: [
+      {
+        source_id: "user-001",
+        authority_kind: "simulation_observation",
+        source_type: "user_input",
+        media_type: "text/plain",
+        value: "hello",
+        provenance_ref: "source://fixture/user-001"
+      }
+    ]
+  }
+};
+
+test("REQ-SBX-GENERAL-003 production gateway uses Engine canonical bytes for HMAC fingerprint", async () => {
+  assert.equal(
+    typeof (boundary as unknown as Record<string, unknown>)
+      .createSandboxSecurityProductionEvaluationGateway,
+    "function"
+  );
+  const hmac = createRecordingHmacService(FIXED_DEPLOYMENT_KEY);
+  const factory = (boundary as unknown as Record<string, unknown>)
+    .createSandboxSecurityProductionEvaluationGateway as (input: Readonly<{
+    runtime: typeof FIXED_ENGINE_RUNTIME;
+    production_mode: "rule_only";
+    hmac: SandboxSecurityHmacService;
+  }>) => Promise<SandboxSecurityEvaluationGateway>;
+  const gateway = await factory({
+    runtime: FIXED_ENGINE_RUNTIME,
+    production_mode: "rule_only",
+    hmac
+  });
+
+  const actual = gateway.fingerprint(FIXED_EVALUATION_REQUEST);
+  const capturedCanonicalBytes = hmac.singleCapturedCanonicalCopy();
+  const expected = independentlyFingerprintCanonicalBytes(
+    FIXED_DEPLOYMENT_KEY,
+    capturedCanonicalBytes
+  );
+
+  assert.equal(actual, expected);
+  assert.notEqual(
+    Buffer.from(capturedCanonicalBytes).toString("ascii"),
+    '{"a":1}'
+  );
+  assert.equal(hmac.canonicalPortCalls, 1);
+  assert.equal(hmac.retainedCanonicalBytes, false);
+});
+
+function makeGatewayPortsFixture(input: Readonly<{
+  fingerprint?: string;
+  fingerprint_error?: unknown;
+  engine_error?: unknown;
+  decision?: unknown;
+}> = {}) {
+  const calls: string[] = [];
+  const evaluate_signals: (AbortSignal | undefined)[] = [];
+  const decision = input.decision ?? FIXED_DECISION;
+  const engine = {
+    async evaluate(
+      _request: SandboxSecurityEvaluationRequest,
+      signal?: AbortSignal
+    ) {
+      calls.push("engine.evaluate");
+      evaluate_signals.push(signal);
+      if (input.engine_error !== undefined) throw input.engine_error;
+      return decision as Readonly<SandboxSecurityDecision>;
+    }
+  };
+  const canonicalFingerprint = {
+    fingerprint() {
+      calls.push("canonical.fingerprint");
+      if (input.fingerprint_error !== undefined) {
+        throw input.fingerprint_error;
+      }
+      return input.fingerprint ?? FINGERPRINT;
+    }
+  };
+  const ports: SandboxSecurityProductionEvaluationGatewayPorts = {
+    async create_engine({ mode }) {
+      calls.push(`create_engine:${mode}`);
+      return engine;
+    },
+    create_canonical_fingerprint() {
+      calls.push("create_canonical_fingerprint");
+      return canonicalFingerprint;
+    }
+  };
+  return { ports, calls, evaluate_signals, engine };
+}
+
+async function createGatewayWithPorts(
+  ports: SandboxSecurityProductionEvaluationGatewayPorts,
+  production_mode: "rule_only" | "local" | "local_and_judge" = "rule_only"
+) {
+  return createSandboxSecurityProductionEvaluationGatewayWithPorts({
+    runtime: FIXED_ENGINE_RUNTIME,
+    production_mode,
+    hmac: createSandboxSecurityHmacService(FIXED_DEPLOYMENT_KEY),
+    ports
+  });
+}
+
+test("REQ-SBX-GENERAL-003 production gateway binds each configured production mode", async () => {
+  for (const mode of ["rule_only", "local", "local_and_judge"] as const) {
+    const fixture = makeGatewayPortsFixture();
+    const gateway = await createGatewayWithPorts(fixture.ports, mode);
+    assert.equal(
+      gateway.composition_binding,
+      `sandbox-security-production-composition.v1:${mode}`
+    );
+    assert.deepEqual(fixture.calls, [
+      `create_engine:${mode}`,
+      "create_canonical_fingerprint"
+    ]);
+  }
+});
+
+test("REQ-SBX-GENERAL-003 production gateway converts fingerprint failures to fixed internal errors", async () => {
+  const invalid = makeGatewayPortsFixture({ fingerprint: "not-a-fingerprint" });
+  const invalidGateway = await createGatewayWithPorts(invalid.ports);
+  assert.throws(
+    () => invalidGateway.fingerprint(FIXED_EVALUATION_REQUEST),
+    (error: any) =>
+      error?.code === "SANDBOX_SECURITY_INTERNAL_ERROR" &&
+      !String(error?.message).includes("detector") &&
+      !String(error?.message).includes("provider")
+  );
+
+  const thrown = makeGatewayPortsFixture({
+    fingerprint_error: new Error("detector/provider detail")
+  });
+  const thrownGateway = await createGatewayWithPorts(thrown.ports);
+  assert.throws(
+    () => thrownGateway.fingerprint(FIXED_EVALUATION_REQUEST),
+    (error: any) =>
+      error?.code === "SANDBOX_SECURITY_INTERNAL_ERROR" &&
+      !String(error?.message).includes("detector") &&
+      !String(error?.message).includes("provider")
+  );
+});
+
+test("REQ-SBX-GENERAL-003 production gateway passes AbortSignal and hides Engine failures", async () => {
+  const controller = new AbortController();
+  const fixture = makeGatewayPortsFixture({
+    engine_error: new Error("provider endpoint and detector detail")
+  });
+  const gateway = await createGatewayWithPorts(fixture.ports);
+  await assert.rejects(
+    () => gateway.evaluate(FIXED_EVALUATION_REQUEST, controller.signal),
+    (error: any) =>
+      error?.code === "SANDBOX_SECURITY_INTERNAL_ERROR" &&
+      !String(error?.message).includes("provider") &&
+      !String(error?.message).includes("detector")
+  );
+  assert.equal(fixture.evaluate_signals[0], controller.signal);
+});
+
+test("REQ-SBX-GENERAL-003 production gateway preserves a caller abort signal", async () => {
+  const controller = new AbortController();
+  const fixture = makeGatewayPortsFixture();
+  const gateway = await createGatewayWithPorts(fixture.ports);
+  controller.abort();
+
+  await gateway.evaluate(FIXED_EVALUATION_REQUEST, controller.signal);
+
+  assert.equal(fixture.evaluate_signals[0], controller.signal);
+  assert.equal(fixture.evaluate_signals[0]?.aborted, true);
+});
+
+test("REQ-SBX-GENERAL-003 production gateway rejects invalid Decisions and defensively normalizes valid Decisions", async () => {
+  const invalid = makeGatewayPortsFixture({ decision: { invalid: true } });
+  const invalidGateway = await createGatewayWithPorts(invalid.ports);
+  await assert.rejects(
+    () => invalidGateway.evaluate(FIXED_EVALUATION_REQUEST),
+    (error: any) => error?.code === "SANDBOX_SECURITY_INTERNAL_ERROR"
+  );
+
+  const sourceDecision = structuredClone(FIXED_DECISION);
+  const valid = makeGatewayPortsFixture({ decision: sourceDecision });
+  const validGateway = await createGatewayWithPorts(valid.ports);
+  const result = await validGateway.evaluate(FIXED_EVALUATION_REQUEST);
+  assert.deepEqual(result, FIXED_DECISION);
+  result.findings.push({} as never);
+  assert.equal(sourceDecision.findings.length, 0);
+});
+
+function createRecordingHmacService(
+  key: Uint8Array
+): SandboxSecurityHmacService &
+  Readonly<{
+    canonicalPortCalls: number;
+    retainedCanonicalBytes: false;
+    singleCapturedCanonicalCopy(): Uint8Array;
+  }> {
+  const delegate = createSandboxSecurityHmacService(key);
+  let canonicalPortCalls = 0;
+  let capturedCanonicalCopy: Uint8Array | null = null;
+  return {
+    ...delegate,
+    get canonicalPortCalls() {
+      return canonicalPortCalls;
+    },
+    retainedCanonicalBytes: false,
+    singleCapturedCanonicalCopy() {
+      if (canonicalPortCalls !== 1 || capturedCanonicalCopy === null) {
+        throw new Error("expected exactly one canonical port call");
+      }
+      return Uint8Array.from(capturedCanonicalCopy);
+    },
+    fingerprintCanonicalBytes(canonicalBytes) {
+      canonicalPortCalls += 1;
+      capturedCanonicalCopy = Uint8Array.from(canonicalBytes);
+      return delegate.fingerprintCanonicalBytes(canonicalBytes);
+    }
+  };
+}
+
+function independentlyFingerprintCanonicalBytes(
+  key: Uint8Array,
+  canonicalBytes: Uint8Array
+): `hmac-sha256:${string}` {
+  const prefix = Buffer.from("sandbox-security-hmac-frame.v1", "ascii");
+  const domain = Buffer.from(
+    "sandbox-security-canonical-fingerprint.v1",
+    "ascii"
+  );
+  const domainLength = Buffer.alloc(2);
+  domainLength.writeUInt16BE(domain.byteLength);
+  const fieldLength = Buffer.alloc(4);
+  fieldLength.writeUInt32BE(canonicalBytes.byteLength);
+  const frame = Buffer.concat([
+    prefix,
+    Buffer.from([0]),
+    domainLength,
+    domain,
+    Buffer.from([1]),
+    fieldLength,
+    Buffer.from(canonicalBytes)
+  ]);
+  return `hmac-sha256:${createHmac("sha256", key).update(frame).digest("hex")}`;
+}
 
 const NOW = "2026-08-05T12:00:00.000Z";
 const EXPIRES = "2026-08-06T12:00:00.000Z";
