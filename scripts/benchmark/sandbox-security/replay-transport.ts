@@ -1,3 +1,5 @@
+import { types as utilTypes } from "node:util";
+
 import {
   SANDBOX_SECURITY_OPENAI_CHAT_COMPLETIONS_JSON_PROTOCOL_ID,
   SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID,
@@ -183,12 +185,53 @@ function normalizeAttemptSequence<T>(
   value: unknown,
   normalizer: (value: unknown) => T
 ): SandboxSecurityReplayAttemptSequence<T> {
-  if (!Array.isArray(value) || value.length > 2) {
+  if (
+    !Array.isArray(value) ||
+    utilTypes.isProxy(value) ||
+    Object.getPrototypeOf(value) !== Array.prototype
+  ) {
     return fail("attempt_sequence_invalid");
   }
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  if (
+    lengthDescriptor === undefined ||
+    lengthDescriptor.enumerable ||
+    !("value" in lengthDescriptor) ||
+    !Number.isInteger(lengthDescriptor.value) ||
+    lengthDescriptor.value < 0 ||
+    lengthDescriptor.value > 2
+  ) {
+    return fail("attempt_sequence_invalid");
+  }
+  const length = lengthDescriptor.value;
+  const keys = Reflect.ownKeys(value);
+  if (keys.length !== length + 1 || !keys.includes("length")) {
+    return fail("attempt_sequence_invalid");
+  }
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (
+      descriptor === undefined ||
+      !descriptor.enumerable ||
+      !("value" in descriptor)
+    ) {
+      return fail("attempt_sequence_invalid");
+    }
+  }
+  for (const key of keys) {
+    if (key === "length") continue;
+    if (
+      typeof key !== "string" ||
+      !/^(0|[1-9][0-9]*)$/u.test(key) ||
+      Number(key) >= length
+    ) {
+      return fail("attempt_sequence_invalid");
+    }
+  }
   const attempts: ReplayAttemptOutcome<T>[] = [];
-  for (let index = 0; index < value.length; index += 1) {
-    const attempt = normalizeOutcome(value[index], normalizer);
+  for (let index = 0; index < length; index += 1) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    const attempt = normalizeOutcome(descriptor!.value, normalizer);
     if (attempt.status === "not_called") {
       return fail("attempt_not_called_invalid");
     }
@@ -595,8 +638,13 @@ export function createSandboxSecurityReplayTransport(input: Readonly<{
   const deliverAttempt = async (
     attempt: ReplayAttemptOutcome<unknown>,
     requestInput: Readonly<SandboxSecurityHttpRequest>,
-    retryableFirstAttempt: boolean
+    attemptIndex: number,
+    attemptCount: number
   ): Promise<Readonly<SandboxSecurityHttpResponse>> => {
+    const retryableFirstAttempt =
+      attemptCount === 2 &&
+      attemptIndex === 0 &&
+      isRetryableFirstAttempt(attempt);
     try {
       const response = await responseFromOutcome(attempt, requestInput, config);
       if (attempt.status !== "response" && !retryableFirstAttempt) {
@@ -634,12 +682,11 @@ export function createSandboxSecurityReplayTransport(input: Readonly<{
         validateRetry(qualificationInventoryRequest, requestInput);
       }
       qualificationInventoryCursor += 1;
-      const retryableFirstAttempt =
-        attemptIndex === 0 && isRetryableFirstAttempt(attempt);
       const response = await deliverAttempt(
         attempt,
         requestInput,
-        retryableFirstAttempt
+        attemptIndex,
+        qualification.inventory.length
       );
       if (attempt.status === "response") state = "qualification_prewarm";
       return response;
@@ -663,12 +710,11 @@ export function createSandboxSecurityReplayTransport(input: Readonly<{
         validateRetry(qualificationPrewarmRequest, requestInput);
       }
       qualificationPrewarmCursor += 1;
-      const retryableFirstAttempt =
-        attemptIndex === 0 && isRetryableFirstAttempt(attempt);
       const response = await deliverAttempt(
         attempt,
         requestInput,
-        retryableFirstAttempt
+        attemptIndex,
+        qualification.prewarm.length
       );
       if (attempt.status === "response") state = "ready";
       return response;
@@ -693,9 +739,12 @@ export function createSandboxSecurityReplayTransport(input: Readonly<{
         validateRetry(localRequest, requestInput);
       }
       localAttemptCursor += 1;
-      const retryableFirstAttempt =
-        attemptIndex === 0 && isRetryableFirstAttempt(attempt);
-      return deliverAttempt(attempt, requestInput, retryableFirstAttempt);
+      return deliverAttempt(
+        attempt,
+        requestInput,
+        attemptIndex,
+        unit.ollama.length
+      );
     }
     const expectedJudgeOperation =
       config.judge_protocol_id === SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID
@@ -731,9 +780,12 @@ export function createSandboxSecurityReplayTransport(input: Readonly<{
       validateRetry(judgeRequest, requestInput);
     }
     judgeAttemptCursor += 1;
-    const retryableFirstAttempt =
-      attemptIndex === 0 && isRetryableFirstAttempt(attempt);
-    return deliverAttempt(attempt, requestInput, retryableFirstAttempt);
+    return deliverAttempt(
+      attempt,
+      requestInput,
+      attemptIndex,
+      unit.judge.length
+    );
   };
 
   return Object.freeze({

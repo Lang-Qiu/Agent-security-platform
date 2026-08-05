@@ -301,6 +301,23 @@ test("REQ-SBX-GENERAL-002 v2 replay exposes a local connection failure then cons
   transport.endInput();
 });
 
+test("REQ-SBX-GENERAL-002 replay treats a singleton local connection failure as final", async () => {
+  const factory = await replayFactory();
+  const transport = createTransport(factory, {
+    inputs: [outcomeUnit([
+      { status: "transport_error", error_code: "connection_failed" }
+    ])]
+  });
+  await qualify(transport);
+  transport.beginInput();
+  await assert.rejects(
+    transport.request(requests(new AbortController().signal, "chat")),
+    { name: "sandbox_security_transport_connection_failed" }
+  );
+  assert.throws(() => transport.endInput(), /failed|state|replay/i);
+  assert.throws(() => transport.assertDrained(), /failed|state|replay/i);
+});
+
 test("REQ-SBX-GENERAL-002 replay qualification sequences consume inventory and prewarm retries in order", async () => {
   const factory = await replayFactory();
   const transport = createTransport(factory, {
@@ -444,6 +461,61 @@ test("REQ-SBX-GENERAL-002 replay rejects embedded not_called, extra attempts, in
     }),
     /attempt|qualification|outcome|replay/i
   );
+});
+
+test("REQ-SBX-GENERAL-002 replay rejects non-dense or extended attempt arrays", async () => {
+  const factory = await replayFactory();
+  const response = responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse);
+  const customPrototype = [response];
+  Object.setPrototypeOf(customPrototype, Object.create(Array.prototype));
+  const sparse = new Array(1);
+  const extraProperty = [response];
+  Object.defineProperty(extraProperty, "extra", {
+    configurable: true,
+    enumerable: false,
+    value: true,
+    writable: true
+  });
+  const extraSymbol = [response];
+  Object.defineProperty(extraSymbol, Symbol("extra"), {
+    configurable: true,
+    enumerable: false,
+    value: true,
+    writable: true
+  });
+  const enumerableLength = new Proxy([response], {
+    getOwnPropertyDescriptor(target, property) {
+      if (property === "length") {
+        return {
+          configurable: false,
+          enumerable: true,
+          value: 1,
+          writable: true
+        };
+      }
+      return Object.getOwnPropertyDescriptor(target, property);
+    }
+  });
+  const variants = [
+    ["custom prototype", customPrototype],
+    ["sparse", sparse],
+    ["extra property", extraProperty],
+    ["extra symbol", extraSymbol],
+    ["invalid length descriptor", enumerableLength]
+  ] as const;
+
+  for (const [label, sequence] of variants) {
+    assert.throws(
+      () => createTransport(factory, {
+        inputs: [{
+          ollama: sequence,
+          judge: []
+        } as unknown as SandboxSecurityReplayInputUnit]
+      }),
+      /replay|attempt_sequence|outcome/i,
+      label
+    );
+  }
 });
 
 test("REQ-SBX-GENERAL-002 replay rejects endInput with an unconsumed retry and rejects a changed retry operation", async () => {
@@ -599,6 +671,26 @@ test("REQ-SBX-GENERAL-002 replay exposes a Judge connection failure then consume
   );
   assert.equal((await transport.request(judgeRequest)).status, 200);
   transport.endInput();
+});
+
+test("REQ-SBX-GENERAL-002 replay treats a singleton Judge connection failure as final", async () => {
+  const factory = await replayFactory();
+  const transport = createTransport(factory, {
+    inputs: [outcomeUnit(
+      [responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse)],
+      [{ status: "transport_error", error_code: "connection_failed" }]
+    )]
+  });
+  await qualify(transport);
+  transport.beginInput();
+  const signal = new AbortController().signal;
+  await transport.request(requests(signal, "chat"));
+  await assert.rejects(
+    transport.request(requests(signal, "responses")),
+    { name: "sandbox_security_transport_connection_failed" }
+  );
+  assert.throws(() => transport.endInput(), /failed|state|replay/i);
+  assert.throws(() => transport.assertDrained(), /failed|state|replay/i);
 });
 
 test("REQ-SBX-GENERAL-002 replay permanently fails after a non-retryable final error", async () => {
