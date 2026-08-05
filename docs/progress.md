@@ -1,3 +1,22 @@
+## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T0 requirement and status gate
+
+- stage: repository workflow/configuration exception to business-logic TDD; no
+  GENERAL-003 business test or production implementation was created
+- status transition: `PLAN_REVIEWED_PENDING_USER_APPROVAL` ->
+  `IMPLEMENTATION_IN_PROGRESS` after explicit user approval
+- RED evidence: the focused gate command failed `1/1` with the intended
+  `AssertionError` that its exact path was absent from `test:repo`; requirement,
+  canonical spec, status, dependency, and VERIFIED-negative assertions passed
+- GREEN evidence: `npm run test:repo` passed `318/318`; focused gate passed `1/1`;
+  `git diff --check` passed
+- implementation: registered
+  `tests/repository/sandbox-security-backend-spec.spec.ts`, switched the active
+  sprint status, and recorded that P1-T0 has no business behavior
+- dependency: GENERAL-002 remains
+  `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`; neither GENERAL-002 nor
+  GENERAL-003 is `VERIFIED`
+- next: P1-T1 exact shared audit event and page contract
+
 ## 2026-08-05 - REQ-SBX-GENERAL-003 implementation plan independently reviewed
 
 - stage: documentation/design exception to full business-logic TDD; no

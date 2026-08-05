@@ -10,7 +10,7 @@ Sandbox Security Authenticated Backend API
 
 ## Status
 
-PLAN_REVIEWED_PENDING_USER_APPROVAL
+IMPLEMENTATION_IN_PROGRESS
 
 ## Transition Authority
 
@@ -26,9 +26,8 @@ re-review each returned `FAIL` with two Critical and five Important findings.
 Three later re-reviews returned `FAIL` while successively closing one Important
 and two Minor findings, one Critical finding, and one final Important finding.
 The final independent plan re-review returned `PASS` with zero Critical,
-Important, or Minor findings. This status records a reviewed plan but authorizes
-neither RED tests nor production implementation until the user explicitly
-approves execution.
+Important, or Minor findings. The user has now explicitly approved execution of
+that reviewed plan, so implementation is active one task at a time.
 
 ## Canonical Inputs
 
@@ -123,7 +122,12 @@ attempted and its expected hermetic fail-closed result reported honestly.
 - The written specification is approved after independent review.
 - The Master and six Phase implementation plans passed final independent review
   with zero Critical, Important, or Minor findings after iterative correction.
-- No GENERAL-003 business test or production implementation has started.
-- Next gate: explicit user approval of the reviewed implementation plan.
-- After approval, execute exactly one Phase/task at a time using RED -> GREEN ->
-  review -> fix/re-review -> document evidence -> exact commit -> stop.
+- Implementation is active at Phase 1 / P1-T0, the permanent requirement and
+  status gate.
+- P1-T0 has no GENERAL-003 business test or production implementation yet; it
+  only establishes the repository workflow gate.
+- GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`; neither
+  GENERAL-002 nor GENERAL-003 is `VERIFIED`.
+- Continue exactly one Phase/task at a time using RED -> GREEN -> review ->
+  fix/re-review -> document evidence -> exact commit -> stop. P1-T1 is next
+  after P1-T0 closes.
