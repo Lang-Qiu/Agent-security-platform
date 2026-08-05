@@ -1,3 +1,26 @@
+## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T4 mandatory typecheck script registration
+
+- phase/task: Phase 1 / P1-T4 Mandatory Typecheck Script Registration
+- status: `COMPLETE_PENDING_P1_T4_REVIEW`
+- workflow exception: configuration-only TDD exception; no business logic or
+  production behavior was introduced
+- implementation: registered the exact root scripts
+  `typecheck:shared` (`shared/tsconfig.json`) and `typecheck:backend`
+  (`backend/tsconfig.json`) using the repository's pinned TypeScript binary;
+  all existing scripts and flags remain unchanged
+- validation: `npm run test:shared` passed `218/218`; `npm run
+  typecheck:shared` passed; `npm run test:backend` passed `241/243` with the
+  two pre-existing failures (the `open_ports` expectation drift and local
+  Semgrep `spawn semgrep ENOENT`); `npm run typecheck:backend` exits with the
+  existing repository baseline TypeScript errors outside this configuration
+  change; `git diff --check` passed
+- changed: `package.json`, `docs/progress.md`
+- dependency: GENERAL-002 remains
+  `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`; neither GENERAL-002 nor
+  GENERAL-003 is `VERIFIED`
+- next: independent specification review, quality review, and Phase 1 exit
+  review; stop before Phase 2
+
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T3 module dispatch boundary
 
 - phase/task: Phase 1 / P1-T3 Injectable Sandbox Module Dispatch Boundary
