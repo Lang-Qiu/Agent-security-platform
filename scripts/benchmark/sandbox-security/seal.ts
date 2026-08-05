@@ -795,9 +795,10 @@ function assertJudgeResolvedModelBinding(
   judgeResolvedModel: string
 ): void {
   for (const [index, input] of inputs.entries()) {
+    const finalAttempt = input.judge.at(-1);
     if (
-      input.judge.status === "response" &&
-      input.judge.normalized_response.model !== judgeResolvedModel
+      finalAttempt?.status === "response" &&
+      finalAttempt.normalized_response.model !== judgeResolvedModel
     ) {
       fail(`judge_resolved_model_mismatch:${index}`);
     }
@@ -1459,21 +1460,27 @@ export function validateAcceptedSandboxSecurityLiveEvidence(
   // Digest binding: qualification inventory/prewarm digest must match.
   const inventory = manifest.ollama_qualification.inventory;
   const prewarm = manifest.ollama_qualification.prewarm;
-  if (inventory.status !== "response" || prewarm.status !== "response") {
+  const inventoryFinal = inventory.at(-1);
+  const prewarmFinal = prewarm.at(-1);
+  if (
+    inventoryFinal?.status !== "response" ||
+    prewarmFinal?.status !== "response"
+  ) {
     fail("qualification_not_response");
   }
-  if (inventory.normalized_response.digest !== manifest.ollama_digest) {
+  if (inventoryFinal.normalized_response.digest !== manifest.ollama_digest) {
     fail("digest_mismatch");
   }
   if (
-    prewarm.normalized_response.verified_ollama_digest !== manifest.ollama_digest
+    prewarmFinal.normalized_response.verified_ollama_digest !==
+    manifest.ollama_digest
   ) {
     fail("prewarm_digest_mismatch");
   }
 
   // Cassette binding: recompute ordered cassette hash from replay units.
   const cassette = {
-    schema_version: "sandbox-security-benchmark-candidate-cassette.v1",
+    schema_version: "sandbox-security-benchmark-candidate-cassette.v2" as const,
     judge_binding_sha256: manifest.judge_binding_sha256,
     inputs: inputs.map((unit) => ({
       fixture_id: unit.fixture_id,
@@ -1483,6 +1490,11 @@ export function validateAcceptedSandboxSecurityLiveEvidence(
       judge_binding_sha256: unit.judge_binding_sha256
     }))
   };
+  try {
+    assertSandboxSecurityBenchmarkAcceptedProviderOutcomes(cassette);
+  } catch {
+    fail("provider_outcome_not_acceptance_capable");
+  }
   const cassetteTreeSha256 = hashSandboxSecurityBenchmarkCandidateCassette(cassette);
   if (cassetteTreeSha256 !== manifest.cassette_tree_sha256) {
     fail("cassette_tree_hash_mismatch");

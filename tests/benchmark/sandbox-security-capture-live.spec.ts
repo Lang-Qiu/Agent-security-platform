@@ -47,6 +47,7 @@ import {
 import type { SandboxSecurityDecision } from "../../shared/types/sandbox-security.ts";
 import {
   hashSandboxSecurityBenchmarkCanonicalJson,
+  hashSandboxSecurityBenchmarkCandidateCassette,
   hashSandboxSecurityBenchmarkJudgeBinding
 } from "../../scripts/benchmark/sandbox-security/contracts.ts";
 
@@ -80,6 +81,8 @@ const P6_PROFILE_PATH = resolve(
 
 const DIGEST =
   "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+const FINAL_OLLAMA_DIGEST =
+  "sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
 const SAFE_TEST_JUDGE_RESOLVED_MODEL = "test-judge-resolved-model";
 
 type RunSandboxSecurityJudgeReadiness = (input: Readonly<{
@@ -142,7 +145,9 @@ function tempRoot(prefix: string): string {
   return mkdtempSync(join(tmpdir(), prefix));
 }
 
-function successInventory(): SandboxSecurityCapturedProviderOutcome {
+function successInventory(
+  digest: string = DIGEST
+): SandboxSecurityCapturedProviderOutcome {
   return Object.freeze({
     capture_phase: "qualification",
     provider: "ollama",
@@ -153,13 +158,15 @@ function successInventory(): SandboxSecurityCapturedProviderOutcome {
       content_type: "application/json",
       normalized_response: Object.freeze({
         model: "qwen3:8b",
-        digest: DIGEST
+        digest
       })
     })
   });
 }
 
-function successPrewarm(): SandboxSecurityCapturedProviderOutcome {
+function successPrewarm(
+  digest: string = DIGEST
+): SandboxSecurityCapturedProviderOutcome {
   return Object.freeze({
     capture_phase: "qualification",
     provider: "ollama",
@@ -170,7 +177,7 @@ function successPrewarm(): SandboxSecurityCapturedProviderOutcome {
       content_type: "application/json",
       normalized_response: Object.freeze({
         model: "qwen3:8b",
-        verified_ollama_digest: DIGEST,
+        verified_ollama_digest: digest,
         done: true,
         message: Object.freeze({
           role: "assistant",
@@ -185,7 +192,9 @@ function successPrewarm(): SandboxSecurityCapturedProviderOutcome {
   });
 }
 
-function successLocalEvaluation(): SandboxSecurityCapturedProviderOutcome {
+function successLocalEvaluation(
+  digest: string = DIGEST
+): SandboxSecurityCapturedProviderOutcome {
   return Object.freeze({
     capture_phase: "evaluation",
     provider: "ollama",
@@ -196,7 +205,7 @@ function successLocalEvaluation(): SandboxSecurityCapturedProviderOutcome {
       content_type: "application/json",
       normalized_response: Object.freeze({
         model: "qwen3:8b",
-        verified_ollama_digest: DIGEST,
+        verified_ollama_digest: digest,
         done: true,
         message: Object.freeze({
           role: "assistant",
@@ -302,6 +311,9 @@ interface FakePortsOptions {
   corruptHash?: boolean;
   skip_input_hash_check?: boolean;
   useProductionConfig?: boolean;
+  retryQualification?: boolean;
+  retryEvaluation?: boolean;
+  qualificationDigest?: string;
 }
 
 function fakeLivePorts(
@@ -375,6 +387,7 @@ function fakeLivePorts(
     ? options.judgeResolvedModel
     : SAFE_TEST_JUDGE_RESOLVED_MODEL;
   const hasJudgeResponse = Object.hasOwn(options, "judgeResponseModel");
+  const qualificationDigest = options.qualificationDigest ?? DIGEST;
   const sink = createSandboxSecurityCaptureSink();
   const testProtocol =
     options.judgeResponseOperation === "chat_completions"
@@ -457,8 +470,30 @@ function fakeLivePorts(
     },
     create_engine: async ({ capture_sink, transport }) => {
       void transport;
-      capture_sink.record(successInventory());
-      capture_sink.record(successPrewarm());
+      if (options.retryQualification) {
+        capture_sink.record({
+          capture_phase: "qualification",
+          provider: "ollama",
+          operation: "model_inventory",
+          outcome: {
+            status: "transport_error",
+            error_code: "connection_failed"
+          }
+        });
+      }
+      capture_sink.record(successInventory(qualificationDigest));
+      if (options.retryQualification) {
+        capture_sink.record({
+          capture_phase: "qualification",
+          provider: "ollama",
+          operation: "chat",
+          outcome: {
+            status: "transport_error",
+            error_code: "connection_failed"
+          }
+        });
+      }
+      capture_sink.record(successPrewarm(qualificationDigest));
       const engine: SandboxSecurityEngine = {
         async evaluate(request, _callerSignal) {
           void _callerSignal;
@@ -474,7 +509,18 @@ function fakeLivePorts(
             capture_sink.record(outcome);
           }
           if (hasJudgeResponse) {
-            capture_sink.record(successLocalEvaluation());
+            if (options.retryEvaluation) {
+              capture_sink.record({
+                capture_phase: "evaluation",
+                provider: "ollama",
+                operation: "chat",
+                outcome: {
+                  status: "transport_error",
+                  error_code: "connection_failed"
+                }
+              });
+            }
+            capture_sink.record(successLocalEvaluation(qualificationDigest));
             capture_sink.record(successJudgeResponse(
               options.judgeResponseModel,
               options.judgeResponseOperation
@@ -1074,7 +1120,7 @@ test("REQ-SBX-GENERAL-002 fails closed when a captured Judge response omits or u
             judgeResponseModel
           })
         ),
-      /judge_resolved_model/i
+      /judge_resolved_model|capture_sink_invalid/i
     );
   }
 });
@@ -1266,6 +1312,86 @@ test("REQ-SBX-GENERAL-002 candidate package is content-free and output-contained
   assert.doesNotMatch(JSON.stringify(cassette), /SANDBOX_SECURITY_JUDGE_API_KEY|primary_category|truth/);
 });
 
+test("REQ-SBX-P6-RETRY live capture preserves qualification and input attempt arrays", async () => {
+  const ports = fakeLivePorts({
+    fixtureCount: 1,
+    retryQualification: true,
+    retryEvaluation: true,
+    qualificationDigest: FINAL_OLLAMA_DIGEST,
+    judgeResponseModel: SAFE_TEST_JUDGE_RESOLVED_MODEL
+  });
+  const frames: Array<Record<string, unknown>> = [];
+  const run = runSandboxSecurityLiveCapture as unknown as (
+    ports: SandboxSecurityLiveCapturePorts,
+    options: Readonly<{
+      candidate_output: "stream";
+      output_frame_writer: { write(frame: unknown): void };
+    }>
+  ) => Promise<Readonly<{ decision_count: number }>>;
+
+  await run(ports, {
+    candidate_output: "stream",
+    output_frame_writer: {
+      write(frame: unknown) {
+        frames.push(frame as Record<string, unknown>);
+      }
+    }
+  });
+
+  const complete = frames.find((frame) => frame.event === "capture_complete");
+  assert.ok(complete);
+  const staging = JSON.parse(String(complete.staging_serialized)) as {
+    schema_version: string;
+    capture_manifest: {
+      ollama_digest: string;
+      ollama_qualification: {
+        inventory: Array<Record<string, unknown>>;
+        prewarm: Array<Record<string, unknown>>;
+      };
+    };
+    cassette: {
+      schema_version: string;
+      inputs: Array<{
+        ollama: Array<Record<string, unknown>>;
+        judge: Array<Record<string, unknown>>;
+      }>;
+    };
+  };
+
+  assert.equal(
+    staging.schema_version,
+    "sandbox-security-benchmark-candidate-staging.v2"
+  );
+  assert.equal(staging.cassette.schema_version, "sandbox-security-benchmark-candidate-cassette.v2");
+  assert.deepEqual(
+    staging.capture_manifest.ollama_qualification.inventory.map(
+      (attempt) => attempt.status
+    ),
+    ["transport_error", "response"]
+  );
+  assert.deepEqual(
+    staging.capture_manifest.ollama_qualification.prewarm.map(
+      (attempt) => attempt.status
+    ),
+    ["transport_error", "response"]
+  );
+  assert.equal(staging.capture_manifest.ollama_digest, FINAL_OLLAMA_DIGEST);
+  assert.deepEqual(
+    staging.cassette.inputs[0]?.ollama.map((attempt) => attempt.status),
+    ["transport_error", "response"]
+  );
+  assert.equal(staging.cassette.inputs[0]?.ollama.at(-1)?.status, "response");
+  assert.deepEqual(
+    staging.cassette.inputs[0]?.judge.map((attempt) => attempt.status),
+    ["response"]
+  );
+  assert.equal(
+    (staging.cassette.inputs[0]?.judge.at(-1)?.normalized_response as { model: string })
+      .model,
+    SAFE_TEST_JUDGE_RESOLVED_MODEL
+  );
+});
+
 test("REQ-SBX-GENERAL-002 Chat capture writes the exact protocol endpoint and six-field binding", async () => {
   const ports = fakeLivePorts({
     fixtureCount: 1,
@@ -1298,10 +1424,10 @@ test("REQ-SBX-GENERAL-002 Chat capture writes the exact protocol endpoint and si
     )
   ) as {
     inputs: Array<{
-      judge: {
+      judge: Array<{
         status: string;
         normalized_response?: { model?: unknown };
-      };
+      }>;
     }>;
   };
 
@@ -1314,9 +1440,9 @@ test("REQ-SBX-GENERAL-002 Chat capture writes the exact protocol endpoint and si
     manifest.judge_binding_sha256,
     hashSandboxSecurityBenchmarkJudgeBinding(binding)
   );
-  assert.equal(cassette.inputs[0]?.judge.status, "response");
+  assert.equal(cassette.inputs[0]?.judge.at(-1)?.status, "response");
   assert.equal(
-    cassette.inputs[0]?.judge.normalized_response?.model,
+    cassette.inputs[0]?.judge.at(-1)?.normalized_response?.model,
     SAFE_TEST_JUDGE_RESOLVED_MODEL
   );
 });
@@ -1372,7 +1498,7 @@ test("REQ-SBX-GENERAL-002 live capture rejects invoked provider failures before 
       await assert.rejects(
         () => runSandboxSecurityLiveCapture(ports),
         new RegExp(
-          `sandbox_security_capture_live_reject:provider_outcome_not_acceptance_capable:${expectedSuffix}`,
+          `(?:sandbox_security_capture_live_reject:provider_outcome_not_acceptance_capable:${expectedSuffix}|sandbox_security_capture_sink_invalid)`,
           "u"
         )
       );
@@ -1511,52 +1637,62 @@ test("REQ-SBX-GENERAL-002 live capture reuses the readiness transport and does n
   const observedTransports: unknown[] = [];
   let configFactoryCalls = 0;
   let envMutatedAfterReadiness = false;
+  const previousJudgeModel = process.env.SANDBOX_SECURITY_JUDGE_MODEL;
 
-  const result = await runSandboxSecurityLiveCapture({
-    bundle_root: bundleRoot,
-    input_root: inputRoot,
-    capture_output_root: captureOutputRoot,
-    inputs_tree_sha256: "a".repeat(64),
-    fixture_ids: [fixtureId],
-    skip_input_hash_check: true,
-    runtime: defaultRuntime(),
-    has_child_permission: () => false,
-    has_worker_permission: () => false,
-    require_live_config: () => {},
-    live_binding: {
-      ollama_digest: DIGEST,
-      judge_protocol_id: "openai_responses_v1",
-      judge_endpoint_policy_id: "operator_https_fqdn_v1",
-      judge_base_url: "https://judge.example.test/v1",
-      judge_endpoint_url: "https://judge.example.test/v1/responses",
-      judge_requested_model: "gpt-5.4-mini"
-    },
-    run_judge_readiness: async () => {
-      configFactoryCalls += 1;
-      return Object.freeze({
-        resolved_model: SAFE_TEST_JUDGE_RESOLVED_MODEL,
-        transport: readinessTransport
-      });
-    },
-    create_engine: async ({ capture_sink, transport }) => {
-      envMutatedAfterReadiness = true;
-      process.env.SANDBOX_SECURITY_JUDGE_MODEL = "mutated-after-readiness";
-      observedTransports.push(transport);
-      assert.equal(transport, readinessTransport);
-      const sink = capture_sink;
-      sink.record(successInventory());
-      sink.record(successPrewarm());
-      return Object.freeze({
-        async evaluate(request: {
-          readonly submission: { readonly request_id: string };
-        }) {
-          sink.record(successLocalEvaluation());
-          sink.record(successJudgeResponse(SAFE_TEST_JUDGE_RESOLVED_MODEL));
-          return contentFreeDecision(request.submission.request_id, 0);
-        }
-      }) as SandboxSecurityEngine;
+  let result: Awaited<ReturnType<typeof runSandboxSecurityLiveCapture>>;
+  try {
+    result = await runSandboxSecurityLiveCapture({
+      bundle_root: bundleRoot,
+      input_root: inputRoot,
+      capture_output_root: captureOutputRoot,
+      inputs_tree_sha256: "a".repeat(64),
+      fixture_ids: [fixtureId],
+      skip_input_hash_check: true,
+      runtime: defaultRuntime(),
+      has_child_permission: () => false,
+      has_worker_permission: () => false,
+      require_live_config: () => {},
+      live_binding: {
+        ollama_digest: DIGEST,
+        judge_protocol_id: "openai_responses_v1",
+        judge_endpoint_policy_id: "operator_https_fqdn_v1",
+        judge_base_url: "https://judge.example.test/v1",
+        judge_endpoint_url: "https://judge.example.test/v1/responses",
+        judge_requested_model: "gpt-5.4-mini"
+      },
+      run_judge_readiness: async () => {
+        configFactoryCalls += 1;
+        return Object.freeze({
+          resolved_model: SAFE_TEST_JUDGE_RESOLVED_MODEL,
+          transport: readinessTransport
+        });
+      },
+      create_engine: async ({ capture_sink, transport }) => {
+        envMutatedAfterReadiness = true;
+        process.env.SANDBOX_SECURITY_JUDGE_MODEL = "mutated-after-readiness";
+        observedTransports.push(transport);
+        assert.equal(transport, readinessTransport);
+        const sink = capture_sink;
+        sink.record(successInventory());
+        sink.record(successPrewarm());
+        return Object.freeze({
+          async evaluate(request: {
+            readonly submission: { readonly request_id: string };
+          }) {
+            sink.record(successLocalEvaluation());
+            sink.record(successJudgeResponse(SAFE_TEST_JUDGE_RESOLVED_MODEL));
+            return contentFreeDecision(request.submission.request_id, 0);
+          }
+        }) as SandboxSecurityEngine;
+      }
+    } as SandboxSecurityLiveCapturePorts);
+  } finally {
+    if (previousJudgeModel === undefined) {
+      delete process.env.SANDBOX_SECURITY_JUDGE_MODEL;
+    } else {
+      process.env.SANDBOX_SECURITY_JUDGE_MODEL = previousJudgeModel;
     }
-  } as SandboxSecurityLiveCapturePorts);
+  }
 
   assert.equal(result.events.includes("judge_readiness"), true);
   assert.equal(result.events.includes("engine_created"), true);
@@ -1610,7 +1746,7 @@ test("REQ-SBX-GENERAL-002 preserves staging when candidate publication rename fa
     ".candidate-package.json"
   );
   const formalStaging = {
-    schema_version: "sandbox-security-benchmark-candidate-staging.v1",
+    schema_version: "sandbox-security-benchmark-candidate-staging.v2",
     capture_manifest: JSON.parse(
       readFileSync(join(candidateRoot, "capture-manifest.json"), "utf8")
     ),
@@ -1659,6 +1795,151 @@ test("REQ-SBX-GENERAL-002 preserves staging when candidate publication rename fa
   }
   assert.equal(existsSync(candidateRoot), false);
   assert.deepEqual(JSON.parse(readFileSync(stagingPath, "utf8")), formalStaging);
+});
+
+test("REQ-SBX-P6-RETRY capture-candidate publishes v2 retry arrays unchanged", async () => {
+  const ports = fakeLivePorts({
+    fixtureCount: 1,
+    retryQualification: true,
+    retryEvaluation: true,
+    qualificationDigest: FINAL_OLLAMA_DIGEST,
+    judgeResponseModel: SAFE_TEST_JUDGE_RESOLVED_MODEL
+  });
+  const result = await runSandboxSecurityLiveCapture(ports);
+  const candidateRoot = result.candidate_root;
+  const manifest = JSON.parse(
+    readFileSync(join(candidateRoot, "capture-manifest.json"), "utf8")
+  ) as {
+    schema_version: string;
+    ollama_qualification: {
+      inventory: Array<Record<string, unknown>>;
+      prewarm: Array<Record<string, unknown>>;
+    };
+  };
+  const cassette = JSON.parse(
+    readFileSync(join(candidateRoot, "cassette.json"), "utf8")
+  ) as {
+    schema_version: string;
+    inputs: Array<{
+      ollama: Array<Record<string, unknown>>;
+      judge: Array<Record<string, unknown>>;
+    }>;
+  };
+
+  assert.equal(manifest.schema_version, "sandbox-security-benchmark-capture.v2");
+  assert.equal(
+    cassette.schema_version,
+    "sandbox-security-benchmark-candidate-cassette.v2"
+  );
+  assert.deepEqual(
+    manifest.ollama_qualification.inventory.map((attempt) => attempt.status),
+    ["transport_error", "response"]
+  );
+  assert.deepEqual(
+    manifest.ollama_qualification.prewarm.map((attempt) => attempt.status),
+    ["transport_error", "response"]
+  );
+  assert.deepEqual(
+    cassette.inputs[0]!.ollama.map((attempt) => attempt.status),
+    ["transport_error", "response"]
+  );
+  assert.deepEqual(
+    cassette.inputs[0]!.judge.map((attempt) => attempt.status),
+    ["response"]
+  );
+});
+
+test("REQ-SBX-P6-RETRY capture-candidate rejects v1 staging and final failed attempts", async () => {
+  const ports = fakeLivePorts({ fixtureCount: 1 });
+  const result = await runSandboxSecurityLiveCapture(ports);
+  const candidateRoot = result.candidate_root;
+  const stagingPath = join(
+    ports.capture_output_root,
+    ".candidate-package.json"
+  );
+  const formalStaging = {
+    schema_version: "sandbox-security-benchmark-candidate-staging.v2",
+    capture_manifest: JSON.parse(
+      readFileSync(join(candidateRoot, "capture-manifest.json"), "utf8")
+    ),
+    cassette: JSON.parse(readFileSync(join(candidateRoot, "cassette.json"), "utf8")),
+    package: JSON.parse(readFileSync(join(candidateRoot, "package.json"), "utf8")),
+    decisions: [
+      JSON.parse(
+        readFileSync(join(candidateRoot, "decisions", "ssb-v1-0001.json"), "utf8")
+      )
+    ]
+  } as {
+    schema_version: string;
+    capture_manifest: Record<string, unknown>;
+    cassette: Record<string, unknown> & {
+      inputs: Array<Record<string, unknown>>;
+    };
+    package: Record<string, unknown>;
+    decisions: unknown[];
+  };
+  rmSync(candidateRoot, { recursive: true, force: true });
+
+  const writeStaging = (staging: unknown): Readonly<{
+    binding: string;
+    sha256: string;
+  }> => {
+    const serialized = `${JSON.stringify(staging)}\n`;
+    writeFileSync(stagingPath, serialized, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600
+    });
+    const stat = lstatSync(stagingPath, { bigint: true });
+    return {
+      binding: `${stat.dev}:${stat.ino}`,
+      sha256: createHash("sha256").update(serialized, "utf8").digest("hex")
+    };
+  };
+
+  const legacy = writeStaging({
+    ...formalStaging,
+    schema_version: "sandbox-security-benchmark-candidate-staging.v1"
+  });
+  assert.throws(
+    () =>
+      materializeSandboxSecurityCandidatePackage({
+        capture_output_root: ports.capture_output_root,
+        capture_output_binding: legacy.binding,
+        fixture_ids: ["ssb-v1-0001"],
+        candidate_package_sha256: legacy.sha256
+      }),
+    /candidate_staging_schema/u
+  );
+  unlinkSync(stagingPath);
+
+  const failedCassette = structuredClone(formalStaging.cassette);
+  failedCassette.inputs[0]!.ollama = [
+    { status: "http_error", http_status: 503 }
+  ];
+  const failedPackage = {
+    ...formalStaging.package,
+    cassette_tree_sha256: hashSandboxSecurityBenchmarkCandidateCassette(
+      failedCassette
+    )
+  };
+  const failed = writeStaging({
+    ...formalStaging,
+    cassette: failedCassette,
+    package: failedPackage
+  });
+  assert.throws(
+    () =>
+      materializeSandboxSecurityCandidatePackage({
+        capture_output_root: ports.capture_output_root,
+        capture_output_binding: failed.binding,
+        fixture_ids: ["ssb-v1-0001"],
+        candidate_package_sha256: failed.sha256
+      }),
+    /candidate_staging_invalid|provider_outcome/u
+  );
+  assert.equal(existsSync(candidateRoot), false);
+  unlinkSync(stagingPath);
 });
 
 test("REQ-SBX-GENERAL-002 live capture opens every input envelope before Judge readiness", async () => {

@@ -348,8 +348,9 @@ function assertCapturedJudgeResponseModels(
   judgeResolvedModel: string
 ): void {
   for (const input of accumulator.inputs) {
-    if (input.judge.status !== "response") continue;
-    const normalizedResponse = input.judge.normalized_response;
+    const finalAttempt = input.judge.at(-1);
+    if (finalAttempt?.status !== "response") continue;
+    const normalizedResponse = finalAttempt.normalized_response;
     if (!isPlainObject(normalizedResponse)) fail("judge_resolved_model");
     const model = Object.getOwnPropertyDescriptor(normalizedResponse, "model");
     if (model === undefined || !("value" in model)) {
@@ -802,23 +803,31 @@ function classifyAcceptanceBlockingProviderOutcome(
   accumulator: Readonly<SandboxSecurityCaptureAccumulator>
 ): string {
   for (const unit of accumulator.inputs) {
-    for (const [slot, outcome] of [
+    for (const [slot, attempts] of [
       ["ollama", unit.ollama],
       ["judge", unit.judge]
     ] as const) {
-      if (outcome.status === "http_error") {
-        return `${slot}_http_error_${outcome.http_status}`;
+      let blocker: string | undefined;
+      for (const outcome of attempts) {
+        if (outcome.status === "http_error") {
+          blocker = `${slot}_http_error_${outcome.http_status}`;
+        }
+        if (outcome.status === "transport_error") {
+          blocker = `${slot}_transport_error_${outcome.error_code}`;
+        }
+        if (outcome.status === "signal_termination") {
+          blocker = `${slot}_signal_termination_${outcome.termination_reason}`;
+        }
       }
-      if (outcome.status === "transport_error") {
-        return `${slot}_transport_error_${outcome.error_code}`;
-      }
-      if (outcome.status === "signal_termination") {
-        return `${slot}_signal_termination_${outcome.termination_reason}`;
+      if (blocker !== undefined) {
+        return blocker;
       }
     }
+    const judgeFinal = unit.judge.at(-1);
+    const ollamaFinal = unit.ollama.at(-1);
     if (
-      unit.judge.status === "response" &&
-      unit.ollama.status === "not_called"
+      judgeFinal?.status === "response" &&
+      ollamaFinal?.status !== "response"
     ) {
       return "judge_response_without_local_response";
     }
@@ -894,15 +903,15 @@ function buildCandidatePackage(input: Readonly<{
 
   const digestFromInventory = (() => {
     const inventory = input.accumulator.qualification_inventory;
+    const finalAttempt = inventory?.at(-1);
     if (
-      inventory !== null &&
-      inventory.status === "response" &&
-      isPlainObject(inventory.normalized_response) &&
-      typeof inventory.normalized_response.digest === "string"
+      finalAttempt?.status === "response" &&
+      isPlainObject(finalAttempt.normalized_response) &&
+      typeof finalAttempt.normalized_response.digest === "string"
     ) {
-      return inventory.normalized_response.digest;
+      return finalAttempt.normalized_response.digest;
     }
-    return input.live_binding.ollama_digest;
+    fail("missing_qualification_inventory");
   })();
 
   const captureManifest = deepFreeze({
@@ -938,7 +947,7 @@ function buildCandidatePackage(input: Readonly<{
   });
 
   const cassette = deepFreeze({
-    schema_version: "sandbox-security-benchmark-candidate-cassette.v1" as const,
+    schema_version: "sandbox-security-benchmark-candidate-cassette.v2" as const,
     judge_binding_sha256: judgeBindingSha256,
     inputs: cassetteInputs
   });

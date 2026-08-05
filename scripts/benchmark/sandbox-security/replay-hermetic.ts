@@ -34,7 +34,7 @@ const FIXTURE_ID = /^ssb-v1-\d{4}$/u;
 const MAX_CHILD_OUTPUT_BYTES = 1_048_576;
 const MAX_CHILD_RUNTIME_MS = 240_000;
 const MAX_JSON_BYTES = 16 * 1024 * 1024;
-const REPLAY_INPUT_SCHEMA = "sandbox-security-hermetic-replay-input.v1";
+const REPLAY_INPUT_SCHEMA = "sandbox-security-hermetic-replay-input.v2";
 const CHILD_RESULT_SCHEMA = "sandbox-security-hermetic-replay-result.v1";
 const NETWORK_PROOF_SCHEMA = "sandbox-security-hermetic-network-proof.v1";
 const PROC_NET_ROOT = "/proc/self/net";
@@ -305,23 +305,82 @@ function expectedFixtureIds(): readonly string[] {
   );
 }
 
-function validateSlot(value: unknown): unknown {
+function validateAttempt(value: unknown): JsonRecord {
   if (!isPlainRecord(value) || typeof value.status !== "string") {
-    fail("replay_slot_invalid");
+    fail("replay_attempt_invalid");
   }
-  if (value.status === "not_called" && Object.keys(value).length !== 1) {
-    fail("replay_slot_invalid");
+  if (value.status === "response") {
+    const response = exactRecord(value, [
+        "status",
+        "http_status",
+        "content_type",
+        "normalized_response"
+      ]);
+    if (
+      response.http_status !== 200 ||
+      response.content_type !== "application/json"
+    ) {
+      fail("replay_attempt_invalid");
+    }
+    return deepCloneJson(response) as JsonRecord;
   }
+  if (value.status === "http_error") {
+    const error = exactRecord(value, ["status", "http_status"]);
+    if (
+      typeof error.http_status !== "number" ||
+      !Number.isInteger(error.http_status) ||
+      error.http_status < 100 ||
+      error.http_status > 599 ||
+      error.http_status === 200
+    ) {
+      fail("replay_attempt_invalid");
+    }
+    return deepCloneJson(error) as JsonRecord;
+  }
+  if (value.status === "transport_error") {
+    const error = exactRecord(value, ["status", "error_code"]);
+    if (
+      error.error_code !== "connection_failed" &&
+      error.error_code !== "response_too_large" &&
+      error.error_code !== "provider_response_invalid"
+    ) {
+      fail("replay_attempt_invalid");
+    }
+    return deepCloneJson(error) as JsonRecord;
+  }
+  if (value.status === "signal_termination") {
+    const termination = exactRecord(value, ["status", "termination_reason"]);
+    if (
+      termination.termination_reason !== "slot_timeout" &&
+      termination.termination_reason !== "work_budget"
+    ) {
+      fail("replay_attempt_invalid");
+    }
+    return deepCloneJson(termination) as JsonRecord;
+  }
+  fail("replay_attempt_invalid");
+}
+
+function validateAttemptSequence(value: unknown): readonly JsonRecord[] {
+  if (!Array.isArray(value) || value.length > 2) {
+    fail("replay_attempt_sequence_invalid");
+  }
+  const keys = Object.keys(value);
   if (
-    value.status !== "not_called" &&
-    value.status !== "response" &&
-    value.status !== "http_error" &&
-    value.status !== "transport_error" &&
-    value.status !== "signal_termination"
+    keys.length !== value.length ||
+    keys.some((key, index) => key !== String(index))
   ) {
-    fail("replay_slot_invalid");
+    fail("replay_attempt_sequence_invalid");
   }
-  return deepCloneJson(value);
+  const attempts = value.map((attempt) => validateAttempt(attempt));
+  if (
+    attempts.length === 2 &&
+    (attempts[0]!.status !== "transport_error" ||
+      attempts[0]!.error_code !== "connection_failed")
+  ) {
+    fail("replay_attempt_retry_invalid");
+  }
+  return Object.freeze(attempts);
 }
 
 /**
@@ -373,7 +432,7 @@ export function validateAndStripReplayEnvelopes(
       "schema_version"
     ].sort();
     if (
-      envelope.schema_version !== "sandbox-security-benchmark-replay.v1" ||
+      envelope.schema_version !== "sandbox-security-benchmark-replay.v2" ||
       keys.some((key) => !allowed.includes(key)) ||
       !Object.hasOwn(envelope, "schema_version") ||
       !Object.hasOwn(envelope, "fixture_id") ||
@@ -405,12 +464,13 @@ export function validateAndStripReplayEnvelopes(
     if (manifestRecord.judge_binding_sha256 !== judgeBindingHash) {
       fail("replay_binding_mismatch");
     }
-    const ollama = validateSlot(envelope.ollama);
-    const judge = validateSlot(envelope.judge);
+    const ollama = validateAttemptSequence(envelope.ollama);
+    const judge = validateAttemptSequence(envelope.judge);
+    const ollamaFinal = ollama.at(-1);
+    const judgeFinal = judge.at(-1);
     if (
-      isPlainRecord(judge) &&
-      judge.status !== "not_called" &&
-      (!isPlainRecord(ollama) || ollama.status !== "response")
+      judgeFinal !== undefined &&
+      (ollamaFinal === undefined || ollamaFinal.status !== "response")
     ) {
       fail("judge_without_local_response");
     }
@@ -1132,12 +1192,16 @@ function parseReplayInput(value: unknown): AnonymousReplayInputDocument {
       fail("replay_input_hash_invalid");
     }
     return Object.freeze({
-      ollama: validateSlot(unit.ollama),
-      judge: validateSlot(unit.judge),
+      ollama: validateAttemptSequence(unit.ollama),
+      judge: validateAttemptSequence(unit.judge),
       decision_projection_sha256: unit.decision_projection_sha256,
       judge_binding_sha256: unit.judge_binding_sha256
     });
   });
+  const qualification = exactRecord(record.qualification, [
+    "inventory",
+    "prewarm"
+  ]);
   const sealedConfig = exactRecord(record.sealed_config, [
     "judge_base_url",
     "judge_binding_sha256",
@@ -1157,7 +1221,10 @@ function parseReplayInput(value: unknown): AnonymousReplayInputDocument {
   ]);
   return Object.freeze({
     schema_version: REPLAY_INPUT_SCHEMA,
-    qualification: record.qualification,
+    qualification: Object.freeze({
+      inventory: validateAttemptSequence(qualification.inventory),
+      prewarm: validateAttemptSequence(qualification.prewarm)
+    }),
     sealed_config: sealedConfig,
     inputs: Object.freeze(inputs)
   });
@@ -1632,7 +1699,7 @@ async function runParent(
     }
 
     const cassette = Object.freeze({
-      schema_version: "sandbox-security-benchmark-candidate-cassette.v1",
+    schema_version: "sandbox-security-benchmark-candidate-cassette.v2",
       judge_binding_sha256: manifest.judge_binding_sha256,
       inputs: Object.freeze(
         accepted.capture.inputs.map((raw) => {

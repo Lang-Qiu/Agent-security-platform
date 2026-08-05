@@ -12,8 +12,8 @@ const BINDING = "b".repeat(64);
 type ReplayEnvelope = Readonly<{
   schema_version: string;
   fixture_id: string;
-  ollama: Readonly<{ status: "not_called" }>;
-  judge: Readonly<{ status: "not_called" }>;
+  ollama: readonly unknown[];
+  judge: readonly unknown[];
   decision_projection_sha256: string;
   judge_binding_sha256: string;
 }>;
@@ -74,10 +74,10 @@ function fixtureIds(count: number): readonly string[] {
 
 function envelopes(count = 300): readonly ReplayEnvelope[] {
   return fixtureIds(count).map((fixture_id) => ({
-    schema_version: "sandbox-security-benchmark-replay.v1",
+    schema_version: "sandbox-security-benchmark-replay.v2",
     fixture_id,
-    ollama: { status: "not_called" },
-    judge: { status: "not_called" },
+    ollama: [],
+    judge: [],
     decision_projection_sha256: SHA,
     judge_binding_sha256: BINDING
   }));
@@ -121,6 +121,76 @@ test("REQ-SBX-GENERAL-002 replay rejects an envelope with the wrong schema versi
       invalid
     ),
     /schema|replay|invalid/i
+  );
+});
+
+test("REQ-SBX-P6-RETRY replay preserves anonymous ordered attempt arrays", async () => {
+  const module = await hermeticModule();
+  const input = [...envelopes()] as Array<ReplayEnvelope>;
+  input[0] = {
+    ...input[0]!,
+    ollama: [
+      { status: "transport_error", error_code: "connection_failed" },
+      {
+        status: "response",
+        http_status: 200,
+        content_type: "application/json",
+        normalized_response: { provider: "local" }
+      }
+    ]
+  };
+  const units = module.validateAndStripReplayEnvelopes(
+    { fixture_ids: fixtureIds(300), judge_binding_sha256: BINDING },
+    input
+  );
+  assert.deepEqual(units[0], {
+    ollama: input[0]!.ollama,
+    judge: [],
+    decision_projection_sha256: SHA,
+    judge_binding_sha256: BINDING
+  });
+  assert.doesNotMatch(JSON.stringify(units), /fixture_id/);
+});
+
+test("REQ-SBX-P6-RETRY replay rejects embedded not_called attempts and scalar v1 envelopes", async () => {
+  const module = await hermeticModule();
+  const embeddedNotCalled = [...envelopes()] as Array<ReplayEnvelope>;
+  embeddedNotCalled[0] = {
+    ...embeddedNotCalled[0]!,
+    ollama: [{ status: "not_called" }]
+  };
+  assert.throws(
+    () => module.validateAndStripReplayEnvelopes(
+      { fixture_ids: fixtureIds(300), judge_binding_sha256: BINDING },
+      embeddedNotCalled
+    ),
+    /attempt|not_called|replay/i
+  );
+
+  const scalarV1 = [...envelopes()] as Array<ReplayEnvelope>;
+  scalarV1[0] = {
+    ...scalarV1[0]!,
+    schema_version: "sandbox-security-benchmark-replay.v1",
+    ollama: { status: "response" } as unknown as readonly unknown[]
+  };
+  assert.throws(
+    () => module.validateAndStripReplayEnvelopes(
+      { fixture_ids: fixtureIds(300), judge_binding_sha256: BINDING },
+      scalarV1
+    ),
+    /schema|attempt|replay/i
+  );
+});
+
+test("REQ-SBX-P6-RETRY hermetic replay writes v2 replay-input and cassette artifacts", () => {
+  const replay = readFileSync(
+    join(REPO_ROOT, "scripts/benchmark/sandbox-security/replay-hermetic.ts"),
+    "utf8"
+  );
+  assert.match(replay, /sandbox-security-hermetic-replay-input\.v2/u);
+  assert.match(
+    replay,
+    /sandbox-security-benchmark-candidate-cassette\.v2/u
   );
 });
 

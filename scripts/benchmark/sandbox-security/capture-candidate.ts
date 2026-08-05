@@ -38,7 +38,7 @@ const CAPTURE_OUTPUT_BINDING = /^(?:0|[1-9][0-9]*):(?:0|[1-9][0-9]*)$/u;
 export const SANDBOX_SECURITY_CANDIDATE_STAGING_FILENAME =
   ".candidate-package.json" as const;
 export const SANDBOX_SECURITY_CANDIDATE_STAGING_SCHEMA_VERSION =
-  "sandbox-security-benchmark-candidate-staging.v1" as const;
+  "sandbox-security-benchmark-candidate-staging.v2" as const;
 export const SANDBOX_SECURITY_MAX_CANDIDATE_STAGING_BYTES = 16 * 1024 * 1024;
 
 function fail(code: string): never {

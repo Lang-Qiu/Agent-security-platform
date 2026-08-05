@@ -213,6 +213,37 @@ function decisionEnvelope(
   });
 }
 
+function retryConnectionFailure(): Readonly<{
+  status: "transport_error";
+  error_code: "connection_failed";
+}> {
+  return Object.freeze({
+    status: "transport_error",
+    error_code: "connection_failed"
+  });
+}
+
+function successfulLocalResponse(): Readonly<Record<string, unknown>> {
+  return Object.freeze({
+    status: "response",
+    http_status: 200,
+    content_type: "application/json",
+    normalized_response: {
+      model: "qwen3:8b",
+      verified_ollama_digest: CANDIDATE_OLLAMA_DIGEST,
+      done: true,
+      message: {
+        role: "assistant",
+        parsed: {
+          schema_version: "sandbox-security-local-model.v1",
+          status: "no_match",
+          candidates: []
+        }
+      }
+    }
+  });
+}
+
 function writeCapturePackage(input: Readonly<{
   captureRoot: string;
   fixtureIds: readonly string[];
@@ -224,6 +255,7 @@ function writeCapturePackage(input: Readonly<{
   mutatePackage?: (packageJson: Record<string, unknown>) => void;
   inputsTreeSha256?: string;
   judgeBinding?: ReturnType<typeof candidateJudgeBinding>;
+  retryLocalAttempt?: boolean;
 }>): Readonly<{
   decisionsTreeSha256: string;
   cassetteTreeSha256: string;
@@ -251,13 +283,17 @@ function writeCapturePackage(input: Readonly<{
   }
 
   const cassette = Object.freeze({
-    schema_version: "sandbox-security-benchmark-candidate-cassette.v1",
+    schema_version: "sandbox-security-benchmark-candidate-cassette.v2",
     judge_binding_sha256: judgeBindingSha256,
     inputs: input.fixtureIds.map((fixtureId, index) =>
       Object.freeze({
         fixture_id: fixtureId,
-        ollama: Object.freeze({ status: "not_called" }),
-        judge: Object.freeze({ status: "not_called" }),
+        ollama: Object.freeze(
+          input.retryLocalAttempt && index === 0
+            ? [retryConnectionFailure(), successfulLocalResponse()]
+            : []
+        ),
+        judge: Object.freeze([]),
         decision_projection_sha256: decisionHashes[index]!,
         judge_binding_sha256: judgeBindingSha256
       })
@@ -275,14 +311,14 @@ function writeCapturePackage(input: Readonly<{
     input.inputsTreeSha256 ??
     "5b95a264e3fd4fb393e313a0dbdd3ea099af6257e9ef3a6e75790e0f6c659407";
   const captureManifest = {
-    schema_version: "sandbox-security-benchmark-capture.v1",
+    schema_version: "sandbox-security-benchmark-capture.v2",
     inputs_tree_sha256: inputsTreeSha256,
     fixture_count: input.fixtureIds.length,
     ...P6_TIMING,
     ollama_model: "qwen3:8b",
     ollama_digest: CANDIDATE_OLLAMA_DIGEST,
     ollama_qualification: {
-      inventory: {
+      inventory: [{
         status: "response",
         http_status: 200,
         content_type: "application/json",
@@ -290,8 +326,8 @@ function writeCapturePackage(input: Readonly<{
           model: "qwen3:8b",
           digest: CANDIDATE_OLLAMA_DIGEST
         }
-      },
-      prewarm: {
+      }],
+      prewarm: [{
         status: "response",
         http_status: 200,
         content_type: "application/json",
@@ -308,7 +344,7 @@ function writeCapturePackage(input: Readonly<{
             }
           }
         }
-      }
+      }]
     },
     ...judgeBinding,
     judge_binding_sha256: hashSandboxSecurityBenchmarkJudgeBinding(judgeBinding),
@@ -1184,7 +1220,7 @@ test("REQ-SBX-GENERAL-002 evaluator rejects invoked provider failure outcomes be
         inputs: Array<Record<string, unknown>>;
       };
       if (side === "judge") {
-        cassette.inputs[0]!.ollama = {
+        cassette.inputs[0]!.ollama = [{
           status: "response",
           http_status: 200,
           content_type: "application/json",
@@ -1201,9 +1237,9 @@ test("REQ-SBX-GENERAL-002 evaluator rejects invoked provider failure outcomes be
               }
             }
           }
-        };
+        }];
       }
-      cassette.inputs[0]![side] = outcome;
+      cassette.inputs[0]![side] = [outcome];
       writeFileSync(cassettePath, `${JSON.stringify(cassette)}\n`);
       assert.throws(
         () =>
@@ -1232,6 +1268,47 @@ test("REQ-SBX-GENERAL-002 evaluator keeps legitimate dual not_called slots accep
     capture_root: captureRoot
   });
   assert.equal(report.accepted, true);
+});
+
+test("REQ-SBX-P6-RETRY evaluator keeps ordered retry attempts in v2 cassette hashes", async () => {
+  const evaluator = await loadEvaluator();
+  const corpus = loadCommittedTruths();
+  const captureRoot = join(tempRoot("ssb-eval-retry-"), "candidate");
+  const verdicts = buildThresholdPassingVerdicts(corpus);
+  const written = writeCapturePackage({
+    captureRoot,
+    fixtureIds: corpus.manifestFixtureIds,
+    verdictFor: (id) => verdicts.get(id) ?? "indeterminate",
+    retryLocalAttempt: true
+  });
+  const report = evaluator.evaluateSandboxSecurityCapture({
+    corpus_root: COMMITTED_CORPUS_ROOT,
+    capture_root: captureRoot
+  });
+  assert.equal(report.accepted, true);
+
+  const cassette = JSON.parse(
+    readFileSync(join(captureRoot, "cassette.json"), "utf8")
+  ) as {
+    schema_version: string;
+    inputs: Array<{ ollama: Array<{ status: string }> }>;
+  };
+  assert.equal(
+    cassette.schema_version,
+    "sandbox-security-benchmark-candidate-cassette.v2"
+  );
+  assert.deepEqual(
+    cassette.inputs[0]!.ollama.map((attempt) => attempt.status),
+    ["transport_error", "response"]
+  );
+  const omittedAttempt = structuredClone(cassette) as typeof cassette;
+  omittedAttempt.inputs[0]!.ollama = [
+    omittedAttempt.inputs[0]!.ollama[1]!
+  ];
+  assert.notEqual(
+    written.cassetteTreeSha256,
+    hashSandboxSecurityBenchmarkCandidateCassette(omittedAttempt)
+  );
 });
 
 test("REQ-SBX-GENERAL-002 evaluator rejects non-production candidate provenance", async () => {
