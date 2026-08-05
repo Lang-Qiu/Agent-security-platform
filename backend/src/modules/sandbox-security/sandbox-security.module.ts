@@ -20,6 +20,10 @@ import type {
 export {
   createSandboxSecuritySimulationEvaluationRequest
 } from "./simulation-authority.ts";
+export {
+  createSandboxSecurityHmacService,
+  createSandboxSecurityOpaqueCapability
+} from "./hmac.ts";
 
 export { toSandboxSecurityEngineRuntime } from "./ports/runtime.ts";
 export {

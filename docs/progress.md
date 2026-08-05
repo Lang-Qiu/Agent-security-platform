@@ -30,6 +30,37 @@
 - commit: `0092e0c feat(backend): build sandbox simulation authority`
 - next: P2-T2 domain-separated HMACs, cursor codec, and opaque tokens
 
+## 2026-08-05 - REQ-SBX-GENERAL-003 P2-T2 cryptographic framing
+
+- phase/task: Phase 2 / P2-T2; implementation complete pending independent
+  specification and code-quality review
+- TDD RED: the new backend HMAC suite failed `10/10` with the intended
+  `AssertionError` because the approved module boundary did not yet export the
+  HMAC and opaque-capability factories; the module and test imports loaded
+  successfully
+- GREEN: added one domain-separated big-endian `HMAC_FRAME`, deployment/scope/
+  idempotency/fingerprint HMACs, authenticated audit cursor encoding and
+  decoding, strict ASCII/length/timestamp/event-ID/base64url validation,
+  constant-time cursor MAC comparison, defensive byte copies, and one-time
+  opaque `sbxcap_v1` token issuance with `sha256:<hex>` digest projection
+- changed: `backend/src/modules/sandbox-security/hmac.ts`,
+  `backend/src/modules/sandbox-security/sandbox-security.module.ts`,
+  `backend/tests/sandbox-security-hmac.spec.ts`, root `package.json`
+- validation: focused HMAC suite `10/10`; `git diff --check` passed;
+  `npm run test:backend` reached `255/257`, with the two known baseline
+  failures for missing `semgrep` and the pre-existing task-engine asset-detail
+  expectation; `npm run typecheck:backend` remains blocked by existing
+  unrelated campaign/task-center/test type errors and reports no P2-T2 source
+  error
+- privacy boundary: raw capability token is returned only by the opaque issue
+  result; the digest-only projection contains no bearer token, and no shared
+  contract or Engine-private type was widened
+- dependency: GENERAL-002 remains
+  `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`; neither GENERAL-002 nor
+  GENERAL-003 is `VERIFIED`
+- next: complete independent reviews, then commit the exact P2-T2 task before
+  starting P2-T3
+
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T4 mandatory typecheck script registration
 
 - phase/task: Phase 1 / P1-T4 Mandatory Typecheck Script Registration
