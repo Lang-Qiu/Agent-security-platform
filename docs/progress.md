@@ -1,3 +1,30 @@
+## 2026-08-05 - REQ-SBX-GENERAL-003 implementation plan independently reviewed
+
+- stage: documentation/design exception to full business-logic TDD; no
+  GENERAL-003 business test or production implementation was created
+- status: `PLAN_REVIEWED_PENDING_USER_APPROVAL`
+- plan set: one Master plus six ordered Phase plans; execution remains one task
+  at a time with RED -> GREEN -> review -> fix/re-review -> evidence -> commit ->
+  stop
+- independent review sequence:
+  - initial review and first re-review: each `FAIL`, `2 Critical / 5 Important /
+    0 Minor`
+  - second re-review: `FAIL`, `0 Critical / 1 Important / 2 Minor`
+  - third re-review: `FAIL`, `1 Critical / 0 Important / 0 Minor`
+  - fourth re-review: `FAIL`, `0 Critical / 1 Important / 0 Minor`
+  - final re-review: `PASS`, `0 Critical / 0 Important / 0 Minor`
+- closed findings include exact repository/service/controller input contracts,
+  gateway-owned Engine composition, single audit projector and event ownership,
+  required normalized TTL typing, asynchronous bodyless admission, raw revoke
+  path ownership, full-request canonical HMAC verification, real SQLite recovery
+  Test Order, immediate test registration, and mutation-driven privacy gates
+- validation: `npm run test:repo` passed `317/317`; `git diff --check` passed;
+  every changed Markdown document has balanced fences
+- dependency: GENERAL-002 remains
+  `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`; neither GENERAL-002 nor
+  GENERAL-003 is `VERIFIED`
+- next: await explicit user approval before P1-T0 or any GENERAL-003 RED test
+
 ## 2026-07-17 - REQ-SBX-GENERAL-002 P1-T2 closed frozen rule catalog
 
 - phase/task: Phase 1 / P1-T2

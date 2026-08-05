@@ -44,6 +44,8 @@ the database in `t.after`, and removes only its own temporary tree.
 - Create: `backend/src/modules/sandbox-security/adapters/sqlite/sqlite-migrations.ts`
 - Create: `backend/tests/sandbox-security-sqlite.spec.ts`
 - Modify: `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+- Modify: `docs/architecture.md`
+- Modify: `package.json`
 
 - [ ] **Step 1: Write real-filesystem migration RED tests**
 
@@ -82,6 +84,7 @@ symlink/FIFO/directory, wrong existing file mode, sidecar containment/mode,
 deployment-key mismatch, newer schema, migration rollback, `quick_check`
 failure fixture, foreign keys, busy timeout, all CHECK constraints, exact
 indexes, and close/checkpoint cases.
+Append this new spec to `test:backend` in the same step.
 
 - [ ] **Step 2: Run RED**
 
@@ -96,13 +99,6 @@ Expected: FAIL because the existing module boundary lacks the database opener.
 - [ ] **Step 3: Implement the database owner**
 
 ```ts
-export interface SqliteSandboxSecurityDatabase {
-  transaction<T>(operation: (database: DatabaseSync) => T): T;
-  read<T>(operation: (database: DatabaseSync) => T): T;
-  checkpointAndClose(): void;
-  readonly state: "open" | "closed";
-}
-
 export function openSandboxSecuritySqliteDatabase(input: Readonly<{
   path: string;
   deployment_key_id: string;
@@ -110,7 +106,7 @@ export function openSandboxSecuritySqliteDatabase(input: Readonly<{
 }>): SqliteSandboxSecurityDatabase;
 ```
 
-Validate the parent and main path before open; enable `WAL`, foreign keys, and
+Import the database port from P1-T3 without redeclaring it. Validate the parent and main path before open; enable `WAL`, foreign keys, and
 `busy_timeout=5000`; apply/check `0600` on main/WAL/SHM after WAL creation and
 each migration. Run `BEGIN IMMEDIATE`, the exact SQL schema from the approved
 specification, deployment-key binding, `quick_check`, and rollback/close on
@@ -126,13 +122,18 @@ node --experimental-strip-types --experimental-test-isolation=none --test \
 npm run typecheck:backend
 ```
 
-- [ ] **Step 5: Review, update progress, and commit**
+- [ ] **Step 5: Synchronize architecture, review, update progress, and commit**
+
+Document the single `DatabaseSync` owner, private parent/file/sidecar boundary,
+WAL pragmas, migration/integrity sequence, transaction API, and close ownership
+in `docs/architecture.md`. Run `npm run test:backend` after the focused GREEN.
 
 ```bash
 git add backend/src/modules/sandbox-security/adapters/sqlite/sqlite-database.ts \
   backend/src/modules/sandbox-security/adapters/sqlite/sqlite-migrations.ts \
   backend/src/modules/sandbox-security/sandbox-security.module.ts \
-  backend/tests/sandbox-security-sqlite.spec.ts docs/progress.md
+  backend/tests/sandbox-security-sqlite.spec.ts package.json \
+  docs/architecture.md docs/progress.md
 git commit -m "feat(backend): add sandbox security SQLite schema"
 ```
 
@@ -155,7 +156,7 @@ test("REQ-SBX-GENERAL-003 capability issue and audit insert are atomic", () => {
   assert.equal(repository.countAuditEvents("capability_issued"), 1);
   assert.throws(
     () => repository.issueWithAudit(SECOND_CAPABILITY_RECORD, malformedIssuedEvent()),
-    /SANDBOX_SECURITY_INTERNAL_ERROR/
+    hasSandboxSecurityServiceError("SANDBOX_SECURITY_INTERNAL_ERROR")
   );
   assert.equal(repository.findByTokenDigest(SECOND_TOKEN_DIGEST), null);
 });
@@ -176,28 +177,16 @@ node --experimental-strip-types --experimental-test-isolation=none --test \
 
 Expected: FAIL at the factory export assertion.
 
-- [ ] **Step 3: Implement the repository port exactly**
+- [ ] **Step 3: Implement the Phase 1 repository port exactly**
 
 ```ts
-export interface SandboxSecurityCapabilityRepository {
-  issueWithAudit(
-    record: Readonly<SandboxSecurityCapabilityPersistenceRecord>,
-    event: Readonly<SandboxSecurityAuditEvent>
-  ): void;
-  findByTokenDigest(
-    tokenDigest: `sha256:${string}`
-  ): Readonly<SandboxSecurityCapabilityPersistenceRecord> | null;
-  revokeWithAudit(input: Readonly<{
-    capability_id: string;
-    revoked_at: string;
-    create_event: (
-      record: Readonly<SandboxSecurityCapabilityPersistenceRecord>
-    ) => Readonly<SandboxSecurityAuditEvent>;
-  }>): Readonly<SandboxSecurityCapabilityPersistenceRecord> | null;
-}
+export function createSqliteSandboxSecurityCapabilityRepository(input: Readonly<{
+  database: SqliteSandboxSecurityDatabase;
+}>): SandboxSecurityCapabilityRepository;
 ```
 
-Prepared statements must name columns; child grants are inserted in one
+Import the port and persistence record from the P1-T3 type files; do not
+redeclare them in the adapter. Prepared statements must name columns; child grants are inserted in one
 transaction; read rows are fully normalized before return. Never expose token
 digest/scope seed through the authorized/public record projection.
 
@@ -223,6 +212,7 @@ git commit -m "feat(backend): persist sandbox security capabilities"
 - Create: `backend/tests/sandbox-security-idempotency.spec.ts`
 - Modify: `backend/tests/sandbox-security-sqlite.spec.ts`
 - Modify: `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+- Modify: `package.json`
 
 - [ ] **Step 1: Write state-machine RED tests**
 
@@ -245,10 +235,14 @@ test("REQ-SBX-GENERAL-003 idempotency claims replays interrupts and conflicts ex
 
 Add expired delete-before-claim, interrupted reclaim preserving created/expiry,
 completion/audit atomicity, replay/audit atomicity, concurrency interruption,
-Engine interruption, best-effort second interruption, invalid cached decision,
-16 MiB bound, production-mode scope separation, 100-row claim cleanup,
-4096-row startup/hourly cleanup, startup recovery event, claimed-without-slot
-restart, cleanup rollback, and no replay after expiry.
+direct `interrupt()` transaction atomicity, invalid cached decision, 16 MiB
+bound, production-mode scope separation, 100-row claim cleanup, 4096-row
+startup/hourly cleanup, startup recovery event, claimed-without-slot restart,
+cleanup rollback, and no replay after expiry. Engine interruption and
+best-effort second interruption belong to the P4-T3 orchestration RED.
+
+Append `backend/tests/sandbox-security-idempotency.spec.ts` to `test:backend` in
+this same step.
 
 - [ ] **Step 2: Run RED**
 
@@ -260,45 +254,47 @@ node --experimental-strip-types --experimental-test-isolation=none --test \
 Expected: FAIL because the existing module boundary lacks the repository
 factory.
 
-- [ ] **Step 3: Implement claim and transactional transitions**
+- [ ] **Step 3: Implement claim and transactional transitions against the Phase 1 port**
 
 ```ts
-export type SandboxSecurityIdempotencyClaimResult =
-  | Readonly<{ kind: "claimed" }>
-  | Readonly<{ kind: "completed"; response: SandboxSecurityDecision }>
-  | Readonly<{ kind: "in_progress" }>
-  | Readonly<{ kind: "fingerprint_conflict" }>;
-
-export interface SandboxSecurityIdempotencyRepository {
-  claim(input: Readonly<SandboxSecurityIdempotencyClaim>): SandboxSecurityIdempotencyClaimResult;
-  complete(input: Readonly<SandboxSecurityIdempotencyCompletion>): void;
-  interrupt(input: Readonly<SandboxSecurityIdempotencyInterruption>): void;
-  rejectConcurrency(input: Readonly<SandboxSecurityIdempotencyInterruption>): void;
-  recoverInProgress(now: string): number;
-  cleanupExpired(now: string, limit: 100 | 4096): number;
-}
+export function createSqliteSandboxSecurityIdempotencyRepository(input: Readonly<{
+  database: SqliteSandboxSecurityDatabase;
+}>): SandboxSecurityIdempotencyRepository;
 ```
 
-Normalize cached decisions using the shared normalizer before return. Use
+Import every idempotency input/result/error/port from P1-T3; do not redeclare
+them. Normalize cached decisions using the shared normalizer before return. Use
 `BEGIN IMMEDIATE` for claim and every paired audit transition. Persist raw
-idempotency keys nowhere.
+idempotency keys nowhere. Throw the Phase 1 tagged claim-cleanup error only when
+the 100-row cleanup in `claim()` rolls back; do not reuse it for lookup,
+normalization, transition, audit, or general SQLite failures.
 
 - [ ] **Step 4: Implement exact maintenance state**
 
 ```ts
-export interface SandboxSecurityIdempotencyMaintenance {
-  state(): "healthy" | "degraded" | "closed";
-  assertEvaluationAvailable(): void;
-  runHourlyCleanup(): void;
-  runPurgePreCleanup(): void;
-  close(): void;
-}
+export function createSandboxSecurityIdempotencyMaintenance(input: Readonly<{
+  repository: SandboxSecurityIdempotencyRepository;
+  runtime: SandboxSecurityRuntimePort;
+  audit_projector: SandboxSecurityAuditProjector;
+}>): SandboxSecurityIdempotencyMaintenance;
 ```
 
-Startup cleanup must commit before `healthy`. Runtime claim/hourly cleanup
-failure sets `degraded`; every evaluation/replay then returns storage 503 before
-body/fingerprint/lookup. A committed hourly or purge pre-cleanup restores
-`healthy`. `closed` never reopens. Schedule exactly one unref'ed hourly timer.
+Import the maintenance port from P1-T3. Construction performs recovery and startup cleanup before `healthy`, then
+schedules exactly one hourly interval and calls `unref()` once. `claim()` wraps
+the repository's atomic cleanup-plus-claim: only its tagged cleanup failure
+sets `degraded`. Hourly or purge-pre-cleanup failures also set `degraded`; a
+later committed hourly or purge pre-cleanup restores `healthy`. `closed` never
+reopens, and `close()` cancels exactly the maintenance interval. The maintenance
+object never closes SQLite and never schedules audit-retention cleanup.
+`assertEvaluationAvailable`, tagged claim-cleanup failure, failed hourly/purge
+cleanup, and `closed` map through the P1 service-error factory to exact
+`SANDBOX_SECURITY_STORAGE_UNAVAILABLE` with retry 60. Other repository failures
+map to `SANDBOX_SECURITY_INTERNAL_ERROR`; no P3 file imports an HTTP class or
+classifies error messages.
+For startup recovery it passes a typed `create_event(record)` callback that
+uses the already constructed projector, `runtime.nextAuditEventId()`, the
+runtime wall clock, the row's stored correlation fields, zero elapsed time, and
+`startup_recovery`. Recovery never hand-builds event JSON.
 
 - [ ] **Step 5: Run GREEN**
 
@@ -315,7 +311,7 @@ npm run typecheck:backend
 git add backend/src/modules/sandbox-security/adapters/sqlite/sqlite-idempotency.repository.ts \
   backend/src/modules/sandbox-security/sandbox-security.module.ts \
   backend/tests/sandbox-security-idempotency.spec.ts \
-  backend/tests/sandbox-security-sqlite.spec.ts docs/progress.md
+  backend/tests/sandbox-security-sqlite.spec.ts package.json docs/progress.md
 git commit -m "feat(backend): persist sandbox security idempotency"
 ```
 
@@ -337,7 +333,8 @@ test("REQ-SBX-GENERAL-003 audit selection cannot return another subject", () => 
     visibility_subject_id: "subject-a",
     after: null,
     limit: 100,
-    read_event: FIXED_AUDIT_READ_EVENT
+    create_event: ({ returned_count, next_cursor_present }) =>
+      fixedAuditReadEvent({ returned_count, next_cursor_present })
   });
   assert.equal(page.events.every((event) => event.subject_id === "subject-a"), true);
   assert.equal(page.events.some((event) => event.event_type === "audit_read"), false);
@@ -346,9 +343,11 @@ test("REQ-SBX-GENERAL-003 audit selection cannot return another subject", () => 
 
 Add descending `(occurred_at,event_id)` ordering, tie pagination, `limit+1`,
 post-normalization subject check, invalid stored JSON, typed-column/event JSON
-cross-check, read-event insert failure, no current-page self-read, fixed 90-day
-cutoff, 1000-row purge, `has_more`, purge/audit atomicity, and purge pre-cleanup
-failure performs no audit deletion.
+cross-check, result-aware read-event callback, read-event insert failure, no
+current-page self-read, fixed 90-day
+cutoff input, 1000-row purge, `has_more`, and purge/audit atomicity. Maintenance
+pre-cleanup failure and degraded recovery belong to P4-T2, where the audit
+service composes maintenance with this repository.
 
 - [ ] **Step 2: Run RED**
 
@@ -360,29 +359,19 @@ node --experimental-strip-types --experimental-test-isolation=none --test \
 
 Expected: FAIL at the missing factory export assertion.
 
-- [ ] **Step 3: Implement the exact repository API**
+- [ ] **Step 3: Implement the exact Phase 1 repository API**
 
 ```ts
-export interface SandboxSecurityAuditRepository {
-  append(event: Readonly<SandboxSecurityAuditEvent>): void;
-  listAndRecordRead(input: Readonly<{
-    visibility_subject_id: string;
-    after: Readonly<{ occurred_at: string; event_id: string }> | null;
-    limit: number;
-    read_event: Readonly<SandboxSecurityAuditEvent>;
-  }>): Readonly<{
-    events: SandboxSecurityAuditEvent[];
-    has_more: boolean;
-  }>;
-  purgeExpiredWithAudit(input: Readonly<{
-    cutoff: string;
-    limit: 1000;
-    create_event: (deletedCount: number, hasMore: boolean) => SandboxSecurityAuditEvent;
-  }>): Readonly<{ deleted_count: number; has_more: boolean }>;
-}
+export function createSqliteSandboxSecurityAuditRepository(input: Readonly<{
+  database: SqliteSandboxSecurityDatabase;
+}>): SandboxSecurityAuditRepository;
 ```
 
-Every public select includes `visibility_subject_id = :subject` in SQL and
+Import the port from P1-T3 rather than redeclaring it. In the same transaction,
+select the page, compute returned count/next-cursor presence, invoke the typed
+event callback, require an `audit_read` event whose count/presence fields equal
+those computed values, insert it, and only then return the page. Every
+public select includes `visibility_subject_id = :subject` in SQL and
 checks normalized events again before return. Bind cutoff internally from the
 service clock; accept no caller-provided retention interval.
 

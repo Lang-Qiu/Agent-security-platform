@@ -10,7 +10,7 @@ Sandbox Security Authenticated Backend API
 
 ## Status
 
-SPEC_APPROVED_PLAN_COMPLETE_PENDING_USER_APPROVAL
+PLAN_REVIEWED_PENDING_USER_APPROVAL
 
 ## Transition Authority
 
@@ -21,9 +21,14 @@ decisions section by section, requested one independent specification review,
 and authorized implementation-plan writing after that review passed.
 
 The final independent specification review returned `PASS` with no Critical or
-Important finding. The complete GENERAL-003 Master and six Phase plans are now
-written and await explicit user approval. This status authorizes neither RED
-tests nor production implementation.
+Important finding. The initial independent implementation-plan review and first
+re-review each returned `FAIL` with two Critical and five Important findings.
+Three later re-reviews returned `FAIL` while successively closing one Important
+and two Minor findings, one Critical finding, and one final Important finding.
+The final independent plan re-review returned `PASS` with zero Critical,
+Important, or Minor findings. This status records a reviewed plan but authorizes
+neither RED tests nor production implementation until the user explicitly
+approves execution.
 
 ## Canonical Inputs
 
@@ -116,8 +121,9 @@ attempted and its expected hermetic fail-closed result reported honestly.
 ## Current Work
 
 - The written specification is approved after independent review.
-- The complete Master and six Phase implementation plans are written.
+- The Master and six Phase implementation plans passed final independent review
+  with zero Critical, Important, or Minor findings after iterative correction.
 - No GENERAL-003 business test or production implementation has started.
-- Next gate: user review and explicit approval of the complete plan set.
+- Next gate: explicit user approval of the reviewed implementation plan.
 - After approval, execute exactly one Phase/task at a time using RED -> GREEN ->
   review -> fix/re-review -> document evidence -> exact commit -> stop.

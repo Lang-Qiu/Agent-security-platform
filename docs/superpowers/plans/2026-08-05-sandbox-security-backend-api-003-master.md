@@ -28,7 +28,7 @@ the repository TypeScript compiler, and no new runtime dependency.
 
 - Requirement: `REQ-SBX-GENERAL-003`
 - Date: `2026-08-05`
-- Status: `PLAN_COMPLETE_PENDING_USER_APPROVAL`
+- Status: `PLAN_REVIEWED_PENDING_USER_APPROVAL`
 - Canonical specification:
   `docs/superpowers/specs/2026-08-05-sandbox-security-backend-api-design.md`
 - Specification review: `PASS`, no Critical or Important findings
@@ -36,40 +36,63 @@ the repository TypeScript compiler, and no new runtime dependency.
   `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`
 - Maximum implementation status before that dependency closes:
   `IMPLEMENTED_PENDING_GLOBAL_P6_GATE`
-- This plan does not authorize implementation until the user approves the
-  complete Master and Phase set.
+- Final independent plan re-review: `PASS`, with zero Critical, Important, or
+  Minor findings after all accepted findings were corrected.
+- This reviewed plan does not authorize implementation until the user
+  explicitly approves it.
 
 ## Plan Set
 
 | Order | Plan | Outcome |
 | --- | --- | --- |
-| 1 | `2026-08-05-sandbox-security-backend-api-003-phase-1-surfaces.md` | shared audit contract, five route matches, injectable module boundary, typecheck scripts |
-| 2 | `2026-08-05-sandbox-security-backend-api-003-phase-2-domain-controls.md` | simulation authority, cryptography, capabilities, rate and concurrency controls |
+| 1 | `2026-08-05-sandbox-security-backend-api-003-phase-1-surfaces.md` | permanent requirement/status gate, shared audit contract, five route matches, exact injectable module/port boundary, typecheck scripts |
+| 2 | `2026-08-05-sandbox-security-backend-api-003-phase-2-domain-controls.md` | simulation authority, cryptography, capabilities, rate/concurrency controls, and the one content-free audit projector required by recovery |
 | 3 | `2026-08-05-sandbox-security-backend-api-003-phase-3-sqlite.md` | hardened database, migrations, durable repositories, recovery and retention |
-| 4 | `2026-08-05-sandbox-security-backend-api-003-phase-4-services.md` | content-free audit projection and capability/audit/evaluation orchestration |
+| 4 | `2026-08-05-sandbox-security-backend-api-003-phase-4-services.md` | capability, audit, and evaluation orchestration using the Phase 2 projector |
 | 5 | `2026-08-05-sandbox-security-backend-api-003-phase-5-http.md` | strict HTTP admission, public/internal controllers, listener integration |
 | 6 | `2026-08-05-sandbox-security-backend-api-003-phase-6-production-closure.md` | real Engine adapter, production startup/shutdown, privacy gates, docs and final validation |
 
 The order is strict. A Phase may start only after every task in its predecessor
 is committed and reviewed with no unresolved Critical or Important finding.
 
-## Plan Self-Review Record
+## Plan Review And Correction Record
 
-- Specification coverage: all sections and every required scenario map to a
-  named Phase task; no uncovered behavior was found.
-- Placeholder scan: no unresolved planning marker, deferred implementation
-  instruction, generalized error-handling placeholder, or cross-task shortcut
-  is present.
+- Initial independent plan review: `FAIL` with two Critical, five Important,
+  and zero Minor findings.
+- First independent re-review: `FAIL` with two Critical, five Important, and
+  zero Minor findings. It confirmed the GENERAL-002 gate correction, Engine
+  factory ownership, immediate test registration, and durable-doc ownership,
+  but found incomplete exact input types, incompatible controller composition,
+  late recovery projection, audit duplication, and four remaining RED/ GREEN
+  boundary errors.
+- Second re-review: `FAIL` with zero Critical, one Important, and two Minor
+  findings: the P6 full-request fingerprint used the P2 `{"a":1}` vector,
+  bodyless admission lacked delayed-byte semantics, and normalized capability
+  TTL lacked a required type.
+- Third re-review: `FAIL` with one Critical and no other finding: revoke routing
+  decoded the capability path before administrator authentication and bodyless
+  admission.
+- Fourth re-review: `FAIL` with zero Critical, one Important, and zero Minor
+  findings: the specification retained an obsolete fake-repository idempotency
+  Test Order despite projector ownership having moved to P2.
+- Final independent re-review: `PASS` with zero Critical, Important, or Minor
+  findings. All earlier findings remained closed.
+- Closed Critical corrections: Phase 1 now spells out every idempotency and
+  audit input field plus the tagged claim-cleanup error; module construction
+  explicitly projects the exact controller dependencies; revoke routing passes
+  an opaque raw path segment until the authenticated bodyless controller; and
+  the one audit projector moved to P2-T5 for injection into Phase 3 recovery.
+- Closed Important/Minor corrections: audit default is 50/max 100; HTTP error
+  mapping requires the response request ID; controllers audit only pre-service
+  admission failures; the P6 gateway test independently recomputes the actual
+  full-request canonical HMAC; bodyless admission awaits delayed chunks; raw and
+  normalized capability TTL types are distinct; and cross-task RED/Test Order
+  ownership matches the six Phase plans.
 - RED integrity: first shared/router/module tests use existing importable
   boundaries; later files are introduced through the existing module export
   boundary; no missing-module exception is accepted as RED.
-- Type consistency corrections: public-controller maintenance admission is
-  pre-body, evaluation-service stage/profile authorization begins after shared
-  normalization, known expired/revoked capability identity is available only
-  for content-free audit, and the SQLite test surface uses the declared
-  `read()` port.
 - Review note closure: exact Retry-After formulas and limits are locked in this
-  Master.
+  Master. Execution remains prohibited until explicit user approval.
 
 ## Execution Environment
 
@@ -192,6 +215,7 @@ backend/tests/sandbox-security-routes.spec.ts
 ```text
 backend/src/modules/sandbox-security/sandbox-security.module.ts
 backend/src/modules/sandbox-security/sandbox-security.types.ts
+backend/src/modules/sandbox-security/sandbox-security.errors.ts
 backend/src/modules/sandbox-security/simulation-authority.ts
 backend/src/modules/sandbox-security/hmac.ts
 backend/src/modules/sandbox-security/dto/capability.ts
@@ -203,6 +227,7 @@ backend/src/modules/sandbox-security/ports/evaluation.gateway.ts
 backend/src/modules/sandbox-security/ports/capability.repository.ts
 backend/src/modules/sandbox-security/ports/idempotency.repository.ts
 backend/src/modules/sandbox-security/ports/audit.repository.ts
+backend/src/modules/sandbox-security/ports/sqlite-database.ts
 ```
 
 ### SQLite Adapters
@@ -262,10 +287,14 @@ Every behavior task uses this exact sequence:
    as invalid RED; repair the test boundary first.
 4. Write the smallest production change that satisfies that behavior.
 5. Run the focused command until GREEN.
-6. Run the Phase regression commands and `git diff --check`.
-7. Request an independent specification and code-quality review.
-8. For each accepted finding, add a new failing regression test before fixing.
-9. Re-run, re-review, update `docs/progress.md`, commit exact paths, and stop.
+6. Run the Phase regression commands and `git diff --check`; after any task
+   that creates or modifies a shared/backend spec, this includes its registered
+   `npm run test:shared` and/or `npm run test:backend` gate.
+7. Confirm every test file created by the task was appended to its permanent
+   `package.json` gate in that same task and that the registered gate reruns it.
+8. Request an independent specification and code-quality review.
+9. For each accepted finding, add a new failing regression test before fixing.
+10. Re-run, re-review, update `docs/progress.md`, commit exact paths, and stop.
 
 The first shared RED dynamically imports the existing `shared/index.ts` and
 fails because the audit normalizer export is absent. The first backend RED
@@ -279,6 +308,13 @@ source file is created. No test catches, maps, or masks
 
 Pure documentation and script-list changes are the repository-approved TDD
 exception. They must not contain production behavior.
+
+The permanent GENERAL-003 repository gate is created and registered in P1-T0,
+before any shared or backend business RED. It owns sprint requirement identity,
+the legal planning/implementation/final status transition set, the unchanged
+GENERAL-002 provisional dependency, and the rule that GENERAL-003 cannot become
+globally `VERIFIED` while the P6 dependency remains open. No GENERAL-002 gate
+may freeze a mutable GENERAL-003 current-work sentence or one transient status.
 
 ## Required Test Naming
 

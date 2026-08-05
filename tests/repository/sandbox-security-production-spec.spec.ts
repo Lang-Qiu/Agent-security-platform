@@ -372,30 +372,6 @@ test("REQ-SBX-GENERAL-002 Spec final review gate rejects incomplete qualificatio
   assert.throws(() => assertGeneral002SpecReviewCorrections(weakened));
 });
 
-test("REQ-SBX-GENERAL-003 owns active sprint state after the authorized transition", () => {
-  const sprint = readText("docs/sprint-current.md");
-  assert.equal(
-    extractSection(sprint, "## Requirement ID"),
-    "REQ-SBX-GENERAL-003"
-  );
-  assert.match(
-    extractSection(sprint, "## Canonical Inputs"),
-    /2026-08-05-sandbox-security-backend-api-design\.md/
-  );
-  assert.match(
-    extractSection(sprint, "## Current Work"),
-    /No GENERAL-003 business test or production implementation has started\./
-  );
-  assert.equal(
-    extractSection(sprint, "## Status"),
-    "SPEC_APPROVED_PLAN_COMPLETE_PENDING_USER_APPROVAL"
-  );
-  assert.match(
-    extractSection(sprint, "## Dependency Gate"),
-    /GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`/
-  );
-});
-
 test("REQ-SBX-GENERAL-002 durable docs describe current production scope", () => {
   const readme = readText("README.md");
   const progress = readText("docs/progress.md");

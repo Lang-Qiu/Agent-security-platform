@@ -6,17 +6,22 @@
 > to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for
 > tracking.
 
-**Goal:** Implement content-free audit projection and the capability, audit,
-and evaluation application workflows using injected domain ports.
+**Goal:** Implement capability, audit, and evaluation application workflows
+using injected domain ports and the single Phase 2 content-free projector.
 
 **Architecture:** Services own orchestration order and transaction intent but
-never inspect SQL or Engine internals. Audit projection is a pure exact-union
-builder. Evaluation fingerprints before claim, acquires an Engine slot only for
+never inspect SQL or Engine internals. Audit projection is injected through the
+already tested pure exact-union builder. Evaluation fingerprints before claim, acquires an Engine slot only for
 a new/reclaimed claim, and returns a Decision only after durable completion and
 audit commit.
 
 **Tech Stack:** TypeScript ESM, `node:test`, fake repositories/gateways/clocks,
 shared normalizers, Phase 2 controls, Phase 3 repository ports.
+
+Every service failure is created with the closed P1
+`createSandboxSecurityServiceError` factory. Phase 4 imports no HTTP class and
+does not encode status codes or response envelopes. Tests assert exact error
+code, rejection metadata, and retry metadata rather than message text.
 
 ---
 
@@ -33,94 +38,11 @@ npm run typecheck:backend
 git diff --check
 ```
 
-## P4-T1: Exact Content-Free Audit Projection
+The exact content-free projector is already implemented and registered by
+P2-T5 so Phase 3 startup recovery can inject it. Phase 4 must reuse that one
+instance and must not add a second builder.
 
-**Files:**
-
-- Create: `backend/src/modules/sandbox-security/audit-projector.ts`
-- Create: `backend/tests/sandbox-security-audit.spec.ts`
-- Modify: `backend/src/modules/sandbox-security/sandbox-security.module.ts`
-
-- [ ] **Step 1: Write projector RED tests**
-
-```ts
-test("REQ-SBX-GENERAL-003 projects a completed Decision without content", () => {
-  assert.equal(typeof boundary.createSandboxSecurityEvaluationCompletedAudit, "function");
-  const event = boundary.createSandboxSecurityEvaluationCompletedAudit!({
-    event_id: FIXED_AUDIT_ID,
-    occurred_at: FIXED_NOW,
-    subject_id: "subject-a",
-    authorization_scope_id: FIXED_SCOPE,
-    capability_id: FIXED_CAPABILITY_ID,
-    composition_binding: "sandbox-security-production-composition.v1:rule_only",
-    elapsed_ms: 17,
-    decision: FIXED_DECISION
-  });
-  assert.equal(event.request_id, FIXED_DECISION.request_id);
-  assert.equal(event.verdict, FIXED_DECISION.verdict);
-  assert.deepEqual(event.category_counts, ALL_CATEGORY_COUNTS);
-  assert.deepEqual(event.detector_run_status_counts, ALL_RUN_STATUS_COUNTS);
-  assert.doesNotMatch(JSON.stringify(event), /RAW_SENTINEL|source_token|evidence_ref/);
-});
-```
-
-Add replay recomputation, interrupted codes, evaluation/audit-read rejection
-matrices, issue/revoke/read/purge ownership, all-zero counts, multiple counts,
-elapsed floor/clamp, exact keys, catalog order, defensive copies, and prohibited
-key/value sentinel scans.
-
-- [ ] **Step 2: Run RED**
-
-```bash
-node --experimental-strip-types --experimental-test-isolation=none --test \
-  backend/tests/sandbox-security-audit.spec.ts
-```
-
-Expected: FAIL because the module boundary lacks the projector factory.
-
-- [ ] **Step 3: Implement explicit variant builders**
-
-```ts
-export function createSandboxSecurityEvaluationCompletedAudit(
-  input: Readonly<SandboxSecurityEvaluationAuditInput>
-): Readonly<SandboxSecurityAuditEvent>;
-
-export function createSandboxSecurityEvaluationReplayedAudit(
-  input: Readonly<SandboxSecurityEvaluationAuditInput>
-): Readonly<SandboxSecurityAuditEvent>;
-
-export function createSandboxSecurityEvaluationInterruptedAudit(
-  input: Readonly<SandboxSecurityInterruptionAuditInput>
-): Readonly<SandboxSecurityAuditEvent>;
-
-export function createSandboxSecurityRequestRejectedAudit(
-  input: Readonly<SandboxSecurityRejectionAuditInput>
-): Readonly<SandboxSecurityAuditEvent>;
-```
-
-Also implement exact issue, revoke, audit-read, and purge builders. Construct
-each returned object field-by-field; never spread a request, Decision, stored
-row, error, or provider value. Normalize the completed/replayed Decision before
-counting findings/runs and normalize the final event before return.
-
-- [ ] **Step 4: Run GREEN**
-
-```bash
-node --experimental-strip-types --experimental-test-isolation=none --test \
-  backend/tests/sandbox-security-audit.spec.ts
-npm run typecheck:backend
-```
-
-- [ ] **Step 5: Review, update progress, and commit**
-
-```bash
-git add backend/src/modules/sandbox-security/audit-projector.ts \
-  backend/src/modules/sandbox-security/sandbox-security.module.ts \
-  backend/tests/sandbox-security-audit.spec.ts docs/progress.md
-git commit -m "feat(backend): project sandbox security audit events"
-```
-
-## P4-T2: Capability Issue and Revoke Service
+## P4-T1: Capability Issue and Revoke Service
 
 **Files:**
 
@@ -131,6 +53,15 @@ git commit -m "feat(backend): project sandbox security audit events"
 - [ ] **Step 1: Write service RED tests with a recording repository**
 
 ```ts
+const FIXED_NORMALIZED_GRANT = {
+  schema_version: "sandbox-security-capability-issue-request.v1",
+  subject_id: "operator:alpha",
+  scopes: ["sandbox_security:evaluate"],
+  allowed_stages: ["user_input", "tool_request"],
+  allowed_policy_profile_ids: ["sandbox-security-strict.v1"],
+  ttl_seconds: 900
+} satisfies Readonly<SandboxSecurityNormalizedCapabilityIssueRequest>;
+
 test("REQ-SBX-GENERAL-003 issues one-time bearer and persists digest only", () => {
   assert.equal(typeof boundary.createSandboxSecurityCapabilityService, "function");
   const fixture = createCapabilityServiceFixture();
@@ -145,8 +76,12 @@ test("REQ-SBX-GENERAL-003 issues one-time bearer and persists digest only", () =
 
 Add explicit 60/3600 TTL, random 32-byte scope seed, UUID v4 IDs, auth-scope
 binding, issue/audit atomic failure, no token on failure, revoke not found,
-first/repeated revoke, limiter deletion after revoke, and returned exact DTO
-cases.
+first revoke fixes `revoked_at`, repeated revoke preserves that timestamp without
+a second revoke event, limiter deletion occurs only after a successful known-ID
+revoke, and returned exact DTO cases. These are the revoke/limiter scenarios
+deliberately owned by this service task rather than P2-T3.
+Assert unknown revoke throws the P1 capability-not-found service error and
+repository/projector failures throw the P1 internal service error.
 
 - [ ] **Step 2: Run RED**
 
@@ -161,28 +96,24 @@ Expected: FAIL at the missing service factory export.
 - [ ] **Step 3: Implement the specification signature**
 
 ```ts
-export interface SandboxSecurityCapabilityService {
-  issue(
-    request: Readonly<SandboxSecurityCapabilityIssueRequest>
-  ): Readonly<SandboxSecurityCapabilityIssueResult>;
-  revoke(
-    capabilityId: string
-  ): Readonly<SandboxSecurityCapabilityPublicRecord>;
-}
-
 export function createSandboxSecurityCapabilityService(input: Readonly<{
   repository: SandboxSecurityCapabilityRepository;
   hmac: SandboxSecurityHmacService;
   production_mode: SandboxSecurityProductionMode;
   runtime: SandboxSecurityRuntimePort;
-  remove_capability_limiter: (capabilityId: string) => void;
+  audit_projector: SandboxSecurityAuditProjector;
+  capability_limiters: SandboxSecurityCapabilityLimiterRegistry;
 }>): SandboxSecurityCapabilityService;
 ```
 
-Call the already-tested DTO normalizer before service entry in the controller;
-the service accepts only its normalized result. Construct one persistence
-record and one audit event, call the atomic repository operation, and only then
-return the raw bearer token.
+Import the service interface, required-TTL
+`SandboxSecurityNormalizedCapabilityIssueRequest`, and all dependency contracts
+from P1-T3 without redeclaring them. Keep every service fixture statically typed
+as that normalized request. Call the already-tested DTO normalizer before
+service entry in the controller; the service accepts only its non-null normalized
+result and never applies a second TTL default. Construct one persistence record
+and one audit event, call the atomic repository operation, and only then return
+the raw bearer token.
 
 - [ ] **Step 4: Run GREEN, review, and commit**
 
@@ -197,7 +128,7 @@ git add backend/src/modules/sandbox-security/capability.service.ts \
 git commit -m "feat(backend): manage sandbox security capabilities"
 ```
 
-## P4-T3: Subject-Scoped Audit List and Fixed Retention Service
+## P4-T2: Subject-Scoped Audit List and Fixed Retention Service
 
 **Files:**
 
@@ -223,16 +154,21 @@ test("REQ-SBX-GENERAL-003 binds an audit cursor to subject and authorization sco
       cursor: first.next_cursor!,
       limit: 1
     }),
-    /SANDBOX_SECURITY_AUDIT_CURSOR_INVALID/
+    hasSandboxSecurityServiceError("SANDBOX_SECURITY_AUDIT_CURSOR_INVALID")
   );
 });
 ```
 
-Add default/maximum limit, deterministic tie pagination, cursor expiry via
-capability auth, selected-page-before-read-event, audit write failure returns
-no page, defensive copies, fixed `90 * 24 * 60 * 60 * 1000` cutoff, 1000-row
-purge, pre-cleanup recovery from degraded, pre-cleanup failure 503/no purge,
-and fixed purge subject cases.
+Add deterministic tie pagination, selected-page-before-read-event, audit write
+failure returns no page, exact returned-count/next-cursor callback values,
+defensive copies, fixed
+`90 * 24 * 60 * 60 * 1000` cutoff, 1000-row purge, pre-cleanup recovery from
+degraded, pre-cleanup failure 503/no purge, and fixed purge subject cases.
+Default/maximum query limits and capability expiry are controller/admission
+behaviors owned by P5-T2; this service accepts an already authorized capability
+and a required normalized `limit`.
+Assert invalid cursor throws the P1 cursor-invalid service error, purge
+pre-cleanup throws storage-unavailable/retry 60, and other failures use internal.
 
 - [ ] **Step 2: Run RED**
 
@@ -247,17 +183,16 @@ Expected: FAIL because the module lacks the audit service factory.
 - [ ] **Step 3: Implement exact service methods**
 
 ```ts
-export interface SandboxSecurityAuditService {
-  list(input: Readonly<{
-    capability: SandboxSecurityAuthorizedCapability;
-    cursor?: string;
-    limit: number;
-  }>): Readonly<SandboxSecurityAuditPage>;
-  purgeExpired(): Readonly<SandboxSecurityAuditPurgeResult>;
-}
+export function createSandboxSecurityAuditService(input: Readonly<{
+  repository: SandboxSecurityAuditRepository;
+  hmac: SandboxSecurityHmacService;
+  maintenance: SandboxSecurityIdempotencyMaintenance;
+  runtime: SandboxSecurityRuntimePort;
+  audit_projector: SandboxSecurityAuditProjector;
+}>): SandboxSecurityAuditService;
 ```
 
-Decode/verify the cursor before repository selection, pass the authenticated
+Import the service interface from P1-T3 without redeclaring it. Decode/verify the cursor before repository selection, pass the authenticated
 subject as the mandatory SQL predicate, encode the next cursor from the last
 returned event only, and call maintenance pre-cleanup before the fixed purge.
 
@@ -274,13 +209,14 @@ git add backend/src/modules/sandbox-security/audit.service.ts \
 git commit -m "feat(backend): serve sandbox security audit pages"
 ```
 
-## P4-T4: Evaluation Orchestration and Idempotency
+## P4-T3: Evaluation Orchestration and Idempotency
 
 **Files:**
 
 - Create: `backend/src/modules/sandbox-security/evaluation.service.ts`
 - Create: `backend/tests/sandbox-security-evaluation.service.spec.ts`
 - Modify: `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+- Modify: `package.json`
 
 - [ ] **Step 1: Write ordered fake-port RED tests**
 
@@ -298,7 +234,7 @@ test("REQ-SBX-GENERAL-003 fingerprints claims leases evaluates releases and comp
     "simulation.build",
     "gateway.fingerprint",
     "hmac.idempotency_key",
-    "repository.claim",
+    "maintenance.claim",
     "concurrency.acquire",
     "gateway.evaluate",
     "concurrency.release",
@@ -313,7 +249,12 @@ invalid fingerprint/no row, no available slot marks interrupted plus rejection,
 Engine failure interruption, completion failure no Decision plus best-effort
 interruption, invalid Engine/cached Decision, abort propagation, slot release
 before persistence, 24-hour timestamps, request correlation, and elapsed audit
-projection cases.
+projection cases. These tests own the replay/conflict slot assertions moved from
+P2-T4 and the Engine/best-effort interruption assertions moved from P3-T3.
+Append this new spec to `test:backend` in the same step.
+Assert fingerprint/Engine/persistence failures use internal, idempotency results
+use the exact two 409-domain codes, no slot uses concurrency/retry 1, and claim
+cleanup uses storage-unavailable/retry 60. Do not import Phase 5 errors.
 
 - [ ] **Step 2: Run RED**
 
@@ -327,24 +268,29 @@ Expected: FAIL because the module lacks the evaluation service factory.
 - [ ] **Step 3: Implement the exact service signature and order**
 
 ```ts
-export interface SandboxSecurityEvaluationService {
-  evaluate(input: Readonly<{
-    capability: SandboxSecurityAuthorizedCapability;
-    idempotency_key: string;
-    submission: SandboxSecurityRequest;
-    signal?: AbortSignal;
-  }>): Promise<Readonly<SandboxSecurityDecision>>;
-}
+export function createSandboxSecurityEvaluationService(input: Readonly<{
+  authorizer: SandboxSecurityCapabilityAuthenticator;
+  hmac: SandboxSecurityHmacService;
+  idempotency_repository: SandboxSecurityIdempotencyRepository;
+  maintenance: SandboxSecurityIdempotencyMaintenance;
+  concurrency: SandboxSecurityEngineConcurrencyLimiter;
+  gateway: SandboxSecurityEvaluationGateway;
+  runtime: SandboxSecurityRuntimePort;
+  audit_projector: SandboxSecurityAuditProjector;
+}>): SandboxSecurityEvaluationService;
 ```
 
-Implementation order is fixed: stage/profile grant; simulation context;
-gateway fingerprint; idempotency-key HMAC; claim; immediate return for
+Import the service interface and dependency contracts from P1-T3 without
+redeclaring them. Implementation order is fixed: stage/profile grant; simulation context;
+gateway fingerprint; idempotency-key HMAC; `maintenance.claim`; immediate return for
 replay/conflicts; slot acquisition for `claimed`; Engine outside a transaction;
 release in `finally` when Engine settles; normalized Decision;
 completion/audit transaction; return. The controller owns the required
-pre-body maintenance-health check; a claim-cleanup failure still surfaces the
-same storage-unavailable error from the repository. Failed fingerprint, replay,
-conflict, and slow body never acquire a slot.
+pre-body maintenance-health check; the service calls `maintenance.claim()` so a
+tagged claim-cleanup failure also transitions health and surfaces the same
+storage-unavailable error. Failed fingerprint, replay, and conflict never
+acquire a slot. Slow-body admission is not observable here and is tested in
+P5-T2 before this service is invoked.
 
 - [ ] **Step 4: Run GREEN and Phase gates**
 
@@ -362,8 +308,9 @@ git diff --check
 ```bash
 git add backend/src/modules/sandbox-security/evaluation.service.ts \
   backend/src/modules/sandbox-security/sandbox-security.module.ts \
-  backend/tests/sandbox-security-evaluation.service.spec.ts docs/progress.md
+  backend/tests/sandbox-security-evaluation.service.spec.ts package.json \
+  docs/progress.md
 git commit -m "feat(backend): orchestrate sandbox security evaluations"
 ```
 
-Stop after P4-T4. HTTP body and header parsing remain Phase 5 work.
+Stop after P4-T3. HTTP body and header parsing remain Phase 5 work.

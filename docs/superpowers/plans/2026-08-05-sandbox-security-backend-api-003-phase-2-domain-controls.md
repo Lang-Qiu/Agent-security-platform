@@ -7,14 +7,15 @@
 > tracking.
 
 **Goal:** Implement simulation-only authority construction, exact HMAC/token
-primitives, capability grant rules, and deterministic in-memory admission
-controls behind the Phase 1 module boundary.
+primitives, capability grant rules, deterministic in-memory admission controls,
+and the one content-free audit projector required before persistence recovery.
 
 **Architecture:** Pure domain helpers depend on injected clock/random ports and
 backend-local types. Cryptographic framing is centralized in one service.
 Capability normalization and authentication remain separate from HTTP header
 parsing. Limiters use a monotonic clock and contain no persistence or Engine
-logic.
+logic. The pure projector consumes only the exact Phase 1 input types and
+returns the shared audit union; it performs no writes.
 
 **Tech Stack:** Node `crypto`, TypeScript ESM, `node:test`, GENERAL-001 public
 Engine types, shared request normalizers.
@@ -41,6 +42,7 @@ git diff --check
 - Create: `backend/src/modules/sandbox-security/simulation-authority.ts`
 - Create: `backend/tests/sandbox-security-simulation-authority.spec.ts`
 - Modify: `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+- Modify: `package.json`
 
 - [ ] **Step 1: Write RED through the existing module boundary**
 
@@ -70,6 +72,7 @@ test("REQ-SBX-GENERAL-003 builds simulation authority from normalized public inp
 Add exact content-order, JSON defensive-copy, optional tool, stage/profile
 mirroring, public/authority equality, mutation-after-return, and absence of
 `platform_control`/`integration_observation` cases.
+Append this new spec to `test:backend` in the same step.
 
 - [ ] **Step 2: Run RED**
 
@@ -137,7 +140,8 @@ npm run typecheck:backend
 ```bash
 git add backend/src/modules/sandbox-security/simulation-authority.ts \
   backend/src/modules/sandbox-security/sandbox-security.module.ts \
-  backend/tests/sandbox-security-simulation-authority.spec.ts docs/progress.md
+  backend/tests/sandbox-security-simulation-authority.spec.ts package.json \
+  docs/progress.md
 git commit -m "feat(backend): build sandbox simulation authority"
 ```
 
@@ -148,6 +152,7 @@ git commit -m "feat(backend): build sandbox simulation authority"
 - Create: `backend/src/modules/sandbox-security/hmac.ts`
 - Create: `backend/tests/sandbox-security-hmac.spec.ts`
 - Modify: `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+- Modify: `package.json`
 
 - [ ] **Step 1: Write independent fixed-vector RED tests**
 
@@ -184,6 +189,7 @@ calling production framing helpers. Add wrong key, tampered MAC, padded/non-
 canonical base64url, wrong field count, trailing byte, non-ASCII, overlength,
 wrong subject/scope, invalid timestamp/event ID, key mutation, token grammar,
 and digest-only cases.
+Append this new spec to `test:backend` in the same step.
 
 - [ ] **Step 2: Run RED**
 
@@ -197,24 +203,6 @@ Expected: FAIL because the existing module lacks the HMAC factory export.
 - [ ] **Step 3: Implement the closed service**
 
 ```ts
-export interface SandboxSecurityHmacService {
-  deploymentKeyId(): string;
-  authorizationScopeId(
-    scopeSeed: Uint8Array,
-    productionMode: SandboxSecurityProductionMode
-  ): string;
-  idempotencyKeyHmac(idempotencyKey: string): string;
-  fingerprintCanonicalBytes(canonicalBytes: Uint8Array): string;
-  encodeAuditCursor(input: Readonly<SandboxSecurityAuditCursorFields>): string;
-  decodeAuditCursor(
-    cursor: string,
-    expected: Readonly<{
-      subject_id: string;
-      authorization_scope_id: string;
-    }>
-  ): Readonly<SandboxSecurityAuditCursorFields> | null;
-}
-
 export function createSandboxSecurityHmacService(
   deploymentKey: Uint8Array
 ): SandboxSecurityHmacService;
@@ -224,7 +212,8 @@ export function createSandboxSecurityOpaqueCapability(input: Readonly<{
 }>): Readonly<{ bearer_token: string; token_digest: `sha256:${string}` }>;
 ```
 
-Implement `HMAC_FRAME` exactly once with ASCII checks and big-endian lengths.
+Import the HMAC port from P1-T3 rather than redeclaring it. Implement
+`HMAC_FRAME` exactly once with ASCII checks and big-endian lengths.
 Copy key and input bytes on entry, retain no canonical-byte reference, use
 `timingSafeEqual` for cursor MAC, and store/return only the capability digest
 outside the one-time issue result.
@@ -242,7 +231,7 @@ npm run typecheck:backend
 ```bash
 git add backend/src/modules/sandbox-security/hmac.ts \
   backend/src/modules/sandbox-security/sandbox-security.module.ts \
-  backend/tests/sandbox-security-hmac.spec.ts docs/progress.md
+  backend/tests/sandbox-security-hmac.spec.ts package.json docs/progress.md
 git commit -m "feat(backend): add sandbox security cryptographic framing"
 ```
 
@@ -254,6 +243,7 @@ git commit -m "feat(backend): add sandbox security cryptographic framing"
 - Create: `backend/src/modules/sandbox-security/capability-authorizer.ts`
 - Create: `backend/tests/sandbox-security-capability.spec.ts`
 - Modify: `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+- Modify: `package.json`
 
 - [ ] **Step 1: Write capability RED cases**
 
@@ -285,9 +275,14 @@ test("REQ-SBX-GENERAL-003 normalizes a default-TTL evaluate grant", () => {
 
 Add TTL `59/60/3600/3601`, empty/duplicate/sparse/inherited/accessor arrays,
 subject grammar, evaluate/non-evaluate grant matrix, strict bearer grammar,
-unknown/malformed/expired/revoked indistinguishable 401, scope-before-stage,
+unknown/malformed as `unknown` and expired/revoked as content-free
+`known_denied` domain results, scope-before-stage,
 stage/profile denial, changed production-mode scope, constant-time bootstrap
-admin check, idempotent revoke timestamp, and limiter-entry removal cases.
+admin check, and exact authorized/known-denied/unknown projections. Revoke
+timestamps and limiter removal belong to P4-T1, where the capability service can
+make those behaviors GREEN.
+
+Append this new spec to `test:backend` in the same step.
 
 - [ ] **Step 2: Run RED**
 
@@ -304,43 +299,7 @@ exports.
 ```ts
 export function normalizeSandboxSecurityCapabilityIssueRequest(
   value: unknown
-): SandboxSecurityCapabilityIssueRequest | null;
-
-export interface SandboxSecurityCapabilityAuthenticator {
-  authenticateToken(token: string): SandboxSecurityCapabilityAuthenticationResult;
-  requireScope(
-    capability: SandboxSecurityAuthorizedCapability,
-    scope: SandboxSecurityCapabilityScope
-  ): void;
-  requireEvaluationGrant(
-    capability: SandboxSecurityAuthorizedCapability,
-    submission: SandboxSecurityRequest
-  ): void;
-  authenticateAdministrator(token: string): void;
-}
-
-export interface SandboxSecurityCapabilityAuditIdentity {
-  capability_id: string;
-  subject_id: string;
-  authorization_scope_id: string;
-  scopes: readonly SandboxSecurityCapabilityScope[];
-  allowed_stages: readonly SandboxSecurityStage[];
-  allowed_policy_profile_ids: readonly SandboxSecurityPolicyProfileId[];
-  issued_at: string;
-  expires_at: string;
-}
-
-export type SandboxSecurityCapabilityAuthenticationResult =
-  | Readonly<{
-      kind: "authorized";
-      capability: SandboxSecurityAuthorizedCapability;
-    }>
-  | Readonly<{
-      kind: "known_denied";
-      rejection_code: "capability_expired" | "capability_revoked";
-      audit_identity: SandboxSecurityCapabilityAuditIdentity;
-    }>
-  | Readonly<{ kind: "unknown" }>;
+): SandboxSecurityNormalizedCapabilityIssueRequest | null;
 
 export function createSandboxSecurityCapabilityAuthenticator(input: Readonly<{
   repository: SandboxSecurityCapabilityRepository;
@@ -351,12 +310,19 @@ export function createSandboxSecurityCapabilityAuthenticator(input: Readonly<{
 }>): SandboxSecurityCapabilityAuthenticator;
 ```
 
-Repository lookup accepts only `sha256:<hex>`. Authorized output omits token
+Import the raw request, normalized request, authenticator, result, and identity
+contracts from P1-T3 without redeclaring them. The normalizer accepts the raw
+optional-TTL DTO but returns only the required-TTL normalized DTO; its omitted
+TTL case and every explicit accepted TTL are asserted with `ttl_seconds`
+present. Repository lookup accepts only `sha256:<hex>`. Authorized output omits token
 digest and scope seed. A known expired/revoked result contains only subject,
 authorization scope, capability ID, and normalized grant fields needed for its
 content-free rejection audit; `unknown` contains no identity. The controller
 maps both denied variants and malformed tokens to the same public 401.
 Administrator comparison hashes both secrets and compares fixed 32-byte values.
+Administrator denial and scope/stage/profile denial use only the P1 closed
+service-error factory with the exact rejection reason; P2 imports no HTTP error
+or status mapping.
 
 - [ ] **Step 4: Run GREEN**
 
@@ -372,7 +338,7 @@ npm run typecheck:backend
 git add backend/src/modules/sandbox-security/dto/capability.ts \
   backend/src/modules/sandbox-security/capability-authorizer.ts \
   backend/src/modules/sandbox-security/sandbox-security.module.ts \
-  backend/tests/sandbox-security-capability.spec.ts docs/progress.md
+  backend/tests/sandbox-security-capability.spec.ts package.json docs/progress.md
 git commit -m "feat(backend): authorize sandbox security capabilities"
 ```
 
@@ -384,6 +350,7 @@ git commit -m "feat(backend): authorize sandbox security capabilities"
 - Create: `backend/src/modules/sandbox-security/engine-concurrency.ts`
 - Create: `backend/tests/sandbox-security-limits.spec.ts`
 - Modify: `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+- Modify: `package.json`
 
 - [ ] **Step 1: Write deterministic RED tests**
 
@@ -417,9 +384,13 @@ test("REQ-SBX-GENERAL-003 only four Engine leases may be active", () => {
 ```
 
 Add global `10/1s`, administrator `2/6s`, fractional refill, backward/nonfinite
-clock rejection, exact Retry-After clamp, idempotent lease release, exception
-release, no lease for slow body/replay/conflict, and capability limiter sweep
-every 256 admissions with one-hour idle/expiry cases.
+clock rejection, exact Retry-After clamp, idempotent lease release, and
+capability limiter registry creation/sweep every 256 admissions
+with one-hour idle/expiry cases. Slow-body ownership belongs to P5-T2;
+replay/conflict slot ownership and release-after-Engine-exception belong to
+P4-T3 orchestration.
+
+Append this new spec to `test:backend` in the same step.
 
 - [ ] **Step 2: Run RED**
 
@@ -433,31 +404,27 @@ Expected: FAIL because the factories are not exported by the existing module.
 - [ ] **Step 3: Implement exact limiter APIs**
 
 ```ts
-export type SandboxSecurityLimitResult =
-  | Readonly<{ allowed: true }>
-  | Readonly<{ allowed: false; retry_after_seconds: number }>;
-
-export interface SandboxSecurityTokenBucket {
-  consume(monotonicNowMs: number): SandboxSecurityLimitResult;
-}
-
 export function createSandboxSecurityTokenBucket(input: Readonly<{
   capacity: number;
   refill_tokens_per_second: number;
   initial_monotonic_ms: number;
 }>): SandboxSecurityTokenBucket;
 
-export interface SandboxSecurityEngineConcurrencyLimiter {
-  tryAcquire(): (() => void) | null;
-  activeCount(): number;
-}
-
 export function createSandboxSecurityEngineConcurrencyLimiter(
   capacity: 4
 ): SandboxSecurityEngineConcurrencyLimiter;
+
+export function createSandboxSecurityCapabilityLimiterRegistry(input: Readonly<{
+  runtime: SandboxSecurityRuntimePort;
+  capacity: 3;
+  refill_tokens_per_second: 0.2;
+  sweep_every_admissions: 256;
+  idle_expiry_ms: 3600000;
+}>): SandboxSecurityCapabilityLimiterRegistry;
 ```
 
-Implement the Master Retry-After formula. Add a capability-keyed limiter map
+Import limiter ports/results from P1-T3 without redeclaring them. Implement the
+Master Retry-After formula. Add a capability-keyed limiter map
 whose entries are created only after successful authentication, deleted on
 revoke, and swept on every 256th public admission using injected wall and
 monotonic clocks.
@@ -479,8 +446,88 @@ git diff --check
 git add backend/src/modules/sandbox-security/token-bucket.ts \
   backend/src/modules/sandbox-security/engine-concurrency.ts \
   backend/src/modules/sandbox-security/sandbox-security.module.ts \
-  backend/tests/sandbox-security-limits.spec.ts docs/progress.md
+  backend/tests/sandbox-security-limits.spec.ts package.json docs/progress.md
 git commit -m "feat(backend): limit sandbox security evaluations"
 ```
 
-Stop after P2-T4. Do not open SQLite in Phase 2.
+## P2-T5: Exact Content-Free Audit Projection
+
+**Files:**
+
+- Create: `backend/src/modules/sandbox-security/audit-projector.ts`
+- Create: `backend/tests/sandbox-security-audit.spec.ts`
+- Modify: `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+- Modify: `package.json`
+
+- [ ] **Step 1: Write projector RED tests**
+
+```ts
+test("REQ-SBX-GENERAL-003 projects a completed Decision without content", () => {
+  assert.equal(typeof boundary.createSandboxSecurityAuditProjector, "function");
+  const projector = boundary.createSandboxSecurityAuditProjector!();
+  const event = projector.evaluationCompleted({
+    event_id: FIXED_AUDIT_ID,
+    occurred_at: FIXED_NOW,
+    subject_id: "subject-a",
+    authorization_scope_id: FIXED_SCOPE,
+    capability_id: FIXED_CAPABILITY_ID,
+    composition_binding: "sandbox-security-production-composition.v1:rule_only",
+    elapsed_ms: 17,
+    decision: FIXED_DECISION
+  });
+  assert.equal(event.request_id, FIXED_DECISION.request_id);
+  assert.equal(event.verdict, FIXED_DECISION.verdict);
+  assert.deepEqual(event.category_counts, ALL_CATEGORY_COUNTS);
+  assert.deepEqual(event.detector_run_status_counts, ALL_RUN_STATUS_COUNTS);
+  assert.doesNotMatch(JSON.stringify(event), /RAW_SENTINEL|source_token|evidence_ref/);
+});
+```
+
+Add replay recomputation, all three interruption codes including
+`startup_recovery`, evaluation/audit-read rejection matrices,
+issue/revoke/read/purge ownership, all-zero/multiple counts, elapsed
+floor/clamp, exact keys, catalog order, defensive copies, and prohibited
+key/value sentinel scans. Exercise every exact Phase 1 audit input interface.
+Append this new spec to `test:backend` in the same step.
+
+- [ ] **Step 2: Run RED**
+
+```bash
+node --experimental-strip-types --experimental-test-isolation=none --test \
+  backend/tests/sandbox-security-audit.spec.ts
+```
+
+Expected: FAIL because the existing module boundary lacks the projector factory.
+
+- [ ] **Step 3: Implement one explicit projector**
+
+```ts
+export function createSandboxSecurityAuditProjector(): SandboxSecurityAuditProjector;
+```
+
+Implement all eight methods from the Phase 1 ledger. Construct every returned
+object field-by-field; never spread a request, Decision, stored row, error, or
+provider value. Normalize completed/replayed Decisions before counting and
+normalize each final event before return. No repository, timer, or HTTP logic is
+added.
+
+- [ ] **Step 4: Run GREEN and registered gates**
+
+```bash
+node --experimental-strip-types --experimental-test-isolation=none --test \
+  backend/tests/sandbox-security-audit.spec.ts
+npm run test:backend
+npm run typecheck:backend
+git diff --check
+```
+
+- [ ] **Step 5: Review, update progress, commit, and stop**
+
+```bash
+git add backend/src/modules/sandbox-security/audit-projector.ts \
+  backend/src/modules/sandbox-security/sandbox-security.module.ts \
+  backend/tests/sandbox-security-audit.spec.ts package.json docs/progress.md
+git commit -m "feat(backend): project sandbox security audit events"
+```
+
+Stop after P2-T5. Do not open SQLite in Phase 2.

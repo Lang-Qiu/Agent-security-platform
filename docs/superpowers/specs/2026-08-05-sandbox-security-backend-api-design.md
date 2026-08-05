@@ -4,13 +4,20 @@
 
 - Requirement: `REQ-SBX-GENERAL-003`
 - Date: `2026-08-05`
-- Status: `APPROVED_SPEC_PLAN_COMPLETE_PENDING_USER_APPROVAL`
+- Status: `APPROVED_SPEC_PLAN_REVIEWED_PENDING_USER_APPROVAL`
 - Workflow: `Design -> Test (RED) -> Implement (GREEN) -> Document -> Stop`
 - Dependencies: GENERAL-001 and GENERAL-002
 
 This document records the design approved in the design dialogue. It does not
 authorize implementation until the user reviews this written specification and
 approves the implementation plan produced afterward.
+
+The initial independent implementation-plan review and first re-review both
+returned `FAIL`, each with two Critical and five Important findings. Their
+accepted findings and later re-review findings were corrected. The final
+independent plan re-review returned `PASS` with zero Critical, Important, or
+Minor findings. This specification remains approved, but the reviewed plan is
+not execution-authorized until the user explicitly approves it.
 
 GENERAL-002 has only the temporary disposition
 `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`. Its formal P6 evidence and global
@@ -332,6 +339,11 @@ interface SandboxSecurityCapabilityIssueRequest {
   allowed_policy_profile_ids: SandboxSecurityPolicyProfileId[];
   ttl_seconds?: number;
 }
+
+interface SandboxSecurityNormalizedCapabilityIssueRequest
+  extends Omit<SandboxSecurityCapabilityIssueRequest, "ttl_seconds"> {
+  ttl_seconds: number;
+}
 ```
 
 `subject_id` matches `^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$`. Scope, stage, and
@@ -341,7 +353,10 @@ At least one scope is required.
 When `sandbox_security:evaluate` is present, both authorization arrays must be
 non-empty. When it is absent, both arrays must be empty. When supplied, TTL is
 an integer from 60 through 3600 seconds; omission selects the approved 900
-second default.
+second default. The strict normalizer accepts the raw optional-TTL request and
+returns only `SandboxSecurityNormalizedCapabilityIssueRequest`, with
+`ttl_seconds` always present. The capability service accepts only that normalized
+type and never applies a second default.
 
 The issue response contains capability ID, subject ID, normalized grant,
 issued/expiry timestamps, and the one-time raw bearer token. Revocation is
@@ -543,7 +558,12 @@ Authorization: Bearer <bootstrap-admin-token>
 
 This route accepts no JSON body. A valid existing capability returns HTTP 200.
 Repeated calls return the original revoked timestamp. Unknown IDs return a
-stable 404.
+stable 404. The internal router recognizes only the route shape and passes the
+capability path slot to the administrator controller without decoding it. After
+administrator authentication and completed bodyless admission, the controller
+percent-decodes exactly once, rejects malformed encoding and decoded
+slash/backslash/NUL, then requires the exact capability ID grammar before the
+service call.
 
 Success is `ApiResponse<SandboxSecurityCapabilityPublicRecord>`.
 
@@ -651,7 +671,12 @@ destroys the request/socket only from the response `finish` callback. It must
 not destroy the `IncomingMessage` before the error response has flushed.
 
 Bodyless routes require no `Transfer-Encoding` and either no Content-Length or
-exactly `Content-Length: 0`. Any declared or observed body is `400`.
+exactly `Content-Length: 0`. Any declared or observed body is `400`. Bodyless
+admission first validates both raw framing headers, rejecting invalid or
+declared-nonzero framing before stream iteration. With valid framing it awaits
+request completion and rejects the first observed nonempty chunk, including one
+delivered on a later turn. Each bodyless controller awaits completion before
+query parsing, path decoding, or service invocation.
 
 The route admission matrices are fixed:
 
@@ -742,7 +767,7 @@ interface SandboxSecurityEvaluationService {
 
 interface SandboxSecurityCapabilityService {
   issue(
-    request: Readonly<SandboxSecurityCapabilityIssueRequest>
+    request: Readonly<SandboxSecurityNormalizedCapabilityIssueRequest>
   ): Readonly<SandboxSecurityCapabilityIssueResult>;
   revoke(
     capabilityId: string
@@ -1307,29 +1332,41 @@ and asserts the five new route matches; it fails by returned value, not import.
 
 Later source modules are introduced only as the minimal GREEN needed by a
 failing test against an already-importable boundary. For example, after route
-recognition exists, an HTTP test against the existing `AppModule` expects the
-new route to return the fixed authentication response rather than fall through;
-that behavioral RED authorizes creation and wiring of the minimal sandbox
-module/controller boundary. Once a source module exists, all focused unit tests
-import it normally and create subsequent RED through behavior. No test catches,
-maps, or masks `ERR_MODULE_NOT_FOUND`.
+recognition exists, a test against the existing App modules injects structural
+fake public/admin controllers and expects exact dispatch rather than fall
+through. That RED authorizes only the module/controller/port type boundary; HTTP
+authentication behavior remains owned by the later controller phase. Once a
+source module exists, all focused unit tests import it normally and create
+subsequent RED through behavior. The content-free audit projector gets its own
+P2 behavior RED/GREEN before persistence. P3 idempotency state-machine and
+startup-recovery tests use a real temporary SQLite repository and inject that
+already-green projector; there is no fake-repository idempotency task. No test
+catches, maps, or masks `ERR_MODULE_NOT_FOUND`.
 
 ### Test Order
 
-1. Shared exact-key types and normalizers for audit pages/events.
-2. Existing public/internal router recognition for all five routes.
-3. Simulation authoritative-context builder.
-4. Domain-separated HMAC fixed vectors and capability token generation.
-5. Capability normalization, issue, expiry, authorization, and revoke.
-6. In-memory monotonic rate and concurrency limiters.
-7. Idempotency state machine with a fake repository.
-8. Audit union, subject visibility, projection, and prohibited-field tests.
-9. Real temporary SQLite migrations, repositories, transactions, recovery,
-   retention, permissions, and corruption handling.
-10. Evaluation service orchestration with fake Engine/fingerprint ports.
-11. Public and internal controller tests.
-12. Public and internal HTTP integration tests.
-13. Repository import/privacy gates and full relevant regressions.
+1. Permanent requirement/status/dependency gate.
+2. Shared exact-key types and normalizers for audit pages/events.
+3. Existing public/internal router recognition for all five route shapes.
+4. Injectable App-module dispatch plus exact controller, service, repository,
+   runtime, error, and module type boundaries.
+5. Simulation authoritative-context builder.
+6. Domain-separated HMAC fixed vectors and capability token generation.
+7. Capability request normalization, authentication, expiry, and authorization.
+8. In-memory monotonic rate and concurrency limiters.
+9. Audit union, subject visibility, the single content-free projector, and
+   prohibited-field tests.
+10. Real temporary SQLite database/migrations and capability repository tests.
+11. Real temporary SQLite idempotency state machine, transactions, startup
+    recovery with the P2 projector, cleanup health, and corruption handling.
+12. Subject-scoped SQLite audit repository and fixed-retention tests.
+13. Capability issue/revoke, audit list/purge, and evaluation orchestration
+    services with recording repositories and fake Engine/fingerprint ports.
+14. HTTP admission/error mapping, public/admin controllers, and both-listener
+    HTTP integration tests.
+15. Real production Engine/canonical gateway, lifecycle, restart, and shutdown
+    tests.
+16. Repository import/privacy gates and full relevant regressions.
 
 ### Required Scenarios
 
@@ -1341,6 +1378,9 @@ Tests must prove at least:
 - duplicate security headers, strict bearer grammar, strict UTF-8, media-type
   parameters, transfer encoding, bodyless routes, and 5000 ms body deadline use
   the route admission matrix;
+- revoke route matching preserves the raw capability path slot, while malformed
+  percent encoding and encoded slash/backslash/NUL are rejected only after
+  administrator authentication and completed bodyless admission;
 - UTF-8 bodies at exactly 786432 bytes pass body admission and one byte over
   fails before JSON parse;
 - real HTTP slow/oversized clients receive the stable 408/413 JSON response and
@@ -1355,7 +1395,11 @@ Tests must prove at least:
 - slow bodies and cached replays never acquire an Engine slot;
 - fingerprint is produced by the Engine helper before idempotency claim;
 - an independently encoded fixture reproduces every published HMAC/cursor
-  vector, including fingerprint `b2dc6d...bb11`;
+  vector, including the P2 canonical-bytes fixture fingerprint
+  `b2dc6d...bb11`;
+- the production gateway test captures the complete fixed EvaluationRequest's
+  real Engine canonical bytes and independently encodes their HMAC frame instead
+  of reusing the P2 `{"a":1}` digest;
 - invalid fingerprints create no idempotency row;
 - same scope/key/fingerprint calls Engine once after completion;
 - completed replay writes content-free replay audit before returning;
