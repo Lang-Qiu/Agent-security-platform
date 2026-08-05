@@ -1012,6 +1012,7 @@ function createConformingReplayTransport(input: Readonly<{
   >;
   units?: readonly AnonymousReplayUnit[];
   request_error?: Error;
+  retry_local_connection_failed?: boolean;
 }> = {}) {
   const qualificationInventory = input.qualification_inventory ??
     responseOutcome(
@@ -1030,10 +1031,12 @@ function createConformingReplayTransport(input: Readonly<{
     | "ready"
     | "input" = "qualification_inventory";
   let unitOrdinal = 0;
+  let localAttempts = 0;
   let localConsumed = false;
   let judgeConsumed = false;
   let wrongThisCount = 0;
   const operations: string[] = [];
+  const requests: SandboxSecurityHttpRequest[] = [];
   let transport!: ReplayTransport;
 
   const wire = (
@@ -1068,6 +1071,7 @@ function createConformingReplayTransport(input: Readonly<{
     async request(this: ReplayTransport, request: Readonly<SandboxSecurityHttpRequest>) {
       if (this !== transport) wrongThisCount += 1;
       if (input.request_error !== undefined) throw input.request_error;
+      requests.push(request);
       operations.push(`${request.provider}:${request.operation}`);
       if (
         phase === "qualification_inventory" &&
@@ -1091,6 +1095,13 @@ function createConformingReplayTransport(input: Readonly<{
       const unit = units[unitOrdinal];
       if (unit === undefined) throw new Error("replay_input_missing");
       if (request.provider === "ollama" && request.operation === "chat") {
+        if (input.retry_local_connection_failed && localAttempts === 0) {
+          localAttempts += 1;
+          throw namedTransportError(
+            "sandbox_security_transport_connection_failed"
+          );
+        }
+        localAttempts += 1;
         if (localConsumed) throw new Error("replay_duplicate_local");
         localConsumed = true;
         return wire(unit.ollama, "chat");
@@ -1107,6 +1118,7 @@ function createConformingReplayTransport(input: Readonly<{
         throw new Error("replay_begin_invalid");
       }
       phase = "input";
+      localAttempts = 0;
       localConsumed = false;
       judgeConsumed = false;
     },
@@ -1131,6 +1143,7 @@ function createConformingReplayTransport(input: Readonly<{
   return {
     transport,
     operations,
+    requests,
     get qualification_consumed() {
       return phase === "ready" || phase === "input";
     },
@@ -1797,6 +1810,46 @@ test("REQ-SBX-GENERAL-002 replay consumes inventory and prewarm before returning
   assert.equal(replay.wrong_this_count, 0);
   assert.deepEqual(runtime.delays, [1000, 100, 1000, 4000]);
   assert.equal(runtime.cancellation_count, 4);
+});
+
+test("REQ-SBX-GENERAL-002 hermetic replay facade retries one recorded local connection failure with the same request", async () => {
+  const runtime = runtimeHarness();
+  const unit: AnonymousReplayUnit = Object.freeze({
+    ollama: responseOutcome(
+      ollamaNormalized(),
+      normalizeSandboxSecurityReplayOllamaResponse
+    ),
+    openai: responseOutcome(
+      openAiNormalized(7),
+      normalizeSandboxSecurityReplayOpenAIResponse
+    )
+  });
+  const replay = createConformingReplayTransport({
+    units: [unit],
+    retry_local_connection_failed: true
+  });
+
+  const engine = await createHermeticReplayEngine({
+    runtime: runtime.runtime,
+    replay_transport: replay.transport,
+    sealed_config: sealedConfig()
+  });
+
+  const evaluationRequestStart = replay.requests.length;
+  replay.transport.beginInput();
+  await engine.evaluate(evaluationRequest());
+  replay.transport.endInput();
+  replay.transport.assertDrained();
+
+  const localRequests = replay.requests.slice(evaluationRequestStart).filter(
+    (request) => request.provider === "ollama" && request.operation === "chat"
+  );
+  assert.equal(localRequests.length, 2);
+  assert.equal(localRequests[0], localRequests[1]);
+  assert.deepEqual(
+    requestBody(localRequests[0]!),
+    requestBody(localRequests[1]!)
+  );
 });
 
 test("REQ-SBX-GENERAL-002 replay routes matched local and Judge through one original runner state", async () => {

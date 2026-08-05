@@ -66,12 +66,23 @@ const SEALED_CONFIG_KEYS = [
   "sanitizer_version"
 ] as const;
 
+type ReplayOutcome = SandboxSecurityReplayTransportOutcome<unknown>;
+type ReplayAttemptOutcome<T> = Exclude<
+  SandboxSecurityReplayTransportOutcome<T>,
+  Readonly<{ status: "not_called" }>
+>;
+
+export type SandboxSecurityReplayAttemptSequence<T> = readonly ReplayAttemptOutcome<T>[];
+
 export interface SandboxSecurityReplayInputUnit {
-  readonly ollama: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse>;
-  readonly judge: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOpenAIResponse>;
+  readonly ollama: SandboxSecurityReplayAttemptSequence<SandboxSecurityReplayOllamaResponse>;
+  readonly judge: SandboxSecurityReplayAttemptSequence<SandboxSecurityReplayOpenAIResponse>;
 }
 
-type ReplayOutcome = SandboxSecurityReplayTransportOutcome<unknown>;
+export interface SandboxSecurityReplayQualification {
+  readonly inventory: SandboxSecurityReplayAttemptSequence<SandboxSecurityReplayOllamaInventoryResponse>;
+  readonly prewarm: SandboxSecurityReplayAttemptSequence<SandboxSecurityReplayOllamaResponse>;
+}
 
 function fail(code: string): never {
   throw new Error(`${INVALID}:${code}`);
@@ -161,22 +172,50 @@ function normalizeOutcome<T>(
   }
 }
 
+function isRetryableFirstAttempt<T>(
+  outcome: ReplayAttemptOutcome<T>
+): boolean {
+  return outcome.status === "transport_error" &&
+    outcome.error_code === "connection_failed";
+}
+
+function normalizeAttemptSequence<T>(
+  value: unknown,
+  normalizer: (value: unknown) => T
+): SandboxSecurityReplayAttemptSequence<T> {
+  if (!Array.isArray(value) || value.length > 2) {
+    return fail("attempt_sequence_invalid");
+  }
+  const attempts: ReplayAttemptOutcome<T>[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const attempt = normalizeOutcome(value[index], normalizer);
+    if (attempt.status === "not_called") {
+      return fail("attempt_not_called_invalid");
+    }
+    if (index === 1 && !isRetryableFirstAttempt(attempts[0]!)) {
+      return fail("attempt_retry_first_invalid");
+    }
+    attempts.push(attempt);
+  }
+  return Object.freeze(attempts);
+}
+
 function normalizeInputUnit(
-  value: SandboxSecurityReplayInputUnit
+  value: unknown
 ): Readonly<SandboxSecurityReplayInputUnit> {
   const record = plainRecord(value);
   exactKeys(record, ["judge", "ollama"]);
-  const ollama = normalizeOutcome(
+  const ollama = normalizeAttemptSequence(
     record.ollama,
     normalizeSandboxSecurityReplayOllamaResponse
   );
-  const judge = normalizeOutcome(
+  const judge = normalizeAttemptSequence(
     record.judge,
     normalizeSandboxSecurityReplayOpenAIResponse
   );
   if (
-    judge.status !== "not_called" &&
-    ollama.status !== "response"
+    judge.length > 0 &&
+    ollama.at(-1)?.status !== "response"
   ) {
     fail("judge_without_local_response");
   }
@@ -184,20 +223,17 @@ function normalizeInputUnit(
 }
 
 function normalizeQualification(value: Readonly<{
-  inventory: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaInventoryResponse>;
-  prewarm: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse>;
-}>): Readonly<{
-  inventory: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaInventoryResponse>;
-  prewarm: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse>;
-}> {
+  inventory: unknown;
+  prewarm: unknown;
+}>): Readonly<SandboxSecurityReplayQualification> {
   const record = plainRecord(value);
   exactKeys(record, ["inventory", "prewarm"]);
   return Object.freeze({
-    inventory: normalizeOutcome(
+    inventory: normalizeAttemptSequence(
       record.inventory,
       normalizeSandboxSecurityReplayOllamaInventoryResponse
     ),
-    prewarm: normalizeOutcome(
+    prewarm: normalizeAttemptSequence(
       record.prewarm,
       normalizeSandboxSecurityReplayOllamaResponse
     )
@@ -240,18 +276,74 @@ function validateResponseBinding(
 }
 
 function requireQualificationResponse<T>(
-  outcome: SandboxSecurityReplayTransportOutcome<T>,
+  attempts: SandboxSecurityReplayAttemptSequence<T>,
   kind: "inventory" | "local",
   config: Readonly<SandboxSecuritySealedProviderConfig>
 ): void {
-  if (outcome.status !== "response") {
+  if (attempts.length === 0 || attempts.at(-1)?.status !== "response") {
     fail(`qualification_${kind}_outcome_invalid`);
   }
-  validateResponseBinding(outcome, kind, config);
+  for (const attempt of attempts) {
+    if (attempt.status === "response") {
+      validateResponseBinding(attempt, kind, config);
+    }
+  }
 }
 
 function signalReason(signal: AbortSignal): unknown {
   return signal.reason;
+}
+
+function requestBody(
+  request: Readonly<SandboxSecurityHttpRequest>
+): Uint8Array | undefined {
+  return "body" in request ? request.body : undefined;
+}
+
+interface ReplayRequestRecord {
+  readonly request: Readonly<SandboxSecurityHttpRequest>;
+  readonly provider: Readonly<SandboxSecurityHttpRequest>["provider"];
+  readonly operation: Readonly<SandboxSecurityHttpRequest>["operation"];
+  readonly body: Uint8Array | undefined;
+}
+
+function recordRequest(
+  request: Readonly<SandboxSecurityHttpRequest>
+): ReplayRequestRecord {
+  const body = requestBody(request);
+  return Object.freeze({
+    request,
+    provider: request.provider,
+    operation: request.operation,
+    body: body === undefined ? undefined : new Uint8Array(body)
+  });
+}
+
+function sameBytes(left: Uint8Array | undefined, right: Uint8Array | undefined): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
+function validateRetryRequest(
+  firstRequest: ReplayRequestRecord,
+  retryRequest: Readonly<SandboxSecurityHttpRequest>
+): void {
+  if (
+    firstRequest.provider !== retryRequest.provider ||
+    firstRequest.operation !== retryRequest.operation
+  ) {
+    fail("retry_operation_invalid");
+  }
+  if (!sameBytes(firstRequest.body, requestBody(retryRequest))) {
+    fail("retry_body_invalid");
+  }
+  if (firstRequest.request !== retryRequest) {
+    fail("retry_request_identity_invalid");
+  }
 }
 
 function waitForTermination(
@@ -432,10 +524,7 @@ function judgePayload(
 }
 
 export function createSandboxSecurityReplayTransport(input: Readonly<{
-  qualification: Readonly<{
-    inventory: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaInventoryResponse>;
-    prewarm: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse>;
-  }>;
+  qualification: Readonly<SandboxSecurityReplayQualification>;
   inputs: readonly SandboxSecurityReplayInputUnit[];
   sealed_config: Readonly<SandboxSecuritySealedProviderConfig>;
 }>): SandboxSecurityReplayTransport {
@@ -443,8 +532,8 @@ export function createSandboxSecurityReplayTransport(input: Readonly<{
   exactKeys(root, ["inputs", "qualification", "sealed_config"]);
   const config = validateSealedConfig(root.sealed_config as SandboxSecuritySealedProviderConfig);
   const qualification = normalizeQualification(root.qualification as {
-    inventory: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaInventoryResponse>;
-    prewarm: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse>;
+    inventory: unknown;
+    prewarm: unknown;
   });
   const rawInputs = root.inputs;
   if (!Array.isArray(rawInputs) || rawInputs.length !== INPUT_COUNT) {
@@ -456,11 +545,15 @@ export function createSandboxSecurityReplayTransport(input: Readonly<{
   requireQualificationResponse(qualification.inventory, "inventory", config);
   requireQualificationResponse(qualification.prewarm, "local", config);
   for (const inputUnit of inputs) {
-    if (inputUnit.ollama.status === "response") {
-      validateResponseBinding(inputUnit.ollama, "local", config);
+    for (const attempt of inputUnit.ollama) {
+      if (attempt.status === "response") {
+        validateResponseBinding(attempt, "local", config);
+      }
     }
-    if (inputUnit.judge.status === "response") {
-      validateResponseBinding(inputUnit.judge, "judge", config);
+    for (const attempt of inputUnit.judge) {
+      if (attempt.status === "response") {
+        validateResponseBinding(attempt, "judge", config);
+      }
     }
   }
 
@@ -472,12 +565,48 @@ export function createSandboxSecurityReplayTransport(input: Readonly<{
     | "drained"
     | "failed" = "qualification_inventory";
   let inputOrdinal = 0;
-  let localConsumed = false;
-  let judgeConsumed = false;
+  let qualificationInventoryCursor = 0;
+  let qualificationPrewarmCursor = 0;
+  let qualificationInventoryRequest: ReplayRequestRecord | null = null;
+  let qualificationPrewarmRequest: ReplayRequestRecord | null = null;
+  let localAttemptCursor = 0;
+  let judgeAttemptCursor = 0;
+  let localRequest: ReplayRequestRecord | null = null;
+  let judgeRequest: ReplayRequestRecord | null = null;
+  let judgeOperation: "responses" | "chat_completions" | null = null;
 
   const invalidState = (code: string): never => {
     state = "failed";
     return fail(code);
+  };
+
+  const validateRetry = (
+    firstRequest: ReplayRequestRecord,
+    retryRequest: Readonly<SandboxSecurityHttpRequest>
+  ): void => {
+    try {
+      validateRetryRequest(firstRequest, retryRequest);
+    } catch (error) {
+      state = "failed";
+      throw error;
+    }
+  };
+
+  const deliverAttempt = async (
+    attempt: ReplayAttemptOutcome<unknown>,
+    requestInput: Readonly<SandboxSecurityHttpRequest>,
+    retryableFirstAttempt: boolean
+  ): Promise<Readonly<SandboxSecurityHttpResponse>> => {
+    try {
+      const response = await responseFromOutcome(attempt, requestInput, config);
+      if (attempt.status !== "response" && !retryableFirstAttempt) {
+        state = "failed";
+      }
+      return response;
+    } catch (error) {
+      if (!retryableFirstAttempt) state = "failed";
+      throw error;
+    }
   };
 
   const request = async (
@@ -493,17 +622,27 @@ export function createSandboxSecurityReplayTransport(input: Readonly<{
       ) {
         return invalidState("qualification_inventory_operation_invalid");
       }
-      state = "qualification_prewarm";
-      try {
-        return await responseFromOutcome(
-          qualification.inventory,
-          requestInput,
-          config
-        );
-      } catch (error) {
-        state = "failed";
-        throw error;
+      const attemptIndex = qualificationInventoryCursor;
+      const attempt = qualification.inventory[attemptIndex];
+      if (attempt === undefined) {
+        return invalidState("qualification_inventory_attempt_missing");
       }
+      if (attemptIndex === 0) qualificationInventoryRequest = recordRequest(requestInput);
+      else if (qualificationInventoryRequest === null) {
+        return invalidState("qualification_inventory_retry_missing");
+      } else {
+        validateRetry(qualificationInventoryRequest, requestInput);
+      }
+      qualificationInventoryCursor += 1;
+      const retryableFirstAttempt =
+        attemptIndex === 0 && isRetryableFirstAttempt(attempt);
+      const response = await deliverAttempt(
+        attempt,
+        requestInput,
+        retryableFirstAttempt
+      );
+      if (attempt.status === "response") state = "qualification_prewarm";
+      return response;
     }
     if (state === "qualification_prewarm") {
       if (
@@ -512,30 +651,51 @@ export function createSandboxSecurityReplayTransport(input: Readonly<{
       ) {
         return invalidState("qualification_prewarm_operation_invalid");
       }
-      state = "ready";
-      try {
-        return await responseFromOutcome(
-          qualification.prewarm,
-          requestInput,
-          config
-        );
-      } catch (error) {
-        state = "failed";
-        throw error;
+      const attemptIndex = qualificationPrewarmCursor;
+      const attempt = qualification.prewarm[attemptIndex];
+      if (attempt === undefined) {
+        return invalidState("qualification_prewarm_attempt_missing");
       }
+      if (attemptIndex === 0) qualificationPrewarmRequest = recordRequest(requestInput);
+      else if (qualificationPrewarmRequest === null) {
+        return invalidState("qualification_prewarm_retry_missing");
+      } else {
+        validateRetry(qualificationPrewarmRequest, requestInput);
+      }
+      qualificationPrewarmCursor += 1;
+      const retryableFirstAttempt =
+        attemptIndex === 0 && isRetryableFirstAttempt(attempt);
+      const response = await deliverAttempt(
+        attempt,
+        requestInput,
+        retryableFirstAttempt
+      );
+      if (attempt.status === "response") state = "ready";
+      return response;
     }
     if (state !== "input") return invalidState("request_outside_input");
     const unit = inputs[inputOrdinal];
     if (unit === undefined) return invalidState("input_missing");
     if (requestInput.provider === "ollama" && requestInput.operation === "chat") {
-      if (localConsumed) return invalidState("local_slot_duplicate");
-      localConsumed = true;
-      try {
-        return await responseFromOutcome(unit.ollama, requestInput, config);
-      } catch (error) {
-        state = "failed";
-        throw error;
+      const attemptIndex = localAttemptCursor;
+      const attempt = unit.ollama[attemptIndex];
+      if (attempt === undefined) {
+        return invalidState(
+          unit.ollama.length === 0
+            ? "local_slot_not_called"
+            : "local_slot_duplicate"
+        );
       }
+      if (attemptIndex === 0) localRequest = recordRequest(requestInput);
+      else if (localRequest === null) {
+        return invalidState("local_retry_missing");
+      } else {
+        validateRetry(localRequest, requestInput);
+      }
+      localAttemptCursor += 1;
+      const retryableFirstAttempt =
+        attemptIndex === 0 && isRetryableFirstAttempt(attempt);
+      return deliverAttempt(attempt, requestInput, retryableFirstAttempt);
     }
     const expectedJudgeOperation =
       config.judge_protocol_id === SANDBOX_SECURITY_OPENAI_RESPONSES_PROTOCOL_ID
@@ -547,15 +707,33 @@ export function createSandboxSecurityReplayTransport(input: Readonly<{
     ) {
       return invalidState("judge_slot_order_or_operation_invalid");
     }
-    if (!localConsumed) return invalidState("judge_slot_order_invalid");
-    if (judgeConsumed) return invalidState("judge_slot_duplicate");
-    judgeConsumed = true;
-    try {
-      return await responseFromOutcome(unit.judge, requestInput, config);
-    } catch (error) {
-      state = "failed";
-      throw error;
+    if (localAttemptCursor !== unit.ollama.length) {
+      return invalidState("judge_slot_order_invalid");
     }
+    const attemptIndex = judgeAttemptCursor;
+    const attempt = unit.judge[attemptIndex];
+    if (attempt === undefined) {
+      return invalidState(
+        unit.judge.length === 0
+          ? "judge_slot_not_called"
+          : "judge_slot_duplicate"
+      );
+    }
+    if (attemptIndex === 0) {
+      judgeRequest = recordRequest(requestInput);
+      judgeOperation = requestInput.operation;
+    } else if (judgeRequest === null || judgeOperation === null) {
+      return invalidState("judge_retry_missing");
+    } else {
+      if (judgeOperation !== requestInput.operation) {
+        return invalidState("judge_operation_changed");
+      }
+      validateRetry(judgeRequest, requestInput);
+    }
+    judgeAttemptCursor += 1;
+    const retryableFirstAttempt =
+      attemptIndex === 0 && isRetryableFirstAttempt(attempt);
+    return deliverAttempt(attempt, requestInput, retryableFirstAttempt);
   };
 
   return Object.freeze({
@@ -565,17 +743,20 @@ export function createSandboxSecurityReplayTransport(input: Readonly<{
         return invalidState("begin_input_invalid");
       }
       state = "input";
-      localConsumed = false;
-      judgeConsumed = false;
+      localAttemptCursor = 0;
+      judgeAttemptCursor = 0;
+      localRequest = null;
+      judgeRequest = null;
+      judgeOperation = null;
     },
     endInput() {
       if (state !== "input") return invalidState("end_input_invalid");
       const unit = inputs[inputOrdinal];
       if (unit === undefined) return invalidState("input_missing");
-      if (!localConsumed && unit.ollama.status !== "not_called") {
+      if (localAttemptCursor !== unit.ollama.length) {
         return invalidState("local_slot_missing");
       }
-      if (!judgeConsumed && unit.judge.status !== "not_called") {
+      if (judgeAttemptCursor !== unit.judge.length) {
         return invalidState("judge_slot_missing");
       }
       inputOrdinal += 1;

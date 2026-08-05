@@ -1144,10 +1144,23 @@ function replayPorts(
     })
   });
   const facade: SandboxSecurityHttpTransport = Object.freeze({
-    request(input: Readonly<SandboxSecurityHttpRequest>) {
-      return Reflect.apply(replay.request, replay.value, [input]) as Promise<
-        Readonly<SandboxSecurityHttpResponse>
-      >;
+    async request(input: Readonly<SandboxSecurityHttpRequest>) {
+      for (let attempt = 1; attempt <= MAX_PROVIDER_ATTEMPTS; attempt += 1) {
+        try {
+          return await Reflect.apply(replay.request, replay.value, [input]) as Readonly<
+            SandboxSecurityHttpResponse
+          >;
+        } catch (error) {
+          if (
+            attempt === 1 &&
+            errorName(error) === "sandbox_security_transport_connection_failed"
+          ) {
+            continue;
+          }
+          throw error;
+        }
+      }
+      return invalid();
     }
   });
   let transportCreated = false;

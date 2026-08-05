@@ -42,11 +42,20 @@ import type {
 const ENCODER = new TextEncoder();
 const DIGEST = `sha256:${"a".repeat(64)}`;
 const JUDGE_MODEL = "deepseek-v4-flash";
+type ReplayAttemptOutcome<T> = Exclude<
+  SandboxSecurityReplayTransportOutcome<T>,
+  { readonly status: "not_called" }
+>;
+type ReplayResponseOutcome<T> = Extract<
+  SandboxSecurityReplayTransportOutcome<T>,
+  { readonly status: "response" }
+>;
+type ReplayAttemptSequence<T> = readonly ReplayAttemptOutcome<T>[];
 
 type ReplayFactory = (input: Readonly<{
   qualification: Readonly<{
-    inventory: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaInventoryResponse>;
-    prewarm: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse>;
+    inventory: ReplayAttemptSequence<SandboxSecurityReplayOllamaInventoryResponse>;
+    prewarm: ReplayAttemptSequence<SandboxSecurityReplayOllamaResponse>;
   }>;
   inputs: readonly SandboxSecurityReplayInputUnit[];
   sealed_config: Readonly<SandboxSecuritySealedProviderConfig>;
@@ -69,8 +78,8 @@ async function replayFactory(): Promise<ReplayFactory> {
 function responseOutcome<T>(
   response: T,
   normalize: (value: unknown) => T
-): SandboxSecurityReplayTransportOutcome<T> {
-  return normalizeSandboxSecurityReplayOutcome(
+): ReplayResponseOutcome<T> {
+  const outcome = normalizeSandboxSecurityReplayOutcome(
     {
       status: "response",
       http_status: 200,
@@ -79,6 +88,10 @@ function responseOutcome<T>(
     },
     normalize
   );
+  if (outcome.status !== "response") {
+    throw new Error("test_response_outcome_invalid");
+  }
+  return outcome;
 }
 
 function inventory(): SandboxSecurityReplayOllamaInventoryResponse {
@@ -116,13 +129,12 @@ function judge(): SandboxSecurityReplayOpenAIResponse {
 }
 
 function outcomeUnit(
-  localOutcome: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse> = responseOutcome(
-    local(),
-    normalizeSandboxSecurityReplayOllamaResponse
-  ),
-  judgeOutcome: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOpenAIResponse> = { status: "not_called" }
+  localAttempts: ReplayAttemptSequence<SandboxSecurityReplayOllamaResponse> = [
+    responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse)
+  ],
+  judgeAttempts: ReplayAttemptSequence<SandboxSecurityReplayOpenAIResponse> = []
 ): SandboxSecurityReplayInputUnit {
-  return { ollama: localOutcome, judge: judgeOutcome };
+  return { ollama: localAttempts, judge: judgeAttempts };
 }
 
 function sealedConfig(
@@ -204,18 +216,18 @@ function requests(
 }
 
 function successfulQualification(): Readonly<{
-  inventory: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaInventoryResponse>;
-  prewarm: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse>;
+  inventory: ReplayAttemptSequence<SandboxSecurityReplayOllamaInventoryResponse>;
+  prewarm: ReplayAttemptSequence<SandboxSecurityReplayOllamaResponse>;
 }> {
   return {
-    inventory: responseOutcome(
+    inventory: [responseOutcome(
       inventory(),
       normalizeSandboxSecurityReplayOllamaInventoryResponse
-    ),
-    prewarm: responseOutcome(
+    )],
+    prewarm: [responseOutcome(
       local(),
       normalizeSandboxSecurityReplayOllamaResponse
-    )
+    )]
   };
 }
 
@@ -223,8 +235,8 @@ function createTransport(
   factory: ReplayFactory,
   inputOverrides: Partial<{
     qualification: Readonly<{
-      inventory: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaInventoryResponse>;
-      prewarm: SandboxSecurityReplayTransportOutcome<SandboxSecurityReplayOllamaResponse>;
+      inventory: ReplayAttemptSequence<SandboxSecurityReplayOllamaInventoryResponse>;
+      prewarm: ReplayAttemptSequence<SandboxSecurityReplayOllamaResponse>;
     }>;
     inputs: readonly SandboxSecurityReplayInputUnit[];
     sealed_config: Readonly<SandboxSecuritySealedProviderConfig>;
@@ -268,10 +280,71 @@ test("REQ-SBX-GENERAL-002 replay transport consumes inventory and prewarm before
   transport.assertDrained();
 });
 
+test("REQ-SBX-GENERAL-002 v2 replay exposes a local connection failure then consumes exactly one same-request retry", async () => {
+  const factory = await replayFactory();
+  const transport = createTransport(factory, {
+    inputs: [outcomeUnit([
+      { status: "transport_error", error_code: "connection_failed" },
+      responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse)
+    ])]
+  });
+  await qualify(transport);
+  transport.beginInput();
+  const request = requests(new AbortController().signal, "chat");
+
+  await assert.rejects(
+    transport.request(request),
+    { name: "sandbox_security_transport_connection_failed" }
+  );
+  const response = await transport.request(request);
+  assert.equal(response.status, 200);
+  transport.endInput();
+});
+
+test("REQ-SBX-GENERAL-002 replay qualification sequences consume inventory and prewarm retries in order", async () => {
+  const factory = await replayFactory();
+  const transport = createTransport(factory, {
+    qualification: {
+      inventory: [
+        { status: "transport_error", error_code: "connection_failed" },
+        responseOutcome(
+          inventory(),
+          normalizeSandboxSecurityReplayOllamaInventoryResponse
+        )
+      ],
+      prewarm: [
+        { status: "transport_error", error_code: "connection_failed" },
+        responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse)
+      ]
+    }
+  });
+  const signal = new AbortController().signal;
+  const inventoryRequest = requests(signal, "model_inventory");
+  const prewarmRequest = requests(signal, "chat");
+
+  await assert.rejects(
+    transport.request(inventoryRequest),
+    { name: "sandbox_security_transport_connection_failed" }
+  );
+  assert.equal((await transport.request(inventoryRequest)).status, 200);
+  await assert.rejects(
+    transport.request(prewarmRequest),
+    { name: "sandbox_security_transport_connection_failed" }
+  );
+  assert.equal((await transport.request(prewarmRequest)).status, 200);
+
+  transport.beginInput();
+  await transport.request(requests(signal, "chat"));
+  transport.endInput();
+});
+
 test("REQ-SBX-GENERAL-002 replay transport rejects wrong and duplicate provider slots", async () => {
   const factory = await replayFactory();
   const transport = createTransport(factory, {
-    inputs: [outcomeUnit(responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse), responseOutcome(judge(), normalizeSandboxSecurityReplayOpenAIResponse))]
+    inputs: [outcomeUnit(
+      [responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse)],
+      [responseOutcome(judge(), normalizeSandboxSecurityReplayOpenAIResponse)]
+    )]
   });
   await qualify(transport);
   const signal = new AbortController().signal;
@@ -282,13 +355,18 @@ test("REQ-SBX-GENERAL-002 replay transport rejects wrong and duplicate provider 
   );
 
   const duplicate = createTransport(factory, {
-    inputs: [outcomeUnit()]
+    inputs: [outcomeUnit([
+      { status: "transport_error", error_code: "connection_failed" },
+      responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse)
+    ])]
   });
   await qualify(duplicate);
   duplicate.beginInput();
-  await duplicate.request(requests(signal, "chat"));
+  const duplicateRequest = requests(signal, "chat");
+  await assert.rejects(duplicate.request(duplicateRequest), /connection_failed/);
+  await duplicate.request(duplicateRequest);
   await assert.rejects(
-    duplicate.request(requests(signal, "chat")),
+    duplicate.request(duplicateRequest),
     /replay|duplicate|slot/
   );
 });
@@ -299,21 +377,144 @@ test("REQ-SBX-GENERAL-002 replay transport rejects incomplete qualification befo
     () => createTransport(factory, {
       qualification: {
         inventory: successfulQualification().inventory,
-        prewarm: { status: "not_called" }
+        prewarm: []
       }
     }),
     /qualification|replay/
   );
 });
 
+test("REQ-SBX-GENERAL-002 replay treats empty attempt sequences as not_called", async () => {
+  const factory = await replayFactory();
+  const transport = createTransport(factory, {
+    inputs: [outcomeUnit([], [])]
+  });
+  await qualify(transport);
+  transport.beginInput();
+  transport.endInput();
+});
+
+test("REQ-SBX-GENERAL-002 replay rejects embedded not_called, extra attempts, invalid retry first outcomes, and invalid qualification sequences", async () => {
+  const factory = await replayFactory();
+  const response = responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse);
+  const invalidUnits = [
+    {
+      label: "embedded not_called",
+      unit: {
+        ollama: [{ status: "not_called" }],
+        judge: []
+      }
+    },
+    {
+      label: "more than two attempts",
+      unit: {
+        ollama: [
+          { status: "transport_error", error_code: "connection_failed" },
+          response,
+          response
+        ],
+        judge: []
+      }
+    },
+    {
+      label: "non-retryable first attempt",
+      unit: {
+        ollama: [response, response],
+        judge: []
+      }
+    }
+  ] as const;
+
+  for (const scenario of invalidUnits) {
+    assert.throws(
+      () => createTransport(factory, {
+        inputs: [scenario.unit as unknown as SandboxSecurityReplayInputUnit]
+      }),
+      /attempt|outcome|replay/i,
+      scenario.label
+    );
+  }
+
+  assert.throws(
+    () => createTransport(factory, {
+      qualification: {
+        inventory: [{ status: "not_called" }] as never,
+        prewarm: successfulQualification().prewarm
+      }
+    }),
+    /attempt|qualification|outcome|replay/i
+  );
+});
+
+test("REQ-SBX-GENERAL-002 replay rejects endInput with an unconsumed retry and rejects a changed retry operation", async () => {
+  const factory = await replayFactory();
+  const transport = createTransport(factory, {
+    inputs: [outcomeUnit([
+      { status: "transport_error", error_code: "connection_failed" },
+      responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse)
+    ])]
+  });
+  await qualify(transport);
+  transport.beginInput();
+  await assert.rejects(
+    transport.request(requests(new AbortController().signal, "chat")),
+    /connection_failed/
+  );
+  assert.throws(
+    () => transport.endInput(),
+    /attempt|missing|drain|state|replay/i
+  );
+
+  const changedOperation = createTransport(factory, {
+    inputs: [outcomeUnit([
+      { status: "transport_error", error_code: "connection_failed" },
+      responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse)
+    ])]
+  });
+  await qualify(changedOperation);
+  changedOperation.beginInput();
+  await assert.rejects(
+    changedOperation.request(requests(new AbortController().signal, "chat")),
+    /connection_failed/
+  );
+  await assert.rejects(
+    changedOperation.request(requests(new AbortController().signal, "responses")),
+    /operation|slot|retry|replay/i
+  );
+  assert.throws(() => changedOperation.endInput(), /failed|state|replay/i);
+});
+
+test("REQ-SBX-GENERAL-002 replay rejects a changed retry body or request identity", async () => {
+  const factory = await replayFactory();
+  const transport = createTransport(factory, {
+    inputs: [outcomeUnit([
+      { status: "transport_error", error_code: "connection_failed" },
+      responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse)
+    ])]
+  });
+  await qualify(transport);
+  transport.beginInput();
+  const firstRequest = requests(new AbortController().signal, "chat");
+  await assert.rejects(transport.request(firstRequest), /connection_failed/);
+  const changedRequest = {
+    ...firstRequest,
+    body: ENCODER.encode("different-request-body")
+  };
+  await assert.rejects(
+    transport.request(changedRequest),
+    /body|identity|request|retry|replay/i
+  );
+  assert.throws(() => transport.endInput(), /failed|state|replay/i);
+});
+
 test("REQ-SBX-GENERAL-002 replay transport waits for recorded signal termination", async () => {
   const factory = await replayFactory();
   const controller = new AbortController();
   const transport = createTransport(factory, {
-    inputs: [outcomeUnit({
+    inputs: [outcomeUnit([{
       status: "signal_termination",
       termination_reason: "slot_timeout"
-    })]
+    }])]
   });
   await qualify(transport);
   transport.beginInput();
@@ -322,13 +523,13 @@ test("REQ-SBX-GENERAL-002 replay transport waits for recorded signal termination
   await assert.rejects(pending, { name: "sandbox_security_slot_timeout" });
 });
 
-test("REQ-SBX-GENERAL-002 replay transport rejects sealed digest mismatch before provider calls", async () => {
+test("REQ-SBX-GENERAL-002 replay transport rejects sealed binding mismatch before provider calls", async () => {
   const factory = await replayFactory();
   assert.throws(
     () => createTransport(factory, {
-      sealed_config: sealedConfig({ ollama_digest: `sha256:${"b".repeat(64)}` })
+      sealed_config: sealedConfig({ judge_binding_sha256: "b".repeat(64) })
     }),
-    /replay.*(digest|sealed|config)/i
+    /replay.*(binding|sealed|config)/i
   );
 });
 
@@ -350,8 +551,8 @@ test("REQ-SBX-GENERAL-002 replay transport reconstructs the sealed Judge protoco
   const factory = await replayFactory();
   const transport = createTransport(factory, {
     inputs: [outcomeUnit(
-      responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse),
-      responseOutcome(judge(), normalizeSandboxSecurityReplayOpenAIResponse)
+      [responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse)],
+      [responseOutcome(judge(), normalizeSandboxSecurityReplayOpenAIResponse)]
     )],
     sealed_config: sealedConfig({
       judge_protocol_id: "openai_chat_completions_json_v1",
@@ -376,24 +577,70 @@ test("REQ-SBX-GENERAL-002 replay transport reconstructs the sealed Judge protoco
   transport.endInput();
 });
 
+test("REQ-SBX-GENERAL-002 replay exposes a Judge connection failure then consumes one same-operation retry", async () => {
+  const factory = await replayFactory();
+  const transport = createTransport(factory, {
+    inputs: [outcomeUnit(
+      [responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse)],
+      [
+        { status: "transport_error", error_code: "connection_failed" },
+        responseOutcome(judge(), normalizeSandboxSecurityReplayOpenAIResponse)
+      ]
+    )]
+  });
+  await qualify(transport);
+  transport.beginInput();
+  const signal = new AbortController().signal;
+  await transport.request(requests(signal, "chat"));
+  const judgeRequest = requests(signal, "responses");
+  await assert.rejects(
+    transport.request(judgeRequest),
+    { name: "sandbox_security_transport_connection_failed" }
+  );
+  assert.equal((await transport.request(judgeRequest)).status, 200);
+  transport.endInput();
+});
+
+test("REQ-SBX-GENERAL-002 replay permanently fails after a non-retryable final error", async () => {
+  const factory = await replayFactory();
+  const transport = createTransport(factory, {
+    inputs: [outcomeUnit([
+      { status: "transport_error", error_code: "connection_failed" },
+      { status: "transport_error", error_code: "response_too_large" }
+    ])]
+  });
+  await qualify(transport);
+  transport.beginInput();
+  const request = requests(new AbortController().signal, "chat");
+  await assert.rejects(transport.request(request), /connection_failed/);
+  await assert.rejects(transport.request(request), /response_too_large/);
+  assert.throws(() => transport.endInput(), /failed|state|replay/i);
+});
+
 test("REQ-SBX-GENERAL-002 replay transport fails closed after local or Judge transport errors", async () => {
   const factory = await replayFactory();
   const cases = [
     {
       label: "local",
-      inputs: [outcomeUnit({
+      inputs: [outcomeUnit([{
         status: "transport_error",
         error_code: "connection_failed"
-      })]
+      }, {
+        status: "transport_error",
+        error_code: "response_too_large"
+      }])]
     },
     {
       label: "judge",
       inputs: [outcomeUnit(
-        responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse),
-        {
+        [responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse)],
+        [{
           status: "transport_error",
           error_code: "connection_failed"
-        }
+        }, {
+          status: "transport_error",
+          error_code: "response_too_large"
+        }]
       )]
     }
   ] as const;
