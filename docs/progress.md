@@ -1,7 +1,7 @@
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T4 mandatory typecheck script registration
 
 - phase/task: Phase 1 / P1-T4 Mandatory Typecheck Script Registration
-- status: `COMPLETE_PENDING_P1_T4_REVIEW`
+- status: `COMPLETE_PHASE_1`
 - workflow exception: configuration-only TDD exception; no business logic or
   production behavior was introduced
 - implementation: registered the exact root scripts
@@ -18,8 +18,12 @@
 - dependency: GENERAL-002 remains
   `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`; neither GENERAL-002 nor
   GENERAL-003 is `VERIFIED`
-- next: independent specification review, quality review, and Phase 1 exit
-  review; stop before Phase 2
+- specification review: PASS with `0 Critical / 0 Important / 0 Minor`.
+- quality review: PASS with `0 Critical / 0 Important / 0 Minor`.
+- commit: `b71006b chore(test): register sandbox security typecheck gates`
+- Phase 1 exit: P1-T0 through P1-T4 are individually committed, reviewed, and
+  documented; continue to Phase 2 / P2-T1.
+- next: P2-T1 simulation-only authoritative context builder
 
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T3 module dispatch boundary
 
