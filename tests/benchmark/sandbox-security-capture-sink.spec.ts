@@ -110,6 +110,27 @@ function evaluationOllama(
   });
 }
 
+function evaluationOllamaTransportError(
+  error_code:
+    | "connection_failed"
+    | "response_too_large"
+    | "provider_response_invalid"
+): SandboxSecurityCapturedProviderOutcome {
+  return Object.freeze({
+    capture_phase: "evaluation",
+    provider: "ollama",
+    operation: "chat",
+    outcome: Object.freeze({
+      status: "transport_error",
+      error_code
+    })
+  });
+}
+
+function evaluationOllamaConnectionFailed(): SandboxSecurityCapturedProviderOutcome {
+  return evaluationOllamaTransportError("connection_failed");
+}
+
 function evaluationJudge(
   operation: "responses" | "chat_completions" = "responses"
 ): SandboxSecurityCapturedProviderOutcome {
@@ -162,27 +183,88 @@ test("REQ-SBX-GENERAL-002 sink accepts exactly inventory then prewarm before fir
   assert.equal(snap.state, "drained");
   assert.equal(snap.closed_input_count, 300);
   assert.equal(snap.inputs.length, 300);
+  assert.equal(snap.qualification_inventory?.length, 1);
+  assert.equal(snap.qualification_prewarm?.length, 1);
 });
 
-test("REQ-SBX-GENERAL-002 sink writes explicit not_called for untouched slots", () => {
+test("REQ-SBX-P6-RETRY sink uses empty attempt arrays for untouched slots", () => {
   const sink = readySink();
   sink.beginInput();
   sink.endInput();
   assert.deepEqual(sink.snapshot().inputs[0], {
-    ollama: { status: "not_called" },
-    judge: { status: "not_called" }
+    ollama: [],
+    judge: []
   });
 });
 
-test("REQ-SBX-GENERAL-002 sink records evaluation slots once while open", () => {
+test("REQ-SBX-P6-RETRY sink groups ordered local attempts and leaves uncalled Judge empty", () => {
+  const sink = readySink();
+  const firstAttempt = evaluationOllamaConnectionFailed();
+  const secondAttempt = evaluationOllama();
+
+  sink.beginInput();
+  sink.record(firstAttempt);
+  sink.record(secondAttempt);
+  sink.endInput();
+
+  const unit = sink.snapshot().inputs[0]!;
+  assert.deepEqual(unit.ollama, [firstAttempt.outcome, secondAttempt.outcome]);
+  assert.deepEqual(unit.judge, []);
+});
+
+test("REQ-SBX-P6-RETRY sink accepts a second attempt only after exact connection_failed", () => {
+  const sink = readySink();
+  sink.beginInput();
+  sink.record(evaluationOllamaConnectionFailed());
+  sink.record(evaluationOllama());
+  sink.endInput();
+
+  assert.equal(sink.snapshot().inputs[0]?.ollama.length, 2);
+});
+
+test("REQ-SBX-P6-RETRY sink rejects a second response when the first attempt is not retryable", () => {
+  const sink = readySink();
+  sink.beginInput();
+  sink.record(evaluationOllama());
+
+  assert.throws(
+    () => sink.record(evaluationOllama()),
+    /sandbox_security_capture_sink_reject:duplicate_ollama/u
+  );
+});
+
+test("REQ-SBX-P6-RETRY sink rejects a second attempt after a non-connection transport error", () => {
+  const sink = readySink();
+  sink.beginInput();
+  sink.record(evaluationOllamaTransportError("response_too_large"));
+
+  assert.throws(
+    () => sink.record(evaluationOllama()),
+    /sandbox_security_capture_sink_reject:duplicate_ollama/u
+  );
+});
+
+test("REQ-SBX-P6-RETRY sink rejects a third attempt", () => {
+  const sink = readySink();
+  sink.beginInput();
+  sink.record(evaluationOllamaConnectionFailed());
+  sink.record(evaluationOllama());
+
+  assert.throws(
+    () => sink.record(evaluationOllama()),
+    /sandbox_security_capture_sink_reject:duplicate_ollama/u
+  );
+});
+
+test("REQ-SBX-GENERAL-002 sink records evaluation slots as one-item attempt arrays", () => {
   const sink = readySink();
   sink.beginInput();
   sink.record(evaluationOllama());
   sink.record(evaluationJudge());
   sink.endInput();
   const unit = sink.snapshot().inputs[0]!;
-  assert.equal(unit.ollama.status, "response");
-  assert.equal(unit.judge.status, "response");
+  assert.equal(unit.ollama[0]?.status, "response");
+  assert.equal(unit.judge[0]?.status, "response");
 });
 
 test("REQ-SBX-GENERAL-002 ready sink accepts Chat completions Judge outcome and stores the closed Judge slot", () => {
@@ -192,7 +274,7 @@ test("REQ-SBX-GENERAL-002 ready sink accepts Chat completions Judge outcome and 
   sink.record(judge);
   sink.endInput();
 
-  assert.deepEqual(sink.snapshot().inputs[0]?.judge, judge.outcome);
+  assert.deepEqual(sink.snapshot().inputs[0]?.judge, [judge.outcome]);
 });
 
 test("REQ-SBX-GENERAL-002 sink rejects cross-protocol duplicate Judge outcomes", () => {
@@ -299,17 +381,58 @@ test("REQ-SBX-GENERAL-002 sink rejects duplicate wrong-phase and boundary record
 test("REQ-SBX-GENERAL-002 sink freezes snapshot and omits oracle fields", () => {
   const sink = readySink();
   sink.beginInput();
+  sink.record(evaluationOllamaConnectionFailed());
   sink.record(evaluationOllama("http_error"));
   sink.endInput();
   const snap: SandboxSecurityCaptureAccumulator = sink.snapshot();
   assert.equal(Object.isFrozen(snap), true);
   assert.equal(Object.isFrozen(snap.inputs), true);
   assert.equal(Object.isFrozen(snap.inputs[0]), true);
+  assert.equal(Object.isFrozen(snap.inputs[0]?.ollama), true);
+  assert.equal(Object.isFrozen(snap.inputs[0]?.ollama[0]), true);
+  assert.equal(Object.isFrozen(snap.inputs[0]?.ollama[1]), true);
+  assert.equal(Object.isFrozen(snap.inputs[0]?.judge), true);
+  assert.equal(Object.isFrozen(snap.qualification_inventory), true);
+  assert.equal(Object.isFrozen(snap.qualification_prewarm), true);
+  assert.equal(Object.isFrozen(snap.qualification_inventory?.[0]), true);
+  assert.equal(Object.isFrozen(snap.qualification_prewarm?.[0]), true);
   const serialized = JSON.stringify(snap);
   assert.doesNotMatch(
     serialized,
-    /fixture_id|primary_category|ground_truth_severity|verdict_class|SANDBOX_SECURITY_JUDGE_API_KEY/
+    /fixture_id|primary_category|ground_truth_severity|verdict_class|raw_body|sanitized_content|OPENAI_API_KEY|SANDBOX_SECURITY_JUDGE_API_KEY/
   );
+});
+
+test("REQ-SBX-GENERAL-002 sink rejects oracle, raw-body, and credential fields", () => {
+  for (const field of [
+    "fixture_id",
+    "primary_category",
+    "ground_truth_severity",
+    "verdict_class",
+    "raw_body",
+    "sanitized_content",
+    "OPENAI_API_KEY",
+    "SANDBOX_SECURITY_JUDGE_API_KEY"
+  ]) {
+    const sink = readySink();
+    sink.beginInput();
+    const record = evaluationOllama();
+    if (record.outcome.status !== "response") {
+      throw new Error("test fixture must be a response");
+    }
+    const contaminated = {
+      ...record,
+      outcome: {
+        ...record.outcome,
+        normalized_response: {
+          ...record.outcome.normalized_response,
+          [field]: "secret"
+        }
+      }
+    };
+
+    assert.throws(() => sink.record(contaminated as never));
+  }
 });
 
 test("REQ-SBX-GENERAL-002 sink fails permanently after malformed qualification", () => {

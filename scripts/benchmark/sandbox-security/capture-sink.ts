@@ -23,26 +23,25 @@ export type SandboxSecurityCaptureSinkState =
   | "failed"
   | "drained";
 
-export type SandboxSecurityCaptureSlotOutcome =
-  SandboxSecurityReplayTransportOutcome<unknown>;
+export type SandboxSecurityCaptureSlotOutcome = Exclude<
+  SandboxSecurityReplayTransportOutcome<unknown>,
+  Readonly<{ status: "not_called" }>
+>;
 
 export interface SandboxSecurityCaptureInputUnit {
-  readonly ollama: SandboxSecurityCaptureSlotOutcome;
-  readonly judge: SandboxSecurityCaptureSlotOutcome;
+  readonly ollama: readonly SandboxSecurityCaptureSlotOutcome[];
+  readonly judge: readonly SandboxSecurityCaptureSlotOutcome[];
 }
 
 export interface SandboxSecurityCaptureAccumulator {
   readonly state: SandboxSecurityCaptureSinkState;
-  readonly qualification_inventory: SandboxSecurityCaptureSlotOutcome | null;
-  readonly qualification_prewarm: SandboxSecurityCaptureSlotOutcome | null;
+  readonly qualification_inventory: readonly SandboxSecurityCaptureSlotOutcome[];
+  readonly qualification_prewarm: readonly SandboxSecurityCaptureSlotOutcome[];
   readonly inputs: readonly SandboxSecurityCaptureInputUnit[];
   readonly closed_input_count: number;
 }
 
 const INVALID = "sandbox_security_capture_sink_invalid";
-const NOT_CALLED: SandboxSecurityCaptureSlotOutcome = Object.freeze({
-  status: "not_called"
-});
 
 function fail(code: string = INVALID): never {
   const error = new TypeError(code);
@@ -89,12 +88,39 @@ function isSuccessfulOutcome(outcome: unknown): boolean {
   return outcome.status === "response";
 }
 
+function isRetryableFirstAttempt(
+  outcome: SandboxSecurityCaptureSlotOutcome
+): boolean {
+  return outcome.status === "transport_error" &&
+    outcome.error_code === "connection_failed";
+}
+
+type SandboxSecurityNormalizedCapturedProviderOutcome =
+  | Readonly<{
+      capture_phase: "qualification";
+      provider: "ollama";
+      operation: "model_inventory";
+      outcome: SandboxSecurityCaptureSlotOutcome;
+    }>
+  | Readonly<{
+      capture_phase: "qualification" | "evaluation";
+      provider: "ollama";
+      operation: "chat";
+      outcome: SandboxSecurityCaptureSlotOutcome;
+    }>
+  | Readonly<{
+      capture_phase: "evaluation";
+      provider: "openai";
+      operation: "responses" | "chat_completions";
+      outcome: SandboxSecurityCaptureSlotOutcome;
+    }>;
+
 function normalizeSlotOutcome(outcome: unknown): SandboxSecurityCaptureSlotOutcome {
   if (!isPlainObject(outcome)) fail();
   const status = outcome.status;
   if (status === "not_called") {
     exactKeys(outcome, ["status"]);
-    return deepFreeze({ status: "not_called" });
+    fail();
   }
   if (status === "response") {
     exactKeys(outcome, [
@@ -199,7 +225,7 @@ function assertNoOracleFields(value: unknown, depth = 0): void {
 
 function normalizeCapturedOutcome(
   value: unknown
-): Readonly<SandboxSecurityCapturedProviderOutcome> {
+): SandboxSecurityNormalizedCapturedProviderOutcome {
   if (!isPlainObject(value)) fail();
   exactKeys(value, ["capture_phase", "provider", "operation", "outcome"]);
   assertNoOracleFields(value);
@@ -218,7 +244,7 @@ function normalizeCapturedOutcome(
       provider: "ollama",
       operation: "model_inventory",
       outcome
-    }) as Readonly<SandboxSecurityCapturedProviderOutcome>;
+    });
   }
   if (
     (capture_phase === "qualification" || capture_phase === "evaluation") &&
@@ -230,7 +256,7 @@ function normalizeCapturedOutcome(
       provider: "ollama",
       operation: "chat",
       outcome
-    }) as Readonly<SandboxSecurityCapturedProviderOutcome>;
+    });
   }
   if (
     capture_phase === "evaluation" &&
@@ -242,14 +268,14 @@ function normalizeCapturedOutcome(
       provider: "openai",
       operation,
       outcome
-    }) as Readonly<SandboxSecurityCapturedProviderOutcome>;
+    });
   }
   fail();
 }
 
 interface OpenInput {
-  ollama: SandboxSecurityCaptureSlotOutcome | null;
-  judge: SandboxSecurityCaptureSlotOutcome | null;
+  ollama: SandboxSecurityCaptureSlotOutcome[];
+  judge: SandboxSecurityCaptureSlotOutcome[];
 }
 
 export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
@@ -257,8 +283,8 @@ export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
     snapshot(): Readonly<SandboxSecurityCaptureAccumulator>;
   }> {
   let state: SandboxSecurityCaptureSinkState = "qualification_inventory";
-  let qualificationInventory: SandboxSecurityCaptureSlotOutcome | null = null;
-  let qualificationPrewarm: SandboxSecurityCaptureSlotOutcome | null = null;
+  const qualificationInventory: SandboxSecurityCaptureSlotOutcome[] = [];
+  const qualificationPrewarm: SandboxSecurityCaptureSlotOutcome[] = [];
   const inputs: SandboxSecurityCaptureInputUnit[] = [];
   let open: OpenInput | null = null;
 
@@ -271,12 +297,12 @@ export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
   function snapshot(): Readonly<SandboxSecurityCaptureAccumulator> {
     return deepFreeze({
       state,
-      qualification_inventory: qualificationInventory,
-      qualification_prewarm: qualificationPrewarm,
+      qualification_inventory: [...qualificationInventory],
+      qualification_prewarm: [...qualificationPrewarm],
       inputs: inputs.map((unit) =>
         deepFreeze({
-          ollama: unit.ollama,
-          judge: unit.judge
+          ollama: [...unit.ollama],
+          judge: [...unit.judge]
         })
       ),
       closed_input_count: inputs.length
@@ -295,13 +321,13 @@ export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
       if (inputs.length >= SANDBOX_SECURITY_CAPTURE_INPUT_COUNT) {
         markFailed("sandbox_security_capture_sink_reject:extra_input");
       }
-      open = { ollama: null, judge: null };
+      open = { ollama: [], judge: [] };
       state = "input_open";
     },
 
     record(raw: Readonly<SandboxSecurityCapturedProviderOutcome>): void {
       if (state === "failed" || state === "drained") fail();
-      let outcome: Readonly<SandboxSecurityCapturedProviderOutcome>;
+      let outcome: SandboxSecurityNormalizedCapturedProviderOutcome;
       try {
         outcome = normalizeCapturedOutcome(raw);
       } catch {
@@ -319,7 +345,7 @@ export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
         if (!isSuccessfulOutcome(outcome.outcome)) {
           markFailed("sandbox_security_capture_sink_reject:inventory_not_success");
         }
-        qualificationInventory = outcome.outcome;
+        qualificationInventory.push(outcome.outcome);
         state = "qualification_prewarm";
         return;
       }
@@ -335,7 +361,7 @@ export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
         if (!isSuccessfulOutcome(outcome.outcome)) {
           markFailed("sandbox_security_capture_sink_reject:prewarm_not_success");
         }
-        qualificationPrewarm = outcome.outcome;
+        qualificationPrewarm.push(outcome.outcome);
         state = "ready";
         return;
       }
@@ -360,24 +386,31 @@ export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
         outcome.provider === "ollama" &&
         outcome.operation === "chat"
       ) {
-        if (open.ollama !== null) {
+        if (
+          open.ollama.length >= 2 ||
+          (open.ollama.length === 1 &&
+            !isRetryableFirstAttempt(open.ollama[0]!))
+        ) {
           markFailed("sandbox_security_capture_sink_reject:duplicate_ollama");
         }
-        open.ollama = outcome.outcome;
+        open.ollama.push(outcome.outcome);
         return;
       }
 
       if (
         outcome.provider === "openai" &&
-        (
-          outcome.operation === "responses" ||
+        (outcome.operation === "responses" ||
           outcome.operation === "chat_completions"
         )
       ) {
-        if (open.judge !== null) {
+        if (
+          open.judge.length >= 2 ||
+          (open.judge.length === 1 &&
+            !isRetryableFirstAttempt(open.judge[0]!))
+        ) {
           markFailed("sandbox_security_capture_sink_reject:duplicate_judge");
         }
-        open.judge = outcome.outcome;
+        open.judge.push(outcome.outcome);
         return;
       }
 
@@ -390,8 +423,8 @@ export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
         markFailed("sandbox_security_capture_sink_reject:end_without_open");
       }
       const unit = deepFreeze({
-        ollama: open.ollama ?? NOT_CALLED,
-        judge: open.judge ?? NOT_CALLED
+        ollama: [...open.ollama],
+        judge: [...open.judge]
       });
       inputs.push(unit);
       open = null;
@@ -410,8 +443,8 @@ export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
       }
       if (
         state !== "ready" ||
-        qualificationInventory === null ||
-        qualificationPrewarm === null
+        qualificationInventory.length === 0 ||
+        qualificationPrewarm.length === 0
       ) {
         fail("sandbox_security_capture_sink_reject:assert_drained_incomplete_qualification");
       }
