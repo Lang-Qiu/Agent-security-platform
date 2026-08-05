@@ -1,3 +1,37 @@
+## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T3 module dispatch boundary
+
+- phase/task: Phase 1 / P1-T3 Injectable Sandbox Module Dispatch Boundary
+- status: `IMPLEMENTED_PENDING_TASK_REVIEW`
+- RED evidence: the structural AppModule/InternalAppModule dispatch suite
+  initially failed because constructors ignored the injected module and
+  recognized sandbox routes returned without a response. The failure was
+  behavioral (no import or syntax error); the existing health route remained
+  green. Unconfigured routes use the existing generic `INTERNAL_ERROR`
+  DomainError contract.
+- implementation: added the type-only module/controller/runtime/Engine
+  gateway/repository/SQLite lifecycle contracts, the exact four-key frozen
+  Engine runtime projection, and the closed service-error factory/type guard
+  with tagged claim-cleanup error. AppModule dispatches two public routes and
+  InternalAppModule dispatches three internal routes only when injected;
+  revoke preserves its raw path segment.
+- GREEN evidence: focused controller/contract suite `7/7`; backend typecheck
+  was run with only pre-existing repository baseline errors and no new
+  sandbox-security source error; full backend gate and independent task reviews
+  remain pending before the selective commit.
+- quality review finding and fix: the first review identified a Minor coverage
+  gap in the service-error descriptor matrix. The controller contract test now
+  table-drives every descriptor code, all three forbidden rejection variants,
+  their derived audit codes, retry metadata, and the existing unknown/mismatch
+  extra-key rejection cases.
+- changed: `backend/src/modules/sandbox-security/`,
+  `backend/src/app.module.ts`, `backend/src/internal-app.module.ts`,
+  `backend/tests/sandbox-security-controller.spec.ts`, `package.json`,
+  `docs/architecture.md`, `docs/progress.md`
+- dependency: GENERAL-002 remains
+  `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`; neither GENERAL-002 nor
+  GENERAL-003 is `VERIFIED`
+- next: P1-T3 specification review, quality review, selective commit
+
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T2 exact route matches
 
 - stage: Phase 1 / P1-T2 complete

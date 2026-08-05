@@ -236,6 +236,25 @@ engines/<engine-name>/
 - TypeScript 约束：`strict: true`
 
 以上基线用于平台骨架阶段的契约与测试落地，后续如果项目级工具链决策变化，应先更新 `metadata.md` 再统一调整。
+
+## GENERAL-003 Sandbox Security Module Boundary
+
+GENERAL-003 的后端能力以可注入的 `SandboxSecurityModule` 作为唯一平台边界。
+公共监听器只 dispatch evaluation 与 subject-scoped audit-read，内部监听器只
+dispatch capability issue/revoke 与 audit purge；未注入模块时，已识别的沙箱路由
+返回固定的通用 `INTERNAL_ERROR` 内部错误，不构造隐式默认模块。
+revoke 路由的 capability-id segment 由路由到 controller 原样传递，应用层不提前
+decode。
+
+P1-T3 固定了 controller、runtime、Engine gateway、capability/idempotency/audit
+repository 与 SQLite database 的 type-only contracts。服务、仓储和数据库实现由
+后续 Phase 各自拥有；本阶段不创建隐藏实现。单一 SQLite owner 通过
+`SqliteSandboxSecurityDatabase` 暴露 transaction/read/checkpoint 生命周期，维护
+timer 由 idempotency maintenance 拥有，模块 close 负责先取消维护再关闭数据库。
+
+后端扩展 runtime 不能直接传入 GENERAL-002。`toSandboxSecurityEngineRuntime`
+每次生成冻结的普通对象，且只包含 Engine 要求顺序的
+`now`、`nextDecisionId`、`monotonicNowMs`、`scheduleTimeout` 四个可枚举键。
 ## REQ-07 Backend Engine Adapter Baseline
 
 当前 backend 在 `task-center` 内新增了一层稳定的引擎接入边界：

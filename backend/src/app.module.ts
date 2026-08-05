@@ -7,6 +7,7 @@ import { createRequestId } from "./common/http/request-id.ts";
 import { matchRoute } from "./common/http/router.ts";
 import { createTaskCenterModule } from "./modules/task-center/task-center.module.ts";
 import { createSupervisionModule } from "./modules/supervision/supervision.module.ts";
+import type { SandboxSecurityModule } from "./modules/sandbox-security/sandbox-security.module.ts";
 import {
   createRuntimeDependencies,
   type RuntimeDependencies
@@ -15,9 +16,14 @@ import {
 export class AppModule {
   taskCenterModule: ReturnType<typeof createTaskCenterModule>;
   supervisionModule: ReturnType<typeof createSupervisionModule>;
+  readonly sandboxSecurityModule?: SandboxSecurityModule;
 
-  constructor(dependencies?: RuntimeDependencies) {
+  constructor(
+    dependencies?: RuntimeDependencies,
+    sandboxSecurityModule?: SandboxSecurityModule
+  ) {
     const runtime = dependencies ?? createRuntimeDependencies();
+    this.sandboxSecurityModule = sandboxSecurityModule;
     this.taskCenterModule = createTaskCenterModule({
       repository: runtime.taskRepository
     });
@@ -65,6 +71,39 @@ export class AppModule {
           return;
         case "getRiskSummary":
           writeJsonResponse(response, this.taskCenterModule.controller.getRiskSummary(route.params.taskId, requestId));
+          return;
+        case "evaluateSandboxSecurity":
+          if (!this.sandboxSecurityModule) {
+            throw new DomainError(
+              "Internal server error",
+              "INTERNAL_ERROR",
+              500
+            );
+          }
+          writeJsonResponse(
+            response,
+            await this.sandboxSecurityModule.publicController.evaluate(
+              request,
+              requestId
+            )
+          );
+          return;
+        case "listSandboxSecurityAuditEvents":
+          if (!this.sandboxSecurityModule) {
+            throw new DomainError(
+              "Internal server error",
+              "INTERNAL_ERROR",
+              500
+            );
+          }
+          writeJsonResponse(
+            response,
+            await this.sandboxSecurityModule.publicController.listAuditEvents(
+              request,
+              url,
+              requestId
+            )
+          );
           return;
         case "listSupervisionSessions": {
           const httpResponse = this.supervisionModule.controller.listSessions(
@@ -160,6 +199,9 @@ export class AppModule {
   }
 }
 
-export function createAppModule(dependencies?: RuntimeDependencies): AppModule {
-  return new AppModule(dependencies);
+export function createAppModule(
+  dependencies?: RuntimeDependencies,
+  sandboxSecurityModule?: SandboxSecurityModule
+): AppModule {
+  return new AppModule(dependencies, sandboxSecurityModule);
 }

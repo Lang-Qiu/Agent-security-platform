@@ -11,6 +11,7 @@ import { readLimitedJsonBody } from "./common/http/limited-json-body.ts";
 import { createRequestId } from "./common/http/request-id.ts";
 import { CampaignIngestController } from "./modules/supervision/campaign-ingest.controller.ts";
 import { CampaignIngestService } from "./modules/supervision/campaign-ingest.service.ts";
+import type { SandboxSecurityModule } from "./modules/sandbox-security/sandbox-security.module.ts";
 import type { InMemoryCampaignRepository } from "./modules/supervision/repositories/in-memory-campaign.repository.ts";
 import type { TaskRepository } from "./modules/task-center/repositories/task.repository.ts";
 import type {
@@ -78,15 +79,18 @@ export class InternalAppModule {
   // tests can verify that createProductionServers reads TRACK1_INGEST_TOKEN
   // (not the legacy CAMPAIGN_INGEST_TOKEN) from the environment.
   readonly ingestToken: string;
+  readonly sandboxSecurityModule?: SandboxSecurityModule;
   private readonly controller: CampaignIngestController;
 
   constructor(input: {
     campaignRepository: InMemoryCampaignRepository;
     ingestToken: string;
     taskRepository?: TaskRepository;
+    sandboxSecurityModule?: SandboxSecurityModule;
   }) {
     this.campaignRepository = input.campaignRepository;
     this.ingestToken = input.ingestToken;
+    this.sandboxSecurityModule = input.sandboxSecurityModule;
     const service = new CampaignIngestService(
       input.campaignRepository,
       input.taskRepository
@@ -209,6 +213,58 @@ export class InternalAppModule {
           );
           return;
         }
+
+        case "issueSandboxSecurityCapability":
+          if (!this.sandboxSecurityModule) {
+            throw new DomainError(
+              "Internal server error",
+              "INTERNAL_ERROR",
+              500
+            );
+          }
+          writeJsonResponse(
+            response,
+            await this.sandboxSecurityModule.adminController.issue(
+              request,
+              requestId
+            )
+          );
+          return;
+
+        case "revokeSandboxSecurityCapability":
+          if (!this.sandboxSecurityModule) {
+            throw new DomainError(
+              "Internal server error",
+              "INTERNAL_ERROR",
+              500
+            );
+          }
+          writeJsonResponse(
+            response,
+            await this.sandboxSecurityModule.adminController.revoke(
+              request,
+              route.params.rawCapabilityIdSegment,
+              requestId
+            )
+          );
+          return;
+
+        case "purgeSandboxSecurityAuditEvents":
+          if (!this.sandboxSecurityModule) {
+            throw new DomainError(
+              "Internal server error",
+              "INTERNAL_ERROR",
+              500
+            );
+          }
+          writeJsonResponse(
+            response,
+            await this.sandboxSecurityModule.adminController.purge(
+              request,
+              requestId
+            )
+          );
+          return;
       }
     } catch (error) {
       const domainError =
