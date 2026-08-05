@@ -1,5 +1,6 @@
-// P2-T5: Internal-only router for Docker-internal campaign ingest.
-// Recognizes only health plus the four exact campaign ingest routes.
+// Internal-only router for Docker-internal campaign ingest and sandbox security
+// administration. It recognizes health, four exact campaign ingest routes, and
+// the three exact sandbox security administration routes.
 // Every other path returns null so the InternalAppModule responds with 404.
 
 export type InternalRouteName =
@@ -7,7 +8,10 @@ export type InternalRouteName =
   | "startCampaign"
   | "ingestSnapshot"
   | "finalizeCampaign"
-  | "registerEvidence";
+  | "registerEvidence"
+  | "issueSandboxSecurityCapability"
+  | "revokeSandboxSecurityCapability"
+  | "purgeSandboxSecurityAuditEvents";
 
 export interface InternalRouteMatch {
   name: InternalRouteName;
@@ -36,6 +40,40 @@ export function matchInternalRoute(
 ): InternalRouteMatch | null {
   if (method === "GET" && pathname === "/internal/health") {
     return { name: "internalHealth", params: {} };
+  }
+
+  if (
+    method === "POST" &&
+    pathname === "/internal/sandbox/security/capabilities"
+  ) {
+    return { name: "issueSandboxSecurityCapability", params: {} };
+  }
+
+  if (
+    method === "POST" &&
+    pathname === "/internal/sandbox/security/audit-events/purge"
+  ) {
+    return { name: "purgeSandboxSecurityAuditEvents", params: {} };
+  }
+
+  // Revoke keeps the capability id opaque until the authenticated controller
+  // has completed bodyless admission and can validate it exactly once.
+  const rawSegments = pathname.split("/");
+  if (
+    method === "POST" &&
+    rawSegments.length === 7 &&
+    rawSegments[0] === "" &&
+    rawSegments[1] === "internal" &&
+    rawSegments[2] === "sandbox" &&
+    rawSegments[3] === "security" &&
+    rawSegments[4] === "capabilities" &&
+    rawSegments[5] !== "" &&
+    rawSegments[6] === "revoke"
+  ) {
+    return {
+      name: "revokeSandboxSecurityCapability",
+      params: { rawCapabilityIdSegment: rawSegments[5] }
+    };
   }
 
   const segments = pathname.split("/").filter(Boolean);

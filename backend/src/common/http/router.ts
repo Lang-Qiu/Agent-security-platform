@@ -10,7 +10,9 @@ export type RouteName =
   | "getSupervisionEvidence"
   | "listCampaigns"
   | "getCampaignDetail"
-  | "getCampaignEvidence";
+  | "getCampaignEvidence"
+  | "evaluateSandboxSecurity"
+  | "listSandboxSecurityAuditEvents";
 
 export interface RouteMatch {
   name: RouteName;
@@ -39,6 +41,20 @@ export function matchRoute(method: string | undefined, pathname: string): RouteM
         params: {}
       };
     }
+  }
+
+  if (method === "POST" && pathname === "/api/sandbox/security/evaluations") {
+    return {
+      name: "evaluateSandboxSecurity",
+      params: {}
+    };
+  }
+
+  if (method === "GET" && pathname === "/api/sandbox/security/audit-events") {
+    return {
+      name: "listSandboxSecurityAuditEvents",
+      params: {}
+    };
   }
 
   const segments = pathname.split("/").filter(Boolean);

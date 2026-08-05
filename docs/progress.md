@@ -1,3 +1,36 @@
+## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T2 exact route matches
+
+- stage: Phase 1 / P1-T2 implementation; specification review passed and the
+  quality review/commit are pending
+- TDD RED: focused `backend/tests/sandbox-security-routes.spec.ts` failed
+  `3/5` with the intended `null` matches for the new public evaluation route,
+  internal capability issue route, and opaque revoke route; two existing-route
+  regression cases passed, with no import or syntax error
+- GREEN: focused route suite passed `5/5`; the new public evaluation/audit
+  routes and internal issue/revoke/purge routes are exact, listener-separated,
+  and reject wrong methods, empty/missing slots, extra segments, and trailing
+  slashes. Revoke preserves `rawCapabilityIdSegment` without decoding.
+- changed: `backend/tests/sandbox-security-routes.spec.ts`,
+  `backend/src/common/http/router.ts`,
+  `backend/src/common/http/internal-router.ts`, `package.json`,
+  `docs/progress.md`
+- regression validation: the focused route plus `main` and campaign/task
+  integration command passed `44/45`; the one failure is the pre-existing
+  local Semgrep `spawn semgrep ENOENT` expectation. `npm run test:backend`
+  passed `234/236`; its two failures are the same missing Semgrep binary and
+  the pre-existing asset-scan `open_ports` expectation drift.
+- repository gate: `npm run test:repo` passed `319/319`.
+- specification review: PASS; one Minor finding that the internal-router
+  module comment described only the prior campaign routes was closed by
+  updating the comment to include the three sandbox security routes.
+- backend TypeScript check remains blocked by pre-existing repository errors
+  outside the changed route files; `git diff --check` passed.
+- dependency: GENERAL-002 remains
+  `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`; neither GENERAL-002 nor
+  GENERAL-003 is `VERIFIED`
+- next: quality review, then exact P1-T2 commit if it passes; do not begin
+  P1-T3
+
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T1 prototype-key review correction
 
 - stage: P1-T1 review-fix cycle; no backend or P1-T2 work started
