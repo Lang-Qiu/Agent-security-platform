@@ -985,8 +985,9 @@ function createCaptureTransport(
             }
           }
           if (
-            attempt < MAX_PROVIDER_ATTEMPTS &&
-            errorName(error) === "sandbox_security_transport_connection_failed"
+            attempt === 1 &&
+            outcome?.status === "transport_error" &&
+            outcome.error_code === "connection_failed"
           ) {
             continue;
           }
