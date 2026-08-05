@@ -2170,3 +2170,46 @@ grammar `sbxcur_v1.<payload>.<mac>`. The shared strict normalizers
 return fresh values or `null`; they perform all exact-key, catalog, bounds,
 timestamp, cursor, and defensive-copy checks before a value crosses the shared
 boundary.
+
+## REQ-SBX-GENERAL-003 HTTP Admission
+
+Sandbox security HTTP handlers inspect security-sensitive fields from
+`IncomingMessage.rawHeaders` case-insensitively. `Authorization`,
+`Idempotency-Key`, `Content-Type`, `Content-Encoding`, `Content-Length`, and
+`Transfer-Encoding` occur at most once. Duplicate authorization is `401`;
+duplicate media or encoding headers are `415`; other duplicate framing or
+idempotency headers are `400`.
+
+Bearer authorization is exactly `Bearer <token>` with one ASCII space and no
+surrounding whitespace. Public tokens use the opaque
+`sbxcap_v1.<43 base64url characters>` grammar. Internal administrator tokens
+use the same header grammar and are checked by the injected administrator
+authorizer.
+
+Body-bearing routes require a single `Content-Type` matching
+`application/json` with optional unquoted `charset=utf-8`, and reject any
+`Content-Encoding`. They accept one canonical decimal `Content-Length` or a
+single case-insensitive `Transfer-Encoding: chunked`, never both. Public
+evaluation bodies are capped at `786432` bytes; internal capability issue
+bodies at `65536` bytes. Bytes are decoded with fatal UTF-8 and parsed only
+after the complete body arrives within the `5000 ms` admission deadline.
+Empty or invalid JSON, invalid framing, invalid UTF-8, and malformed
+`Idempotency-Key` (`^[A-Za-z0-9._~-]{16,128}$`) return
+`SANDBOX_SECURITY_INVALID_REQUEST` (or the specific media/body error).
+
+Audit-read, capability-revoke, and audit-purge routes are bodyless. They allow
+no transfer encoding and only no `Content-Length` or `Content-Length: 0`.
+Admission still awaits request completion and rejects a nonempty chunk that is
+delivered later. Audit query parsing allows only one `cursor` and one `limit`,
+defaults `limit` to `50`, and bounds it to `1..100`; malformed percent
+encoding, unknown or repeated keys, empty/overlong cursors, and non-canonical
+limits are `400`.
+
+Controller failures are typed `SandboxSecurityHttpError` values and are mapped
+to the `ApiResponse` error envelope only by the public and internal app modules.
+`Retry-After` is emitted exactly for in-progress/concurrency (`1`), rate-limit
+(`1..60` from the monotonic bucket), and storage-unavailable (`60`) errors.
+Server-detected `408` and `413` responses include `Connection: close`; the
+request and socket are destroyed only from the response `finish` callback.
+When the caller has already aborted or the response is not writable, no second
+headers/body/end/destroy operation is attempted.

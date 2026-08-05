@@ -12,6 +12,12 @@ import {
   createRuntimeDependencies,
   type RuntimeDependencies
 } from "./runtime-dependencies.ts";
+import {
+  SandboxSecurityHttpError,
+  sandboxSecurityHttpErrorResponse,
+  sandboxSecurityServiceErrorToHttpError
+} from "./modules/sandbox-security/http-admission.ts";
+import { isSandboxSecurityServiceError } from "./modules/sandbox-security/sandbox-security.errors.ts";
 
 export class AppModule {
   taskCenterModule: ReturnType<typeof createTaskCenterModule>;
@@ -85,7 +91,8 @@ export class AppModule {
             await this.sandboxSecurityModule.publicController.evaluate(
               request,
               requestId
-            )
+            ),
+            request
           );
           return;
         case "listSandboxSecurityAuditEvents":
@@ -102,7 +109,8 @@ export class AppModule {
               request,
               url,
               requestId
-            )
+            ),
+            request
           );
           return;
         case "listSupervisionSessions": {
@@ -159,18 +167,29 @@ export class AppModule {
         }
       }
     } catch (error) {
+      if (error instanceof SandboxSecurityHttpError) {
+        writeJsonResponse(
+          response,
+          sandboxSecurityHttpErrorResponse(error, requestId),
+          request
+        );
+        return;
+      }
+      if (isSandboxSecurityServiceError(error)) {
+        const httpError = sandboxSecurityServiceErrorToHttpError(error);
+        writeJsonResponse(
+          response,
+          sandboxSecurityHttpErrorResponse(httpError, requestId),
+          request
+        );
+        return;
+      }
       const domainError =
         error instanceof DomainError
           ? error
           : new DomainError("Internal server error", "INTERNAL_ERROR", 500);
 
-      writeJsonResponse(
-        response,
-        createErrorHttpResponse({
-          requestId,
-          error: domainError
-        })
-      );
+      writeJsonResponse(response, createErrorHttpResponse({ requestId, error: domainError }));
     }
   }
 

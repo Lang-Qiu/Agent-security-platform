@@ -20,6 +20,12 @@ import type {
   Track1CampaignSnapshotEnvelope,
   Track1CampaignStartEnvelope
 } from "../../shared/types/campaign-ingest.ts";
+import {
+  SandboxSecurityHttpError,
+  sandboxSecurityHttpErrorResponse,
+  sandboxSecurityServiceErrorToHttpError
+} from "./modules/sandbox-security/http-admission.ts";
+import { isSandboxSecurityServiceError } from "./modules/sandbox-security/sandbox-security.errors.ts";
 
 // P2-T5: Body limits measured in UTF-8 bytes.
 // Lifecycle envelopes (start/finalize/evidence) are capped at 256 KiB.
@@ -227,7 +233,8 @@ export class InternalAppModule {
             await this.sandboxSecurityModule.adminController.issue(
               request,
               requestId
-            )
+            ),
+            request
           );
           return;
 
@@ -245,7 +252,8 @@ export class InternalAppModule {
               request,
               route.params.rawCapabilityIdSegment,
               requestId
-            )
+            ),
+            request
           );
           return;
 
@@ -262,20 +270,35 @@ export class InternalAppModule {
             await this.sandboxSecurityModule.adminController.purge(
               request,
               requestId
-            )
+            ),
+            request
           );
           return;
       }
     } catch (error) {
+      if (error instanceof SandboxSecurityHttpError) {
+        writeJsonResponse(
+          response,
+          sandboxSecurityHttpErrorResponse(error, requestId),
+          request
+        );
+        return;
+      }
+      if (isSandboxSecurityServiceError(error)) {
+        const httpError = sandboxSecurityServiceErrorToHttpError(error);
+        writeJsonResponse(
+          response,
+          sandboxSecurityHttpErrorResponse(httpError, requestId),
+          request
+        );
+        return;
+      }
       const domainError =
         error instanceof DomainError
           ? error
           : new DomainError("Internal server error", "INTERNAL_ERROR", 500);
 
-      writeJsonResponse(
-        response,
-        createErrorHttpResponse({ requestId, error: domainError })
-      );
+      writeJsonResponse(response, createErrorHttpResponse({ requestId, error: domainError }));
     }
   }
 }

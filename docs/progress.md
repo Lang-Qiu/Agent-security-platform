@@ -1,3 +1,49 @@
+## 2026-08-06 - REQ-SBX-GENERAL-003 P5-T1 HTTP admission and response policy
+
+- phase/task: Phase 5 / P5-T1 Raw Header, Body, Query, and Response Policy
+- status: `IMPLEMENTED_PENDING_P5_T2`
+- implementation:
+  - added fail-closed raw-header admission for public and administrator bearer
+    credentials, idempotency keys, JSON media/framing, fatal UTF-8, bounded
+    bodies, deadlines, caller aborts, bodyless streams, and audit queries
+  - added typed HTTP errors, exhaustive service-error mapping, exact
+    `Retry-After`/`Connection` headers, request-id envelopes, and finish-safe
+    408/413 response cleanup without duplicate writes or destroys
+  - wired both app listeners to map sandbox errors and pass the request into
+    response writing; normal Node `close` events no longer become false 408s
+  - avoids invoking an async iterator `return()` on admission errors so stream
+    cleanup cannot close the request before the 408/413 response finishes
+- files:
+  - `backend/src/modules/sandbox-security/http-admission.ts`
+  - `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+  - `backend/src/common/http/http-response.ts`
+  - `backend/src/app.module.ts`
+  - `backend/src/internal-app.module.ts`
+  - `backend/tests/sandbox-security-controller.spec.ts`
+  - `docs/api-contract.md`
+- tests:
+  - controller/admission plus main regression suite is green (`61/61`)
+  - real `node:http` complete-body close regression is green; focused matrix
+    also covers normal-EOF error writes, existing generic error preservation,
+    non-closing reader errors, hanging iterator cleanup, 408/413 ordering,
+    headers, and no-op response states
+  - `npm run typecheck:backend` still reports only existing campaign,
+    task-center, and test baseline errors; no P5-T1 sandbox-security error
+  - `npm run test:backend` is `415/417`; the two failures remain the existing
+    Semgrep `ENOENT` and task-engine asset expectation drift
+  - `git diff --check` passes
+- TDD/reviews:
+  - admission RED first failed at the missing boundary exports; close-event and
+    hanging-cleanup regressions were each run RED before their targeted fixes
+  - independent specification and quality review: PASS with `0 Critical / 0
+    Important / 0 Minor`
+- boundary:
+  - public/admin controllers and injected module assembly remain P5-T2/P5-T4;
+    production gateway and lifecycle remain Phase 6
+  - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
+    GENERAL-003 is not `VERIFIED`
+- next: proceed to P5-T2 public evaluation and audit controllers
+
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P4-T3 evaluation orchestration and idempotency
 
 - phase/task: Phase 4 / P4-T3 Evaluation Orchestration and Idempotency
