@@ -76,6 +76,9 @@ export {
 } from "./http-admission.ts";
 export type { SandboxSecurityHttpErrorCode } from "./http-admission.ts";
 export { createSandboxSecurityController } from "./sandbox-security.controller.ts";
+export {
+  createSandboxSecurityAdminController
+} from "./sandbox-security-admin.controller.ts";
 
 export interface SandboxSecurityPublicController {
   evaluate(request: IncomingMessage, requestId: string): Promise<HttpResponse>;

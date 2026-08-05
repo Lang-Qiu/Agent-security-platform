@@ -83,6 +83,47 @@
     GENERAL-003 is not `VERIFIED`
 - next: proceed to P5-T3 internal capability and purge controller
 
+## 2026-08-06 - REQ-SBX-GENERAL-003 P5-T3 administrator capability and purge controller
+
+- phase/task: Phase 5 / P5-T3 Internal Capability and Purge Controller
+- status: `IMPLEMENTED_PENDING_P5_T4`
+- implementation:
+  - added the administrator controller factory for capability issue/revoke and
+    fixed-retention audit purge routes
+  - enforces administrator bucket and auth before body/path work, strict
+    65536-byte issue admission, exact DTO normalization, and bodyless revoke/
+    purge completion
+  - performs exactly-once capability path decoding and v4 ID validation,
+    preserves service-owned 404/503 mappings, and normalizes unexpected stream
+    failures to typed invalid requests without leaking details
+  - registered the admin suite in `test:backend`
+- files:
+  - `backend/src/modules/sandbox-security/sandbox-security-admin.controller.ts`
+  - `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+  - `backend/tests/sandbox-security-admin.controller.spec.ts`
+  - `package.json`
+  - `docs/api-contract.md`
+- tests:
+  - administrator controller focused suite is green (`21/21`)
+  - combined controller/routes/capability regression is green (`111/111`)
+  - `npm run test:backend` is `456/458`; the two failures remain the existing
+    Semgrep `ENOENT` and task-engine asset expectation drift
+  - backend typecheck reports only existing campaign/task-center/test baseline
+    errors; no P5-T3 sandbox-security error
+  - `git diff --check` passes
+- TDD/reviews:
+  - factory RED first failed because the module lacked the admin export;
+    malformed issue/bodyless iterator regressions also failed RED before their
+    typed-400 fixes
+  - independent specification and quality reviews: PASS with `0 Critical / 0
+    Important / 0 Minor`
+- boundary:
+  - injected module assembly and real HTTP integration remain P5-T4;
+    production gateway and lifecycle remain Phase 6
+  - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
+    GENERAL-003 is not `VERIFIED`
+- next: proceed to P5-T4 complete injected module and real HTTP admission
+
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P4-T3 evaluation orchestration and idempotency
 
 - phase/task: Phase 4 / P4-T3 Evaluation Orchestration and Idempotency

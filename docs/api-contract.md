@@ -2239,3 +2239,28 @@ service and are mapped without a second controller event. Body admission
 errors on evaluation use their evaluation rejection codes; an unsupported
 media error on a bodyless audit route is returned to the caller but is not
 projected as an invalid `audit_read` rejection variant.
+
+### P5-T3 administrator controller contract
+
+Internal capability and purge handlers consume the administrator token bucket
+before parsing or authenticating the bearer credential. Invalid credentials,
+including duplicate or malformed raw headers, return the fixed administrator
+`401` without reading a body, decoding a path segment, invoking a service, or
+creating an audit event.
+
+Capability issue then reads a strict JSON body with the `65536`-byte and
+`5000 ms` limits, normalizes the exact issue DTO (including the default
+`ttl_seconds=900`), and calls the capability service only after normalization.
+Success is `201 ApiResponse<SandboxSecurityCapabilityIssueResult>` and exposes
+the opaque bearer token only in that response. Revoke and purge first await
+bodyless completion; revoke then percent-decodes the opaque path segment once,
+rejects malformed encoding, decoded slash/backslash/NUL, and non-v4 capability
+IDs, and only then calls the revoke service. Repeated revocation remains
+idempotent and an unknown ID maps to the fixed `404`.
+
+Purge delegates the fixed 90-day, bounded-1000-row retention operation to the
+audit service and returns the exact purge result. Storage degradation maps to
+`503` with `Retry-After: 60`; administrator rate rejection and bad credentials
+are not durably audited. Unknown stream/iterator failures at the controller
+boundary are normalized to the stable `400 SANDBOX_SECURITY_INVALID_REQUEST`
+without leaking implementation details.
