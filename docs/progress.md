@@ -1,7 +1,6 @@
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T2 exact route matches
 
-- stage: Phase 1 / P1-T2 implementation; specification review passed and the
-  quality review/commit are pending
+- stage: Phase 1 / P1-T2 complete
 - TDD RED: focused `backend/tests/sandbox-security-routes.spec.ts` failed
   `3/5` with the intended `null` matches for the new public evaluation route,
   internal capability issue route, and opaque revoke route; two existing-route
@@ -28,8 +27,9 @@
 - dependency: GENERAL-002 remains
   `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`; neither GENERAL-002 nor
   GENERAL-003 is `VERIFIED`
-- next: quality review, then exact P1-T2 commit if it passes; do not begin
-  P1-T3
+- quality review: PASS with `0 Critical / 0 Important / 0 Minor`; commit
+  `c147b01` contains the exact P1-T2 paths
+- next: P1-T3 injectable sandbox module dispatch boundary
 
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T1 prototype-key review correction
 
