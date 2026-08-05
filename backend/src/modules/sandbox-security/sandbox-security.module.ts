@@ -39,6 +39,9 @@ export {
   createSandboxSecurityAuditProjector
 } from "./audit-projector.ts";
 export { openSandboxSecuritySqliteDatabase } from "./adapters/sqlite/sqlite-database.ts";
+export {
+  createSqliteSandboxSecurityCapabilityRepository
+} from "./adapters/sqlite/sqlite-capability.repository.ts";
 
 export { toSandboxSecurityEngineRuntime } from "./ports/runtime.ts";
 export {

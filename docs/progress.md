@@ -8747,3 +8747,46 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
     GENERAL-003 is not `VERIFIED`
 - next: complete independent specification and quality reviews, then proceed
   to P3-T2 only after this task's exact commit
+
+## 2026-08-05 - REQ-SBX-GENERAL-003 P3-T2 capability repository persistence
+
+- phase/task: Phase 3 / P3-T2
+- status: `COMPLETE_PENDING_P3_T3`
+- implementation:
+  - added the SQLite capability repository factory behind the sandbox-security
+    module boundary
+  - made capability issue plus `capability_issued` audit insertion atomic,
+    including canonical child grant catalogs, strict content-free audit
+    normalization, and tagged `SANDBOX_SECURITY_INTERNAL_ERROR` failures
+  - added digest-only lookup with fail-closed malformed-row handling,
+    restart durability, defensive copies, foreign-key restrict/cascade
+    coverage, first-revoke timestamp persistence, repeated/unknown revoke
+    handling, and atomic revoke plus audit insertion
+  - verified that bearer token material is never written to SQLite, WAL, or
+    SHM artifacts; a revoke callback throwing an ordinary same-message Error
+    is wrapped as a tagged service error
+- tests:
+  - capability repository RED was verified first (`6/6` factory-boundary
+    failures); GREEN focused capability persistence tests passed (`8/8`)
+  - the full real-filesystem SQLite suite passed (`22/22`)
+  - `npm run test:backend` remains `306/308`; the two failures are existing
+    Semgrep `ENOENT` and task-engine static-provider expectation drift,
+    unrelated to P3-T2
+  - `npm run typecheck:backend` still reports only existing campaign,
+    task-center, and test baseline errors; no P3-T2 sandbox-security source
+    error was added
+  - `git diff --check` passed
+- TDD evidence: the missing repository factory produced the initial RED;
+  implementation then reached GREEN, and the quality-review regression for
+  wrapping ordinary same-message revoke errors was run RED before its guard
+  fix and re-run GREEN
+- reviews:
+  - specification review: PASS with `0 Critical / 0 Important / 0 Minor`
+  - quality review: PASS with `0 Critical / 0 Important / 0 Minor`
+- boundary:
+  - idempotency, audit read/purge repositories, application services, HTTP,
+    and production composition remain later Phase 3/4/5/6 tasks
+  - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
+    GENERAL-003 is not `VERIFIED`
+- commit: `feat(backend): persist sandbox security capabilities`
+- next: P3-T3 idempotency state machine, recovery, and maintenance health

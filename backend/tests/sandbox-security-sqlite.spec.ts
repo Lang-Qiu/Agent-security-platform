@@ -19,9 +19,96 @@ import { join } from "node:path";
 import test from "node:test";
 
 import * as boundary from "../src/modules/sandbox-security/sandbox-security.module.ts";
+import type {
+  SandboxSecurityAuditEvent,
+  SandboxSecurityCapabilityPersistenceRecord
+} from "../src/modules/sandbox-security/sandbox-security.types.ts";
+import type { SandboxSecurityCapabilityRepository } from "../src/modules/sandbox-security/ports/capability.repository.ts";
 
 const FIXED_DEPLOYMENT_KEY_ID =
   "deployment-key:hmac-sha256:" + "a".repeat(64);
+
+const CAPABILITY_ID = "capability:00000000-0000-4000-8000-000000000001";
+const SECOND_CAPABILITY_ID = "capability:00000000-0000-4000-8000-000000000002";
+const TOKEN = `sbxcap_v1.${"A".repeat(43)}`;
+const TOKEN_DIGEST = `sha256:${"1".repeat(64)}` as `sha256:${string}`;
+const SECOND_TOKEN_DIGEST = `sha256:${"2".repeat(64)}` as `sha256:${string}`;
+const SCOPE_SEED = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
+const SECOND_SCOPE_SEED = Uint8Array.from({ length: 32 }, (_, index) => index + 33);
+const ISSUED_AT = "2026-08-05T00:00:00.000Z";
+const EXPIRES_AT = "2026-08-05T00:15:00.000Z";
+
+function capabilityRecord(
+  overrides: Partial<SandboxSecurityCapabilityPersistenceRecord> = {}
+): SandboxSecurityCapabilityPersistenceRecord {
+  return {
+    capability_id: CAPABILITY_ID,
+    subject_id: "operator:alpha",
+    token_digest: TOKEN_DIGEST,
+    scope_seed: new Uint8Array(SCOPE_SEED),
+    scopes: ["sandbox_security:evaluate", "sandbox_security:audit:read"],
+    allowed_stages: ["user_input", "model_output", "tool_request"],
+    allowed_policy_profile_ids: [
+      "sandbox-security-balanced.v1",
+      "sandbox-security-strict.v1"
+    ],
+    issued_at: ISSUED_AT,
+    expires_at: EXPIRES_AT,
+    revoked_at: null,
+    ...overrides
+  };
+}
+
+function capabilityIssuedEvent(
+  record: SandboxSecurityCapabilityPersistenceRecord,
+  eventId = "audit:00000000-0000-4000-8000-000000000001"
+): SandboxSecurityAuditEvent {
+  return {
+    schema_version: "sandbox-security-audit-event.v1",
+    event_id: eventId,
+    event_type: "capability_issued",
+    occurred_at: record.issued_at,
+    subject_id: record.subject_id,
+    authorization_scope_id: "authscope:hmac-sha256:" + "a".repeat(64),
+    capability_id: record.capability_id,
+    scopes: ["sandbox_security:evaluate", "sandbox_security:audit:read"],
+    allowed_stages: ["user_input", "model_output", "tool_request"],
+    allowed_policy_profile_ids: [
+      "sandbox-security-balanced.v1",
+      "sandbox-security-strict.v1"
+    ],
+    issued_at: record.issued_at,
+    expires_at: record.expires_at
+  };
+}
+
+function capabilityRepository(
+  fixture: Readonly<{ parentPath: string; databasePath: string }>,
+  t: { after(callback: () => void): void }
+): Readonly<{
+  repository: SandboxSecurityCapabilityRepository;
+  database: ReturnType<NonNullable<typeof boundary.openSandboxSecuritySqliteDatabase>>;
+}> {
+  const database = openDatabase(fixture, t);
+  const factory = (
+    boundary as unknown as {
+      createSqliteSandboxSecurityCapabilityRepository?: (input: Readonly<{
+        database: ReturnType<NonNullable<typeof boundary.openSandboxSecuritySqliteDatabase>>;
+      }>) => SandboxSecurityCapabilityRepository;
+    }
+  ).createSqliteSandboxSecurityCapabilityRepository;
+  assert.equal(typeof factory, "function");
+  const repository = factory!({ database });
+  return { repository, database };
+}
+
+function assertInternalError(error: unknown): boolean {
+  assert.equal(
+    (error as { code?: unknown } | null)?.code,
+    "SANDBOX_SECURITY_INTERNAL_ERROR"
+  );
+  return true;
+}
 
 function createPrivateDatabaseFixture(): Readonly<{
   parentPath: string;
@@ -509,4 +596,270 @@ test("REQ-SBX-GENERAL-003 enforces transaction ownership, rollback, read, and cl
   assert.throws(() => database.read(() => undefined));
   assert.throws(() => database.transaction(() => undefined));
   assert.doesNotThrow(() => database.checkpointAndClose());
+});
+
+test("REQ-SBX-GENERAL-003 capability issue and audit insert are atomic", (t) => {
+  const fixture = createPrivateDatabaseFixture();
+  const { repository } = capabilityRepository(fixture, t);
+  const record = capabilityRecord();
+  repository.issueWithAudit(record, capabilityIssuedEvent(record));
+  assert.deepEqual(repository.findByTokenDigest(TOKEN_DIGEST), record);
+});
+
+test("REQ-SBX-GENERAL-003 capability repository rolls back malformed audit inserts", (t) => {
+  const fixture = createPrivateDatabaseFixture();
+  const { repository, database } = capabilityRepository(fixture, t);
+  const first = capabilityRecord();
+  repository.issueWithAudit(first, capabilityIssuedEvent(first));
+  const second = capabilityRecord({
+    capability_id: SECOND_CAPABILITY_ID,
+    token_digest: SECOND_TOKEN_DIGEST,
+    scope_seed: new Uint8Array(SECOND_SCOPE_SEED)
+  });
+
+  assert.throws(
+    () => repository.issueWithAudit(second, {} as SandboxSecurityAuditEvent),
+    assertInternalError
+  );
+  assert.equal(repository.findByTokenDigest(SECOND_TOKEN_DIGEST), null);
+  assert.equal(
+    database.read((db) =>
+      (db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM sandbox_security_audit_events WHERE event_type = ?"
+        )
+        .get("capability_issued") as { count: number }).count
+    ),
+    1
+  );
+});
+
+test("REQ-SBX-GENERAL-003 capability lookup normalizes catalogs and returns defensive copies", (t) => {
+  const fixture = createPrivateDatabaseFixture();
+  const { repository } = capabilityRepository(fixture, t);
+  const input = capabilityRecord({
+    scopes: ["sandbox_security:audit:read", "sandbox_security:evaluate"],
+    allowed_stages: ["tool_request", "user_input", "model_output"],
+    allowed_policy_profile_ids: [
+      "sandbox-security-strict.v1",
+      "sandbox-security-balanced.v1"
+    ]
+  });
+  repository.issueWithAudit(input, capabilityIssuedEvent(input));
+
+  const normalized = repository.findByTokenDigest(TOKEN_DIGEST);
+  assert.ok(normalized);
+  assert.deepEqual(normalized.scopes, [
+    "sandbox_security:evaluate",
+    "sandbox_security:audit:read"
+  ]);
+  assert.deepEqual(normalized.allowed_stages, [
+    "user_input",
+    "model_output",
+    "tool_request"
+  ]);
+  assert.deepEqual(normalized.allowed_policy_profile_ids, [
+    "sandbox-security-balanced.v1",
+    "sandbox-security-strict.v1"
+  ]);
+  normalized.scope_seed[0] = 255;
+  (normalized.scopes as SandboxSecurityCapabilityPersistenceRecord["scopes"] as string[]).pop();
+  const reread = repository.findByTokenDigest(TOKEN_DIGEST);
+  assert.ok(reread);
+  assert.equal(reread.scope_seed[0], SCOPE_SEED[0]);
+  assert.deepEqual(reread.scopes, [
+    "sandbox_security:evaluate",
+    "sandbox_security:audit:read"
+  ]);
+  assert.equal(repository.findByTokenDigest(`sha256:${"f".repeat(64)}`), null);
+});
+
+test("REQ-SBX-GENERAL-003 capability records survive restart and never persist raw tokens", (t) => {
+  const fixture = createPrivateDatabaseFixture();
+  const database = openDatabase(fixture, t);
+  const factory = (
+    boundary as unknown as {
+      createSqliteSandboxSecurityCapabilityRepository?: (input: Readonly<{
+        database: ReturnType<NonNullable<typeof boundary.openSandboxSecuritySqliteDatabase>>;
+      }>) => SandboxSecurityCapabilityRepository;
+    }
+  ).createSqliteSandboxSecurityCapabilityRepository;
+  assert.equal(typeof factory, "function");
+  const repository = factory!({ database });
+  const record = capabilityRecord();
+  repository.issueWithAudit(record, capabilityIssuedEvent(record));
+  database.checkpointAndClose();
+
+  const reopened = boundary.openSandboxSecuritySqliteDatabase!({
+    path: fixture.databasePath,
+    deployment_key_id: FIXED_DEPLOYMENT_KEY_ID,
+    now: () => ISSUED_AT
+  });
+  t.after(() => closeAndRemove(fixture.parentPath, reopened));
+  const restarted = factory!({ database: reopened });
+  assert.deepEqual(restarted.findByTokenDigest(TOKEN_DIGEST), record);
+
+  for (const path of [
+    fixture.databasePath,
+    `${fixture.databasePath}-wal`,
+    `${fixture.databasePath}-shm`
+  ]) {
+    if (existsSync(path)) {
+      assert.equal(readFileSync(path).includes(Buffer.from(TOKEN, "ascii")), false);
+    }
+  }
+});
+
+test("REQ-SBX-GENERAL-003 capability foreign keys restrict references and cascade grant children", (t) => {
+  const fixture = createPrivateDatabaseFixture();
+  const { repository, database } = capabilityRepository(fixture, t);
+  const record = capabilityRecord();
+  repository.issueWithAudit(record, capabilityIssuedEvent(record));
+  assert.throws(() =>
+    database.transaction((db) => {
+      db.prepare("DELETE FROM sandbox_security_capabilities WHERE capability_id = ?").run(
+        record.capability_id
+      );
+    })
+  );
+  assert.equal(
+    database.read((db) =>
+      (db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM sandbox_security_capability_scopes WHERE capability_id = ?"
+        )
+        .get(record.capability_id) as { count: number }).count
+    ),
+    2
+  );
+  database.transaction((db) => {
+    db.prepare("DELETE FROM sandbox_security_audit_events WHERE capability_id = ?").run(
+      record.capability_id
+    );
+    db.prepare("DELETE FROM sandbox_security_capabilities WHERE capability_id = ?").run(
+      record.capability_id
+    );
+  });
+  assert.equal(
+    database.read((db) =>
+      (db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM sandbox_security_capability_scopes WHERE capability_id = ?"
+        )
+        .get(record.capability_id) as { count: number }).count
+    ),
+    0
+  );
+});
+
+test("REQ-SBX-GENERAL-003 fails closed for malformed capability rows", (t) => {
+  const fixture = createPrivateDatabaseFixture();
+  const { repository, database } = capabilityRepository(fixture, t);
+  const record = capabilityRecord();
+  repository.issueWithAudit(record, capabilityIssuedEvent(record));
+  database.transaction((db) => {
+    db.prepare(
+      "DELETE FROM sandbox_security_capability_profiles WHERE capability_id = ?"
+    ).run(record.capability_id);
+  });
+  assert.equal(repository.findByTokenDigest(TOKEN_DIGEST), null);
+});
+
+test("REQ-SBX-GENERAL-003 revocation fixes the first timestamp and is atomic with audit", (t) => {
+  const fixture = createPrivateDatabaseFixture();
+  const { repository, database } = capabilityRepository(fixture, t);
+  const record = capabilityRecord();
+  repository.issueWithAudit(record, capabilityIssuedEvent(record));
+  const revokedAt = "2026-08-05T00:05:00.000Z";
+  const revokeEvent = (eventId: string, timestamp: string): SandboxSecurityAuditEvent => ({
+    schema_version: "sandbox-security-audit-event.v1",
+    event_id: eventId,
+    event_type: "capability_revoked",
+    occurred_at: timestamp,
+    subject_id: record.subject_id,
+    authorization_scope_id: "authscope:hmac-sha256:" + "a".repeat(64),
+    capability_id: record.capability_id,
+    revoked_at: timestamp
+  });
+  const first = repository.revokeWithAudit({
+    capability_id: record.capability_id,
+    revoked_at: revokedAt,
+    create_event: () => revokeEvent("audit:00000000-0000-4000-8000-000000000003", revokedAt)
+  });
+  assert.equal(first?.revoked_at, revokedAt);
+  const repeated = repository.revokeWithAudit({
+    capability_id: record.capability_id,
+    revoked_at: "2026-08-05T00:10:00.000Z",
+    create_event: () => {
+      throw new Error("repeated revoke must not create an audit event");
+    }
+  });
+  assert.equal(repeated?.revoked_at, revokedAt);
+  assert.equal(
+    database.read((db) =>
+      (db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM sandbox_security_audit_events WHERE event_type = ?"
+        )
+        .get("capability_revoked") as { count: number }).count
+    ),
+    1
+  );
+  assert.equal(
+    repository.revokeWithAudit({
+      capability_id: "capability:00000000-0000-4000-8000-000000000099",
+      revoked_at: revokedAt,
+      create_event: () => revokeEvent("audit:00000000-0000-4000-8000-000000000004", revokedAt)
+    }),
+    null
+  );
+});
+
+test("REQ-SBX-GENERAL-003 rolls back revoke when its audit event is malformed", (t) => {
+  const fixture = createPrivateDatabaseFixture();
+  const { repository, database } = capabilityRepository(fixture, t);
+  const record = capabilityRecord();
+  repository.issueWithAudit(record, capabilityIssuedEvent(record));
+  assert.throws(
+    () =>
+      repository.revokeWithAudit({
+        capability_id: record.capability_id,
+        revoked_at: "2026-08-05T00:05:00.000Z",
+        create_event: () => ({}) as SandboxSecurityAuditEvent
+      }),
+    assertInternalError
+  );
+  assert.equal(repository.findByTokenDigest(TOKEN_DIGEST)?.revoked_at, null);
+  assert.equal(
+    database.read((db) =>
+      (db
+        .prepare(
+          "SELECT COUNT(*) AS count FROM sandbox_security_audit_events WHERE event_type = ?"
+        )
+        .get("capability_revoked") as { count: number }).count
+    ),
+    0
+  );
+});
+
+test("REQ-SBX-GENERAL-003 wraps an ordinary same-message revoke error as a tagged service error", (t) => {
+  const fixture = createPrivateDatabaseFixture();
+  const { repository } = capabilityRepository(fixture, t);
+  const record = capabilityRecord();
+  repository.issueWithAudit(record, capabilityIssuedEvent(record));
+  assert.throws(
+    () =>
+      repository.revokeWithAudit({
+        capability_id: record.capability_id,
+        revoked_at: "2026-08-05T00:05:00.000Z",
+        create_event: () => {
+          throw new Error("SANDBOX_SECURITY_INTERNAL_ERROR");
+        }
+      }),
+    (error: unknown) => {
+      assert.equal((error as { code?: unknown }).code, "SANDBOX_SECURITY_INTERNAL_ERROR");
+      assert.equal((error as { name?: unknown }).name, "SandboxSecurityServiceError");
+      return true;
+    }
+  );
 });
