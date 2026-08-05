@@ -66,6 +66,42 @@ function failedInventory(): SandboxSecurityCapturedProviderOutcome {
   });
 }
 
+function inventoryConnectionFailed(): SandboxSecurityCapturedProviderOutcome {
+  return Object.freeze({
+    capture_phase: "qualification",
+    provider: "ollama",
+    operation: "model_inventory",
+    outcome: Object.freeze({
+      status: "transport_error",
+      error_code: "connection_failed"
+    })
+  });
+}
+
+function prewarmConnectionFailed(): SandboxSecurityCapturedProviderOutcome {
+  return Object.freeze({
+    capture_phase: "qualification",
+    provider: "ollama",
+    operation: "chat",
+    outcome: Object.freeze({
+      status: "transport_error",
+      error_code: "connection_failed"
+    })
+  });
+}
+
+function failedPrewarm(): SandboxSecurityCapturedProviderOutcome {
+  return Object.freeze({
+    capture_phase: "qualification",
+    provider: "ollama",
+    operation: "chat",
+    outcome: Object.freeze({
+      status: "http_error",
+      http_status: 503
+    })
+  });
+}
+
 function evaluationOllama(
   status: "response" | "not_called" | "http_error" = "response"
 ): SandboxSecurityCapturedProviderOutcome {
@@ -187,6 +223,75 @@ test("REQ-SBX-GENERAL-002 sink accepts exactly inventory then prewarm before fir
   assert.equal(snap.qualification_prewarm?.length, 1);
 });
 
+test("REQ-SBX-P6-RETRY sink records inventory connection_failed before advancing after response", () => {
+  const sink = createSandboxSecurityCaptureSink();
+  const firstAttempt = inventoryConnectionFailed();
+  const secondAttempt = successInventory();
+
+  sink.record(firstAttempt);
+  assert.equal(sink.snapshot().state, "qualification_inventory");
+  assert.deepEqual(sink.snapshot().qualification_inventory, [firstAttempt.outcome]);
+
+  sink.record(secondAttempt);
+  const snap = sink.snapshot();
+  assert.equal(snap.state, "qualification_prewarm");
+  assert.deepEqual(snap.qualification_inventory, [
+    firstAttempt.outcome,
+    secondAttempt.outcome
+  ]);
+});
+
+test("REQ-SBX-P6-RETRY sink records prewarm connection_failed before advancing after response", () => {
+  const sink = createSandboxSecurityCaptureSink();
+  sink.record(successInventory());
+  const firstAttempt = prewarmConnectionFailed();
+  const secondAttempt = successPrewarm();
+
+  sink.record(firstAttempt);
+  assert.equal(sink.snapshot().state, "qualification_prewarm");
+  assert.deepEqual(sink.snapshot().qualification_prewarm, [firstAttempt.outcome]);
+
+  sink.record(secondAttempt);
+  const snap = sink.snapshot();
+  assert.equal(snap.state, "ready");
+  assert.deepEqual(snap.qualification_prewarm, [
+    firstAttempt.outcome,
+    secondAttempt.outcome
+  ]);
+});
+
+test("REQ-SBX-P6-RETRY sink records a non-retryable first qualification failure before failing closed", () => {
+  const sink = createSandboxSecurityCaptureSink();
+  const failure = failedInventory();
+
+  assert.throws(
+    () => sink.record(failure),
+    /sandbox_security_capture_sink_reject:inventory_not_success/u
+  );
+  const snap = sink.snapshot();
+  assert.equal(snap.state, "failed");
+  assert.deepEqual(snap.qualification_inventory, [failure.outcome]);
+});
+
+test("REQ-SBX-P6-RETRY sink records an exhausted second qualification failure before failing closed", () => {
+  const sink = createSandboxSecurityCaptureSink();
+  sink.record(successInventory());
+  const firstAttempt = prewarmConnectionFailed();
+  const secondAttempt = failedPrewarm();
+
+  sink.record(firstAttempt);
+  assert.throws(
+    () => sink.record(secondAttempt),
+    /sandbox_security_capture_sink_reject:prewarm_not_success/u
+  );
+  const snap = sink.snapshot();
+  assert.equal(snap.state, "failed");
+  assert.deepEqual(snap.qualification_prewarm, [
+    firstAttempt.outcome,
+    secondAttempt.outcome
+  ]);
+});
+
 test("REQ-SBX-P6-RETRY sink uses empty attempt arrays for untouched slots", () => {
   const sink = readySink();
   sink.beginInput();
@@ -277,14 +382,14 @@ test("REQ-SBX-GENERAL-002 ready sink accepts Chat completions Judge outcome and 
   assert.deepEqual(sink.snapshot().inputs[0]?.judge, [judge.outcome]);
 });
 
-test("REQ-SBX-GENERAL-002 sink rejects cross-protocol duplicate Judge outcomes", () => {
+test("REQ-SBX-P6-RETRY sink rejects a Judge retry with a different operation", () => {
   const sink = readySink();
   sink.beginInput();
-  sink.record(evaluationJudge("chat_completions"));
+  sink.record(evaluationJudge("responses"));
 
   assert.throws(
-    () => sink.record(evaluationJudge("responses")),
-    /sandbox_security_capture_sink_reject:duplicate_judge/u
+    () => sink.record(evaluationJudge("chat_completions")),
+    /sandbox_security_capture_sink_reject:judge_operation_mismatch/u
   );
 });
 

@@ -275,7 +275,9 @@ function normalizeCapturedOutcome(
 
 interface OpenInput {
   ollama: SandboxSecurityCaptureSlotOutcome[];
+  ollama_operation: "chat" | null;
   judge: SandboxSecurityCaptureSlotOutcome[];
+  judge_operation: "responses" | "chat_completions" | null;
 }
 
 export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
@@ -321,7 +323,12 @@ export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
       if (inputs.length >= SANDBOX_SECURITY_CAPTURE_INPUT_COUNT) {
         markFailed("sandbox_security_capture_sink_reject:extra_input");
       }
-      open = { ollama: [], judge: [] };
+      open = {
+        ollama: [],
+        ollama_operation: null,
+        judge: [],
+        judge_operation: null
+      };
       state = "input_open";
     },
 
@@ -342,12 +349,19 @@ export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
         ) {
           markFailed("sandbox_security_capture_sink_reject:expected_inventory");
         }
-        if (!isSuccessfulOutcome(outcome.outcome)) {
-          markFailed("sandbox_security_capture_sink_reject:inventory_not_success");
+        const attemptIndex = qualificationInventory.length;
+        if (attemptIndex >= 2) {
+          markFailed("sandbox_security_capture_sink_reject:inventory_attempt_limit");
         }
         qualificationInventory.push(outcome.outcome);
-        state = "qualification_prewarm";
-        return;
+        if (isSuccessfulOutcome(outcome.outcome)) {
+          state = "qualification_prewarm";
+          return;
+        }
+        if (attemptIndex === 0 && isRetryableFirstAttempt(outcome.outcome)) {
+          return;
+        }
+        markFailed("sandbox_security_capture_sink_reject:inventory_not_success");
       }
 
       if (state === "qualification_prewarm") {
@@ -358,12 +372,19 @@ export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
         ) {
           markFailed("sandbox_security_capture_sink_reject:expected_prewarm");
         }
-        if (!isSuccessfulOutcome(outcome.outcome)) {
-          markFailed("sandbox_security_capture_sink_reject:prewarm_not_success");
+        const attemptIndex = qualificationPrewarm.length;
+        if (attemptIndex >= 2) {
+          markFailed("sandbox_security_capture_sink_reject:prewarm_attempt_limit");
         }
         qualificationPrewarm.push(outcome.outcome);
-        state = "ready";
-        return;
+        if (isSuccessfulOutcome(outcome.outcome)) {
+          state = "ready";
+          return;
+        }
+        if (attemptIndex === 0 && isRetryableFirstAttempt(outcome.outcome)) {
+          return;
+        }
+        markFailed("sandbox_security_capture_sink_reject:prewarm_not_success");
       }
 
       if (state === "ready") {
@@ -393,6 +414,13 @@ export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
         ) {
           markFailed("sandbox_security_capture_sink_reject:duplicate_ollama");
         }
+        if (
+          open.ollama_operation !== null &&
+          open.ollama_operation !== outcome.operation
+        ) {
+          markFailed("sandbox_security_capture_sink_reject:ollama_operation_mismatch");
+        }
+        open.ollama_operation = outcome.operation;
         open.ollama.push(outcome.outcome);
         return;
       }
@@ -404,12 +432,19 @@ export function createSandboxSecurityCaptureSink(): SandboxSecurityCaptureSink &
         )
       ) {
         if (
+          open.judge_operation !== null &&
+          open.judge_operation !== outcome.operation
+        ) {
+          markFailed("sandbox_security_capture_sink_reject:judge_operation_mismatch");
+        }
+        if (
           open.judge.length >= 2 ||
           (open.judge.length === 1 &&
             !isRetryableFirstAttempt(open.judge[0]!))
         ) {
           markFailed("sandbox_security_capture_sink_reject:duplicate_judge");
         }
+        open.judge_operation = outcome.operation;
         open.judge.push(outcome.outcome);
         return;
       }
