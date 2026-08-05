@@ -518,6 +518,76 @@ test("REQ-SBX-GENERAL-002 replay rejects non-dense or extended attempt arrays", 
   }
 });
 
+test("REQ-SBX-GENERAL-002 replay validates length descriptor flags and accepts frozen sequences", async () => {
+  const factory = await replayFactory();
+  const response = responseOutcome(local(), normalizeSandboxSecurityReplayOllamaResponse);
+  const frozenTransport = createTransport(factory, {
+    inputs: [{
+      ollama: Object.freeze([response]),
+      judge: []
+    }]
+  });
+  await qualify(frozenTransport);
+  frozenTransport.beginInput();
+  await frozenTransport.request(requests(new AbortController().signal, "chat"));
+  frozenTransport.endInput();
+
+  const originalDescriptor = Object.getOwnPropertyDescriptor;
+  const invalidDescriptors = [
+    {
+      label: "enumerable length",
+      descriptor: {
+        configurable: false,
+        enumerable: true,
+        value: 1,
+        writable: true
+      }
+    },
+    {
+      label: "configurable length",
+      descriptor: {
+        configurable: true,
+        enumerable: false,
+        value: 1,
+        writable: true
+      }
+    },
+    {
+      label: "non-boolean writable length",
+      descriptor: {
+        configurable: false,
+        enumerable: false,
+        value: 1,
+        writable: "mutable" as unknown as boolean
+      }
+    }
+  ] as const;
+
+  for (const variant of invalidDescriptors) {
+    const invalidLength = [response];
+    Object.getOwnPropertyDescriptor = ((target: object, property: PropertyKey) => {
+      if (target === invalidLength && property === "length") {
+        return variant.descriptor;
+      }
+      return originalDescriptor(target, property);
+    }) as typeof Object.getOwnPropertyDescriptor;
+    try {
+      assert.throws(
+        () => createTransport(factory, {
+          inputs: [{
+            ollama: invalidLength,
+            judge: []
+          } as unknown as SandboxSecurityReplayInputUnit]
+        }),
+        /attempt_sequence_invalid/,
+        variant.label
+      );
+    } finally {
+      Object.getOwnPropertyDescriptor = originalDescriptor;
+    }
+  }
+});
+
 test("REQ-SBX-GENERAL-002 replay rejects endInput with an unconsumed retry and rejects a changed retry operation", async () => {
   const factory = await replayFactory();
   const transport = createTransport(factory, {

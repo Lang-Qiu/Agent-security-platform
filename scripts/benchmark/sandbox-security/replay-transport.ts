@@ -195,8 +195,12 @@ function normalizeAttemptSequence<T>(
   const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
   if (
     lengthDescriptor === undefined ||
-    lengthDescriptor.enumerable ||
     !("value" in lengthDescriptor) ||
+    "get" in lengthDescriptor ||
+    "set" in lengthDescriptor ||
+    lengthDescriptor.enumerable !== false ||
+    lengthDescriptor.configurable !== false ||
+    typeof lengthDescriptor.writable !== "boolean" ||
     !Number.isInteger(lengthDescriptor.value) ||
     lengthDescriptor.value < 0 ||
     lengthDescriptor.value > 2
