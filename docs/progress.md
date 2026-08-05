@@ -1,7 +1,7 @@
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T3 module dispatch boundary
 
 - phase/task: Phase 1 / P1-T3 Injectable Sandbox Module Dispatch Boundary
-- status: `IMPLEMENTED_PENDING_TASK_REVIEW`
+- status: `COMPLETE_PENDING_P1_T4`
 - RED evidence: the structural AppModule/InternalAppModule dispatch suite
   initially failed because constructors ignored the injected module and
   recognized sandbox routes returned without a response. The failure was
@@ -16,8 +16,8 @@
   revoke preserves its raw path segment.
 - GREEN evidence: focused controller/contract suite `7/7`; backend typecheck
   was run with only pre-existing repository baseline errors and no new
-  sandbox-security source error; full backend gate and independent task reviews
-  remain pending before the selective commit.
+  sandbox-security source error; full backend gate `241/243` retained only the
+  pre-existing Semgrep `ENOENT` and asset-scan `open_ports` drift.
 - quality review finding and fix: the first review identified a Minor coverage
   gap in the service-error descriptor matrix. The controller contract test now
   table-drives every descriptor code, all three forbidden rejection variants,
@@ -30,7 +30,12 @@
 - dependency: GENERAL-002 remains
   `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`; neither GENERAL-002 nor
   GENERAL-003 is `VERIFIED`
-- next: P1-T3 specification review, quality review, selective commit
+- specification review: PASS with `0 Critical / 0 Important / 0 Minor`.
+- quality review: first pass found one Minor descriptor-matrix coverage gap;
+  the table-driven test now covers all nine descriptor codes and all forbidden
+  variants. Re-review PASS with `0 Critical / 0 Important / 0 Minor`.
+- commit: `9422495 feat(backend): add sandbox security module boundary`
+- next: P1-T4 mandatory typecheck script registration
 
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T2 exact route matches
 
