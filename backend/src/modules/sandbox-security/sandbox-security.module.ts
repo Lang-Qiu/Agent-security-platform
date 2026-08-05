@@ -46,6 +46,7 @@ export {
   createSqliteSandboxSecurityIdempotencyRepository,
   createSandboxSecurityIdempotencyMaintenance
 } from "./adapters/sqlite/sqlite-idempotency.repository.ts";
+export { createSqliteSandboxSecurityAuditRepository } from "./adapters/sqlite/sqlite-audit.repository.ts";
 
 export { toSandboxSecurityEngineRuntime } from "./ports/runtime.ts";
 export {

@@ -24,6 +24,8 @@ import type {
   SandboxSecurityCapabilityPersistenceRecord
 } from "../src/modules/sandbox-security/sandbox-security.types.ts";
 import type { SandboxSecurityCapabilityRepository } from "../src/modules/sandbox-security/ports/capability.repository.ts";
+import type { SandboxSecurityAuditRepository } from "../src/modules/sandbox-security/ports/audit.repository.ts";
+import { createSandboxSecurityServiceError } from "../src/modules/sandbox-security/sandbox-security.errors.ts";
 
 const FIXED_DEPLOYMENT_KEY_ID =
   "deployment-key:hmac-sha256:" + "a".repeat(64);
@@ -37,6 +39,24 @@ const SCOPE_SEED = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
 const SECOND_SCOPE_SEED = Uint8Array.from({ length: 32 }, (_, index) => index + 33);
 const ISSUED_AT = "2026-08-05T00:00:00.000Z";
 const EXPIRES_AT = "2026-08-05T00:15:00.000Z";
+const AUDIT_SCOPE_A = "authscope:hmac-sha256:" + "a".repeat(64);
+const AUDIT_SCOPE_B = "authscope:hmac-sha256:" + "b".repeat(64);
+const AUDIT_SUBJECT_A = "subject-a";
+const AUDIT_SUBJECT_B = "subject-b";
+const AUDIT_COMPOSITION = "sandbox-security-production-composition.v1:rule_only";
+const canonicalAuditIds = new Map<string, string>();
+let nextCanonicalAuditId = 100;
+
+function canonicalAuditId(value: string): string {
+  if (/^audit:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)) {
+    return value;
+  }
+  const existing = canonicalAuditIds.get(value);
+  if (existing !== undefined) return existing;
+  const generated = `audit:00000000-0000-4000-8000-${String(nextCanonicalAuditId++).padStart(12, "0")}`;
+  canonicalAuditIds.set(value, generated);
+  return generated;
+}
 
 function capabilityRecord(
   overrides: Partial<SandboxSecurityCapabilityPersistenceRecord> = {}
@@ -921,4 +941,305 @@ test("REQ-SBX-GENERAL-003 keeps idempotency rows durable across SQLite reopen", 
     ),
     1
   );
+});
+
+test("REQ-SBX-GENERAL-003 exposes the subject-scoped SQLite audit repository boundary", () => {
+  assert.equal(typeof boundary.createSqliteSandboxSecurityAuditRepository, "function");
+});
+
+function auditProjector(): any {
+  const factory = boundary.createSandboxSecurityAuditProjector;
+  assert.equal(typeof factory, "function");
+  const projector = factory!();
+  return new Proxy(projector, {
+    get(target, property, receiver) {
+      const value = Reflect.get(target, property, receiver);
+      if (typeof value !== "function") return value;
+      return (input: Record<string, unknown>, ...rest: unknown[]) =>
+        value.call(target, { ...input, event_id: canonicalAuditId(input.event_id as string) }, ...rest);
+    }
+  });
+}
+
+function interruptedAuditEvent(input: Readonly<{
+  event_id: string;
+  subject_id: string;
+  authorization_scope_id: string;
+  capability_id: string;
+  occurred_at: string;
+  interruption_code?: "engine_error" | "persistence_error" | "startup_recovery";
+}>): SandboxSecurityAuditEvent {
+  return auditProjector().evaluationInterrupted({
+    event_id: input.event_id,
+    occurred_at: input.occurred_at,
+    subject_id: input.subject_id,
+    authorization_scope_id: input.authorization_scope_id,
+    capability_id: input.capability_id,
+    request_id: "request-001",
+    stage: "user_input",
+    policy_profile_id: "sandbox-security-balanced.v1",
+    composition_binding: AUDIT_COMPOSITION,
+    elapsed_ms: 1,
+    interruption_code: input.interruption_code ?? "engine_error"
+  });
+}
+
+function insertAuditEventRow(
+  database: ReturnType<NonNullable<typeof boundary.openSandboxSecuritySqliteDatabase>>,
+  event: SandboxSecurityAuditEvent,
+  typedOverrides: Readonly<Partial<{
+    event_type: string;
+    visibility_subject_id: string;
+    authorization_scope_id: string | null;
+    capability_id: string | null;
+    occurred_at: string;
+  }>> = {}
+): void {
+  database.transaction((db) => {
+    db.prepare(
+      `INSERT INTO sandbox_security_audit_events(
+        event_id, event_type, visibility_subject_id, authorization_scope_id,
+        capability_id, occurred_at, event_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      event.event_id,
+      typedOverrides.event_type ?? event.event_type,
+      typedOverrides.visibility_subject_id ?? event.subject_id,
+      typedOverrides.authorization_scope_id === undefined
+        ? event.authorization_scope_id
+        : typedOverrides.authorization_scope_id,
+      typedOverrides.capability_id === undefined
+        ? event.capability_id
+        : typedOverrides.capability_id,
+      typedOverrides.occurred_at ?? event.occurred_at,
+      JSON.stringify(event)
+    );
+  });
+}
+
+function auditRepositoryFixture(
+  t: { after(callback: () => void): void }
+): Readonly<{
+  repository: SandboxSecurityAuditRepository;
+  database: ReturnType<NonNullable<typeof boundary.openSandboxSecuritySqliteDatabase>>;
+}> {
+  const fixture = createPrivateDatabaseFixture();
+  const capabilityFixture = capabilityRepository(fixture, t);
+  const recordA = capabilityRecord({
+    subject_id: AUDIT_SUBJECT_A
+  });
+  const recordB = capabilityRecord({
+    capability_id: SECOND_CAPABILITY_ID,
+    subject_id: AUDIT_SUBJECT_B,
+    token_digest: SECOND_TOKEN_DIGEST,
+    scope_seed: new Uint8Array(SECOND_SCOPE_SEED),
+    scopes: ["sandbox_security:evaluate", "sandbox_security:audit:read"],
+    allowed_stages: ["user_input", "model_output", "tool_request"],
+    allowed_policy_profile_ids: ["sandbox-security-balanced.v1", "sandbox-security-strict.v1"]
+  });
+  capabilityFixture.repository.issueWithAudit(recordA, capabilityIssuedEvent(recordA, "audit:00000000-0000-4000-8000-000000000010"));
+  capabilityFixture.repository.issueWithAudit(recordB, capabilityIssuedEvent(recordB, "audit:00000000-0000-4000-8000-000000000011"));
+  capabilityFixture.database.transaction((db) => {
+    db.prepare("DELETE FROM sandbox_security_audit_events").run();
+  });
+  const factory = boundary.createSqliteSandboxSecurityAuditRepository;
+  assert.equal(typeof factory, "function");
+  return { repository: factory!({ database: capabilityFixture.database }), database: capabilityFixture.database };
+}
+
+test("REQ-SBX-GENERAL-003 audit selection is subject-scoped, ordered, and records the page after selection", (t) => {
+  const { repository, database } = auditRepositoryFixture(t);
+  const events = [
+    interruptedAuditEvent({ event_id: "audit:a-1", subject_id: AUDIT_SUBJECT_A, authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, occurred_at: "2026-08-05T12:00:00.001Z" }),
+    interruptedAuditEvent({ event_id: "audit:a-2", subject_id: AUDIT_SUBJECT_A, authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, occurred_at: "2026-08-05T12:00:00.001Z" }),
+    interruptedAuditEvent({ event_id: "audit:a-3", subject_id: AUDIT_SUBJECT_A, authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, occurred_at: "2026-08-05T11:59:00.000Z" }),
+    interruptedAuditEvent({ event_id: "audit:b-1", subject_id: AUDIT_SUBJECT_B, authorization_scope_id: AUDIT_SCOPE_B, capability_id: SECOND_CAPABILITY_ID, occurred_at: "2026-08-05T13:00:00.000Z" })
+  ];
+  for (const event of events) insertAuditEventRow(database, event);
+  const page = repository.listAndRecordRead({
+    visibility_subject_id: AUDIT_SUBJECT_A,
+    after: null,
+    limit: 2,
+    create_event: ({ returned_count, next_cursor_present }) =>
+      auditProjector().auditRead({
+        event_id: "audit:read-1",
+        occurred_at: "2026-08-05T12:01:00.000Z",
+        subject_id: AUDIT_SUBJECT_A,
+        authorization_scope_id: AUDIT_SCOPE_A,
+        capability_id: CAPABILITY_ID,
+        returned_count,
+        next_cursor_present,
+        elapsed_ms: 1
+      })
+  });
+  assert.deepEqual(page.events.map((event) => event.event_id), [canonicalAuditId("audit:a-2"), canonicalAuditId("audit:a-1")]);
+  assert.equal(page.events.every((event) => event.subject_id === AUDIT_SUBJECT_A), true);
+  assert.equal(page.has_more, true);
+  assert.equal(page.events.some((event) => event.event_type === "audit_read"), false);
+  assert.equal(database.read((db) => (db.prepare("SELECT COUNT(*) AS count FROM sandbox_security_audit_events WHERE event_type = 'audit_read'").get() as { count: number }).count), 1);
+});
+
+test("REQ-SBX-GENERAL-003 audit selection paginates ties with the exclusive occurred_at/event_id cursor", (t) => {
+  const { repository, database } = auditRepositoryFixture(t);
+  for (const [eventId, occurredAt] of [["audit:t-1", "2026-08-05T12:00:00.001Z"], ["audit:t-2", "2026-08-05T12:00:00.001Z"], ["audit:t-3", "2026-08-05T11:59:00.000Z"]] as const) {
+    insertAuditEventRow(database, interruptedAuditEvent({ event_id: eventId, subject_id: AUDIT_SUBJECT_A, authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, occurred_at: occurredAt }));
+  }
+  const first = repository.listAndRecordRead({
+    visibility_subject_id: AUDIT_SUBJECT_A,
+    after: null,
+    limit: 2,
+    create_event: ({ returned_count, next_cursor_present }) => auditProjector().auditRead({
+      event_id: "audit:read-t-1", occurred_at: "2026-08-05T12:02:00.000Z", subject_id: AUDIT_SUBJECT_A,
+      authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, returned_count,
+      next_cursor_present, elapsed_ms: 1
+    })
+  });
+  assert.deepEqual(first.events.map((event) => event.event_id), [canonicalAuditId("audit:t-2"), canonicalAuditId("audit:t-1")]);
+  const second = repository.listAndRecordRead({
+    visibility_subject_id: AUDIT_SUBJECT_A,
+    after: { occurred_at: first.events[1]!.occurred_at, event_id: first.events[1]!.event_id },
+    limit: 2,
+    create_event: ({ returned_count, next_cursor_present }) => auditProjector().auditRead({
+      event_id: "audit:read-t-2", occurred_at: "2026-08-05T12:03:00.000Z", subject_id: AUDIT_SUBJECT_A,
+      authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, returned_count,
+      next_cursor_present, elapsed_ms: 1
+    })
+  });
+  assert.deepEqual(second.events.map((event) => event.event_id), [canonicalAuditId("audit:t-3")]);
+  assert.equal(second.has_more, false);
+});
+
+test("REQ-SBX-GENERAL-003 rejects invalid or cross-wired stored audit rows without writing a read event", (t) => {
+  const { repository, database } = auditRepositoryFixture(t);
+  const valid = interruptedAuditEvent({ event_id: "audit:bad-json", subject_id: AUDIT_SUBJECT_A, authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, occurred_at: "2026-08-05T12:00:00.000Z" });
+  database.transaction((db) => {
+    db.prepare("INSERT INTO sandbox_security_audit_events(event_id,event_type,visibility_subject_id,authorization_scope_id,capability_id,occurred_at,event_json) VALUES (?,?,?,?,?,?,?)").run(valid.event_id, valid.event_type, AUDIT_SUBJECT_A, AUDIT_SCOPE_A, CAPABILITY_ID, valid.occurred_at, "not-json");
+  });
+  assert.throws(() => repository.listAndRecordRead({
+    visibility_subject_id: AUDIT_SUBJECT_A,
+    after: null,
+    limit: 10,
+    create_event: () => auditProjector().auditRead({ event_id: "audit:read-invalid", occurred_at: "2026-08-05T12:01:00.000Z", subject_id: AUDIT_SUBJECT_A, authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, returned_count: 0, next_cursor_present: false, elapsed_ms: 1 })
+  }), assertInternalError);
+  database.transaction((db) => db.prepare("DELETE FROM sandbox_security_audit_events WHERE event_id = ?").run(valid.event_id));
+  insertAuditEventRow(database, valid, { visibility_subject_id: AUDIT_SUBJECT_B });
+  assert.throws(() => repository.listAndRecordRead({
+    visibility_subject_id: AUDIT_SUBJECT_B,
+    after: null,
+    limit: 10,
+    create_event: () => auditProjector().auditRead({ event_id: "audit:read-cross", occurred_at: "2026-08-05T12:01:00.000Z", subject_id: AUDIT_SUBJECT_B, authorization_scope_id: AUDIT_SCOPE_B, capability_id: SECOND_CAPABILITY_ID, returned_count: 0, next_cursor_present: false, elapsed_ms: 1 })
+  }), assertInternalError);
+  assert.equal(database.read((db) => (db.prepare("SELECT COUNT(*) AS count FROM sandbox_security_audit_events WHERE event_type = 'audit_read'").get() as { count: number }).count), 0);
+});
+
+test("REQ-SBX-GENERAL-003 requires a result-aware audit-read callback and rolls back its insert failure", (t) => {
+  const { repository, database } = auditRepositoryFixture(t);
+  const event = interruptedAuditEvent({ event_id: "audit:source", subject_id: AUDIT_SUBJECT_A, authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, occurred_at: "2026-08-05T12:00:00.000Z" });
+  insertAuditEventRow(database, event);
+  assert.throws(() => repository.listAndRecordRead({
+    visibility_subject_id: AUDIT_SUBJECT_A,
+    after: null,
+    limit: 10,
+    create_event: () => auditProjector().auditRead({ event_id: "audit:read-mismatch", occurred_at: "2026-08-05T12:01:00.000Z", subject_id: AUDIT_SUBJECT_A, authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, returned_count: 999, next_cursor_present: true, elapsed_ms: 1 })
+  }), assertInternalError);
+  assert.equal(database.read((db) => (db.prepare("SELECT COUNT(*) AS count FROM sandbox_security_audit_events WHERE event_type = 'audit_read'").get() as { count: number }).count), 0);
+  assert.throws(() => repository.listAndRecordRead({
+    visibility_subject_id: AUDIT_SUBJECT_A,
+    after: null,
+    limit: 10,
+    create_event: () => auditProjector().auditRead({ event_id: event.event_id, occurred_at: "2026-08-05T12:01:00.000Z", subject_id: AUDIT_SUBJECT_A, authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, returned_count: 1, next_cursor_present: false, elapsed_ms: 1 })
+  }), assertInternalError);
+  assert.equal(database.read((db) => (db.prepare("SELECT COUNT(*) AS count FROM sandbox_security_audit_events").get() as { count: number }).count), 1);
+});
+
+test("REQ-SBX-GENERAL-003 returns defensive audit copies and supports append", (t) => {
+  const { repository, database } = auditRepositoryFixture(t);
+  const event = interruptedAuditEvent({ event_id: "audit:defensive", subject_id: AUDIT_SUBJECT_A, authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, occurred_at: "2026-08-05T12:00:00.000Z" });
+  repository.append(event);
+  const page = repository.listAndRecordRead({
+    visibility_subject_id: AUDIT_SUBJECT_A,
+    after: null,
+    limit: 10,
+    create_event: ({ returned_count, next_cursor_present }) => auditProjector().auditRead({ event_id: "audit:read-defensive", occurred_at: "2026-08-05T12:01:00.000Z", subject_id: AUDIT_SUBJECT_A, authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, returned_count, next_cursor_present, elapsed_ms: 1 })
+  });
+  page.events[0]!.subject_id = "subject-mutated";
+  const again = repository.listAndRecordRead({
+    visibility_subject_id: AUDIT_SUBJECT_A,
+    after: null,
+    limit: 1,
+    create_event: ({ returned_count, next_cursor_present }) => auditProjector().auditRead({ event_id: "audit:read-defensive-2", occurred_at: "2026-08-05T12:02:00.000Z", subject_id: AUDIT_SUBJECT_A, authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, returned_count, next_cursor_present, elapsed_ms: 1 })
+  });
+  assert.equal(again.events[0]!.subject_id, AUDIT_SUBJECT_A);
+  assert.equal(database.read((db) => (db.prepare("SELECT COUNT(*) AS count FROM sandbox_security_audit_events WHERE event_type = 'audit_read'").get() as { count: number }).count), 2);
+});
+
+test("REQ-SBX-GENERAL-003 purges at most 1000 old rows with a fixed 90-day audit event", (t) => {
+  const { repository, database } = auditRepositoryFixture(t);
+  database.transaction((db) => {
+    const insert = db.prepare("INSERT INTO sandbox_security_audit_events(event_id,event_type,visibility_subject_id,authorization_scope_id,capability_id,occurred_at,event_json) VALUES (?,?,?,?,?,?,?)");
+    for (let index = 0; index < 1002; index += 1) {
+      const event = interruptedAuditEvent({ event_id: `audit:old-${index}`, subject_id: AUDIT_SUBJECT_A, authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, occurred_at: "2026-04-01T00:00:00.000Z" });
+      insert.run(event.event_id, event.event_type, event.subject_id, event.authorization_scope_id, event.capability_id, event.occurred_at, JSON.stringify(event));
+    }
+    const recent = interruptedAuditEvent({ event_id: "audit:recent", subject_id: AUDIT_SUBJECT_A, authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, occurred_at: "2026-08-01T00:00:00.000Z" });
+    insert.run(recent.event_id, recent.event_type, recent.subject_id, recent.authorization_scope_id, recent.capability_id, recent.occurred_at, JSON.stringify(recent));
+  });
+  const first = repository.purgeExpiredWithAudit({
+    cutoff: "2026-05-01T00:00:00.000Z",
+    limit: 1000,
+    create_event: (deletedCount, hasMore) => auditProjector().auditPurged({ event_id: "audit:purge-1", occurred_at: "2026-08-05T12:00:00.000Z", deleted_count: deletedCount, has_more: hasMore, elapsed_ms: 1 })
+  });
+  assert.deepEqual(first, { deleted_count: 1000, has_more: true });
+  assert.equal(database.read((db) => (db.prepare("SELECT COUNT(*) AS count FROM sandbox_security_audit_events WHERE event_type = 'evaluation_interrupted'").get() as { count: number }).count), 3);
+  const second = repository.purgeExpiredWithAudit({
+    cutoff: "2026-05-01T00:00:00.000Z",
+    limit: 1000,
+    create_event: (deletedCount, hasMore) => auditProjector().auditPurged({ event_id: "audit:purge-2", occurred_at: "2026-08-05T12:01:00.000Z", deleted_count: deletedCount, has_more: hasMore, elapsed_ms: 1 })
+  });
+  assert.deepEqual(second, { deleted_count: 2, has_more: false });
+});
+
+test("REQ-SBX-GENERAL-003 rolls back audit purge on mismatched or failed purge audit", (t) => {
+  const { repository, database } = auditRepositoryFixture(t);
+  const old = interruptedAuditEvent({ event_id: "audit:purge-old", subject_id: AUDIT_SUBJECT_A, authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, occurred_at: "2026-04-01T00:00:00.000Z" });
+  insertAuditEventRow(database, old);
+  const existing = interruptedAuditEvent({ event_id: "audit:purge-existing", subject_id: AUDIT_SUBJECT_A, authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, occurred_at: "2026-08-01T00:00:00.000Z" });
+  insertAuditEventRow(database, existing);
+  assert.throws(() => repository.purgeExpiredWithAudit({
+    cutoff: "2026-05-01T00:00:00.000Z",
+    limit: 1000,
+    create_event: () => auditProjector().auditPurged({ event_id: "audit:purge-mismatch", occurred_at: "2026-08-05T12:00:00.000Z", deleted_count: 999, has_more: false, elapsed_ms: 1 })
+  }), assertInternalError);
+  assert.equal(database.read((db) => (db.prepare("SELECT COUNT(*) AS count FROM sandbox_security_audit_events WHERE event_id = ?").get(old.event_id) as { count: number }).count), 1);
+  assert.throws(() => repository.purgeExpiredWithAudit({
+    cutoff: "2026-05-01T00:00:00.000Z",
+    limit: 1000,
+    create_event: () => auditProjector().auditPurged({ event_id: existing.event_id, occurred_at: "2026-08-05T12:00:00.000Z", deleted_count: 1, has_more: false, elapsed_ms: 1 })
+  }), assertInternalError);
+  assert.equal(database.read((db) => (db.prepare("SELECT COUNT(*) AS count FROM sandbox_security_audit_events WHERE event_id = ?").get(old.event_id) as { count: number }).count), 1);
+});
+
+test("REQ-SBX-GENERAL-003 does not accept a caller-provided audit retention interval", (t) => {
+  const { repository } = auditRepositoryFixture(t);
+  assert.throws(() => repository.purgeExpiredWithAudit({
+    cutoff: "2026-05-01T00:00:00.000Z",
+    limit: 1000,
+    retention_days: 1,
+    create_event: () => auditProjector().auditPurged({ event_id: "audit:retention-extra", occurred_at: "2026-08-05T12:00:00.000Z", deleted_count: 0, has_more: false, elapsed_ms: 1 })
+  } as any), assertInternalError);
+});
+
+test("REQ-SBX-GENERAL-003 wraps non-internal callback service errors as internal and rolls back the read", (t) => {
+  const { repository, database } = auditRepositoryFixture(t);
+  const source = interruptedAuditEvent({ event_id: "audit:callback-source", subject_id: AUDIT_SUBJECT_A, authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, occurred_at: "2026-08-05T12:00:00.000Z" });
+  insertAuditEventRow(database, source);
+  assert.throws(() => repository.listAndRecordRead({
+    visibility_subject_id: AUDIT_SUBJECT_A,
+    after: null,
+    limit: 10,
+    create_event: () => {
+      throw createSandboxSecurityServiceError({ code: "SANDBOX_SECURITY_STORAGE_UNAVAILABLE", audit_rejection_code: "storage_unavailable" });
+    }
+  }), assertInternalError);
+  assert.equal(database.read((db) => (db.prepare("SELECT COUNT(*) AS count FROM sandbox_security_audit_events WHERE event_type = 'audit_read'").get() as { count: number }).count), 0);
 });

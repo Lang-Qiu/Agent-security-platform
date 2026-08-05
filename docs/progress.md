@@ -8833,3 +8833,47 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
     Important / 0 Minor`
 - commit: `feat(backend): persist sandbox security idempotency`
 - next: P3-T4 subject-scoped audit read and retention repository
+
+## 2026-08-05 - REQ-SBX-GENERAL-003 P3-T4 subject-scoped audit persistence
+
+- phase/task: Phase 3 / P3-T4
+- status: `IMPLEMENTATION_COMPLETE_PENDING_COMMIT`
+- implementation:
+  - added the SQLite audit repository factory with mandatory named subject
+    selection, descending `(occurred_at,event_id)` pagination, tie cursor
+    filtering, limit+1 `has_more`, normalized defensive event copies, and
+    post-normalization subject checks
+  - cross-checked every stored event's JSON against typed columns and wrapped
+    invalid JSON, callback, constraint, and transaction failures as the tagged
+    internal service error; read-event insertion occurs after page selection in
+    the same transaction
+  - added fixed-input 90-day cutoff purge with an ordered 1000-row bound,
+    `has_more`, exact `audit_purged` projection, and deletion/audit atomicity;
+    caller-provided retention fields are rejected
+- files:
+  - `backend/src/modules/sandbox-security/adapters/sqlite/sqlite-audit.repository.ts`
+  - `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+  - `backend/tests/sandbox-security-sqlite.spec.ts`
+- tests:
+  - factory-boundary RED failed for the intended missing export before
+    implementation
+  - focused SQLite suite is green (`33/33`); the review regressions for
+    caller retention input and non-internal callback errors were each run RED
+    then GREEN
+  - `npm run test:backend` is `336/338`; the two failures remain the existing
+    Semgrep `ENOENT` and task-engine asset expectation drift
+  - `npm run typecheck:backend` has no P3-T4 sandbox-security errors and
+    `git diff --check` passes
+- reviews:
+  - independent specification review and re-review: PASS with `0 Critical / 0
+    Important / 0 Minor`
+  - independent quality review and re-review: PASS with `0 Critical / 0
+    Important / 0 Minor`
+- boundary:
+  - P3-T4 is not committed yet; P4 services, HTTP, and production composition
+    remain later tasks
+  - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
+    GENERAL-003 is not `VERIFIED`
+- next: selectively stage and commit
+  `feat(backend): persist sandbox security audit repository`, then proceed to
+  P4-T1
