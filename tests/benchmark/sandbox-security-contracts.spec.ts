@@ -1161,6 +1161,24 @@ test("REQ-SBX-P6-RETRY rejects a v1 candidate cassette without a compatibility p
   });
 });
 
+test("REQ-SBX-P6-RETRY rejects a v1 replay envelope directly", () => {
+  const value = replayEnvelope();
+  value.schema_version = "sandbox-security-benchmark-replay.v1";
+
+  assert.throws(() => normalizeReplay(value), {
+    message: /^benchmark_contract_invalid$/u
+  });
+});
+
+test("REQ-SBX-P6-RETRY rejects a v1 capture manifest directly", () => {
+  const value = captureManifest();
+  value.schema_version = "sandbox-security-benchmark-capture.v1";
+
+  assert.throws(() => normalizeCapture(value), {
+    message: /^benchmark_contract_invalid$/u
+  });
+});
+
 test("REQ-SBX-GENERAL-002 capture manifest and seal admit only exact content-free hashes", () => {
   const capture = captureManifest();
   assert.deepEqual(normalizeCapture(capture), capture);
@@ -1555,6 +1573,22 @@ test("REQ-SBX-GENERAL-002 candidate cassette hashing supports 300 bounded replay
   assert.notEqual(
     firstHash,
     hashCandidateCassette({ ...cassette, inputs: [...cassette.inputs].reverse() })
+  );
+});
+
+test("REQ-SBX-P6-RETRY candidate cassette hash includes ordered retry attempts", () => {
+  const hashCandidateCassette = requiredHasher(
+    "hashSandboxSecurityBenchmarkCandidateCassette"
+  );
+  const retryCassette = validV2RetryCassette();
+  const singleResponseCassette = structuredClone(retryCassette);
+  singleResponseCassette.inputs[0]!.ollama = [
+    structuredClone(retryCassette.inputs[0]!.ollama[1])
+  ];
+
+  assert.notEqual(
+    hashCandidateCassette(singleResponseCassette),
+    hashCandidateCassette(retryCassette)
   );
 });
 
