@@ -1588,6 +1588,10 @@ test("REQ-SBX-P6-RETRY candidate cassette hash includes ordered retry attempts",
   const singleResponseHash = hashCandidateCassette(singleResponseCassette);
   const retryHash = hashCandidateCassette(retryCassette);
 
+  assert.equal(
+    retryHash,
+    "d373ba5c173f92dd20a0bb96cdae24e7208cced7154712d9a6e21a1e1cb62680"
+  );
   assert.notEqual(singleResponseHash, retryHash);
 
   const changedFirstAttempt = structuredClone(retryCassette);
