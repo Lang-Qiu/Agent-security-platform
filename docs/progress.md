@@ -8657,3 +8657,42 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
     GENERAL-003 is not `VERIFIED`
 - commit: `feat(backend): limit sandbox security evaluations`
 - next: P2-T5 exact content-free audit projection
+
+## 2026-08-05 - REQ-SBX-GENERAL-003 P2-T5 content-free audit projection
+
+- phase/task: Phase 2 / P2-T5
+- status: `COMPLETE_PHASE_2_PENDING_P3_T1`
+- implementation:
+  - added the single injected audit projector for all eight Phase 1 audit
+    event variants
+  - completed and replayed decisions are normalized before recomputing the
+    fixed nine risk-category and six detector-run-status count catalogs
+  - every event is built field-by-field, normalized again through the shared
+    exact-key contract, and excludes decision content, provenance, evidence,
+    detector identifiers, provider values, and idempotency material
+  - elapsed values are floored and clamped to the shared `0..60000` bound;
+    capability arrays and count records are returned as defensive copies
+- tests:
+  - focused P2-T5 audit suite is green (`8/8`)
+  - focused P2-T3/T4/T5 combination is green (`55/55`), and the shared audit
+    contract suite is green (`11/11`)
+  - `npm run test:backend` includes the audit suite; the two existing failures
+    remain Semgrep `ENOENT` and task-engine asset expectation drift
+  - `npm run typecheck:backend` still reports only existing
+    campaign/task-center/test baseline errors; no P2-T5 source or test error
+    remains
+  - `git diff --check` passed
+- TDD evidence: the focused suite first failed (`7/7`) because the module
+  boundary lacked `createSandboxSecurityAuditProjector`, then passed after the
+  minimal projector and export were added; a quality-review regression first
+  failed on implicit elapsed coercion and passed after the explicit runtime
+  type guard (`8/8`)
+- reviews: independent specification and quality reviews PASS with
+  `0 Critical / 0 Important / 0 Minor`; the quality boundary regression was
+  re-reviewed and closed
+- boundary:
+  - no repository, SQLite, timer, HTTP, revoke side effect, or Engine
+    orchestration behavior was added; persistence remains Phase 3
+  - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
+    GENERAL-003 is not `VERIFIED`
+- next: Phase 3 SQLite persistence

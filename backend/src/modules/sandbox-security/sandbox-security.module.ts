@@ -35,6 +35,9 @@ export {
 export {
   createSandboxSecurityEngineConcurrencyLimiter
 } from "./engine-concurrency.ts";
+export {
+  createSandboxSecurityAuditProjector
+} from "./audit-projector.ts";
 
 export { toSandboxSecurityEngineRuntime } from "./ports/runtime.ts";
 export {
