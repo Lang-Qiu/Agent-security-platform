@@ -449,11 +449,16 @@ export type SandboxSecurityReplayAttemptOutcome<TResponse> = Exclude<
   Readonly<{ readonly status: "not_called" }>
 >;
 
+export type SandboxSecurityReplayRetryableFirstAttemptOutcome = Readonly<{
+  readonly status: "transport_error";
+  readonly error_code: "connection_failed";
+}>;
+
 export type SandboxSecurityReplayAttemptSequence<TResponse> =
   | readonly []
   | readonly [SandboxSecurityReplayAttemptOutcome<TResponse>]
   | readonly [
-      SandboxSecurityReplayAttemptOutcome<TResponse>,
+      SandboxSecurityReplayRetryableFirstAttemptOutcome,
       SandboxSecurityReplayAttemptOutcome<TResponse>
     ];
 
@@ -1536,29 +1541,37 @@ function normalizeOutcome<T>(value: unknown, response: (value: unknown) => T): S
   return invalid();
 }
 
-function isConnectionFailedAttempt<T>(
-  value: SandboxSecurityReplayAttemptOutcome<T>
-): boolean {
+function isRetryableFirstAttempt<TResponse>(
+  value: SandboxSecurityReplayAttemptOutcome<TResponse>
+): value is SandboxSecurityReplayRetryableFirstAttemptOutcome {
   return value.status === "transport_error" && value.error_code === "connection_failed";
+}
+
+function normalizeAttemptOutcome<TResponse>(
+  value: unknown,
+  response: (value: unknown) => TResponse
+): SandboxSecurityReplayAttemptOutcome<TResponse> {
+  const outcome = normalizeOutcome(value, response);
+  if (outcome.status === "not_called") return invalid();
+  return outcome;
 }
 
 export function normalizeSandboxSecurityReplayAttemptSequence<TResponse>(
   value: unknown,
   response: (value: unknown) => TResponse
 ): SandboxSecurityReplayAttemptSequence<TResponse> {
-  const attempts: SandboxSecurityReplayAttemptOutcome<TResponse>[] = denseArray(
-    value,
-    0,
-    2
-  ).map((item) => {
-    const outcome = normalizeOutcome(item, response);
-    if (outcome.status === "not_called") return invalid();
-    return outcome;
-  });
-  if (attempts.length === 2 && !isConnectionFailedAttempt(attempts[0]!)) {
-    return invalid();
+  const attempts = denseArray(value, 0, 2);
+  if (attempts.length === 0) {
+    return deepFreeze([] as const);
   }
-  return deepFreeze(attempts) as unknown as SandboxSecurityReplayAttemptSequence<TResponse>;
+  if (attempts.length === 1) {
+    const attempt = normalizeAttemptOutcome(attempts[0]!, response);
+    return deepFreeze([attempt] as const);
+  }
+  const firstAttempt = normalizeAttemptOutcome(attempts[0]!, response);
+  if (!isRetryableFirstAttempt(firstAttempt)) return invalid();
+  const secondAttempt = normalizeAttemptOutcome(attempts[1]!, response);
+  return deepFreeze([firstAttempt, secondAttempt] as const);
 }
 
 export function normalizeSandboxSecurityBenchmarkReplayEnvelope(value: unknown): Readonly<SandboxSecurityBenchmarkReplayEnvelope> {

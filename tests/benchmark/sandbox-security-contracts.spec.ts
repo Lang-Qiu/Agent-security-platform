@@ -1585,11 +1585,28 @@ test("REQ-SBX-P6-RETRY candidate cassette hash includes ordered retry attempts",
   singleResponseCassette.inputs[0]!.ollama = [
     structuredClone(retryCassette.inputs[0]!.ollama[1])
   ];
+  const singleResponseHash = hashCandidateCassette(singleResponseCassette);
+  const retryHash = hashCandidateCassette(retryCassette);
 
-  assert.notEqual(
-    hashCandidateCassette(singleResponseCassette),
-    hashCandidateCassette(retryCassette)
-  );
+  assert.notEqual(singleResponseHash, retryHash);
+
+  const changedFirstAttempt = structuredClone(retryCassette);
+  (changedFirstAttempt.inputs[0]!.ollama as unknown[])[0] = {
+    status: "transport_error",
+    error_code: "response_too_large"
+  };
+  assert.throws(() => hashCandidateCassette(changedFirstAttempt), {
+    message: /^benchmark_contract_invalid$/u
+  });
+
+  const reorderedAttempts = structuredClone(retryCassette);
+  reorderedAttempts.inputs[0]!.ollama = [
+    structuredClone(retryCassette.inputs[0]!.ollama[1]),
+    structuredClone(retryCassette.inputs[0]!.ollama[0])
+  ];
+  assert.throws(() => hashCandidateCassette(reorderedAttempts), {
+    message: /^benchmark_contract_invalid$/u
+  });
 });
 
 test("REQ-SBX-GENERAL-002 candidate package layout admits only declared root and decision entries", () => {
