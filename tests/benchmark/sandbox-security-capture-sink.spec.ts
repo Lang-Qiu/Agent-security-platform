@@ -190,6 +190,20 @@ function evaluationJudge(
   });
 }
 
+function evaluationJudgeConnectionFailed(
+  operation: "responses" | "chat_completions" = "responses"
+): SandboxSecurityCapturedProviderOutcome {
+  return Object.freeze({
+    capture_phase: "evaluation",
+    provider: "openai",
+    operation,
+    outcome: Object.freeze({
+      status: "transport_error",
+      error_code: "connection_failed"
+    })
+  });
+}
+
 function readySink() {
   const sink = createSandboxSecurityCaptureSink();
   sink.record(successInventory());
@@ -385,7 +399,7 @@ test("REQ-SBX-GENERAL-002 ready sink accepts Chat completions Judge outcome and 
 test("REQ-SBX-P6-RETRY sink rejects a Judge retry with a different operation", () => {
   const sink = readySink();
   sink.beginInput();
-  sink.record(evaluationJudge("responses"));
+  sink.record(evaluationJudgeConnectionFailed("responses"));
 
   assert.throws(
     () => sink.record(evaluationJudge("chat_completions")),
