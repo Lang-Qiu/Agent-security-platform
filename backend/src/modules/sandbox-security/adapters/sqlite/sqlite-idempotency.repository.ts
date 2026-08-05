@@ -201,18 +201,20 @@ function assertRequestRejectedEvent(
     policy_profile_id: SandboxSecurityPolicyProfileId;
     composition_binding: string;
   }>,
-  rejectionCode: "idempotency_in_progress" | "idempotency_conflict" | "concurrency_limited"
+  rejectionCode: "idempotency_in_progress" | "idempotency_conflict" | "concurrency_limited",
+  options: Readonly<{ match_request_context?: boolean }> = {}
 ): void {
   const event = normalizedAuditEvent(value);
+  const matchRequestContext = options.match_request_context !== false;
   if (
     event.event_type !== "request_rejected" ||
     event.authorization_scope_id !== record.authorization_scope_id ||
     event.capability_id !== record.capability_id ||
     event.subject_id !== record.subject_id ||
     event.route_id !== "evaluation" ||
-    event.request_id !== record.request_id ||
-    event.stage !== record.stage ||
-    event.policy_profile_id !== record.policy_profile_id ||
+    (matchRequestContext && event.request_id !== record.request_id) ||
+    (matchRequestContext && event.stage !== record.stage) ||
+    (matchRequestContext && event.policy_profile_id !== record.policy_profile_id) ||
     event.composition_binding !== record.composition_binding ||
     event.rejection_code !== rejectionCode
   ) {
@@ -462,7 +464,8 @@ export function createSqliteSandboxSecurityIdempotencyRepository(input: Readonly
             assertRequestRejectedEvent(
               claimInput.fingerprint_conflict_event,
               existing,
-              "idempotency_conflict"
+              "idempotency_conflict",
+              { match_request_context: false }
             );
             insertAuditEvent(sqlite, claimInput.fingerprint_conflict_event);
             return { kind: "fingerprint_conflict" };

@@ -1,3 +1,56 @@
+## 2026-08-05 - REQ-SBX-GENERAL-003 P4-T3 evaluation orchestration and idempotency
+
+- phase/task: Phase 4 / P4-T3 Evaluation Orchestration and Idempotency
+- status: `IMPLEMENTED`
+- implementation:
+  - added the typed evaluation service factory behind the sandbox-security
+    module boundary with the fixed authorization, simulation-authority,
+    fingerprint, HMAC, claim, slot, Engine, release, normalization, and
+    completion order
+  - keeps replay, in-progress, and fingerprint-conflict results out of the
+    Engine slot path; binds claims to the effective authorization scope and
+    gateway composition; retains completed rows for exactly 24 hours
+  - normalizes cached and Engine Decisions before replay or completion,
+    propagates AbortSignal, snapshots capability/correlation fields across the
+    Engine await, releases slots before persistence, and records best-effort
+    engine/persistence interruptions on failure
+  - converges malformed claim results, slot acquisition/release failures, and
+    concurrency-rejection persistence failures to tagged internal errors; a
+    successful no-slot path atomically records interruption plus the fixed
+    concurrency rejection
+  - corrected the SQLite fingerprint-conflict path so a changed request
+    correlation still returns `fingerprint_conflict` and records the attempted
+    request's content-free rejection event atomically
+- files:
+  - `backend/src/modules/sandbox-security/evaluation.service.ts`
+  - `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+  - `backend/src/modules/sandbox-security/adapters/sqlite/sqlite-idempotency.repository.ts`
+  - `backend/tests/sandbox-security-evaluation.service.spec.ts`
+  - `backend/tests/sandbox-security-idempotency.spec.ts`
+  - `package.json`
+- tests:
+  - evaluation service focused suite is green (`15/15`)
+  - SQLite idempotency suite is green (`20/20`), including changed-correlation
+    fingerprint conflict persistence
+  - `npm run test:backend` is `372/374`; the two failures remain the existing
+    Semgrep `ENOENT` and task-engine asset expectation drift, unrelated to
+    P4-T3
+  - `npm run typecheck:backend` reports no P4-T3 sandbox-security source or
+    test error; existing campaign/task-center/test baseline errors remain
+  - `git diff --check` passes
+- TDD/reviews:
+  - factory RED first failed for the intended missing export; implementation
+    reached GREEN after the ordered fake-port suite was added
+  - independent specification review: PASS with `0 Critical / 0 Important /
+    0 Minor`
+  - independent quality review: PASS with `0 Critical / 0 Important / 0 Minor`
+- boundary:
+  - HTTP admission, controllers, and production gateway/lifecycle remain
+    Phase 5/6 work; GENERAL-002 remains
+    `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and GENERAL-003 is not
+    `VERIFIED`
+- next: proceed to P5-T1 raw header, body, query, and response policy
+
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P4-T2 subject-scoped audit service
 
 - phase/task: Phase 4 / P4-T2 Subject-Scoped Audit List and Fixed Retention

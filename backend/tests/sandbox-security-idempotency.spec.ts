@@ -242,6 +242,41 @@ test("REQ-SBX-GENERAL-003 claims replays and rejects fingerprint conflicts", (t)
   });
 });
 
+test("REQ-SBX-GENERAL-003 records a changed-correlation fingerprint conflict without an internal error", (t) => {
+  const { repository, database } = repositoryFor(t);
+  const claim = makeClaim();
+  assert.deepEqual(repository.claim(claim), { kind: "claimed" });
+  repository.complete(makeCompletion());
+
+  assert.deepEqual(
+    repository.claim(
+      makeClaim({
+        request_fingerprint: FINGERPRINT_B,
+        request_id: "request-002",
+        stage: "model_output",
+        policy_profile_id: "sandbox-security-strict.v1"
+      })
+    ),
+    { kind: "fingerprint_conflict" }
+  );
+  const event = database.read((db) =>
+    JSON.parse(
+      (
+        db
+          .prepare(
+            "SELECT event_json FROM sandbox_security_audit_events WHERE event_type = 'request_rejected' ORDER BY rowid DESC LIMIT 1"
+          )
+          .get() as { event_json: string }
+      ).event_json
+    ) as SandboxSecurityAuditEvent
+  );
+  assert.equal(event.event_type, "request_rejected");
+  assert.equal(event.rejection_code, "idempotency_conflict");
+  assert.equal(event.request_id, "request-002");
+  assert.equal(event.stage, "model_output");
+  assert.equal(event.policy_profile_id, "sandbox-security-strict.v1");
+});
+
 test("REQ-SBX-GENERAL-003 deletes an expired row before claim and never replays it", (t) => {
   const { repository, database } = repositoryFor(t);
   repository.claim(makeClaim({ expires_at: LATER }));

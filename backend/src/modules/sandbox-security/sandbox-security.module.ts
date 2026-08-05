@@ -32,6 +32,9 @@ export {
   createSandboxSecurityCapabilityService
 } from "./capability.service.ts";
 export {
+  createSandboxSecurityEvaluationService
+} from "./evaluation.service.ts";
+export {
   createSandboxSecurityAuditService
 } from "./audit.service.ts";
 export {
