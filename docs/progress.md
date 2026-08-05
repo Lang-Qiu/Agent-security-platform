@@ -32,8 +32,7 @@
 
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P2-T2 cryptographic framing
 
-- phase/task: Phase 2 / P2-T2; implementation complete pending independent
-  specification and code-quality review
+- phase/task: Phase 2 / P2-T2 complete
 - TDD RED: the new backend HMAC suite failed `10/10` with the intended
   `AssertionError` because the approved module boundary did not yet export the
   HMAC and opaque-capability factories; the module and test imports loaded
@@ -58,8 +57,10 @@
 - dependency: GENERAL-002 remains
   `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`; neither GENERAL-002 nor
   GENERAL-003 is `VERIFIED`
-- next: complete independent reviews, then commit the exact P2-T2 task before
-  starting P2-T3
+- specification review: PASS with `0 Critical / 0 Important / 0 Minor`.
+- quality review: PASS with `0 Critical / 0 Important / 0 Minor`.
+- commit: `fa60909 feat(backend): add sandbox security cryptographic framing`
+- next: P2-T3 capability DTO, authentication, and authorization
 
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P1-T4 mandatory typecheck script registration
 
