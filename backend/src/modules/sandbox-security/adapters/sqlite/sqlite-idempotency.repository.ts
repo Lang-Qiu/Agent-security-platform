@@ -175,11 +175,12 @@ function insertAuditEvent(database: DatabaseSync, value: unknown): void {
   database
     .prepare(
       `INSERT INTO sandbox_security_audit_events(
-        event_id, event_type, visibility_subject_id, authorization_scope_id,
+        event_schema, event_id, event_type, visibility_subject_id, authorization_scope_id,
         capability_id, occurred_at, event_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
+      "sandbox-security-audit-event.v1",
       event.event_id,
       event.event_type,
       event.subject_id,

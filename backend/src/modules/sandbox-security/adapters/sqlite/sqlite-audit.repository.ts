@@ -2,7 +2,9 @@ import { Buffer } from "node:buffer";
 import type { DatabaseSync } from "node:sqlite";
 
 import { normalizeSandboxSecurityAuditEvent } from "../../../../../../shared/contracts/sandbox-security-api.ts";
+import { normalizeSandboxSecurityEnforcementAuditEvent } from "../../../../../../shared/contracts/sandbox-security-enforcement-audit.ts";
 import type { SandboxSecurityAuditEvent } from "../../../../../../shared/types/sandbox-security-api.ts";
+import type { SandboxSecurityEnforcementAuditEvent } from "../../../../../../shared/types/sandbox-security-enforcement-audit.ts";
 import type { SandboxSecurityAuditRepository } from "../../ports/audit.repository.ts";
 import type { SqliteSandboxSecurityDatabase } from "../../ports/sqlite-database.ts";
 import {
@@ -17,9 +19,12 @@ const SUBJECT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const UTC_MILLISECOND_PATTERN =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const MAX_EVENT_BYTES = 65536;
+const LEGACY_EVENT_SCHEMA = "sandbox-security-audit-event.v1" as const;
+const PRIVATE_EVENT_SCHEMA = "sandbox-security-enforcement-audit-event.v1" as const;
 
 interface AuditRow {
   rowid?: unknown;
+  event_schema?: unknown;
   event_id?: unknown;
   event_type?: unknown;
   visibility_subject_id?: unknown;
@@ -41,6 +46,7 @@ function isStrictTimestamp(value: unknown): value is string {
 
 function parseStoredEvent(row: Readonly<AuditRow>): SandboxSecurityAuditEvent {
   if (
+    row.event_schema !== LEGACY_EVENT_SCHEMA ||
     typeof row.event_id !== "string" ||
     typeof row.event_type !== "string" ||
     typeof row.visibility_subject_id !== "string" ||
@@ -74,6 +80,44 @@ function parseStoredEvent(row: Readonly<AuditRow>): SandboxSecurityAuditEvent {
   return event;
 }
 
+function parseStoredPrivateEvent(
+  row: Readonly<AuditRow>
+): SandboxSecurityEnforcementAuditEvent {
+  if (
+    row.event_schema !== PRIVATE_EVENT_SCHEMA ||
+    typeof row.event_id !== "string" ||
+    typeof row.event_type !== "string" ||
+    typeof row.visibility_subject_id !== "string" ||
+    typeof row.authorization_scope_id !== "string" ||
+    typeof row.capability_id !== "string" ||
+    typeof row.occurred_at !== "string" ||
+    typeof row.event_json !== "string"
+  ) {
+    throw internalError();
+  }
+  const eventBytes = Buffer.byteLength(row.event_json, "utf8");
+  if (eventBytes < 2 || eventBytes > MAX_EVENT_BYTES) throw internalError();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(row.event_json);
+  } catch {
+    throw internalError();
+  }
+  const event = normalizeSandboxSecurityEnforcementAuditEvent(parsed);
+  if (
+    event === null ||
+    event.event_id !== row.event_id ||
+    event.event_type !== row.event_type ||
+    event.subject_id !== row.visibility_subject_id ||
+    event.authorization_scope_id !== row.authorization_scope_id ||
+    event.capability_id !== row.capability_id ||
+    event.occurred_at !== row.occurred_at
+  ) {
+    throw internalError();
+  }
+  return event;
+}
+
 function normalizeEvent(value: unknown): SandboxSecurityAuditEvent {
   const event = normalizeSandboxSecurityAuditEvent(value);
   if (event === null) throw internalError();
@@ -89,11 +133,12 @@ function insertEvent(database: DatabaseSync, value: unknown): SandboxSecurityAud
   database
     .prepare(
       `INSERT INTO sandbox_security_audit_events(
-        event_id, event_type, visibility_subject_id, authorization_scope_id,
+        event_schema, event_id, event_type, visibility_subject_id, authorization_scope_id,
         capability_id, occurred_at, event_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
+      LEGACY_EVENT_SCHEMA,
       event.event_id,
       event.event_type,
       event.subject_id,
@@ -227,10 +272,11 @@ export function createSqliteSandboxSecurityAuditRepository(input: Readonly<{
           }
           const rows = sqlite
             .prepare(
-              `SELECT rowid, event_id, event_type, visibility_subject_id,
+              `SELECT rowid, event_schema, event_id, event_type, visibility_subject_id,
                 authorization_scope_id, capability_id, occurred_at, event_json
                FROM sandbox_security_audit_events
-               WHERE visibility_subject_id = :subject${afterClause}
+               WHERE event_schema = '${LEGACY_EVENT_SCHEMA}'
+                 AND visibility_subject_id = :subject${afterClause}
                ORDER BY occurred_at DESC, event_id DESC
                LIMIT :row_limit`
             )
@@ -266,7 +312,7 @@ export function createSqliteSandboxSecurityAuditRepository(input: Readonly<{
         return database.transaction((sqlite) => {
           const rows = sqlite
             .prepare(
-              `SELECT rowid, event_id, event_type, visibility_subject_id,
+              `SELECT rowid, event_schema, event_id, event_type, visibility_subject_id,
                 authorization_scope_id, capability_id, occurred_at, event_json
                FROM sandbox_security_audit_events
                WHERE occurred_at < :cutoff
@@ -274,8 +320,17 @@ export function createSqliteSandboxSecurityAuditRepository(input: Readonly<{
                LIMIT :row_limit`
             )
             .all({ cutoff: purgeInput.cutoff, row_limit: 1001 }) as AuditRow[];
-          // Validate rows before deletion so corruption cannot be silently purged.
-          for (const row of rows) parseStoredEvent(row);
+          // Validate every selected row before deletion so corruption cannot be silently purged.
+          for (const row of rows) {
+            if (!Number.isSafeInteger(row.rowid)) throw internalError();
+            if (row.event_schema === LEGACY_EVENT_SCHEMA) {
+              parseStoredEvent(row);
+            } else if (row.event_schema === PRIVATE_EVENT_SCHEMA) {
+              parseStoredPrivateEvent(row);
+            } else {
+              throw internalError();
+            }
+          }
           const hasMore = rows.length > 1000;
           const selected = rows.slice(0, 1000);
           if (selected.length > 0) {
