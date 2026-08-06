@@ -1,8 +1,34 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { IncomingMessage, ServerResponse } from "node:http";
 
+import { InternalAppModule } from "../src/internal-app.module.ts";
 import { matchInternalRoute } from "../src/common/http/internal-router.ts";
 import { matchRoute } from "../src/common/http/router.ts";
+
+function invokeInternalRoute(
+  app: InternalAppModule,
+  url: string
+): Promise<number | undefined> {
+  let statusCode: number | undefined;
+  const response = {
+    set statusCode(value: number | undefined) {
+      statusCode = value;
+    },
+    setHeader() {
+      return response;
+    },
+    end() {
+      return response;
+    }
+  } as unknown as ServerResponse;
+  const request = {
+    method: "POST",
+    url,
+    headers: {}
+  } as IncomingMessage;
+  return app.handle(request, response).then(() => statusCode);
+}
 
 test("REQ-SBX-GENERAL-003 public router recognizes only evaluation and audit read", () => {
   assert.deepEqual(
@@ -60,6 +86,77 @@ test("REQ-SBX-GENERAL-003 internal router recognizes only capability and purge r
     matchInternalRoute("GET", "/api/sandbox/security/audit-events"),
     null,
     "internal router must not recognize public routes"
+  );
+});
+
+test("REQ-SBX-GENERAL-004 internal router recognizes only the enforcement audit route", () => {
+  assert.deepEqual(
+    matchInternalRoute(
+      "POST",
+      "/internal/sandbox/security/enforcement-events"
+    ),
+    { name: "enforcementAudit", params: {} }
+  );
+  assert.equal(
+    matchInternalRoute(
+      "GET",
+      "/internal/sandbox/security/enforcement-events"
+    ),
+    null
+  );
+  assert.equal(
+    matchInternalRoute(
+      "POST",
+      "/internal/sandbox/security/enforcement-events/"
+    ),
+    null
+  );
+  assert.equal(
+    matchInternalRoute(
+      "POST",
+      "/internal/sandbox/security/enforcement-events/extra"
+    ),
+    null
+  );
+  assert.equal(
+    matchInternalRoute(
+      "POST",
+      "/internal/sandbox/security/enforcement-events%2F"
+    ),
+    null
+  );
+  assert.equal(
+    matchRoute("POST", "/internal/sandbox/security/enforcement-events"),
+    null
+  );
+});
+
+test("REQ-SBX-GENERAL-004 reserved enforcement route fails closed before P2 dispatch", async () => {
+  const app = new InternalAppModule({
+    campaignRepository: { list: () => [] } as never,
+    ingestToken: "a".repeat(64)
+  });
+
+  assert.equal(
+    await invokeInternalRoute(
+      app,
+      "/internal/sandbox/security/enforcement-events"
+    ),
+    404
+  );
+  assert.equal(
+    await invokeInternalRoute(
+      app,
+      "/internal/sandbox/security/foo/../enforcement-events"
+    ),
+    404
+  );
+  assert.equal(
+    await invokeInternalRoute(
+      app,
+      "/internal/sandbox/security/%2e%2e/enforcement-events"
+    ),
+    404
   );
 });
 

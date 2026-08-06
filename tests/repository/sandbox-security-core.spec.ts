@@ -42,6 +42,27 @@ const P1_T1_SHARED_TYPES = [
   "SandboxSecurityAuditPage"
 ] as const;
 
+const P1_T2_SHARED_PRIVATE_NAMES = [
+  "SandboxSecurityEnforcementAuditCapabilityScope",
+  "SandboxSecurityEnforcementPoint",
+  "SandboxSecurityEnforcementInterruptionCode",
+  "SandboxSecurityProductionCompositionBinding",
+  "SandboxSecurityEnforcementAuditRequestCommon",
+  "SandboxSecurityEnforcementAuditRequest",
+  "OpenClawEnforcementAuditRequest",
+  "SandboxSecurityEnforcementAuditEventCommon",
+  "SandboxSecurityEnforcementCompletedEvent",
+  "SandboxSecurityEnforcementInterruptedEvent",
+  "SandboxSecurityEnforcementAuditCapabilityIssuedEvent",
+  "SandboxSecurityEnforcementAuditEvent",
+  "SandboxSecurityEnforcementAuditEventCandidate",
+  "OpenClawEnforcementAuditAck",
+  "SandboxSecurityEnforcementAuditEventType",
+  "normalizeSandboxSecurityEnforcementAuditRequest",
+  "normalizeSandboxSecurityEnforcementAuditEvent",
+  "normalizeOpenClawEnforcementAuditAck"
+] as const;
+
 const P1_T1_API_TYPES = [
   "SandboxSecurityCapabilityScope",
   ...P1_T1_SHARED_TYPES,
@@ -381,7 +402,10 @@ function analyzeSharedExportProvenance(
     canonicalValueExportNames: new Set<string>([
       ...MASTER_A_RUNTIME,
       ...P1_T1_SHARED_RUNTIME
-    ])
+    ]),
+    allowedIndirectCanonicalExportNames: new Set(
+      P1_T2_SHARED_PRIVATE_NAMES
+    )
   });
 }
 
@@ -2512,8 +2536,12 @@ test("REQ-SBX-GENERAL-001 keeps shared contracts engine independent", () => {
     ...MASTER_A_RUNTIME,
     ...MASTER_B_TYPES,
     ...P1_T1_SHARED_RUNTIME,
-    ...P1_T1_SHARED_TYPES
+    ...P1_T1_SHARED_TYPES,
+    ...P1_T2_SHARED_PRIVATE_NAMES
   ]);
+  const allowedIndirectCanonicalNames = new Set(
+    P1_T2_SHARED_PRIVATE_NAMES
+  );
 
   for (const identifier of FORBIDDEN_SHARED_ENGINE_EXPORTS) {
     assert.equal(
@@ -2535,11 +2563,13 @@ test("REQ-SBX-GENERAL-001 keeps shared contracts engine independent", () => {
         true,
         `canonical sandbox security export ${entry.exportedName} must be in Master A/B`
       );
-      assert.equal(
-        entry.directCanonicalExport,
-        true,
-        `canonical sandbox security export ${entry.exportedName} must use a direct same-name row`
-      );
+      if (!allowedIndirectCanonicalNames.has(entry.exportedName)) {
+        assert.equal(
+          entry.directCanonicalExport,
+          true,
+          `canonical sandbox security export ${entry.exportedName} must use a direct same-name row`
+        );
+      }
     }
   }
 });

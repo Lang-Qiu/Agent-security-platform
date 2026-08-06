@@ -1,6 +1,6 @@
 // Internal-only router for Docker-internal campaign ingest and sandbox security
 // administration. It recognizes health, four exact campaign ingest routes, and
-// the three exact sandbox security administration routes.
+// the four exact sandbox security administration routes.
 // Every other path returns null so the InternalAppModule responds with 404.
 
 export type InternalRouteName =
@@ -11,7 +11,8 @@ export type InternalRouteName =
   | "registerEvidence"
   | "issueSandboxSecurityCapability"
   | "revokeSandboxSecurityCapability"
-  | "purgeSandboxSecurityAuditEvents";
+  | "purgeSandboxSecurityAuditEvents"
+  | "enforcementAudit";
 
 export interface InternalRouteMatch {
   name: InternalRouteName;
@@ -54,6 +55,13 @@ export function matchInternalRoute(
     pathname === "/internal/sandbox/security/audit-events/purge"
   ) {
     return { name: "purgeSandboxSecurityAuditEvents", params: {} };
+  }
+
+  if (
+    method === "POST" &&
+    pathname === "/internal/sandbox/security/enforcement-events"
+  ) {
+    return { name: "enforcementAudit", params: {} };
   }
 
   // Revoke keeps the capability id opaque until the authenticated controller

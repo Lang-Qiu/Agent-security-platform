@@ -111,8 +111,15 @@ export class InternalAppModule {
     const requestId = createRequestId();
 
     try {
-      const url = new URL(request.url ?? "/", "http://127.0.0.1");
-      const route = matchInternalRoute(request.method, url.pathname);
+      // Match the raw request-target path. URL.pathname normalizes dot
+      // segments before the exact internal route matcher can reject them.
+      const requestTarget = request.url ?? "/";
+      const queryIndex = requestTarget.indexOf("?");
+      const pathname =
+        queryIndex === -1
+          ? requestTarget
+          : requestTarget.slice(0, queryIndex);
+      const route = matchInternalRoute(request.method, pathname);
 
       if (!route) {
         throw new DomainError("Route not found", "NOT_FOUND", 404);
@@ -274,6 +281,11 @@ export class InternalAppModule {
             request
           );
           return;
+
+        case "enforcementAudit":
+          // The real controller is owned by Phase 2; keep the reserved path
+          // non-hanging and fail closed until that dispatch exists.
+          throw new DomainError("Route not found", "NOT_FOUND", 404);
       }
     } catch (error) {
       if (error instanceof SandboxSecurityHttpError) {

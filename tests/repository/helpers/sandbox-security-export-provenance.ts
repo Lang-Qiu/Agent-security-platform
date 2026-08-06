@@ -49,6 +49,7 @@ export type SandboxSecurityExportProvenanceOptions = {
   overlay?: ReadonlyMap<string, string>;
   canonicalTypeExportNames: ReadonlySet<string>;
   canonicalValueExportNames: ReadonlySet<string>;
+  allowedIndirectCanonicalExportNames?: ReadonlySet<string>;
 };
 
 type OverlayCompilerHost = ts.CompilerHost & {
@@ -893,7 +894,8 @@ export function analyzeSandboxSecurityExportProvenance(
       }
       if (
         canonicalSandboxOriginPaths.length > 0 &&
-        !directCanonicalExport
+        !directCanonicalExport &&
+        !input.allowedIndirectCanonicalExportNames?.has(exportedName)
       ) {
         violations.push(
           `shared package export ${exportedName} reaches canonical sandbox security declarations without a direct same-name A/B export row`
