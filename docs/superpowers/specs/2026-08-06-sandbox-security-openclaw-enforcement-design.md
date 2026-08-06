@@ -23,6 +23,24 @@ has completed its implementation work at
 is inherited and is not reopened by this requirement. Neither dependency may
 be described as globally `VERIFIED` by GENERAL-004.
 
+## Independent Review Record
+
+- Final verdict: `PASS`
+- Critical findings: `0`
+- Important findings: `0`
+- Minor findings: `0`
+- Review mode: independent read-only subagent review
+- Closed areas: enforcement/audit health separation, exact audit unions,
+  versioned private capability provisioning, public v1 compatibility,
+  `event_schema` repository filtering, replay timestamp identity, response
+  envelope relations, internal HTTP admission, package/image isolation,
+  replacement provenance, privacy, and implementation signatures
+
+The final independent re-review was performed after all earlier Critical,
+Important, and Minor findings were corrected. It does not authorize
+implementation; explicit user approval of this written specification remains
+the next gate.
+
 ## Canonical Inputs
 
 - [`metadata.md`](../../../metadata.md)
@@ -76,6 +94,9 @@ silently continue without its security plugin and patched barriers.
   per-run/per-call correlation.
 - A dedicated content-free internal audit route using the GENERAL-003
   repository and SQLite schema migration from v1 to v2.
+- A versioned internal provisioning variant on the existing capability-issue
+  route for the dedicated audit token; existing GENERAL-003 v1 capability
+  request/types remain unchanged.
 - Plugin configuration validation, startup integrity gates, bounded Engine
   concurrency, and non-durable OpenClaw session paths.
 - Unit, integration, repository, privacy, patch-integrity, and Track 1
@@ -118,9 +139,10 @@ The requirement is accepted only when all of the following are demonstrated:
   cannot cross-contaminate evaluations.
 - Startup rejects a missing or duplicated enforcement plugin, a missing
   barrier, an invalid OpenClaw package identity, or a changed patch digest.
-- Completed and interrupted enforcement evaluations are audited through the
-  dedicated capability, without changing the already selected host action
-  when audit is unavailable.
+- Every completed and interrupted enforcement evaluation attempts the
+  dedicated content-free audit write. Successful writes are persisted; an
+  unavailable audit service is recorded only in audit health/counters and
+  never changes the already selected host action.
 - SQLite v1 data is preserved and upgraded idempotently to v2, and replay or
   event-ID conflict behavior is deterministic.
 - Raw or transformed application content is absent from all plugin logs,
@@ -150,11 +172,30 @@ general-security plugin in the same acceptance fixture. The new plugin may
 share only public shared contracts and public Engine indexes. It must not
 import detector, profile, reducer, sanitizer, or backend repository internals.
 
+### Package and Image Isolation
+
+The existing `integrations/openclaw/` package root is the Track 1 package. Its
+`package.json`, dependency resolution, build output, plugin manifest, and
+runtime image remain pinned to `openclaw@2026.6.10` and are not reused for
+GENERAL-004. The general-security runtime is a second standalone package root
+at `integrations/openclaw/general-security/` with its own `package.json`,
+lockfile, `node_modules`, plugin entry, build output, and exact
+`openclaw@2026.6.34` dependency. The nested package is deliberately not
+implicitly merged into the current Track 1 workspace package.
+
+The general-security Docker image installs only that nested package with its
+own frozen lockfile and copies only its plugin/configuration plus the public
+Engine/shared build inputs. The Track 1 image and compose service retain their
+existing build context and dependency tree. A startup probe rejects a plugin
+loaded from the other package root, a duplicate OpenClaw package identity, or
+an image containing both plugin manifests in one runtime.
+
 ### Ownership
 
 - The OpenClaw patch owns host ordering, final-value capture, hook awaiting,
   duplicate-registration detection, and side-effect suppression.
-- `integrations/openclaw/src/general-security/` owns configuration,
+- `integrations/openclaw/general-security/src/general-security/` owns
+  configuration,
   correlation, authority reconstruction, action mapping, audit invocation, and
   plugin lifecycle.
 - `engines/sandbox/src/security/index.ts` and
@@ -163,6 +204,84 @@ import detector, profile, reducer, sanitizer, or backend repository internals.
   `evaluate` contract.
 - GENERAL-003's backend route, capability authorizer, content-free projector,
   SQLite repository, and retention policy remain the audit authority.
+
+### UI Component Skeleton
+
+GENERAL-004 has no frontend component or public frontend API. The backend and
+OpenClaw runtime are the complete user-facing enforcement boundary for this
+requirement. GENERAL-005 owns the future workbench, audit view, and frontend
+presentation of any compatible audit contract.
+
+### Backend Function Signatures
+
+The implementation must keep these explicit backend boundaries (names may be
+adapted only without changing their parameter/return semantics):
+
+```ts
+interface OpenClawEnforcementAuditIdentity {
+  subject_id: string;
+  capability_id: string;
+  authorization_scope_id: string;
+}
+
+interface SandboxSecurityEnforcementAuditService {
+  appendEnforcementEvent(
+    request: Readonly<OpenClawEnforcementAuditRequest>,
+    identity: Readonly<OpenClawEnforcementAuditIdentity>
+  ): Promise<Readonly<OpenClawEnforcementAuditAck>>;
+}
+
+interface SandboxSecurityEnforcementAuditRepository {
+  append(input: Readonly<{
+    candidate: Readonly<SandboxSecurityEnforcementAuditEventCandidate>;
+    occurred_at: string;
+  }>): Readonly<{
+    event_id: string;
+    status: "accepted" | "replayed";
+    occurred_at: string;
+  }>;
+}
+
+interface SandboxSecurityEnforcementAuditCapabilityService {
+  issueEnforcementAudit(
+    request: Readonly<
+      SandboxSecurityEnforcementAuditCapabilityIssueRequest
+    >
+  ): Readonly<SandboxSecurityEnforcementAuditCapabilityIssueResult>;
+}
+
+interface SandboxSecurityEnforcementAuditController {
+  enforcementAudit(
+    request: IncomingMessage,
+    request_id: string
+  ): Promise<HttpResponse>;
+}
+
+interface SandboxSecurityAdminController {
+  issue(
+    request: IncomingMessage,
+    request_id: string
+  ): Promise<HttpResponse>; // exact schema dispatch, including new branch
+}
+```
+
+The controller owns listener/method/authentication/body admission and invokes
+the service only after exact normalization. The service injects authenticated
+identity, obtains server time from its runtime port, maps to a candidate that
+excludes `occurred_at`, and delegates idempotency to the dual-union repository.
+Neither service nor repository accepts raw content, a client-supplied identity,
+or a caller-selected action.
+
+The existing administrator controller keeps its `issue` route/method and
+dispatches to `issueEnforcementAudit` only after the new exact schema has been
+normalized. The legacy schema continues to call the unchanged GENERAL-003
+capability service method. Both branches share admission and administrator
+authentication but have disjoint normalized DTOs and result schemas.
+
+`SandboxSecurityEnforcementAuditEventCandidate` is the exact dedicated durable
+union with `occurred_at` omitted independently from each variant; it is not a
+loose partial type. Every other backend-injected identity and variant field is
+required before repository append.
 
 ### Startup and Lifetime
 
@@ -173,15 +292,32 @@ Startup performs these steps in order:
 2. load and validate one immutable general-security configuration;
 3. create exactly one process-level production Engine and its bounded runtime
    ports;
-4. probe all four final barriers and the dedicated audit capability; and
+4. probe all four final barriers and the dedicated audit route/configuration;
+   a missing or malformed capability fails startup, while a valid-form but
+   expired/rejected audit token only marks audit health degraded; and
 5. register the plugin hooks.
 
-Any failure in steps 1 through 4 aborts startup before hook registration. A
-runtime failure after registration fails closed for the current event and
-marks plugin health `degraded`; it never unregisters the barrier or bypasses
-enforcement. A global Engine concurrency limit of four matches GENERAL-003.
-There is no waiting queue: when an Engine slot is unavailable, the current
-event uses the appropriate fail-closed action.
+Any failure in steps 1 through 3, or a failed barrier probe in step 4, aborts
+startup before hook registration. A valid-form audit token rejection during
+the step-4 connectivity probe does not abort enforcement startup; it records
+audit degradation and continues with the barriers enabled. The
+runtime has two independent health states:
+
+```ts
+interface OpenClawSecurityHealth {
+  enforcement: "healthy" | "failed";
+  audit: "healthy" | "degraded";
+}
+```
+
+The patched barriers inspect `enforcement`, not `audit`. A fatal runtime
+failure after registration sets `enforcement: "failed"` and fails closed for
+the current event; it never unregisters the barrier or bypasses enforcement.
+An audit timeout, expired audit token, audit authentication/storage failure, or
+malformed audit acknowledgement sets only `audit: "degraded"`. A global Engine
+concurrency limit of four matches GENERAL-003. There is no waiting queue: when
+an Engine slot is unavailable, the current event uses the appropriate
+fail-closed action.
 
 ## OpenClaw Supply-Chain and Patch Contract
 
@@ -212,8 +348,9 @@ The patch adds or exposes these final hook contracts:
 
 The patched barriers carry stable `runId`, `sessionKey`, and a call
 correlation. They await the plugin Promise and fail closed on timeout, thrown
-error, malformed return, missing correlation, or plugin health `degraded`.
-The patch must not create a second delivery path that can bypass the barrier.
+error, malformed return, missing correlation, or `enforcement: "failed"`.
+They do not fail closed merely because `audit` is `"degraded"`. The patch must
+not create a second delivery path that can bypass the barrier.
 
 ## Immutable Plugin Configuration
 
@@ -244,6 +381,88 @@ The effective composition binding is fixed to
 `sandbox-security-production-composition.v1:<productionMode>`. A process must
 not accept a different profile, mode, endpoint, token, or composition binding
 after startup.
+
+The dedicated capability grant contains exactly the configured
+`policyProfileId`, all three Engine stages (`user_input`, `model_output`, and
+`tool_request`), and an authorization-scope identity bound by GENERAL-003 to
+the backend's current production composition. The plugin copies profile and
+composition binding only from its frozen startup configuration; neither may be
+derived from an OpenClaw event. Startup verifies that the capability grant and
+backend composition match the plugin configuration. A valid-form token that
+is expired or rejected follows the audit-only degradation rule above.
+
+### Dedicated Capability Provisioning
+
+GENERAL-003's `SandboxSecurityCapabilityScope` v1 union and capability issue
+request remain closed and unchanged. The database storage scope catalog gains
+the internal literal `sandbox_security:enforcement:audit:write`, represented by
+a separate `SandboxSecurityEnforcementAuditCapabilityScope` type. The existing
+internal route `POST /internal/sandbox/security/capabilities` dispatches by
+`schema_version` after its unchanged administrator authentication/body
+admission. Its existing GENERAL-003 v1 branch is byte- and behavior-compatible;
+the new exact branch accepts only:
+
+```ts
+interface SandboxSecurityEnforcementAuditCapabilityIssueRequest {
+  schema_version:
+    "sandbox-security-enforcement-audit-capability-issue-request.v1";
+  subject_id: string;
+  policy_profile_id:
+    | "sandbox-security-balanced.v1"
+    | "sandbox-security-strict.v1";
+  ttl_seconds: number;
+}
+
+interface SandboxSecurityEnforcementAuditCapabilityIssueResult {
+  schema_version:
+    "sandbox-security-enforcement-audit-capability-issue-result.v1";
+  capability_id: string;
+  subject_id: string;
+  scopes: ["sandbox_security:enforcement:audit:write"];
+  allowed_stages: ["user_input", "model_output", "tool_request"];
+  allowed_policy_profile_ids: [
+    "sandbox-security-balanced.v1" | "sandbox-security-strict.v1"
+  ];
+  composition_binding:
+    | "sandbox-security-production-composition.v1:rule_only"
+    | "sandbox-security-production-composition.v1:local"
+    | "sandbox-security-production-composition.v1:local_and_judge";
+  bearer_token: string;
+  issued_at: string;
+  expires_at: string;
+  revoked_at: null;
+}
+```
+
+`subject_id` uses the existing strict subject grammar and `ttl_seconds` is a
+safe integer in `[60, 3600]`. No scope, stage, production mode, endpoint, or
+authorization-scope ID is accepted from the request. The backend fixes the
+scope to the dedicated literal, stages to all three Engine stages, and
+composition to its immutable process configuration. The profile tuple contains
+exactly the normalized request profile. `bearer_token` matches the existing
+`sbxcap_v1.*` grammar and is returned exactly once. All IDs and timestamps use
+the existing GENERAL-003 grammars, and `expires_at` is exactly `issued_at +
+ttl_seconds`. The controller wraps this result in the existing exact
+`ApiResponse<T>` success envelope with HTTP `201`. The OpenClaw configuration
+receives only this minted token, never the bootstrap administrator credential
+used to authorize issuance.
+
+Storage uses a private union of the unchanged public v1 scope type and the new
+internal scope. Existing evaluation/audit-read authenticators explicitly
+reject a capability whose only scope is the enforcement-audit literal; only
+the enforcement-audit authenticator accepts it, and it requires that exact
+single-scope grant. No union widening is exported through GENERAL-003's public
+v1 capability types.
+
+Issuance emits a backend-owned
+`SandboxSecurityEnforcementAuditCapabilityIssuedEvent` under the dedicated
+`sandbox-security-enforcement-audit-event.v1` schema. It uses
+`event_type: "capability_issued"`, contains the authenticated administrator
+identity, new capability ID/subject, fixed scope/stages/profile/composition,
+issued-at, and expires-at, and never contains the raw token. It is handled by
+the enforcement-audit repository and excluded from GENERAL-003's public v1
+audit page by the `event_schema` predicate defined below. Revocation continues
+to use the existing internal revoke route and never exposes the token.
 
 ## Authority Reconstruction
 
@@ -346,6 +565,25 @@ The mapper may return `pass` only for Engine `allow` or `alert`. It may return
 findings, locators, detector output, provider data, or the original content to
 OpenClaw's hook result.
 
+### Replacement Provenance
+
+The patched host, rather than an ordinary plugin or caller, is the only writer
+of a replacement envelope. It attaches an internal non-user-writable marker:
+
+```text
+openclaw-security-fixed-replacement.v1
+```
+
+The marker is carried in a private host field outside the user payload and is
+accepted only when the replacement code and exact fixed replacement text match
+the closed mapper catalog. Ordinary host rewrites cannot mutate, remove, or
+forge the marker. The patched delivery path writes the replacement after the
+last ordinary rewrite, bypasses ordinary rewrite handlers, and does not
+re-enter the same security barrier. The replacement path is still owned by
+the barrier that selected it, so there is no unguarded delivery path. Tests
+must prove that every `ask`, `deny`, and failure at every barrier emits only
+the immutable replacement envelope and never the original value.
+
 ## Action Semantics
 
 The Engine action is selected first and is immutable before audit begins.
@@ -371,7 +609,8 @@ required evaluation failure. A failure floor is `ask` for user input, model
 output, and outbound delivery, and `deny` for tool execution. Unknown or
 malformed Engine decisions are failures. A replacement must be the only
 outbound result for the stopped event; the original blocked content is not
-persisted.
+persisted. The fixed replacement is represented as a host `replaced` outcome,
+never as a continued original event.
 
 ## Failure and Interruption Rules
 
@@ -384,9 +623,7 @@ The following all fail closed:
 - Engine throw, timeout, invalid decision, unavailable slot, or composition
   mismatch;
 - missing, duplicated, or invalidly configured enforcement plugin;
-- invalid OpenClaw package, patch manifest, patch digest, or runtime probe;
-- an audit client request that violates the dedicated content-free contract
-  (the preselected Engine action still remains in effect).
+- invalid OpenClaw package, patch manifest, patch digest, or runtime probe.
 
 An interruption is audited as `enforcement_interrupted` with a stable closed
 interruption code and the applied fail-closed action. An Engine failure is not
@@ -420,13 +657,17 @@ repository.
 
 ### Request and Acknowledgement
 
-The request contains only the following fields:
+The plugin sends one of two exact-key, closed discriminated unions. These
+integration-private request types must import the canonical catalogs from
+[`shared/types/sandbox-security-api.ts`](../../../shared/types/sandbox-security-api.ts)
+and [`shared/types/sandbox-security.ts`](../../../shared/types/sandbox-security.ts);
+the plugin must not define a second catalog.
 
 ```ts
-interface OpenClawEnforcementAuditRequest {
+type OpenClawEnforcementAuditCommon = {
   schema_version: "sandbox-security-enforcement-audit-request.v1";
-  event_id: string;
-  request_id: string;
+  event_id: string;       // ^audit:<UUIDv4>$
+  request_id: string;     // ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$
   enforcement_point:
     | "before_agent_run"
     | "before_model_output_delivery"
@@ -440,24 +681,77 @@ interface OpenClawEnforcementAuditRequest {
     | "sandbox-security-production-composition.v1:rule_only"
     | "sandbox-security-production-composition.v1:local"
     | "sandbox-security-production-composition.v1:local_and_judge";
-  elapsed_ms: number;
-  outcome: "enforcement_completed" | "enforcement_interrupted";
-  verdict?: "no_detected_risk" | "risk_detected" | "indeterminate";
-  action?: "allow" | "alert" | "ask" | "deny";
-  risk_level?: "info" | "low" | "medium" | "high" | "critical";
-  category_counts?: Record<string, number>;
-  detector_run_status_counts?: Record<string, number>;
-  host_outcome?: "continued" | "replaced";
-  interruption_code?: string;
-  applied_fail_closed_action?: "ask" | "deny";
-}
+  elapsed_ms: number;      // safe integer in [0, 60000]
+};
+
+type OpenClawEnforcementAuditRequest =
+  | (OpenClawEnforcementAuditCommon & {
+      event_type: "enforcement_completed";
+      verdict: "no_detected_risk" | "risk_detected" | "indeterminate";
+      action: "allow" | "alert" | "ask" | "deny";
+      risk_level: "info" | "low" | "medium" | "high" | "critical";
+      category_counts: SandboxSecurityAuditCategoryCounts;
+      detector_run_status_counts: SandboxSecurityAuditRunStatusCounts;
+      host_outcome: "continued" | "replaced";
+    })
+  | (OpenClawEnforcementAuditCommon & {
+      event_type: "enforcement_interrupted";
+      interruption_code:
+        | "authority_mismatch"
+        | "correlation_mismatch"
+        | "unsupported_input"
+        | "engine_error"
+        | "engine_timeout"
+        | "engine_slot_unavailable"
+        | "barrier_timeout"
+        | "startup_recovery";
+      applied_fail_closed_action: "ask" | "deny";
+    });
 ```
 
-The implementation must use closed catalogs and exact-key normalization; the
-`Record<string, number>` notation above is shorthand for the existing
-GENERAL-003 risk-category and detector-status catalogs. Completed events carry
-the decision projection and `host_outcome`; interrupted events carry only a
-stable interruption code and `applied_fail_closed_action`.
+The two union variants have no optional fields: exact-key normalization rejects
+missing or extra fields, accessors, non-plain prototypes, non-finite numbers,
+and values outside the catalogs. `enforcement_point` and `stage` must match
+the authority matrix. Completed `host_outcome` is `continued` exactly for
+`allow|alert` and `replaced` exactly for `ask|deny`. Interrupted
+`applied_fail_closed_action` is `ask` at user/model/outbound points and `deny`
+at the tool point. Both count maps contain every canonical risk/status key,
+each value is a safe integer in `[0, 4096]`, and their totals are at most 4096.
+The request profile must equal the capability's single allowed profile and the
+plugin's immutable configured profile. The request composition binding must
+equal both the authenticated capability authorization-scope binding and the
+backend module's immutable production composition.
+
+The backend maps the request into a dedicated
+`SandboxSecurityEnforcementAuditEvent` union without accepting any client
+identity. This is an explicit versioned shared-contract extension with schema
+version `sandbox-security-enforcement-audit-event.v1`; it is defined in a new
+shared type/normalizer and does not mutate GENERAL-003's closed public
+`SandboxSecurityAuditEvent` v1 union. Existing GENERAL-003 v1 readers and the
+public audit page continue to accept only their existing event catalog. The
+dedicated durable union has three exact variants: the two request-derived
+`enforcement_completed|enforcement_interrupted` variants and the backend-only
+`capability_issued` variant defined above.
+
+SQLite v2 deliberately uses one dual-union `sandbox_security_audit_events`
+table so the existing subject predicate, 90-day retention, event-ID
+idempotency, and indexes remain authoritative. The v2 repository validates the
+two schemas separately: the existing GENERAL-003 repository accepts only its
+legacy event types, while a new enforcement-audit repository accepts only
+the dedicated enforcement schema. The v2 table has an exact `event_schema`
+column with values `sandbox-security-audit-event.v1` or
+`sandbox-security-enforcement-audit-event.v1`. The public GENERAL-003
+audit-read query requires the former in its existing subject-scoped SQL before
+normalization; the enforcement repository requires the latter. Thus old v1
+readers never receive a new row, including the dedicated `capability_issued`
+row, and a future explicitly versioned page contract may expose enforcement
+rows without changing the public v1 page.
+
+The backend injects `subject_id`, capability ID, authorization scope, and
+server-generated `occurred_at`; it copies only the validated common and
+variant fields. The dedicated durable projection therefore has the same
+discriminator and field relation as the request, plus authenticated identity,
+and is the only enforcement JSON written to SQLite.
 
 The request must reject and never accept: subject, authorization scope or
 capability ID, occurred-at, a full Decision, findings, locator or evidence
@@ -465,7 +759,9 @@ references, provider data, free text, raw or sanitized content, ordinary
 content hashes, session history, run IDs, call IDs, or replacement text. No
 OpenClaw transcript field is copied into this request.
 
-The route acknowledges with:
+The service acknowledgement is the `data` payload inside the repository's
+existing exact `ApiResponse<T>` success envelope; the HTTP body is never a bare
+acknowledgement:
 
 ```ts
 interface OpenClawEnforcementAuditAck {
@@ -476,10 +772,47 @@ interface OpenClawEnforcementAuditAck {
 }
 ```
 
-HTTP behavior is fixed: `201` for an accepted event, `200` for an identical
-event-ID replay, and `409` when an event ID is reused with a different
-content-free projection. Authentication, normalization, and storage failures
-are returned without raw request values.
+The client first exact-normalizes `ApiResponse<OpenClawEnforcementAuditAck>`,
+then exact-normalizes its `data`. `ack.event_id` must equal the request event
+ID. `201` is valid only with `status: "accepted"`; `200` is valid only with
+`status: "replayed"`. `occurred_at` is a strict UTC millisecond timestamp
+generated by the backend; replay returns the timestamp stored by the first
+accepted insert. Any status/body/ID/timestamp relationship mismatch is a
+malformed acknowledgement and sets only audit health degraded. An event ID
+reused with a different canonical content-free candidate returns `409`.
+Authentication, normalization, and storage failures use the existing exact
+error envelope and contain no raw request values.
+
+### Internal Admission
+
+The route applies the same internal-listener admission order as GENERAL-003:
+
+1. route match on the internal listener and `POST` method;
+2. authenticate the dedicated bearer capability and require the exact
+   `sandbox_security:enforcement:audit:write` scope before reading the body;
+3. require `Content-Type: application/json`;
+4. read at most `65,536` bytes with a fixed `5,000 ms` body deadline;
+5. normalize the exact union above and reject trailing/duplicate/unknown keys;
+6. require stage/profile against the authenticated grant and require
+   composition binding against both the grant and backend module; and
+7. invoke the idempotent repository and write the bounded acknowledgement.
+
+The route reuses GENERAL-003's fixed internal administrator token bucket
+parameters (capacity `2`, refill `1` token every `6` seconds) as an
+internal-listener
+admission guard; this reuses limiter values only and never reuses administrator
+credentials or scope. A deficit returns `429` with the existing bounded
+`Retry-After` calculation. Missing or invalid bearer is `401`, an authenticated
+wrong scope is `403`, malformed JSON or contract violation is `400`, body
+timeout is `408`, oversized body is `413`, unsupported media type is `415`,
+identical replay is `200`, event-ID conflict is `409`, and repository/storage
+failure is `503`. Every error has a closed code and contains no request body,
+raw content, or provider data.
+
+A stage, profile, or composition mismatch returns the closed `403` authorization
+error and stores no enforcement audit event. The plugin sets only
+`audit: "degraded"`; the already selected host action and future Engine
+enforcement remain unchanged.
 
 ### Audit Ordering and Health
 
@@ -492,9 +825,19 @@ For every completed or interrupted evaluation:
 
 On timeout, authentication failure, storage failure, or malformed
 acknowledgement, the plugin records only an internal error code, bounded count,
-and elapsed time, then marks health `degraded`. Audit failure never changes an
-already selected Engine action and never causes an original blocked event to be
-released. There is no persistent queue or background retry in v1.
+and elapsed time, then sets `audit: "degraded"`; `enforcement` remains
+`"healthy"` unless an independent enforcement failure occurs. Audit failure
+never changes an already selected Engine action, never makes a later
+`allow|alert` fail closed solely due to audit state, and never causes an
+original blocked event to be released. There is no persistent queue or
+background retry in v1. Acceptance requires one audit attempt for every
+completed/interrupted evaluation, not successful persistence when the audited
+backend is demonstrably unavailable.
+
+Failure to construct or exact-normalize the dedicated content-free audit
+request is an audit failure, not an enforcement failure. The client sends no
+invalid request, sets only `audit: "degraded"`, and returns the preselected host
+action unchanged.
 
 ## SQLite v2 Migration
 
@@ -507,6 +850,8 @@ transactional v2 migration that:
   `sandbox_security:enforcement:audit:write`;
 - extends the audit-event catalog with `enforcement_completed` and
   `enforcement_interrupted`;
+- adds a required `event_schema` column whose CHECK accepts only the unchanged
+  GENERAL-003 event schema or the new enforcement-audit event schema;
 - records the migration in the schema-migrations table and rejects an unknown,
   skipped, or partially applied version;
 - validates the v1 object definitions before migration and the v2 object
@@ -514,10 +859,36 @@ transactional v2 migration that:
 - implements idempotent append, identical replay, and event-ID payload
   conflict behavior for enforcement events.
 
-The migration must not rewrite event JSON, recalculate identities, drop
-indexes, change capability TTL limits, or broaden audit visibility. Existing
-GENERAL-003 capability policy is unchanged; only the new dedicated audit scope
-is added.
+SQLite cannot alter either CHECK catalog in place. Migration 2 therefore runs
+in one transaction, validates the immutable v1 definitions and migration row,
+creates v2 replacement tables with the old plus new scope/event literals,
+copies every existing row without changing its JSON or identity and assigns
+the legacy `sandbox-security-audit-event.v1` schema value, recreates the
+same indexes/foreign keys, swaps tables, records migration version `2`, and
+validates the complete v2 object catalog before commit. The migration adds the
+two enforcement event literals and exact schema values to table CHECKs but does
+not make the legacy normalizer accept them; the dual-union repositories and
+their opposite `event_schema` SQL predicates enforce that separation. Any
+failure rolls back to intact v1.
+Startup accepts exactly a validated v1 (then migrates) or a validated v2;
+unknown, skipped, partial, or drifted schemas fail startup.
+
+Repository append canonicalizes the backend-owned content-free candidate
+without `occurred_at`. If the event ID is absent, the repository validates the
+supplied server timestamp, builds/stores the full durable event, and returns
+`accepted`. If the event ID exists, it exact-normalizes the stored event,
+removes only its stored `occurred_at`, and compares canonical candidate bytes.
+An identical candidate returns `replayed` with the first stored timestamp; a
+different candidate returns the domain conflict mapped to HTTP `409`. The
+comparison includes event schema, authenticated identity, request projection,
+and all exact variant fields, but deliberately excludes the newly generated
+server timestamp and never uses a raw-content hash.
+
+The migration must not rewrite existing event JSON, recalculate identities,
+drop indexes, change capability TTL limits, or broaden audit visibility.
+Existing GENERAL-003 capability policy is unchanged; only the new dedicated
+internal storage scope, two new event-type literals, required event-schema
+discriminator, and dedicated capability-issuance/audit schemas are added.
 
 ## Privacy and Runtime Storage
 
@@ -534,15 +905,18 @@ and evidence rules remain unchanged and are tested separately.
 
 Content-free audit projections may retain only the approved category and
 detector status counts, verdict/action/risk, timing, stage/profile/composition,
-enforcement point, host outcome, or stable interruption code. No ordinary
-content hash is an acceptable substitute for this rule.
+enforcement point, host outcome, stable interruption code, or the applied
+fail-closed action. No ordinary content hash is an acceptable substitute for
+this rule.
 
 ## Planned Implementation Surface
 
 New integration files:
 
 ```text
-integrations/openclaw/src/general-security/
+integrations/openclaw/general-security/package.json
+integrations/openclaw/general-security/pnpm-lock.yaml
+integrations/openclaw/general-security/src/general-security/
   config.ts
   authority-builder.ts
   action-mapper.ts
@@ -551,36 +925,73 @@ integrations/openclaw/src/general-security/
   runtime.ts
   index.ts
 
-integrations/openclaw/tests/general-security-authority.spec.ts
-integrations/openclaw/tests/general-security-action-mapper.spec.ts
-integrations/openclaw/tests/general-security-plugin.spec.ts
-integrations/openclaw/tests/general-security-audit-client.spec.ts
-integrations/openclaw/tests/general-security-runtime.spec.ts
-integrations/openclaw/openclaw-security.plugin.json
-integrations/openclaw/config/openclaw-security.json5
-integrations/openclaw/patches/openclaw-2026.6.34-general-security.patch
-integrations/openclaw/patches/openclaw-2026.6.34-general-security.manifest.json
-integrations/openclaw/scripts/apply-general-security-patch.mjs
+integrations/openclaw/general-security/tests/general-security-authority.spec.ts
+integrations/openclaw/general-security/tests/general-security-action-mapper.spec.ts
+integrations/openclaw/general-security/tests/general-security-plugin.spec.ts
+integrations/openclaw/general-security/tests/general-security-audit-client.spec.ts
+integrations/openclaw/general-security/tests/general-security-runtime.spec.ts
+integrations/openclaw/general-security/openclaw-security.plugin.json
+integrations/openclaw/general-security/config/openclaw-security.json5
+integrations/openclaw/general-security/patches/openclaw-2026.6.34-general-security.patch
+integrations/openclaw/general-security/patches/openclaw-2026.6.34-general-security.manifest.json
+integrations/openclaw/general-security/scripts/apply-general-security-patch.mjs
 ```
 
-New backend and repository tests/surfaces:
+The existing `integrations/openclaw/package.json`, its current lockfile entry,
+root plugin manifest, Track 1 `src/`, tests, and Track 1 deployment image are
+explicitly unchanged. The nested package is built and tested independently;
+the two packages never share `node_modules`, an OpenClaw plugin directory, or
+an image layer containing the other package's manifest.
+
+New backend, shared, router, and repository tests/surfaces:
 
 ```text
 backend/src/modules/sandbox-security/enforcement-audit.service.ts
 backend/src/modules/sandbox-security/sandbox-security-enforcement-audit.controller.ts
+backend/src/modules/sandbox-security/sandbox-security.module.ts
+backend/src/modules/sandbox-security/sandbox-security.types.ts
+backend/src/modules/sandbox-security/http-admission.ts
+backend/src/modules/sandbox-security/dto/enforcement-audit-capability.ts
+backend/src/modules/sandbox-security/capability.service.ts
+backend/src/modules/sandbox-security/sandbox-security-admin.controller.ts
+backend/src/modules/sandbox-security/ports/enforcement-audit.repository.ts
+backend/src/modules/sandbox-security/adapters/sqlite/sqlite-migrations.ts
+backend/src/modules/sandbox-security/adapters/sqlite/sqlite-enforcement-audit.repository.ts
+backend/src/modules/sandbox-security/adapters/sqlite/sqlite-audit.repository.ts
+backend/src/modules/sandbox-security/adapters/sqlite/sqlite-capability.repository.ts
+backend/src/common/http/internal-router.ts
+backend/src/internal-app.module.ts
+shared/types/sandbox-security-api.ts
+shared/contracts/sandbox-security-api.ts
+shared/types/sandbox-security-enforcement-audit.ts
+shared/contracts/sandbox-security-enforcement-audit.ts
 tests/integration/openclaw-sandbox-security.runtime.spec.ts
 tests/repository/sandbox-security-openclaw-enforcement.spec.ts
+tests/repository/sandbox-security-openclaw-enforcement-route.spec.ts
 deploy/sandbox-security/Dockerfile.openclaw
 deploy/sandbox-security/compose.openclaw-security.yml
 deploy/sandbox-security/README.md
 ```
 
-Event and route types belong in the existing shared/backend sandbox-security
-module boundary. Event normalization must be added to the canonical shared
-contract rather than duplicated inside the plugin. Event repositories and
-SQLite adapters remain backend-owned. Root package scripts, lockfiles,
-OpenClaw package/build files, and required durable documentation are modified
-only during implementation after the plan is approved.
+The internal router adds exactly one
+`enforcementAudit` route name for
+`POST /internal/sandbox/security/enforcement-events`; `InternalAppModule`
+registers exactly one controller branch and injects the existing sandbox
+security module instance. Module construction wires the new audit service,
+dedicated capability scope, audit limiter, shared normalizer, v2 repository,
+and controller before the internal listener starts. Route tests prove that the
+route is absent from the public router, present once on the internal router,
+and unavailable when the sandbox-security module is not composed.
+
+Event normalization is added to the canonical shared contracts rather than
+duplicated inside the plugin. A new dedicated enforcement-audit type and
+normalizer define two request variants and three durable variants (completed,
+interrupted, and backend-only capability issuance); the existing public audit
+type remains unchanged. The private storage-scope catalog and SQLite CHECK
+catalogs are extended in their owning files. The dual-union repositories, SQL
+predicates, and SQLite adapters remain backend-owned. Root package scripts,
+lockfiles, OpenClaw package/build files, and required durable documentation are
+modified only during implementation after the plan is approved.
 
 No frontend file is planned for GENERAL-004.
 
@@ -620,6 +1031,10 @@ The matrix must cover:
 - existing Engine size, depth, candidate, detector, and time boundaries;
 - unsupported binary/multimodal payloads;
 - audit authentication, storage, timeout, replay, and conflict;
+- bare/malformed audit envelopes, ack ID/status/HTTP/timestamp mismatches, and
+  replay with a different newly sampled server time;
+- legacy GENERAL-003 capability/audit v1 normalization and SQL exclusion of
+  every dedicated enforcement-schema row;
 - missing plugin/barriers and incorrect package, patch, or file digests; and
 - raw and transformed content scans across application-managed output surfaces.
 

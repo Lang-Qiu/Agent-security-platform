@@ -129,6 +129,9 @@ GENERAL-003's out-of-scope retry rule.
 
 - The approved written draft is now at
   `docs/superpowers/specs/2026-08-06-sandbox-security-openclaw-enforcement-design.md`.
+- The final independent read-only specification re-review returned `PASS` with
+  zero Critical, Important, or Minor findings after all earlier findings were
+  corrected.
 - No GENERAL-004 production files, tests, architecture/API implementation
   claims, or frontend files have been added.
 - The next gate is explicit user review of the written specification. Only
