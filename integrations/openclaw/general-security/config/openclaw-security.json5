@@ -1,0 +1,6 @@
+{
+  policyProfileId: "${SANDBOX_SECURITY_POLICY_PROFILE_ID}",
+  productionMode: "${SANDBOX_SECURITY_PRODUCTION_MODE}",
+  auditEndpoint: "${SANDBOX_SECURITY_AUDIT_ENDPOINT}",
+  auditCapabilityToken: "${SANDBOX_SECURITY_AUDIT_CAPABILITY_TOKEN}"
+}

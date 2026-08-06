@@ -1,0 +1,34 @@
+{
+  "id": "agent-security-sandbox-general",
+  "name": "Agent Security Sandbox General",
+  "version": "1.0.0",
+  "main": "./dist/index.js",
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "policyProfileId",
+      "productionMode",
+      "auditEndpoint",
+      "auditCapabilityToken"
+    ],
+    "properties": {
+      "policyProfileId": {
+        "type": "string"
+      },
+      "productionMode": {
+        "type": "string"
+      },
+      "auditEndpoint": {
+        "type": "string"
+      },
+      "auditCapabilityToken": {
+        "type": "string",
+        "writeOnly": true
+      }
+    }
+  }
+}
