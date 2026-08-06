@@ -8,12 +8,16 @@ import type {
   SandboxSecurityCapabilityLimiterRegistry,
   SandboxSecurityCapabilityService,
   SandboxSecurityCapabilityPersistenceRecord,
+  SandboxSecurityPrivateCapabilityPersistenceRecord,
   SandboxSecurityHmacService,
   SandboxSecurityNormalizedCapabilityIssueRequest
 } from "../src/modules/sandbox-security/sandbox-security.types.ts";
 import type { SandboxSecurityRequest } from "../../shared/types/sandbox-security.ts";
 import * as boundary from "../src/modules/sandbox-security/sandbox-security.module.ts";
-import type { SandboxSecurityCapabilityRepository } from "../src/modules/sandbox-security/ports/capability.repository.ts";
+import type {
+  SandboxSecurityCapabilityRepository,
+  SandboxSecurityEnforcementAuditCapabilityRepository
+} from "../src/modules/sandbox-security/ports/capability.repository.ts";
 import type { SandboxSecurityRuntimePort } from "../src/modules/sandbox-security/ports/runtime.ts";
 import { createSandboxSecurityServiceError } from "../src/modules/sandbox-security/sandbox-security.errors.ts";
 
@@ -245,7 +249,9 @@ function makeCapabilityServiceFixture(input: Readonly<{
   };
 
   let revokedRecord: SandboxSecurityCapabilityPersistenceRecord | null = null;
-  const repository: SandboxSecurityCapabilityRepository = {
+  const repository: SandboxSecurityCapabilityRepository &
+    SandboxSecurityEnforcementAuditCapabilityRepository = {
+    issueEnforcementAuditWithAudit() {},
     issueWithAudit(record, event) {
       if (state.issue_error !== undefined) throw state.issue_error;
       state.issued.push({ record, event });
@@ -286,7 +292,7 @@ function makeCapabilityServiceFixture(input: Readonly<{
 
   const create = get<(
     value: Readonly<{
-      repository: SandboxSecurityCapabilityRepository;
+      repository: SandboxSecurityCapabilityRepository & SandboxSecurityEnforcementAuditCapabilityRepository;
       hmac: SandboxSecurityHmacService;
       production_mode: "local";
       runtime: SandboxSecurityRuntimePort;
@@ -389,6 +395,31 @@ test("REQ-SBX-GENERAL-003 authenticates unknown and malformed tokens as unknown"
   assert.deepEqual(authenticator.authenticateToken("not-a-capability"), { kind: "unknown" });
   assert.deepEqual(authenticator.authenticateToken(`${TOKEN.slice(0, -1)}!`), { kind: "unknown" });
   assert.deepEqual(authenticator.authenticateToken(`${TOKEN}x`), { kind: "unknown" });
+});
+
+test("REQ-SBX-GENERAL-004 public v1 authenticator rejects a private enforcement record", () => {
+  const privateRecord = {
+    ...makeRecord(),
+    scopes: ["sandbox_security:enforcement:audit:write"],
+    allowed_stages: ["user_input", "model_output", "tool_request"],
+    allowed_policy_profile_ids: ["sandbox-security-balanced.v1"],
+    composition_binding: "sandbox-security-production-composition.v1:local"
+  } as unknown as SandboxSecurityPrivateCapabilityPersistenceRecord;
+  const repository = makeRepository(null) as unknown as {
+    findByTokenDigest(
+      digest: `sha256:${string}`
+    ): SandboxSecurityPrivateCapabilityPersistenceRecord | null;
+  };
+  repository.findByTokenDigest = () => privateRecord;
+  const create = get<(input: any) => any>("createSandboxSecurityCapabilityAuthenticator");
+  const authenticator = create({
+    repository,
+    hmac: makeHmac(),
+    production_mode: "local",
+    bootstrap_admin_token: "admin-secret",
+    now: () => NOW
+  });
+  assert.deepEqual(authenticator.authenticateToken(TOKEN), { kind: "unknown" });
 });
 
 test("REQ-SBX-GENERAL-003 returns content-free known-denied and authorized projections", () => {

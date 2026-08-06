@@ -6,10 +6,21 @@ import {
 } from "../../../../shared/types/sandbox-security.ts";
 import type { SandboxSecurityCapabilityScope } from "../../../../shared/types/sandbox-security-api.ts";
 import type { SandboxSecurityRequest } from "../../../../shared/types/sandbox-security.ts";
+import {
+  SANDBOX_SECURITY_POLICY_PROFILE_IDS as PRIVATE_POLICY_PROFILE_IDS,
+  SANDBOX_SECURITY_STAGES as PRIVATE_STAGES
+} from "../../../../shared/types/sandbox-security.ts";
+import type {
+  SandboxSecurityProductionCompositionBinding
+} from "../../../../shared/types/sandbox-security-enforcement-audit.ts";
 import type { SandboxSecurityCapabilityRepository } from "./ports/capability.repository.ts";
 import {
   createSandboxSecurityServiceError
 } from "./sandbox-security.errors.ts";
+import type {
+  SandboxSecurityEnforcementAuditCapabilityPersistenceRecord,
+  SandboxSecurityEnforcementAuditAuthorizedCapability
+} from "./dto/enforcement-audit-capability.ts";
 import type {
   SandboxSecurityAuthorizedCapability,
   SandboxSecurityCapabilityAuthenticationResult,
@@ -21,15 +32,26 @@ import type {
   SandboxSecurityProductionMode,
   SandboxSecurityStage
 } from "./sandbox-security.types.ts";
+import type {
+  SandboxSecurityEnforcementAuditAuthenticator,
+  SandboxSecurityEnforcementAuditCapabilityAuthenticationResult
+} from "./sandbox-security.types.ts";
 
 const CAPABILITY_TOKEN_PATTERN = /^sbxcap_v1\.[A-Za-z0-9_-]{43}$/;
 const CAPABILITY_ID_PATTERN =
   /^capability:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const TOKEN_DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const AUTHORIZATION_SCOPE_PATTERN = /^authscope:hmac-sha256:[0-9a-f]{64}$/;
 const SUBJECT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const UTC_MILLISECOND_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})Z$/;
 const AUTHORIZATION_MODES = ["rule_only", "local", "local_and_judge"] as const;
+const ENFORCEMENT_SCOPE = "sandbox_security:enforcement:audit:write" as const;
+const COMPOSITION_BINDINGS = [
+  "sandbox-security-production-composition.v1:rule_only",
+  "sandbox-security-production-composition.v1:local",
+  "sandbox-security-production-composition.v1:local_and_judge"
+] as const satisfies readonly SandboxSecurityProductionCompositionBinding[];
 
 type PlainRecord = Record<string, unknown>;
 
@@ -203,6 +225,113 @@ function normalizePersistenceRecord(
   };
 }
 
+export function normalizeEnforcementPersistenceRecord(
+  value: unknown,
+  expectedDigest: `sha256:${string}`
+): SandboxSecurityEnforcementAuditCapabilityPersistenceRecord | null {
+  const keys = [
+    "capability_id",
+    "subject_id",
+    "token_digest",
+    "scope_seed",
+    "scopes",
+    "allowed_stages",
+    "allowed_policy_profile_ids",
+    "composition_binding",
+    "issued_at",
+    "expires_at",
+    "revoked_at"
+  ] as const;
+  if (!isOwnEnumerableDataRecord(value) || !hasExactKeys(value, keys)) return null;
+  if (
+    typeof value.capability_id !== "string" ||
+    !CAPABILITY_ID_PATTERN.test(value.capability_id) ||
+    typeof value.subject_id !== "string" ||
+    !SUBJECT_PATTERN.test(value.subject_id) ||
+    typeof value.token_digest !== "string" ||
+    !TOKEN_DIGEST_PATTERN.test(value.token_digest) ||
+    value.token_digest !== expectedDigest ||
+    !(value.scope_seed instanceof Uint8Array) ||
+    value.scope_seed.byteLength !== 32 ||
+    typeof value.composition_binding !== "string" ||
+    !COMPOSITION_BINDINGS.includes(value.composition_binding as SandboxSecurityProductionCompositionBinding) ||
+    !isStrictUtcMillisecondTimestamp(value.issued_at) ||
+    !isStrictUtcMillisecondTimestamp(value.expires_at) ||
+    Date.parse(value.expires_at) <= Date.parse(value.issued_at) ||
+    (value.revoked_at !== null && !isStrictUtcMillisecondTimestamp(value.revoked_at))
+  ) {
+    return null;
+  }
+  if (
+    !isDenseArray(value.scopes) ||
+    value.scopes.length !== 1 ||
+    readArrayElement(value.scopes, 0) !== ENFORCEMENT_SCOPE ||
+    !isDenseArray(value.allowed_stages) ||
+    value.allowed_stages.length !== PRIVATE_STAGES.length ||
+    PRIVATE_STAGES.some((stage, index) => readArrayElement(value.allowed_stages as readonly unknown[], index) !== stage) ||
+    !isDenseArray(value.allowed_policy_profile_ids) ||
+    value.allowed_policy_profile_ids.length !== 1 ||
+    !PRIVATE_POLICY_PROFILE_IDS.includes(
+      readArrayElement(value.allowed_policy_profile_ids, 0) as (typeof PRIVATE_POLICY_PROFILE_IDS)[number]
+    )
+  ) {
+    return null;
+  }
+  return {
+    capability_id: value.capability_id,
+    subject_id: value.subject_id,
+    token_digest: value.token_digest as `sha256:${string}`,
+    scope_seed: new Uint8Array(value.scope_seed),
+    scopes: [ENFORCEMENT_SCOPE],
+    allowed_stages: [...PRIVATE_STAGES],
+    allowed_policy_profile_ids: [
+      readArrayElement(value.allowed_policy_profile_ids, 0) as (typeof PRIVATE_POLICY_PROFILE_IDS)[number]
+    ],
+    composition_binding: value.composition_binding as SandboxSecurityProductionCompositionBinding,
+    issued_at: value.issued_at,
+    expires_at: value.expires_at,
+    revoked_at: value.revoked_at
+  };
+}
+
+function privateAuthorizationScopeId(
+  record: Readonly<SandboxSecurityEnforcementAuditCapabilityPersistenceRecord>,
+  hmac: SandboxSecurityHmacService,
+  productionMode: SandboxSecurityProductionMode
+): string | null {
+  try {
+    const scopeId = hmac.authorizationScopeId(record.scope_seed, productionMode);
+    return typeof scopeId === "string" && AUTHORIZATION_SCOPE_PATTERN.test(scopeId)
+      ? scopeId
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function toEnforcementAuthorizedCapability(
+  record: Readonly<SandboxSecurityEnforcementAuditCapabilityPersistenceRecord>,
+  authorizationScopeId: string
+): SandboxSecurityEnforcementAuditAuthorizedCapability {
+  return Object.freeze({
+    capability_id: record.capability_id,
+    subject_id: record.subject_id,
+    authorization_scope_id: authorizationScopeId,
+    scopes: Object.freeze([ENFORCEMENT_SCOPE] as [typeof ENFORCEMENT_SCOPE]),
+    allowed_stages: Object.freeze([...PRIVATE_STAGES] as [
+      "user_input",
+      "model_output",
+      "tool_request"
+    ]),
+    allowed_policy_profile_ids: Object.freeze([...record.allowed_policy_profile_ids] as [
+      (typeof PRIVATE_POLICY_PROFILE_IDS)[number]
+    ]),
+    composition_binding: record.composition_binding,
+    issued_at: record.issued_at,
+    expires_at: record.expires_at
+  });
+}
+
 function toAuditIdentity(
   record: SandboxSecurityCapabilityPersistenceRecord,
   authorizationScopeId: string
@@ -229,7 +358,7 @@ export function createSandboxSecurityCapabilityAuthenticator(input: Readonly<{
   production_mode: SandboxSecurityProductionMode;
   bootstrap_admin_token: string;
   now: () => string;
-}>): SandboxSecurityCapabilityAuthenticator {
+}>): SandboxSecurityCapabilityAuthenticator & SandboxSecurityEnforcementAuditAuthenticator {
   if (
     input === null ||
     typeof input !== "object" ||
@@ -250,7 +379,7 @@ export function createSandboxSecurityCapabilityAuthenticator(input: Readonly<{
   const bootstrapAdminToken = input.bootstrap_admin_token;
   const now = input.now;
 
-  const authenticator: SandboxSecurityCapabilityAuthenticator = {
+  const authenticator: SandboxSecurityCapabilityAuthenticator & SandboxSecurityEnforcementAuditAuthenticator = {
     authenticateToken(token: string): SandboxSecurityCapabilityAuthenticationResult {
       if (typeof token !== "string" || !CAPABILITY_TOKEN_PATTERN.test(token)) {
         return { kind: "unknown" };
@@ -299,6 +428,44 @@ export function createSandboxSecurityCapabilityAuthenticator(input: Readonly<{
       return { kind: "authorized", capability: Object.freeze(authorized) };
     },
 
+    authenticateEnforcementAuditToken(
+      token: string
+    ): SandboxSecurityEnforcementAuditCapabilityAuthenticationResult {
+      if (typeof token !== "string" || !CAPABILITY_TOKEN_PATTERN.test(token)) {
+        return { kind: "unknown" };
+      }
+      const digest = tokenDigest(token);
+      const rawRecord = repository.findByTokenDigest(digest);
+      const record = normalizeEnforcementPersistenceRecord(rawRecord, digest);
+      if (record === null) return { kind: "unknown" };
+      const authorizationScopeId = privateAuthorizationScopeId(
+        record,
+        hmac,
+        productionMode
+      );
+      if (authorizationScopeId === null) return { kind: "unknown" };
+      const identity = toEnforcementAuthorizedCapability(record, authorizationScopeId);
+      if (record.revoked_at !== null) {
+        return {
+          kind: "known_denied",
+          rejection_code: "capability_revoked",
+          audit_identity: identity
+        };
+      }
+      const nowValue = now();
+      if (
+        !isStrictUtcMillisecondTimestamp(nowValue) ||
+        Date.parse(record.expires_at) <= Date.parse(nowValue)
+      ) {
+        return {
+          kind: "known_denied",
+          rejection_code: "capability_expired",
+          audit_identity: identity
+        };
+      }
+      return { kind: "authorized", capability: identity };
+    },
+
     requireScope(
       capability: SandboxSecurityAuthorizedCapability,
       scope: SandboxSecurityCapabilityScope
@@ -332,6 +499,74 @@ export function createSandboxSecurityCapabilityAuthenticator(input: Readonly<{
           audit_rejection_code: "profile_forbidden"
         });
       }
+    },
+
+    requireEnforcementAuditGrant(
+      capability,
+      context
+    ): SandboxSecurityEnforcementAuditAuthorizedCapability {
+      const reject = (
+        auditRejectionCode: "scope_forbidden" | "stage_forbidden" | "profile_forbidden"
+      ): never => {
+        throw createSandboxSecurityServiceError({
+          code: "SANDBOX_SECURITY_FORBIDDEN",
+          audit_rejection_code: auditRejectionCode
+        });
+      };
+      if (
+        capability === null ||
+        typeof capability !== "object" ||
+        !Array.isArray(capability.scopes) ||
+        capability.scopes.length !== 1 ||
+        capability.scopes[0] !== ENFORCEMENT_SCOPE
+      ) {
+        return reject("scope_forbidden");
+      }
+      if (
+        !Array.isArray(capability.allowed_stages) ||
+        capability.allowed_stages.length !== PRIVATE_STAGES.length ||
+        capability.allowed_stages.some((stage, index) => stage !== PRIVATE_STAGES[index])
+      ) {
+        return reject("stage_forbidden");
+      }
+      if (
+        !Array.isArray(capability.allowed_policy_profile_ids) ||
+        capability.allowed_policy_profile_ids.length !== 1 ||
+        !PRIVATE_POLICY_PROFILE_IDS.includes(capability.allowed_policy_profile_ids[0] as (typeof PRIVATE_POLICY_PROFILE_IDS)[number])
+      ) {
+        return reject("profile_forbidden");
+      }
+      if (
+        context === null ||
+        typeof context !== "object" ||
+        !hasExactKeys(context as PlainRecord, ["stage", "policy_profile_id", "composition_binding"]) ||
+        !PRIVATE_STAGES.includes(context.stage as (typeof PRIVATE_STAGES)[number]) ||
+        !PRIVATE_POLICY_PROFILE_IDS.includes(context.policy_profile_id as (typeof PRIVATE_POLICY_PROFILE_IDS)[number]) ||
+        !COMPOSITION_BINDINGS.includes(context.composition_binding as SandboxSecurityProductionCompositionBinding)
+      ) {
+        return reject("scope_forbidden");
+      }
+      if (!capability.allowed_stages.includes(context.stage as SandboxSecurityStage)) {
+        return reject("stage_forbidden");
+      }
+      if (capability.allowed_policy_profile_ids[0] !== context.policy_profile_id) {
+        return reject("profile_forbidden");
+      }
+      const currentComposition = `sandbox-security-production-composition.v1:${productionMode}` as SandboxSecurityProductionCompositionBinding;
+      if (
+        capability.composition_binding !== context.composition_binding ||
+        capability.composition_binding !== currentComposition
+      ) {
+        return reject("scope_forbidden");
+      }
+      const nowValue = now();
+      if (
+        !isStrictUtcMillisecondTimestamp(nowValue) ||
+        Date.parse(capability.expires_at) <= Date.parse(nowValue)
+      ) {
+        return reject("scope_forbidden");
+      }
+      return capability;
     },
 
     authenticateAdministrator(token: string): void {

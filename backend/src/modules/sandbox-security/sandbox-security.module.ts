@@ -13,6 +13,8 @@ import type {
   SandboxSecurityCapabilityAuthenticator,
   SandboxSecurityCapabilityLimiterRegistry,
   SandboxSecurityCapabilityService,
+  SandboxSecurityEnforcementAuditAuthenticator,
+  SandboxSecurityEnforcementAuditCapabilityService,
   SandboxSecurityEngineConcurrencyLimiter,
   SandboxSecurityEvaluationService,
   SandboxSecurityIdempotencyMaintenance,
@@ -99,7 +101,11 @@ export type {
 export type {
   SandboxSecurityPrivateAuthorizedCapability,
   SandboxSecurityPrivateCapabilityPersistenceRecord,
-  SandboxSecurityPrivateCapabilityScope
+  SandboxSecurityEnforcementAuditCapabilityRecord,
+  SandboxSecurityPrivateCapabilityScope,
+  SandboxSecurityEnforcementAuditAuthenticator,
+  SandboxSecurityEnforcementAuditCapabilityService,
+  SandboxSecurityEnforcementAuditCapabilityAuthenticationResult
 } from "./sandbox-security.types.ts";
 export {
   createSandboxSecurityCapabilityAuthenticator

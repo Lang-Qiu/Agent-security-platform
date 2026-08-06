@@ -131,7 +131,10 @@ function makeRuntime(): SandboxSecurityRuntimePort {
   };
 }
 
-function makeFixture(overrides: Partial<FixtureState> = {}) {
+function makeFixture(
+  overrides: Partial<FixtureState> = {},
+  options: Readonly<{ legacyCapabilityService?: boolean }> = {}
+) {
   const state: FixtureState = {
     calls: [],
     bodyReadCount: 0,
@@ -165,13 +168,16 @@ function makeFixture(overrides: Partial<FixtureState> = {}) {
       }
     }
   };
-  const capabilityService: SandboxSecurityCapabilityService = {
+  const capabilityService = {
     issue(input): Readonly<SandboxSecurityCapabilityIssueResult> {
       state.calls.push("capability_issue");
       state.capabilityServiceCalls += 1;
       state.issueInputs.push(input);
       if (state.issueError !== null) throw state.issueError;
       return state.issueResult;
+    },
+    issueEnforcementAudit() {
+      throw new Error("private capability issue is not part of this fixture");
     },
     revoke(capabilityId): Readonly<SandboxSecurityCapabilityPublicRecord> {
       state.calls.push("capability_revoke");
@@ -180,7 +186,10 @@ function makeFixture(overrides: Partial<FixtureState> = {}) {
       if (state.revokeError !== null) throw state.revokeError;
       return { ...state.revokeResult, capability_id: capabilityId };
     }
-  };
+  } as SandboxSecurityCapabilityService;
+  if (options.legacyCapabilityService === true) {
+    Reflect.deleteProperty(capabilityService, "issueEnforcementAudit");
+  }
   const auditService: SandboxSecurityAuditService = {
     list: () => ({ schema_version: "sandbox-security-audit-page.v1", events: [], next_cursor: null }),
     purgeExpired() {
@@ -448,6 +457,23 @@ test("REQ-SBX-GENERAL-003 rejects strict issue DTO extras and invalid TTL before
   assert.equal(fixture.state.capabilityServiceCalls, 0);
 });
 
+test("REQ-SBX-GENERAL-004 public v1 scope branch rejects the private enforcement scope", async () => {
+  const fixture = makeFixture();
+  const body = JSON.stringify({
+    schema_version: "sandbox-security-capability-issue-request.v1",
+    subject_id: "integration:openclaw",
+    scopes: ["sandbox_security:enforcement:audit:write"],
+    allowed_stages: [],
+    allowed_policy_profile_ids: [],
+    ttl_seconds: 3600
+  });
+  await assert.rejects(
+    () => fixture.controller.issue(requestFromBody(fixture.state, body), "request-private-scope"),
+    hasSandboxHttpError(400, "SANDBOX_SECURITY_INVALID_REQUEST")
+  );
+  assert.equal(fixture.state.capabilityServiceCalls, 0);
+});
+
 test("REQ-SBX-GENERAL-003 maps malformed issue body iterators to invalid request", async () => {
   const fixture = makeFixture();
   await assert.rejects(
@@ -616,4 +642,8 @@ test("REQ-SBX-GENERAL-003 maps unexpected service failures to typed internal err
       return true;
     }
   );
+});
+
+test("REQ-SBX-GENERAL-004 keeps the admin controller constructible with a public-only service fixture", () => {
+  assert.doesNotThrow(() => makeFixture({}, { legacyCapabilityService: true }));
 });

@@ -15,6 +15,9 @@ import {
   isSandboxSecurityServiceError
 } from "./sandbox-security.errors.ts";
 import { normalizeSandboxSecurityCapabilityIssueRequest } from "./dto/capability.ts";
+import {
+  normalizeSandboxSecurityEnforcementAuditCapabilityIssueRequest
+} from "./dto/enforcement-audit-capability.ts";
 import type {
   SandboxSecurityAuditService,
   SandboxSecurityCapabilityAuthenticator,
@@ -73,6 +76,18 @@ function mapError(error: unknown): SandboxSecurityHttpError {
     return sandboxSecurityServiceErrorToHttpError(error);
   }
   return internalError();
+}
+
+function readSchemaVersion(value: unknown): unknown {
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.getPrototypeOf(value) !== Object.prototype
+  ) {
+    return undefined;
+  }
+  return (value as Record<string, unknown>).schema_version;
 }
 
 function assertDependencies(input: Readonly<{
@@ -185,9 +200,24 @@ export function createSandboxSecurityAdminController(input: Readonly<{
         if (error instanceof SandboxSecurityHttpError) throw error;
         throw invalidRequestError();
       }
-      const normalized = normalizeSandboxSecurityCapabilityIssueRequest(body.value);
-      if (normalized === null) throw invalidRequestError();
-      const result = capabilityService.issue(normalized);
+      let result: unknown;
+      if (
+        readSchemaVersion(body.value) ===
+        "sandbox-security-enforcement-audit-capability-issue-request.v1"
+      ) {
+        const normalized = normalizeSandboxSecurityEnforcementAuditCapabilityIssueRequest(
+          body.value
+        );
+        if (normalized === null) throw invalidRequestError();
+        if (typeof capabilityService.issueEnforcementAudit !== "function") {
+          throw internalError();
+        }
+        result = capabilityService.issueEnforcementAudit(normalized);
+      } else {
+        const normalized = normalizeSandboxSecurityCapabilityIssueRequest(body.value);
+        if (normalized === null) throw invalidRequestError();
+        result = capabilityService.issue(normalized);
+      }
       return createSuccessHttpResponse({
         requestId,
         message: "Sandbox security capability issued",

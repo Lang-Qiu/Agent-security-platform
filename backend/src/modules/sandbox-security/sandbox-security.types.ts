@@ -13,7 +13,8 @@ import type {
   SandboxSecurityCapabilityScope
 } from "../../../../shared/types/sandbox-security-api.ts";
 import type {
-  SandboxSecurityEnforcementAuditCapabilityScope
+  SandboxSecurityEnforcementAuditCapabilityScope,
+  SandboxSecurityProductionCompositionBinding
 } from "../../../../shared/types/sandbox-security-enforcement-audit.ts";
 import type {
   SandboxSecurityEnforcementAuditCapabilityIssueRequest,
@@ -42,6 +43,20 @@ export type {
 export type SandboxSecurityPrivateCapabilityScope =
   | SandboxSecurityCapabilityScope
   | SandboxSecurityEnforcementAuditCapabilityScope;
+
+export interface SandboxSecurityEnforcementAuditCapabilityRecord {
+  schema_version:
+    "sandbox-security-enforcement-audit-capability-record.v1";
+  capability_id: string;
+  subject_id: string;
+  scopes: [SandboxSecurityEnforcementAuditCapabilityScope];
+  allowed_stages: ["user_input", "model_output", "tool_request"];
+  allowed_policy_profile_ids: [SandboxSecurityPolicyProfileId];
+  composition_binding: SandboxSecurityProductionCompositionBinding;
+  issued_at: string;
+  expires_at: string;
+  revoked_at: string | null;
+}
 
 export type SandboxSecurityProductionMode =
   | "rule_only"
@@ -277,6 +292,32 @@ export type SandboxSecurityPrivateAuthorizedCapability =
   | SandboxSecurityAuthorizedCapability
   | SandboxSecurityEnforcementAuditAuthorizedCapability;
 
+export type SandboxSecurityEnforcementAuditCapabilityAuthenticationResult =
+  | Readonly<{
+      kind: "authorized";
+      capability: SandboxSecurityEnforcementAuditAuthorizedCapability;
+    }>
+  | Readonly<{
+      kind: "known_denied";
+      rejection_code: "capability_expired" | "capability_revoked";
+      audit_identity: SandboxSecurityEnforcementAuditAuthorizedCapability;
+    }>
+  | Readonly<{ kind: "unknown" }>;
+
+export interface SandboxSecurityEnforcementAuditAuthenticator {
+  authenticateEnforcementAuditToken(
+    token: string
+  ): SandboxSecurityEnforcementAuditCapabilityAuthenticationResult;
+  requireEnforcementAuditGrant(
+    capability: SandboxSecurityEnforcementAuditAuthorizedCapability,
+    context: Readonly<{
+      stage: SandboxSecurityStage;
+      policy_profile_id: SandboxSecurityPolicyProfileId;
+      composition_binding: SandboxSecurityProductionCompositionBinding;
+    }>
+  ): SandboxSecurityEnforcementAuditAuthorizedCapability;
+}
+
 export interface SandboxSecurityEvaluationAuditInput {
   event_id: string;
   occurred_at: string;
@@ -380,9 +421,18 @@ export interface SandboxSecurityCapabilityService {
   issue(
     request: Readonly<SandboxSecurityNormalizedCapabilityIssueRequest>
   ): Readonly<SandboxSecurityCapabilityIssueResult>;
+  issueEnforcementAudit(
+    request: Readonly<SandboxSecurityEnforcementAuditCapabilityIssueRequest>
+  ): Readonly<SandboxSecurityEnforcementAuditCapabilityIssueResult>;
   revoke(
     capabilityId: string
-  ): Readonly<SandboxSecurityCapabilityPublicRecord>;
+  ): Readonly<SandboxSecurityCapabilityPublicRecord | SandboxSecurityEnforcementAuditCapabilityRecord>;
+}
+
+export interface SandboxSecurityEnforcementAuditCapabilityService {
+  issueEnforcementAudit(
+    request: Readonly<SandboxSecurityEnforcementAuditCapabilityIssueRequest>
+  ): Readonly<SandboxSecurityEnforcementAuditCapabilityIssueResult>;
 }
 
 export interface SandboxSecurityAuditService {
