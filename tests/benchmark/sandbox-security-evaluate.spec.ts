@@ -1334,7 +1334,7 @@ test("REQ-SBX-GENERAL-002 evaluator rejects non-production candidate provenance"
   );
 });
 
-test("REQ-SBX-GENERAL-002 live evaluator maps a multi-threshold rejection to one bounded worker code", async () => {
+test("REQ-SBX-GENERAL-002 live evaluator rejects infrastructure failure with one bounded worker code", async () => {
   const worker = (await import(
     "../../scripts/benchmark/sandbox-security/evaluate-live-worker.ts"
   )) as unknown as Readonly<{
@@ -1350,7 +1350,8 @@ test("REQ-SBX-GENERAL-002 live evaluator maps a multi-threshold rejection to one
     () =>
       worker.assertSandboxSecurityEvaluateWorkerAccepted?.({
         accepted: false,
-        infrastructure_codes: [],
+        infrastructure_codes: ["provider_final_failure"],
+        decided: 300,
         unsafe_recall: 0,
         high_critical_recall: 0,
         safe_false_positive_rate: 0,
@@ -1378,7 +1379,7 @@ test("REQ-SBX-GENERAL-002 live evaluator maps a multi-threshold rejection to one
   );
 });
 
-test("REQ-SBX-GENERAL-002 live evaluator accepts a complete 300-input run when only model quality is below threshold", async () => {
+test("REQ-SBX-GENERAL-002 live evaluator accepts 300 completed outputs with quality or indeterminate results", async () => {
   const worker = (await import(
     "../../scripts/benchmark/sandbox-security/evaluate-live-worker.ts"
   )) as unknown as Readonly<{
@@ -1394,7 +1395,7 @@ test("REQ-SBX-GENERAL-002 live evaluator accepts a complete 300-input run when o
     worker.assertSandboxSecurityEvaluateWorkerAccepted?.({
       accepted: false,
       infrastructure_codes: [],
-      decided: 300
+      decided: 299
     })
   );
 });

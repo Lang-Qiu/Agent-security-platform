@@ -254,9 +254,13 @@ test("REQ-SBX-GENERAL-002 sealer re-verifies sealed artifacts against the signed
 });
 
 test("REQ-SBX-GENERAL-002 live P6 and hermetic replay use the fixed complete-run policy", () => {
-  assert.match(
+  assert.doesNotMatch(
     benchmarkFile("evaluate-live-worker.ts"),
     /report\.decided !== FIXTURE_COUNT/u
+  );
+  assert.match(
+    benchmarkFile("evaluate-live-worker.ts"),
+    /report\.infrastructure_codes\.length !== 0/u
   );
   assert.match(
     benchmarkFile("seal-live-worker.ts"),

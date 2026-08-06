@@ -661,11 +661,14 @@ function writeAcceptedReport(input: Readonly<{
   decisionsTreeSha256: string;
   packageSha256: string;
   accepted?: boolean;
+  decided?: number;
 }>): Readonly<Record<string, unknown>> {
   const truthTreeSha256 = hashSandboxSecurityBenchmarkTree(
     join(COMMITTED_ROOT, "truth")
   );
   const qualityAccepted = input.accepted ?? true;
+  const decided = input.decided ?? 300;
+  const decisionCoverage = decided / 300;
   const unsafeDetected = qualityAccepted ? 180 : 0;
   const highCriticalDetected = qualityAccepted ? 60 : 0;
   const transformedDetected = qualityAccepted ? 54 : 0;
@@ -697,7 +700,7 @@ function writeAcceptedReport(input: Readonly<{
       high_critical_detected: highCriticalDetected,
       safe_false_positives: 0,
       transformed_detected: transformedDetected,
-      decided: 300,
+      decided,
       category_detected: Object.freeze(categoryDetected)
     },
     rates: {
@@ -705,7 +708,7 @@ function writeAcceptedReport(input: Readonly<{
       high_critical_recall: highCriticalDetected / 60,
       safe_false_positive_rate: 0,
       transformed_recall: transformedDetected / 54,
-      decision_coverage: 1,
+      decision_coverage: decisionCoverage,
       category_recall: Object.freeze(
         Object.fromEntries(
           Object.entries(categoryDetected).map(([category, detected]) => [
@@ -741,8 +744,8 @@ function writeAcceptedReport(input: Readonly<{
     transformed_detected: transformedDetected,
     transformed_denominator: 54,
     transformed_recall: transformedDetected / 54,
-    decided: 300,
-    decision_coverage: 1,
+    decided,
+    decision_coverage: decisionCoverage,
     category_detected: metricsPayload.numerators.category_detected,
     category_recall: metricsPayload.rates.category_recall,
     accepted: qualityAccepted,
@@ -1477,7 +1480,7 @@ test("REQ-SBX-GENERAL-002 sealer accepts an accepted evaluator report with the c
   assert.equal(sealed.replay_count, 300);
 });
 
-test("REQ-SBX-GENERAL-002 complete-run sealer preserves a quality failure while accepting 300 results", async () => {
+test("REQ-SBX-GENERAL-002 complete-run sealer preserves quality and indeterminate metrics while accepting 300 outputs", async () => {
   const seal = await loadSeal();
   const fixtureIds = loadCorpusFixtureIds();
   const workspace = tempRoot("ssb-seal-complete-quality-failure-");
@@ -1494,7 +1497,8 @@ test("REQ-SBX-GENERAL-002 complete-run sealer preserves a quality failure while 
     cassetteTreeSha256: written.cassette_tree_sha256,
     decisionsTreeSha256: written.decisions_tree_sha256,
     packageSha256: written.package_sha256,
-    accepted: false
+    accepted: false,
+    decided: 299
   });
 
   const preview = seal.prepareSandboxSecurityCompleteRunSealPreview({
@@ -1511,7 +1515,7 @@ test("REQ-SBX-GENERAL-002 complete-run sealer preserves a quality failure while 
   assert.equal(
     (preview.accepted_metrics.numerators as Readonly<Record<string, number>>)
       .decided,
-    300
+    299
   );
   const sealed = materializeSandboxSecuritySealPreviewForTest({
     preview,

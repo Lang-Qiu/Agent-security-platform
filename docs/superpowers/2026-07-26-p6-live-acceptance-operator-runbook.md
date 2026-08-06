@@ -12,12 +12,14 @@
 > acceptance is complete until a fresh 300-input run, accepted seal, and
 > hermetic replay pass.
 
-> Current complete-run rule (2026-08-06): after a fresh run has all `300`
-> decision results, `decided === 300`, no infrastructure codes, and valid final
-> provider outcomes, live P6 continues to receipt, seal, and P7 even when
-> model-quality metrics miss the frozen thresholds. The actual quality boolean
-> remains in `accepted_metrics.accepted` and is never rewritten. Incomplete,
-> failed, malformed, or partially captured provider outcomes remain fail-closed.
+> Current complete-run rule (2026-08-06): after a fresh run has exactly `300`
+> completed decision projections in its candidate package/cassette, no
+> infrastructure codes, and valid final provider outcomes, live P6 continues
+> to receipt, seal, and P7 even when model-quality metrics miss the frozen
+> thresholds or one or more model outputs are `indeterminate`. The retained
+> quality metrics, including `accepted_metrics.decided` and the actual quality
+> boolean, are never rewritten. Incomplete, failed, malformed, or partially
+> captured provider outcomes remain fail-closed.
 
 > Status (2026-08-03): the fixed four-worker P6 acceptance pipeline and the
 > approved seven-domain Judge screening amendment are implemented and
