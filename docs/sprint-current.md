@@ -10,15 +10,15 @@ OpenClaw sandbox security enforcement
 
 ## Status
 
-PLAN_REVIEWED_PENDING_USER_APPROVAL
+IMPLEMENTATION_IN_PROGRESS
 
 ## Transition Authority
 
 GENERAL-003 is complete at `IMPLEMENTED_PENDING_GLOBAL_P6_GATE`. The user
-instructed the project to continue the GENERAL-004 plan group after the Phase 4
-plan was written and to complete every remaining plan. That latest explicit
-instruction authorizes implementation-plan writing and supersedes the earlier
-planning hold. It does not authorize production code or plan execution.
+explicitly approved execution of the reviewed GENERAL-004 plan group on
+2026-08-06 after requiring the existing workspace changes to be checkpointed.
+The current branch is the execution branch; work remains bounded to
+GENERAL-004.
 
 The GENERAL-004 written specification remains approved. A fresh independent
 completion audit of the five-Phase plan found one Critical runtime-catalog gap
@@ -36,8 +36,8 @@ evaluation with fail-closed issuance. Those corrections required another
 independent re-review.
 The final independent re-review returned `PASS` with Critical `0`, Important
 `0`, and Minor `0`, confirming both findings resolved and no regression in the
-27-task/commit ledger or thirteen-file Phase 4 identity. This review does not
-authorize implementation; explicit user approval is still required.
+27-task/commit ledger or thirteen-file Phase 4 identity. The user's explicit
+approval is now recorded above.
 
 ## Canonical Inputs
 
@@ -170,8 +170,8 @@ GENERAL-003's out-of-scope retry rule.
   closed, and no new actionable issue was found.
 - No GENERAL-004 production files, tests, architecture/API implementation
   claims, or frontend files have been added.
-- The next gate is explicit user approval of the reviewed plan. Implementation
-  has not begun.
+- The plan status transition has been recorded; implementation is proceeding
+  through the Phase 1 RED gate.
 - GENERAL-003 implementation work remains complete through its phase- and
   P6-T4 review gates, bounded by the unresolved GENERAL-002 global P6 gate.
 - The P6 retry amendment remains complete through Task 6 documentation and
@@ -181,8 +181,9 @@ GENERAL-003's out-of-scope retry rule.
 
 ## Next Transition
 
-`PLAN_REVIEWED_PENDING_USER_APPROVAL` -> `PLAN_APPROVED`
+`PLAN_REVIEWED_PENDING_USER_APPROVAL` -> `PLAN_APPROVED` ->
+`IMPLEMENTATION_IN_PROGRESS`
 
-The transition requires the user's explicit approval to execute this reviewed
-plan. Until then, stop after documentation verification and do not begin
-implementation or the next requirement.
+The first transition records the user's explicit approval. The second records
+that Phase 1 execution has begun. GENERAL-004 remains the only active
+requirement, and no later requirement may start.

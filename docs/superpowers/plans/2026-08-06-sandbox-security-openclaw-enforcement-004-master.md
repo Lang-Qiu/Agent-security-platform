@@ -29,7 +29,7 @@ Compose, existing GENERAL-001/002 public Engine indexes, and no frontend code.
 
 - Requirement: `REQ-SBX-GENERAL-004`
 - Date: `2026-08-06`
-- Status: `PLAN_REVIEWED_PENDING_USER_APPROVAL`
+- Status: `PLAN_APPROVED`
 - Canonical specification:
   `docs/superpowers/specs/2026-08-06-sandbox-security-openclaw-enforcement-design.md`
 - Specification review: final independent `PASS`, Critical `0`, Important `0`,
@@ -42,8 +42,7 @@ Compose, existing GENERAL-001/002 public Engine indexes, and no frontend code.
   `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`
 - Maximum implementation status before that dependency closes:
   `IMPLEMENTED_PENDING_GLOBAL_P6_GATE`
-- This reviewed plan does not authorize implementation. It requires the user's
-  explicit approval before execution.
+- The user explicitly approved execution of this plan group on 2026-08-06.
 
 ## Plan Set
 
