@@ -17,6 +17,10 @@ import type {
   SandboxSecurityProductionCompositionBinding
 } from "../../../../shared/types/sandbox-security-enforcement-audit.ts";
 import type {
+  OpenClawEnforcementAuditAck,
+  SandboxSecurityEnforcementAuditRequest
+} from "../../../../shared/types/sandbox-security-enforcement-audit.ts";
+import type {
   SandboxSecurityEnforcementAuditCapabilityIssueRequest,
   SandboxSecurityEnforcementAuditCapabilityIssueResult,
   SandboxSecurityEnforcementAuditCapabilityPersistenceRecord,
@@ -433,6 +437,19 @@ export interface SandboxSecurityEnforcementAuditCapabilityService {
   issueEnforcementAudit(
     request: Readonly<SandboxSecurityEnforcementAuditCapabilityIssueRequest>
   ): Readonly<SandboxSecurityEnforcementAuditCapabilityIssueResult>;
+}
+
+export interface OpenClawEnforcementAuditIdentity {
+  subject_id: string;
+  capability_id: string;
+  authorization_scope_id: string;
+}
+
+export interface SandboxSecurityEnforcementAuditService {
+  appendEnforcementEvent(
+    request: Readonly<SandboxSecurityEnforcementAuditRequest>,
+    identity: Readonly<OpenClawEnforcementAuditIdentity>
+  ): Promise<Readonly<OpenClawEnforcementAuditAck>>;
 }
 
 export interface SandboxSecurityAuditService {

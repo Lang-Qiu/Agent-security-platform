@@ -13,8 +13,10 @@ import type {
   SandboxSecurityCapabilityAuthenticator,
   SandboxSecurityCapabilityLimiterRegistry,
   SandboxSecurityCapabilityService,
+  OpenClawEnforcementAuditIdentity,
   SandboxSecurityEnforcementAuditAuthenticator,
   SandboxSecurityEnforcementAuditCapabilityService,
+  SandboxSecurityEnforcementAuditService,
   SandboxSecurityEngineConcurrencyLimiter,
   SandboxSecurityEvaluationService,
   SandboxSecurityIdempotencyMaintenance,
@@ -119,6 +121,7 @@ export {
 export {
   createSandboxSecurityAuditService
 } from "./audit.service.ts";
+export { createSandboxSecurityEnforcementAuditService } from "./enforcement-audit.service.ts";
 export {
   createSandboxSecurityCapabilityLimiterRegistry,
   createSandboxSecurityTokenBucket
@@ -413,7 +416,9 @@ export type {
   SandboxSecurityCapabilityAuthenticator,
   SandboxSecurityCapabilityLimiterRegistry,
   SandboxSecurityCapabilityService,
+  OpenClawEnforcementAuditIdentity,
   SandboxSecurityEngineConcurrencyLimiter,
+  SandboxSecurityEnforcementAuditService,
   SandboxSecurityEvaluationGateway,
   SandboxSecurityEvaluationService,
   SandboxSecurityIdempotencyMaintenance,
