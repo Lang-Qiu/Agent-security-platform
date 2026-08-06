@@ -130,6 +130,23 @@ export type {
   SandboxSecurityAuditEvent,
   SandboxSecurityAuditPage
 } from "./types/sandbox-security-api.ts";
+export type {
+  SandboxSecurityEnforcementAuditCapabilityScope,
+  SandboxSecurityEnforcementPoint,
+  SandboxSecurityEnforcementInterruptionCode,
+  SandboxSecurityProductionCompositionBinding,
+  SandboxSecurityEnforcementAuditRequestCommon,
+  SandboxSecurityEnforcementAuditRequest,
+  OpenClawEnforcementAuditRequest,
+  SandboxSecurityEnforcementAuditEventCommon,
+  SandboxSecurityEnforcementAuditEventType,
+  SandboxSecurityEnforcementCompletedEvent,
+  SandboxSecurityEnforcementInterruptedEvent,
+  SandboxSecurityEnforcementAuditCapabilityIssuedEvent,
+  SandboxSecurityEnforcementAuditEvent,
+  SandboxSecurityEnforcementAuditEventCandidate,
+  OpenClawEnforcementAuditAck
+} from "./types/sandbox-security-enforcement-audit.ts";
 
 export {
   normalizeSandboxSecurityRequest,
@@ -141,3 +158,8 @@ export {
   normalizeSandboxSecurityAuditEvent,
   normalizeSandboxSecurityAuditPage
 } from "./contracts/sandbox-security-api.ts";
+export {
+  normalizeSandboxSecurityEnforcementAuditRequest,
+  normalizeSandboxSecurityEnforcementAuditEvent,
+  normalizeOpenClawEnforcementAuditAck
+} from "./contracts/sandbox-security-enforcement-audit.ts";
