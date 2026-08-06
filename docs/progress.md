@@ -1,3 +1,59 @@
+## 2026-08-07 - REQ-SBX-GENERAL-004 P2-T3 private capability provisioning and authentication
+
+- phase/task: Phase 2 / P2-T3
+- status: `IMPLEMENTED_PENDING_P2_T3_INDEPENDENT_REVIEW`
+- implementation:
+  - added the exact private enforcement-audit capability issue schema and
+    branch-specific result while keeping the GENERAL-003 v1 DTO union closed
+  - fixed the private grant to one scope, all three stages, one requested
+    profile, and the immutable production composition binding
+  - persisted capability issuance and the private `capability_issued` event
+    atomically; raw bearer tokens remain transient and are absent from SQLite
+    and audit projections
+  - added private token authentication, expiry/revocation fail-closed results,
+    stage/profile/composition grant checks, and private-aware revoke projection
+  - preserved construction of existing public-only administrator fixtures by
+    checking the private service branch only when its exact schema is selected
+- files:
+  - `backend/src/modules/sandbox-security/ports/capability.repository.ts`
+  - `backend/src/modules/sandbox-security/adapters/sqlite/sqlite-capability.repository.ts`
+  - `backend/src/modules/sandbox-security/capability-authorizer.ts`
+  - `backend/src/modules/sandbox-security/capability.service.ts`
+  - `backend/src/modules/sandbox-security/sandbox-security-admin.controller.ts`
+  - `backend/src/modules/sandbox-security/sandbox-security.types.ts`
+  - `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+  - `backend/tests/sandbox-security-enforcement-audit-capability.spec.ts`
+  - `backend/tests/sandbox-security-capability.spec.ts`
+  - `backend/tests/sandbox-security-admin.controller.spec.ts`
+- tests and verification:
+  - RED evidence: private issue initially returned
+    `SANDBOX_SECURITY_INVALID_REQUEST`; private authentication lacked the
+    private capability branch; private revoke initially mapped to
+    `SANDBOX_SECURITY_INTERNAL_ERROR`
+  - regression RED: a public-only administrator fixture failed construction
+    with `Invalid sandbox security administrator controller input`; after the
+    branch-local check, the regression and focused capability suites pass
+    (`49/49`)
+  - `npm run test:backend` completed with `509` tests, `507` pass, and the two
+    existing baseline failures: task-engine fixture expectation drift and
+    missing local `semgrep` (`spawn semgrep ENOENT`)
+  - `npm run typecheck:backend` exits `2` on existing supervision,
+    task-center, campaign, and test diagnostics; no P2-T3 source/test
+    diagnostic remains; `git diff --check` passes
+- commit: `81e9aad` (`feat(sandbox): provision enforcement audit capabilities`)
+- review:
+  - independent specification and quality review dispatch was attempted
+    repeatedly, but `multi_agent_v1__spawn_agent` returns
+    `agent thread limit reached` and the listed prior agent IDs are not
+    addressable; no PASS is claimed and the Phase 2 gate remains closed
+- boundary:
+  - P2-T4 application service and P2-T5 internal enforcement-event HTTP
+    controller remain unstarted; no later Phase files were changed
+  - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
+    GENERAL-004 is not `VERIFIED`
+- next: obtain the required independent specification review, then the
+  independent quality review; fix and re-review any findings before P2-T4
+
 ## 2026-08-06 - REQ-SBX-GENERAL-004 implementation plan independently reviewed
 
 - phase/task: specification plus Master and Phase 1-5 implementation planning

@@ -2144,7 +2144,7 @@ bootstrap-administrator capability and retention operations.
 | --- | --- | --- | --- | --- |
 | public | `POST /api/sandbox/security/evaluations` | `Authorization: Bearer <capability>` plus `Idempotency-Key` | JSON `SandboxSecurityRequest`; 786432 raw bytes; 5000 ms body deadline | `200 ApiResponse<SandboxSecurityDecision>` |
 | public | `GET /api/sandbox/security/audit-events` | `Authorization: Bearer <capability>` with `sandbox_security:audit:read` | only `cursor` and `limit` query keys; bodyless | `200 ApiResponse<SandboxSecurityAuditPage>` |
-| internal | `POST /internal/sandbox/security/capabilities` | `Authorization: Bearer <bootstrap-admin-token>` | JSON issue DTO; 65536 raw bytes; 5000 ms body deadline | `201 ApiResponse<SandboxSecurityCapabilityIssueResult>` |
+| internal | `POST /internal/sandbox/security/capabilities` | `Authorization: Bearer <bootstrap-admin-token>` | exact public or private JSON issue DTO; 65536 raw bytes; 5000 ms body deadline | `201 ApiResponse<SandboxSecurityCapabilityIssueResult | SandboxSecurityEnforcementAuditCapabilityIssueResult>` |
 | internal | `POST /internal/sandbox/security/capabilities/:capabilityId/revoke` | `Authorization: Bearer <bootstrap-admin-token>` | bodyless; one percent-decode of the path ID | `200 ApiResponse<SandboxSecurityCapabilityPublicRecord>` |
 | internal | `POST /internal/sandbox/security/audit-events/purge` | `Authorization: Bearer <bootstrap-admin-token>` | bodyless; fixed 90-day retention and 1000-row batch | `200 ApiResponse<SandboxSecurityAuditPurgeResult>` |
 
@@ -2203,6 +2203,8 @@ interface SandboxSecurityDecision {
 | `SandboxSecurityToolRequest` | `call_id`, `tool_name`, `arguments`, optional `target`; no caller-selected provider, model, endpoint, timeout, retry, fallback, policy, or production mode. |
 | `SandboxSecurityCapabilityIssueRequest` | `schema_version: "sandbox-security-capability-issue-request.v1"`, `subject_id`, `scopes`, `allowed_stages`, `allowed_policy_profile_ids`, optional `ttl_seconds`; TTL defaults to 900 and is bounded to 60..3600 seconds. Evaluation scope requires at least one stage and profile; audit-only grants require both arrays empty. |
 | `SandboxSecurityCapabilityIssueResult` | `schema_version: "sandbox-security-capability-issue-result.v1"`, `capability_id`, `subject_id`, `scopes`, `allowed_stages`, `allowed_policy_profile_ids`, `bearer_token`, `issued_at`, `expires_at`, `revoked_at: null`; the bearer token appears only in this successful 201 response. |
+| `SandboxSecurityEnforcementAuditCapabilityIssueRequest` | `schema_version: "sandbox-security-enforcement-audit-capability-issue-request.v1"`, `subject_id`, one `policy_profile_id`, and `ttl_seconds` as a safe integer in `60..3600`; scope, stages, production mode, endpoint, and authorization-scope ID are backend-owned. |
+| `SandboxSecurityEnforcementAuditCapabilityIssueResult` | `schema_version: "sandbox-security-enforcement-audit-capability-issue-result.v1"`, fixed scope `sandbox_security:enforcement:audit:write`, all `user_input`, `model_output`, and `tool_request` stages, exactly one profile, immutable production composition, one transient `bearer_token`, strict timestamps, and `revoked_at: null`. |
 | `SandboxSecurityCapabilityPublicRecord` | `schema_version: "sandbox-security-capability-record.v1"`, `capability_id`, `subject_id`, `scopes`, `allowed_stages`, `allowed_policy_profile_ids`, `issued_at`, `expires_at`, `revoked_at`; it never contains a token digest or scope seed. |
 | `SandboxSecurityAuditPage` | `schema_version: "sandbox-security-audit-page.v1"`, `events` (0..100 content-free events), `next_cursor` (null or canonical `sbxcur_v1.<payload>.<mac>`). |
 | `SandboxSecurityAuditPurgeResult` | `schema_version: "sandbox-security-audit-purge-result.v1"`, `retention_days: 90`, `deleted_count`, `has_more`; the cutoff and batch size are not caller inputs. |
@@ -2396,10 +2398,13 @@ including duplicate or malformed raw headers, return the fixed administrator
 creating an audit event.
 
 Capability issue then reads a strict JSON body with the `65536`-byte and
-`5000 ms` limits, normalizes the exact issue DTO (including the default
-`ttl_seconds=900`), and calls the capability service only after normalization.
-Success is `201 ApiResponse<SandboxSecurityCapabilityIssueResult>` and exposes
-the opaque bearer token only in that response. Revoke and purge first await
+`5000 ms` limits, dispatches only by exact `schema_version`, normalizes the
+selected issue DTO, and calls its branch-specific capability service only after
+normalization. The legacy schema keeps the default `ttl_seconds=900`; the
+private enforcement schema requires its explicit profile and bounded TTL.
+Success is `201 ApiResponse<SandboxSecurityCapabilityIssueResult |
+SandboxSecurityEnforcementAuditCapabilityIssueResult>` and exposes the opaque
+bearer token only in that response. Revoke and purge first await
 bodyless completion; revoke then percent-decodes the opaque path segment once,
 rejects malformed encoding, decoded slash/backslash/NUL, and non-v4 capability
 IDs, and only then calls the revoke service. Repeated revocation remains

@@ -170,13 +170,23 @@ GENERAL-003's out-of-scope retry rule.
   closed, and no new actionable issue was found.
 - GENERAL-004 Phase 1 is complete through its five task commits and review
   gate. Phase 2 P2-T1 and P2-T2 are complete through their task commits and
-  review gates; P2-T3 is the next task.
+  review gates. P2-T3 is implemented and committed as `81e9aad`, with focused
+  GREEN `49/49`, but its required independent specification and quality
+  reviews are pending because the subagent service reports
+  `agent thread limit reached`; the Phase 2 exit gate is therefore closed.
 - P2-T2 added the private enforcement audit repository, explicit legacy
   `event_schema` writes, public schema filtering, dual-schema purge
   validation, replay/conflict handling, and real SQLite regression tests.
 - The P2-T2 file list omitted the two existing legacy audit writers in
   `sqlite-capability.repository.ts` and `sqlite-idempotency.repository.ts`;
   both received only the required explicit legacy schema column/value change.
+- P2-T3 added the private capability issue/authentication branch, fixed grant
+  shape, private capability-issued audit storage, and private-aware revoke
+  projection. It preserves public-only administrator fixture construction by
+  checking the private service method only for the private schema branch.
+- P2-T3 RED/GREEN and verification evidence is recorded in
+  `docs/progress.md`; no P2-T4 or later Phase production file has been
+  modified.
 - The plan-required focused P2-T2 suites pass. `npm run test:backend` remains
   dependency/baseline-bounded and currently reports 499/501, with the known
   semgrep-missing and task-engine fixture expectation failures; no P2-T2
@@ -192,7 +202,7 @@ GENERAL-003's out-of-scope retry rule.
 ## Next Transition
 
 `PLAN_REVIEWED_PENDING_USER_APPROVAL` -> `PLAN_APPROVED` ->
-`IMPLEMENTATION_IN_PROGRESS` -> `P2-T3_IN_PROGRESS`
+`IMPLEMENTATION_IN_PROGRESS` -> `P2-T3_REVIEW_PENDING` -> `P2-T4_IN_PROGRESS`
 
 The first transition records the user's explicit approval. The second records
 that Phase 1 execution has begun. GENERAL-004 remains the only active

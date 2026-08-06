@@ -241,7 +241,9 @@ engines/<engine-name>/
 
 GENERAL-003 的后端能力以可注入的 `SandboxSecurityModule` 作为唯一平台边界。
 公共监听器只 dispatch evaluation 与 subject-scoped audit-read，内部监听器只
-dispatch capability issue/revoke 与 audit purge；未注入模块时，已识别的沙箱路由
+dispatch capability issue/revoke 与 audit purge；capability issue 在同一既有
+route 上按精确 `schema_version` 分派 GENERAL-003 公共 v1 与 GENERAL-004
+私有 enforcement-audit DTO；未注入模块时，已识别的沙箱路由
 返回固定的通用 `INTERNAL_ERROR` 内部错误，不构造隐式默认模块。
 revoke 路由的 capability-id segment 由路由到 controller 原样传递，应用层不提前
 decode。
@@ -251,6 +253,12 @@ repository 与 SQLite database 的 type-only contracts。服务、仓储和数�
 后续 Phase 各自拥有；本阶段不创建隐藏实现。单一 SQLite owner 通过
 `SqliteSandboxSecurityDatabase` 暴露 transaction/read/checkpoint 生命周期，维护
 timer 由 idempotency maintenance 拥有，模块 close 负责先取消维护再关闭数据库。
+
+GENERAL-004 的私有 capability 分支使用独立的内部 scope/type union；后台固定
+scope、全部 Engine stages、单一 profile 和当前 production composition，并在同一
+SQLite transaction 内写入 capability 与私有 `capability_issued` event。GENERAL-003
+public v1 authorizer/read surface 不接受该 scope；既有 revoke boundary 仅返回无
+token 的私有记录并保持 legacy revoke audit semantics。
 
 后端扩展 runtime 不能直接传入 GENERAL-002。`toSandboxSecurityEngineRuntime`
 每次生成冻结的普通对象，且只包含 Engine 要求顺序的
