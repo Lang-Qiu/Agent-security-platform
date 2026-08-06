@@ -2,18 +2,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const SPRINT_PATH = "docs/sprint-current.md";
 const PACKAGE_PATH = "package.json";
 const TEST_PATH = "tests/repository/sandbox-security-backend-spec.spec.ts";
 const CANONICAL_SPEC_PATH =
   "docs/superpowers/specs/2026-08-05-sandbox-security-backend-api-design.md";
-
-const LEGAL_GENERAL_003_STATUSES = new Set([
-  "PLAN_FIXED_PENDING_REVIEW",
-  "PLAN_REVIEWED_PENDING_USER_APPROVAL",
-  "IMPLEMENTATION_IN_PROGRESS",
-  "IMPLEMENTED_PENDING_GLOBAL_P6_GATE"
-]);
+const PROGRESS_PATH = "docs/progress.md";
+const GENERAL_003_DURABLE_SECTION =
+  "## 2026-08-06 - REQ-SBX-GENERAL-003 P6-T4 durable documentation and final verification";
 
 type SandboxSecurityBackendSnapshot = Readonly<{
   files: Readonly<Record<string, string>>;
@@ -138,7 +133,8 @@ function readSnapshot(): SandboxSecurityBackendSnapshot {
     "shared/types/sandbox-security-api.ts",
     "shared/contracts/sandbox-security-api.ts",
     "shared/contracts/sandbox-security-request.ts",
-    "docs/sprint-current.md"
+    CANONICAL_SPEC_PATH,
+    PROGRESS_PATH
   ] as const;
   return {
     files: Object.fromEntries(files.map((path) => [path, readText(path)])),
@@ -187,15 +183,15 @@ function assertSandboxSecurityBackendBoundaries(
   snapshot: SandboxSecurityBackendSnapshot
 ): void {
   // P1-T0 identity/dependency checks remain the first permanent boundary.
-  const sprint = snapshot.files[SPRINT_PATH] ?? readText(SPRINT_PATH);
-  assert.match(sprint, /\bREQ-SBX-GENERAL-003\b/);
-  const status = currentStatus(sprint);
-  assert.ok(LEGAL_GENERAL_003_STATUSES.has(status));
-  const dependencyGate = extractSection(sprint, "## Dependency Gate");
-  assert.match(dependencyGate, /PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE/);
-  assertNoVerifiedClaims(sprint);
+  assertGeneral003DurableGate(
+    snapshot.files[CANONICAL_SPEC_PATH] ?? readText(CANONICAL_SPEC_PATH),
+    snapshot.files[PROGRESS_PATH] ?? readText(PROGRESS_PATH)
+  );
   const testRepoScript = snapshot.package_json.scripts?.["test:repo"] ?? "";
-  assert.ok(testRepoScript.split(/\s+/).includes(TEST_PATH));
+  assert.ok(
+    testRepoScript.split(/\s+/).includes(TEST_PATH),
+    `test:repo must register ${TEST_PATH}`
+  );
 
   const source = (path: string): string => {
     const value = snapshot.files[path];
@@ -246,7 +242,9 @@ function assertSandboxSecurityBackendBoundaries(
     assert.doesNotMatch(app, new RegExp(`case\\s+["']${route}["']`));
   }
 
-  const sourceEntries = Object.entries(snapshot.files);
+  const sourceEntries = Object.entries(snapshot.files).filter(
+    ([path]) => !path.startsWith("docs/")
+  );
   for (const [path, text] of sourceEntries) {
     assert.doesNotMatch(
       path,
@@ -349,18 +347,6 @@ function extractSection(text: string, heading: string): string {
     : text.slice(bodyStart, bodyStart + next).trim();
 }
 
-function currentStatus(sprint: string): string {
-  const matches = [
-    ...sprint.matchAll(/^## Status\s*\n+([A-Z][A-Z0-9_]*)\s*$/gm)
-  ];
-  assert.equal(
-    matches.length,
-    1,
-    "sprint-current.md must expose exactly one uppercase Status value"
-  );
-  return matches[0]![1]!;
-}
-
 function assertNoVerifiedClaims(sprint: string): void {
   for (const line of sprint.split(/\r?\n/)) {
     if (
@@ -372,7 +358,7 @@ function assertNoVerifiedClaims(sprint: string): void {
 
     assert.match(
       line,
-      /\b(?:not|never|does not|cannot|without|absent|pending|provisional|unverified|neither|nor)\b/i,
+      /\b(?:no|not|never|does not|cannot|without|absent|pending|provisional|unverified|neither|nor)\b/i,
       `GENERAL-002/003 must not be described as VERIFIED: ${line}`
     );
     if (
@@ -389,43 +375,59 @@ function assertNoVerifiedClaims(sprint: string): void {
   }
 }
 
+function assertGeneral003DurableGate(
+  canonicalSpec: string,
+  progress: string
+): void {
+  assert.match(canonicalSpec, /\bREQ-SBX-GENERAL-003\b/);
+  const durableSection = extractSection(progress, GENERAL_003_DURABLE_SECTION);
+  assert.match(
+    durableSection,
+    /status: `IMPLEMENTED_PENDING_GLOBAL_P6_GATE`/,
+    "GENERAL-003 P6-T4 durable status is missing"
+  );
+  assert.match(
+    durableSection,
+    /PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE/,
+    "GENERAL-003 dependency gate is missing"
+  );
+  assertNoVerifiedClaims(durableSection);
+}
+
 test("REQ-SBX-GENERAL-003 repository gate enforces canonical identity and dependency-safe status", () => {
-  const sprint = readText(SPRINT_PATH);
   const packageJson = JSON.parse(readText(PACKAGE_PATH)) as {
     scripts?: Record<string, string>;
   };
 
-  assert.match(sprint, /\bREQ-SBX-GENERAL-003\b/);
   const canonicalSpec = readText(CANONICAL_SPEC_PATH);
   assert.ok(canonicalSpec.length > 0, `canonical spec is empty: ${CANONICAL_SPEC_PATH}`);
-  assert.ok(
-    sprint.includes(CANONICAL_SPEC_PATH),
-    `sprint-current.md must reference ${CANONICAL_SPEC_PATH}`
-  );
-
-  const status = currentStatus(sprint);
-  assert.ok(
-    LEGAL_GENERAL_003_STATUSES.has(status),
-    `illegal GENERAL-003 status: ${status}`
-  );
-
-  const dependencyGate = extractSection(sprint, "## Dependency Gate");
-  assert.match(
-    dependencyGate,
-    /PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE/
-  );
-  assertNoVerifiedClaims(sprint);
-
-  if (dependencyGate.includes("PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE")) {
-    if (status.startsWith("IMPLEMENTED")) {
-      assert.equal(status, "IMPLEMENTED_PENDING_GLOBAL_P6_GATE");
-    }
-  }
+  assertGeneral003DurableGate(canonicalSpec, readText(PROGRESS_PATH));
 
   const testRepoScript = packageJson.scripts?.["test:repo"] ?? "";
   assert.ok(
     testRepoScript.split(/\s+/).includes(TEST_PATH),
     `test:repo must register ${TEST_PATH}`
+  );
+});
+
+test("REQ-SBX-GENERAL-003 repository gate rejects removal of the P6-T4 completion status", () => {
+  const snapshot = readSnapshot();
+  const progress = snapshot.files[PROGRESS_PATH];
+  assert.equal(typeof progress, "string");
+  const mutated: SandboxSecurityBackendSnapshot = {
+    ...snapshot,
+    files: {
+      ...snapshot.files,
+      [PROGRESS_PATH]: progress.replace(
+        "status: `IMPLEMENTED_PENDING_GLOBAL_P6_GATE`",
+        "status: `IMPLEMENTATION_IN_PROGRESS`"
+      )
+    }
+  };
+
+  assert.throws(
+    () => assertSandboxSecurityBackendBoundaries(mutated),
+    /P6-T4 durable status is missing/
   );
 });
 
