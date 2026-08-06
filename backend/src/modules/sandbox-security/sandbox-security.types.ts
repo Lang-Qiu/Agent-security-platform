@@ -12,6 +12,15 @@ import type {
   SandboxSecurityAuditPage,
   SandboxSecurityCapabilityScope
 } from "../../../../shared/types/sandbox-security-api.ts";
+import type {
+  SandboxSecurityEnforcementAuditCapabilityScope
+} from "../../../../shared/types/sandbox-security-enforcement-audit.ts";
+import type {
+  SandboxSecurityEnforcementAuditCapabilityIssueRequest,
+  SandboxSecurityEnforcementAuditCapabilityIssueResult,
+  SandboxSecurityEnforcementAuditCapabilityPersistenceRecord,
+  SandboxSecurityEnforcementAuditAuthorizedCapability
+} from "./dto/enforcement-audit-capability.ts";
 
 export type {
   SandboxSecurityAuditEvent,
@@ -23,6 +32,16 @@ export type {
   SandboxSecurityStage,
   SandboxSecurityDecision
 };
+export type {
+  SandboxSecurityEnforcementAuditCapabilityIssueRequest,
+  SandboxSecurityEnforcementAuditCapabilityIssueResult,
+  SandboxSecurityEnforcementAuditCapabilityPersistenceRecord,
+  SandboxSecurityEnforcementAuditAuthorizedCapability
+};
+
+export type SandboxSecurityPrivateCapabilityScope =
+  | SandboxSecurityCapabilityScope
+  | SandboxSecurityEnforcementAuditCapabilityScope;
 
 export type SandboxSecurityProductionMode =
   | "rule_only"
@@ -249,6 +268,14 @@ export interface SandboxSecurityAuthorizedCapability {
   issued_at: string;
   expires_at: string;
 }
+
+export type SandboxSecurityPrivateCapabilityPersistenceRecord =
+  | SandboxSecurityCapabilityPersistenceRecord
+  | SandboxSecurityEnforcementAuditCapabilityPersistenceRecord;
+
+export type SandboxSecurityPrivateAuthorizedCapability =
+  | SandboxSecurityAuthorizedCapability
+  | SandboxSecurityEnforcementAuditAuthorizedCapability;
 
 export interface SandboxSecurityEvaluationAuditInput {
   event_id: string;

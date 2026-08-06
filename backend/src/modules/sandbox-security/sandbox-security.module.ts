@@ -88,6 +88,20 @@ export {
 } from "./hmac.ts";
 export { normalizeSandboxSecurityCapabilityIssueRequest } from "./dto/capability.ts";
 export {
+  normalizeSandboxSecurityEnforcementAuditCapabilityIssueRequest
+} from "./dto/enforcement-audit-capability.ts";
+export type {
+  SandboxSecurityEnforcementAuditCapabilityIssueRequest,
+  SandboxSecurityEnforcementAuditCapabilityIssueResult,
+  SandboxSecurityEnforcementAuditCapabilityPersistenceRecord,
+  SandboxSecurityEnforcementAuditAuthorizedCapability
+} from "./dto/enforcement-audit-capability.ts";
+export type {
+  SandboxSecurityPrivateAuthorizedCapability,
+  SandboxSecurityPrivateCapabilityPersistenceRecord,
+  SandboxSecurityPrivateCapabilityScope
+} from "./sandbox-security.types.ts";
+export {
   createSandboxSecurityCapabilityAuthenticator
 } from "./capability-authorizer.ts";
 export {
