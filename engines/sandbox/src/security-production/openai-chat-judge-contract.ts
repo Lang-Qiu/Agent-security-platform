@@ -6,6 +6,7 @@ import {
   parseSandboxSecurityOpenAiJudgeAssistantContent,
   validateSandboxSecurityOpenAiJudgeRequestedModel,
   validateSandboxSecurityOpenAiJudgeResolvedModel,
+  type SandboxSecurityOpenAiJudgePromptProfile,
   type SandboxSecurityParsedOpenAIResponse
 } from "./openai-judge-contract.ts";
 
@@ -116,11 +117,12 @@ function requestedModel(
 
 export function createSandboxSecurityOpenAiChatJudgeRequest(
   payload: Readonly<SandboxSecuritySanitizedJudgePayload>,
-  options: Readonly<{ judge_requested_model: string }>
+  options: Readonly<{ judge_requested_model: string }>,
+  promptProfile?: SandboxSecurityOpenAiJudgePromptProfile
 ): Readonly<{ body: Uint8Array }> {
   return withRequestValidation(() => {
     const model = requestedModel(options);
-    const prompt = createSandboxSecurityOpenAiJudgePrompt(payload);
+    const prompt = createSandboxSecurityOpenAiJudgePrompt(payload, promptProfile);
     const body = ENCODER.encode(
       JSON.stringify({
         model,

@@ -32,6 +32,7 @@ interface DetectorModule {
     transport: SandboxSecurityHttpTransport;
     judge_protocol_id: SandboxSecurityJudgeProtocolId;
     judge_requested_model: string;
+    judge_prompt_profile?: string;
   }>): SanitizedExternalDetector;
 }
 
@@ -56,6 +57,7 @@ const NONCE = "a".repeat(32);
 const RAW_PROVIDER_SENTINEL = "RAW_PROVIDER_PROSE_MUST_NOT_LEAK";
 const SANITIZED_PAYLOAD_SENTINEL = "SANITIZED_PAYLOAD_MUST_NOT_BE_RETAINED";
 const JUDGE_REQUESTED_MODEL = "gpt-5.4-mini";
+const V3_PROMPT_PROFILE = "sandbox-security-openai-judge-prompt.v3";
 const RESPONSES_PROTOCOL_ID = "openai_responses_v1" as const;
 const CHAT_PROTOCOL_ID = "openai_chat_completions_json_v1" as const;
 
@@ -352,6 +354,75 @@ test("REQ-SBX-GENERAL-002 Judge detector selects one exact protocol pair without
     assert.deepEqual(result, expected);
     assertDeepFrozen(result);
   }
+});
+
+test("REQ-SBX-GENERAL-002 Judge detector forwards the explicit v3 profile to Responses and Chat builders", async () => {
+  const current = payload();
+  const scenarios = [
+    {
+      protocol_id: RESPONSES_PROTOCOL_ID,
+      operation: "responses" as const,
+      response_body: responseBody([])
+    },
+    {
+      protocol_id: CHAT_PROTOCOL_ID,
+      operation: "chat_completions" as const,
+      response_body: chatResponseBody([])
+    }
+  ] as const;
+
+  for (const scenario of scenarios) {
+    const harness = transportHarness(() => jsonResponse(scenario.response_body));
+    const detector = createSandboxSecurityOpenAiJudgeDetector({
+      transport: harness.transport,
+      judge_protocol_id: scenario.protocol_id,
+      judge_requested_model: JUDGE_REQUESTED_MODEL,
+      judge_prompt_profile: V3_PROMPT_PROFILE
+    });
+
+    await detector.detect(current, new AbortController().signal);
+    assert.equal(harness.calls.length, 1);
+    const call = harness.calls[0]!;
+    assert.equal(call.operation, scenario.operation);
+    if (!("body" in call)) throw new Error("missing_request_body");
+    const body = JSON.parse(new TextDecoder().decode(call.body)) as Record<
+      string,
+      any
+    >;
+    const systemInstruction = scenario.operation === "responses"
+      ? body.input[0].content[0].text
+      : body.messages[0].content;
+    assert.match(
+      systemInstruction,
+      /instruction_override:.*ignore, forget, stop, replace, or outrank an active instruction, task, or policy\./u
+    );
+    assert.match(
+      systemInstruction,
+      /jailbreak:.*bypass, disable, evade, or route around a safety or access-control safeguard, including adversarial role-play or encoding used for that purpose\./u
+    );
+    if (scenario.operation === "responses") {
+      assert.equal(systemInstruction.includes("sandbox-security-judge.v1"), false);
+      assert.equal(
+        body.text.format.schema.properties.schema_version.const,
+        "sandbox-security-judge.v1"
+      );
+    } else {
+      assert.equal(systemInstruction.includes("sandbox-security-judge.v1"), true);
+    }
+  }
+
+  assert.throws(
+    () => createSandboxSecurityOpenAiJudgeDetector({
+      transport: transportHarness(() => jsonResponse(responseBody([]))).transport,
+      judge_protocol_id: RESPONSES_PROTOCOL_ID,
+      judge_requested_model: JUDGE_REQUESTED_MODEL,
+      judge_prompt_profile: "unknown-profile"
+    }),
+    {
+      name: "TypeError",
+      message: "sandbox_security_openai_judge_detector_invalid"
+    }
+  );
 });
 
 test("REQ-SBX-GENERAL-002 Judge omission is partial coverage only", async () => {
