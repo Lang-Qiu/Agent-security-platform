@@ -102,6 +102,11 @@ function closeAfterFailure(database: DatabaseSync): void {
     // Preserve the startup error; close is still attempted below.
   }
   try {
+    database.exec("PRAGMA foreign_keys = ON");
+  } catch {
+    // Preserve the startup error; close is still attempted below.
+  }
+  try {
     database.close();
   } catch {
     // Preserve the startup error.
@@ -141,6 +146,10 @@ export function openSandboxSecuritySqliteDatabase(input: Readonly<{
     assertRegularArtifact(configured.databasePath, "database");
     assertSidecarBoundary(configured.databasePath, configured.parentPath);
 
+    // SQLite cannot toggle foreign-key enforcement inside a transaction. The
+    // migration itself runs under the exclusive startup transaction and
+    // performs PRAGMA foreign_key_check before this setting is restored.
+    database.exec("PRAGMA foreign_keys = OFF");
     database.exec("BEGIN IMMEDIATE");
     applySandboxSecurityMigrations({
       database,
@@ -151,6 +160,10 @@ export function openSandboxSecuritySqliteDatabase(input: Readonly<{
     assertRegularArtifact(configured.databasePath, "database");
     assertSidecarBoundary(configured.databasePath, configured.parentPath);
     database.exec("COMMIT");
+    database.exec("PRAGMA foreign_keys = ON");
+    if (database.prepare("PRAGMA foreign_keys").get()!.foreign_keys !== 1) {
+      throw new Error("sandbox security SQLite foreign keys could not be restored");
+    }
     assertRegularArtifact(configured.databasePath, "database");
     assertSidecarBoundary(configured.databasePath, configured.parentPath);
   } catch (error) {

@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 
-export const SANDBOX_SECURITY_SCHEMA_VERSION = 1 as const;
+export const SANDBOX_SECURITY_SCHEMA_VERSION = 2 as const;
 
 const EXPECTED_TABLES = [
   "sandbox_security_audit_events",
@@ -127,6 +127,44 @@ CREATE INDEX sandbox_security_audit_retention_idx
   ON sandbox_security_audit_events(occurred_at, event_id);
 `;
 
+const SANDBOX_SECURITY_V2_SCOPE_TABLE_SQL = `
+CREATE TABLE sandbox_security_capability_scopes_v2 (
+  capability_id TEXT NOT NULL REFERENCES
+    sandbox_security_capabilities(capability_id) ON DELETE CASCADE,
+  scope TEXT NOT NULL CHECK (scope IN (
+    'sandbox_security:evaluate', 'sandbox_security:audit:read',
+    'sandbox_security:enforcement:audit:write')),
+  PRIMARY KEY (capability_id, scope)
+);`;
+
+const SANDBOX_SECURITY_V2_AUDIT_TABLE_SQL = `
+CREATE TABLE sandbox_security_audit_events_v2 (
+  event_id TEXT PRIMARY KEY,
+  event_schema TEXT NOT NULL DEFAULT 'sandbox-security-audit-event.v1' CHECK (event_schema IN (
+    'sandbox-security-audit-event.v1',
+    'sandbox-security-enforcement-audit-event.v1')),
+  event_type TEXT NOT NULL CHECK (event_type IN (
+    'evaluation_completed', 'evaluation_replayed',
+    'evaluation_interrupted', 'request_rejected',
+    'capability_issued', 'capability_revoked',
+    'audit_read', 'audit_purged',
+    'enforcement_completed', 'enforcement_interrupted')),
+  visibility_subject_id TEXT NOT NULL
+    CHECK (length(visibility_subject_id) BETWEEN 1 AND 64),
+  authorization_scope_id TEXT,
+  capability_id TEXT REFERENCES
+    sandbox_security_capabilities(capability_id) ON DELETE RESTRICT,
+  occurred_at TEXT NOT NULL,
+  event_json TEXT NOT NULL CHECK (length(event_json) BETWEEN 2 AND 65536)
+);`;
+
+const SANDBOX_SECURITY_V2_AUDIT_INDEX_SQL = `
+CREATE INDEX sandbox_security_audit_visibility_order_idx
+  ON sandbox_security_audit_events(
+    visibility_subject_id, occurred_at DESC, event_id DESC);
+CREATE INDEX sandbox_security_audit_retention_idx
+  ON sandbox_security_audit_events(occurred_at, event_id);`;
+
 function hasObject(
   database: DatabaseSync,
   type: "table" | "index",
@@ -151,34 +189,65 @@ function normalizeDefinition(sql: string): string {
   return sql.replace(/\s+/g, " ").trim();
 }
 
-let expectedDefinitions: ReadonlyMap<string, string> | null = null;
+type SupportedSchemaVersion = 1 | 2;
 
-function getExpectedDefinitions(): ReadonlyMap<string, string> {
-  if (expectedDefinitions !== null) {
-    return expectedDefinitions;
-  }
-  const memory = new DatabaseSync(":memory:");
-  try {
-    memory.exec(SANDBOX_SECURITY_V1_SCHEMA_SQL);
-    const definitions = new Map<string, string>();
-    for (const row of memory
-      .prepare(
-        "SELECT type, name, sql FROM sqlite_master WHERE (type = 'table' OR type = 'index') AND name LIKE 'sandbox_security_%'"
-      )
-      .all() as Array<{ type: SchemaObjectType; name: string; sql: string | null }>) {
-      if (row.sql === null) {
-        throw new Error(`sandbox security SQLite definition is missing: ${row.name}`);
-      }
-      definitions.set(`${row.type}:${row.name}`, normalizeDefinition(row.sql));
+let expectedDefinitions:
+  | ReadonlyMap<SupportedSchemaVersion, ReadonlyMap<string, string>>
+  | null = null;
+
+function collectDefinitions(database: DatabaseSync): ReadonlyMap<string, string> {
+  const definitions = new Map<string, string>();
+  for (const row of database
+    .prepare(
+      "SELECT type, name, sql FROM sqlite_master WHERE (type = 'table' OR type = 'index') AND name LIKE 'sandbox_security_%'"
+    )
+    .all() as Array<{ type: SchemaObjectType; name: string; sql: string | null }>) {
+    if (row.sql === null) {
+      throw new Error(`sandbox security SQLite definition is missing: ${row.name}`);
     }
-    expectedDefinitions = definitions;
-    return definitions;
-  } finally {
-    memory.close();
+    definitions.set(`${row.type}:${row.name}`, normalizeDefinition(row.sql));
   }
+  return definitions;
 }
 
-function assertV1Objects(database: DatabaseSync): void {
+function getExpectedDefinitions(
+  version: SupportedSchemaVersion
+): ReadonlyMap<string, string> {
+  if (expectedDefinitions === null) {
+    const v1 = new DatabaseSync(":memory:");
+    const v2 = new DatabaseSync(":memory:");
+    try {
+      v1.exec(SANDBOX_SECURITY_V1_SCHEMA_SQL);
+      v2.exec(SANDBOX_SECURITY_V1_SCHEMA_SQL);
+      v2.exec(
+        `DROP INDEX sandbox_security_audit_visibility_order_idx;
+         DROP INDEX sandbox_security_audit_retention_idx;
+         DROP TABLE sandbox_security_audit_events;
+         DROP TABLE sandbox_security_capability_scopes;
+         ${SANDBOX_SECURITY_V2_SCOPE_TABLE_SQL}
+         ${SANDBOX_SECURITY_V2_AUDIT_TABLE_SQL}
+         ALTER TABLE sandbox_security_capability_scopes_v2
+           RENAME TO sandbox_security_capability_scopes;
+         ALTER TABLE sandbox_security_audit_events_v2
+           RENAME TO sandbox_security_audit_events;
+         ${SANDBOX_SECURITY_V2_AUDIT_INDEX_SQL}`
+      );
+      expectedDefinitions = new Map([
+        [1, collectDefinitions(v1)],
+        [2, collectDefinitions(v2)]
+      ]);
+    } finally {
+      v1.close();
+      v2.close();
+    }
+  }
+  return expectedDefinitions.get(version)!;
+}
+
+function assertSchemaObjects(
+  database: DatabaseSync,
+  version: SupportedSchemaVersion
+): void {
   for (const table of EXPECTED_TABLES) {
     if (!hasObject(database, "table", table)) {
       throw new Error(`sandbox security SQLite table missing: ${table}`);
@@ -197,7 +266,7 @@ function assertV1Objects(database: DatabaseSync): void {
     tables.length !== EXPECTED_TABLES.length ||
     EXPECTED_TABLES.some((table) => !tables.includes(table))
   ) {
-    throw new Error("sandbox security SQLite table catalog is not v1");
+    throw new Error(`sandbox security SQLite table catalog is not v${version}`);
   }
   const indexes = listObjects(database, "index").filter((name) =>
     name.startsWith("sandbox_security_")
@@ -206,10 +275,10 @@ function assertV1Objects(database: DatabaseSync): void {
     indexes.length !== EXPECTED_INDEXES.length ||
     EXPECTED_INDEXES.some((index) => !indexes.includes(index))
   ) {
-    throw new Error("sandbox security SQLite index catalog is not v1");
+    throw new Error(`sandbox security SQLite index catalog is not v${version}`);
   }
 
-  const canonical = getExpectedDefinitions();
+  const canonical = getExpectedDefinitions(version);
   for (const type of ["table", "index"] as const) {
     const names = type === "table" ? EXPECTED_TABLES : EXPECTED_INDEXES;
     for (const name of names) {
@@ -223,10 +292,20 @@ function assertV1Objects(database: DatabaseSync): void {
         typeof row?.sql !== "string" ||
         normalizeDefinition(row.sql) !== expected
       ) {
-        throw new Error(`sandbox security SQLite ${type} definition is not v1: ${name}`);
+        throw new Error(
+          `sandbox security SQLite ${type} definition is not v${version}: ${name}`
+        );
       }
     }
   }
+}
+
+function assertV1Objects(database: DatabaseSync): void {
+  assertSchemaObjects(database, 1);
+}
+
+function assertV2Objects(database: DatabaseSync): void {
+  assertSchemaObjects(database, 2);
 }
 
 function assertDeploymentBinding(
@@ -245,21 +324,110 @@ function assertDeploymentBinding(
   }
 }
 
-function assertCurrentVersion(database: DatabaseSync): void {
-  const rows = database
+function readMigrationRows(database: DatabaseSync): Array<{
+  version: number;
+  applied_at: string;
+}> {
+  return database
     .prepare("SELECT version, applied_at FROM sandbox_security_schema_migrations ORDER BY version")
     .all() as Array<{ version: number; applied_at: string }>;
+}
+
+function currentSchemaVersion(database: DatabaseSync): SupportedSchemaVersion {
+  const rows = readMigrationRows(database);
   if (rows.some((row) => row.version > SANDBOX_SECURITY_SCHEMA_VERSION)) {
     throw new Error("sandbox security SQLite schema is newer than this binary");
   }
   if (
-    rows.length !== 1 ||
-    rows[0]?.version !== SANDBOX_SECURITY_SCHEMA_VERSION ||
-    typeof rows[0].applied_at !== "string" ||
-    rows[0].applied_at.length === 0
+    rows.length === 1 &&
+    rows[0]?.version === 1 &&
+    typeof rows[0].applied_at === "string" &&
+    rows[0].applied_at.length > 0
   ) {
+    return 1;
+  }
+  if (
+    rows.length === 2 &&
+    rows[0]?.version === 1 &&
+    rows[1]?.version === 2 &&
+    rows.every(
+      (row) => typeof row.applied_at === "string" && row.applied_at.length > 0
+    )
+  ) {
+    return 2;
+  }
+  if (rows.some((row) => row.version < 1)) {
     throw new Error("sandbox security SQLite migration state is incomplete");
   }
+  throw new Error("sandbox security SQLite migration state is incomplete");
+}
+
+function migrationTimestamp(now: () => string): string {
+  const appliedAt = now();
+  if (typeof appliedAt !== "string" || appliedAt.length === 0) {
+    throw new TypeError("SQLite migration timestamp must be a non-empty string");
+  }
+  return appliedAt;
+}
+
+function assertForeignKeyIntegrity(database: DatabaseSync): void {
+  const foreignKeyViolations = database
+    .prepare("PRAGMA foreign_key_check")
+    .all();
+  if (foreignKeyViolations.length > 0) {
+    throw new Error("sandbox security SQLite foreign_key_check failed");
+  }
+}
+
+function migrateV1ToV2(input: Readonly<{
+  database: DatabaseSync;
+  now: () => string;
+}>): void {
+  const { database } = input;
+  assertV1Objects(database);
+
+  database.exec(
+    `${SANDBOX_SECURITY_V2_SCOPE_TABLE_SQL}
+     ${SANDBOX_SECURITY_V2_AUDIT_TABLE_SQL}`
+  );
+  database.exec(
+    `INSERT INTO sandbox_security_capability_scopes_v2(capability_id, scope)
+     SELECT capability_id, scope FROM sandbox_security_capability_scopes`
+  );
+  database.exec(
+    `INSERT INTO sandbox_security_audit_events_v2(
+       event_schema, event_id, event_type, visibility_subject_id,
+       authorization_scope_id, capability_id, occurred_at, event_json
+     )
+     SELECT 'sandbox-security-audit-event.v1', event_id, event_type,
+       visibility_subject_id, authorization_scope_id, capability_id,
+       occurred_at, event_json
+     FROM sandbox_security_audit_events`
+  );
+
+  database.exec(
+    `DROP INDEX sandbox_security_audit_visibility_order_idx;
+     DROP INDEX sandbox_security_audit_retention_idx;
+     DROP TABLE sandbox_security_audit_events;
+     DROP TABLE sandbox_security_capability_scopes;
+     ALTER TABLE sandbox_security_capability_scopes_v2
+       RENAME TO sandbox_security_capability_scopes;
+     ALTER TABLE sandbox_security_audit_events_v2
+       RENAME TO sandbox_security_audit_events;
+     ${SANDBOX_SECURITY_V2_AUDIT_INDEX_SQL}`
+  );
+
+  database
+    .prepare(
+      "INSERT INTO sandbox_security_schema_migrations(version, applied_at) VALUES (?, ?)"
+    )
+    .run(2, migrationTimestamp(input.now));
+
+  assertForeignKeyIntegrity(database);
+  if (currentSchemaVersion(database) !== 2) {
+    throw new Error("sandbox security SQLite schema v2 migration did not settle");
+  }
+  assertV2Objects(database);
 }
 
 export function applySandboxSecurityMigrations(input: Readonly<{
@@ -287,22 +455,27 @@ export function applySandboxSecurityMigrations(input: Readonly<{
 
   if (!hasMigrationTable) {
     database.exec(SANDBOX_SECURITY_V1_SCHEMA_SQL);
-    const appliedAt = input.now();
-    if (typeof appliedAt !== "string" || appliedAt.length === 0) {
-      throw new TypeError("SQLite migration timestamp must be a non-empty string");
-    }
+    const appliedAt = migrationTimestamp(input.now);
     database
       .prepare(
         "INSERT INTO sandbox_security_schema_migrations(version, applied_at) VALUES (?, ?)"
       )
-      .run(SANDBOX_SECURITY_SCHEMA_VERSION, appliedAt);
+      .run(1, appliedAt);
     database
       .prepare("INSERT INTO sandbox_security_metadata(key, value) VALUES (?, ?)")
       .run("deployment_key_id", deploymentKeyId);
   }
 
-  assertCurrentVersion(database);
-  assertV1Objects(database);
+  const version = currentSchemaVersion(database);
+  if (version === 1) {
+    assertV1Objects(database);
+    assertDeploymentBinding(database, deploymentKeyId);
+    migrateV1ToV2({ database, now: input.now });
+    return;
+  }
+
+  assertV2Objects(database);
+  assertForeignKeyIntegrity(database);
   assertDeploymentBinding(database, deploymentKeyId);
 }
 

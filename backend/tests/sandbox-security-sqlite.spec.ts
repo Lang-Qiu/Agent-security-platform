@@ -19,6 +19,10 @@ import { join } from "node:path";
 import test from "node:test";
 
 import * as boundary from "../src/modules/sandbox-security/sandbox-security.module.ts";
+import {
+  SANDBOX_SECURITY_SCHEMA_VERSION,
+  SANDBOX_SECURITY_V1_SCHEMA_SQL
+} from "../src/modules/sandbox-security/adapters/sqlite/sqlite-migrations.ts";
 import type {
   SandboxSecurityAuditEvent,
   SandboxSecurityCapabilityPersistenceRecord
@@ -139,6 +143,103 @@ function createPrivateDatabaseFixture(): Readonly<{
   return { parentPath, databasePath: join(parentPath, "security.db") };
 }
 
+function seedV1Fixture(
+  fixture: Readonly<{ databasePath: string }>,
+  options: Readonly<{ orphanAudit?: boolean }> = {}
+): Readonly<{ event: SandboxSecurityAuditEvent; eventJson: string }> {
+  const raw = new DatabaseSync(fixture.databasePath);
+  raw.exec(SANDBOX_SECURITY_V1_SCHEMA_SQL);
+  raw.exec("PRAGMA foreign_keys = OFF");
+  raw
+    .prepare(
+      "INSERT INTO sandbox_security_schema_migrations(version, applied_at) VALUES (?, ?)"
+    )
+    .run(1, ISSUED_AT);
+  raw
+    .prepare("INSERT INTO sandbox_security_metadata(key, value) VALUES (?, ?)")
+    .run("deployment_key_id", FIXED_DEPLOYMENT_KEY_ID);
+
+  const record = capabilityRecord();
+  if (!options.orphanAudit) {
+    raw
+      .prepare(
+        `INSERT INTO sandbox_security_capabilities(
+          capability_id, subject_id, token_digest, scope_seed,
+          issued_at, expires_at, revoked_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        record.capability_id,
+        record.subject_id,
+        record.token_digest,
+        Buffer.from(record.scope_seed),
+        record.issued_at,
+        record.expires_at,
+        record.revoked_at
+      );
+    for (const scope of record.scopes) {
+      raw
+        .prepare(
+          "INSERT INTO sandbox_security_capability_scopes(capability_id, scope) VALUES (?, ?)"
+        )
+        .run(record.capability_id, scope);
+    }
+    for (const stage of record.allowed_stages) {
+      raw
+        .prepare(
+          "INSERT INTO sandbox_security_capability_stages(capability_id, stage) VALUES (?, ?)"
+        )
+        .run(record.capability_id, stage);
+    }
+    for (const profile of record.allowed_policy_profile_ids) {
+      raw
+        .prepare(
+          "INSERT INTO sandbox_security_capability_profiles(capability_id, policy_profile_id) VALUES (?, ?)"
+        )
+        .run(record.capability_id, profile);
+    }
+  }
+
+  const event = capabilityIssuedEvent(record);
+  const eventJson = JSON.stringify(event);
+  raw
+    .prepare(
+      `INSERT INTO sandbox_security_audit_events(
+        event_id, event_type, visibility_subject_id,
+        authorization_scope_id, capability_id, occurred_at, event_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      event.event_id,
+      event.event_type,
+      event.subject_id,
+      event.authorization_scope_id,
+      event.capability_id,
+      event.occurred_at,
+      eventJson
+    );
+  raw.close();
+  return { event, eventJson };
+}
+
+function seedMigrationRowsFixture(
+  fixture: Readonly<{ databasePath: string }>,
+  versions: readonly number[]
+): void {
+  const raw = new DatabaseSync(fixture.databasePath);
+  raw.exec(
+    "CREATE TABLE sandbox_security_schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+  );
+  for (const version of versions) {
+    raw
+      .prepare(
+        "INSERT INTO sandbox_security_schema_migrations(version, applied_at) VALUES (?, ?)"
+      )
+      .run(version, ISSUED_AT);
+  }
+  raw.close();
+}
+
 function closeAndRemove(
   parentPath: string,
   database: { checkpointAndClose(): void; readonly state: string } | null
@@ -180,7 +281,7 @@ function assertOpenRejected(input: Readonly<{
   );
 }
 
-test("REQ-SBX-GENERAL-003 opens a mode-0600 WAL database with exact v1 tables", (t) => {
+test("REQ-SBX-GENERAL-003 opens a mode-0600 WAL database with exact v2 tables", (t) => {
   assert.equal(typeof boundary.openSandboxSecuritySqliteDatabase, "function");
   const fixture = createPrivateDatabaseFixture();
   const database = openDatabase(fixture, t);
@@ -211,6 +312,246 @@ test("REQ-SBX-GENERAL-003 opens a mode-0600 WAL database with exact v1 tables", 
       "sandbox_security_schema_migrations"
     ]
   );
+});
+
+test("REQ-SBX-GENERAL-004 migrates a v1 fixture to schema v2 without rewriting legacy rows", (t) => {
+  const fixture = createPrivateDatabaseFixture();
+  const legacy = seedV1Fixture(fixture);
+  const database = openDatabase(fixture, t);
+
+  assert.equal(SANDBOX_SECURITY_SCHEMA_VERSION, 2);
+  assert.deepEqual(
+    database.read((sqlite) =>
+      sqlite
+        .prepare(
+          "SELECT version FROM sandbox_security_schema_migrations ORDER BY version"
+        )
+        .all()
+        .map((row) => ({ version: (row as { version: number }).version }))
+    ),
+    [{ version: 1 }, { version: 2 }]
+  );
+  const tableSql = database.read((sqlite) =>
+    (
+      sqlite
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sandbox_security_audit_events'"
+        )
+        .get() as { sql: string }
+    ).sql
+  );
+  assert.ok(tableSql.includes("event_schema TEXT NOT NULL"));
+  assert.ok(
+    tableSql.includes("'sandbox-security-enforcement-audit-event.v1'")
+  );
+  const scopeSql = database.read((sqlite) =>
+    (
+      sqlite
+        .prepare(
+          "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sandbox_security_capability_scopes'"
+        )
+        .get() as { sql: string }
+    ).sql
+  );
+  assert.ok(scopeSql.includes("'sandbox_security:enforcement:audit:write'"));
+
+  const legacyRow = {
+    ...(database.read((sqlite) =>
+      sqlite
+        .prepare(
+          `SELECT event_schema, event_id, event_type, visibility_subject_id,
+            authorization_scope_id, capability_id, occurred_at, event_json
+           FROM sandbox_security_audit_events WHERE event_id = ?`
+        )
+        .get(legacy.event.event_id)
+    ) as Record<string, unknown>)
+  };
+  assert.deepEqual(legacyRow, {
+    event_schema: "sandbox-security-audit-event.v1",
+    event_id: legacy.event.event_id,
+    event_type: legacy.event.event_type,
+    visibility_subject_id: legacy.event.subject_id,
+    authorization_scope_id: legacy.event.authorization_scope_id,
+    capability_id: legacy.event.capability_id,
+    occurred_at: legacy.event.occurred_at,
+    event_json: legacy.eventJson
+  });
+  assert.deepEqual(
+    database.read((sqlite) =>
+      sqlite
+        .prepare("PRAGMA foreign_key_check")
+        .all()
+    ),
+    []
+  );
+  assert.equal(
+    database.read((sqlite) => sqlite.prepare("PRAGMA foreign_keys").get()!.foreign_keys),
+    1
+  );
+});
+
+test("REQ-SBX-GENERAL-004 rerunning a validated schema v2 database is a no-op", (t) => {
+  const fixture = createPrivateDatabaseFixture();
+  seedV1Fixture(fixture);
+  const first = boundary.openSandboxSecuritySqliteDatabase!({
+    path: fixture.databasePath,
+    deployment_key_id: FIXED_DEPLOYMENT_KEY_ID,
+    now: () => ISSUED_AT
+  });
+  const snapshot = first.read((sqlite) => ({
+    migrations: sqlite
+      .prepare("SELECT version, applied_at FROM sandbox_security_schema_migrations ORDER BY version")
+      .all()
+      .map((row) => ({
+        version: (row as { version: number }).version,
+        applied_at: (row as { applied_at: string }).applied_at
+      })),
+    auditSql: sqlite
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sandbox_security_audit_events'")
+      .get(),
+    scopeSql: sqlite
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sandbox_security_capability_scopes'")
+      .get()
+  }));
+  assert.deepEqual(snapshot.migrations, [
+    { version: 1, applied_at: ISSUED_AT },
+    { version: 2, applied_at: ISSUED_AT }
+  ]);
+  assert.match(
+    (snapshot.auditSql as { sql: string }).sql,
+    /event_schema TEXT NOT NULL/
+  );
+  first.checkpointAndClose();
+
+  const second = boundary.openSandboxSecuritySqliteDatabase!({
+    path: fixture.databasePath,
+    deployment_key_id: FIXED_DEPLOYMENT_KEY_ID,
+    now: () => "2026-08-06T00:00:00.000Z"
+  });
+  t.after(() => closeAndRemove(fixture.parentPath, second));
+  assert.deepEqual(
+    second.read((sqlite) => ({
+      migrations: sqlite
+        .prepare("SELECT version, applied_at FROM sandbox_security_schema_migrations ORDER BY version")
+        .all()
+        .map((row) => ({
+          version: (row as { version: number }).version,
+          applied_at: (row as { applied_at: string }).applied_at
+        })),
+      auditSql: sqlite
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sandbox_security_audit_events'")
+        .get(),
+      scopeSql: sqlite
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sandbox_security_capability_scopes'")
+        .get()
+    })),
+    snapshot
+  );
+});
+
+test("REQ-SBX-GENERAL-004 rejects unknown, drifted, and partial schema versions before mutation", (t) => {
+  const unknown = createPrivateDatabaseFixture();
+  seedMigrationRowsFixture(unknown, [3]);
+  t.after(() => closeAndRemove(unknown.parentPath, null));
+  assertOpenRejected({ path: unknown.databasePath });
+
+  const drifted = createPrivateDatabaseFixture();
+  seedV1Fixture(drifted);
+  const driftedDb = new DatabaseSync(drifted.databasePath);
+  driftedDb.exec(
+    "PRAGMA writable_schema=ON; UPDATE sqlite_master SET sql=replace(sql, 'length(subject_id) BETWEEN 1 AND 64', 'length(subject_id) BETWEEN 1 AND 63') WHERE type='table' AND name='sandbox_security_capabilities'"
+  );
+  driftedDb.close();
+  t.after(() => closeAndRemove(drifted.parentPath, null));
+  assertOpenRejected({ path: drifted.databasePath });
+  const driftedCheck = new DatabaseSync(drifted.databasePath);
+  assert.deepEqual(
+    driftedCheck
+      .prepare("SELECT version FROM sandbox_security_schema_migrations ORDER BY version")
+      .all()
+      .map((row) => ({ version: (row as { version: number }).version })),
+    [{ version: 1 }]
+  );
+  driftedCheck.close();
+
+  const partial = createPrivateDatabaseFixture();
+  seedV1Fixture(partial);
+  const partialDb = new DatabaseSync(partial.databasePath);
+  partialDb
+    .prepare(
+      "INSERT INTO sandbox_security_schema_migrations(version, applied_at) VALUES (?, ?)"
+    )
+    .run(2, ISSUED_AT);
+  partialDb.close();
+  t.after(() => closeAndRemove(partial.parentPath, null));
+  assertOpenRejected({ path: partial.databasePath });
+});
+
+test("REQ-SBX-GENERAL-004 rolls back a v1-to-v2 copy failure without mutating the v1 fixture", (t) => {
+  const fixture = createPrivateDatabaseFixture();
+  const legacy = seedV1Fixture(fixture, { orphanAudit: true });
+  t.after(() => closeAndRemove(fixture.parentPath, null));
+
+  assertOpenRejected({ path: fixture.databasePath });
+  const afterFailure = new DatabaseSync(fixture.databasePath);
+  assert.deepEqual(
+    afterFailure
+      .prepare("SELECT version FROM sandbox_security_schema_migrations ORDER BY version")
+      .all()
+      .map((row) => ({ version: (row as { version: number }).version })),
+    [{ version: 1 }]
+  );
+  assert.equal(
+    (
+      afterFailure
+        .prepare("PRAGMA table_info(sandbox_security_audit_events)")
+        .all() as Array<{ name: string }>
+    ).some((column) => column.name === "event_schema"),
+    false
+  );
+  assert.equal(
+    (
+      afterFailure
+        .prepare("SELECT event_json FROM sandbox_security_audit_events WHERE event_id = ?")
+        .get(legacy.event.event_id) as { event_json: string }
+    ).event_json,
+    legacy.eventJson
+  );
+  afterFailure.close();
+});
+
+test("REQ-SBX-GENERAL-004 rejects an existing schema v2 foreign-key violation on startup", (t) => {
+  const fixture = createPrivateDatabaseFixture();
+  const initial = boundary.openSandboxSecuritySqliteDatabase!({
+    path: fixture.databasePath,
+    deployment_key_id: FIXED_DEPLOYMENT_KEY_ID,
+    now: () => ISSUED_AT
+  });
+  initial.checkpointAndClose();
+
+  const tampered = new DatabaseSync(fixture.databasePath);
+  tampered.exec("PRAGMA foreign_keys = OFF");
+  tampered
+    .prepare(
+      "INSERT INTO sandbox_security_capability_scopes(capability_id, scope) VALUES (?, ?)"
+    )
+    .run("capability:missing", "sandbox_security:evaluate");
+  tampered.close();
+  t.after(() => closeAndRemove(fixture.parentPath, null));
+
+  let reopened: { checkpointAndClose(): void } | null = null;
+  let rejected = false;
+  try {
+    reopened = boundary.openSandboxSecuritySqliteDatabase!({
+      path: fixture.databasePath,
+      deployment_key_id: FIXED_DEPLOYMENT_KEY_ID,
+      now: () => ISSUED_AT
+    });
+  } catch {
+    rejected = true;
+  }
+  assert.equal(rejected, true);
+  if (reopened !== null) reopened.checkpointAndClose();
 });
 
 test("REQ-SBX-GENERAL-003 rejects relative paths and unsafe parents", (t) => {
@@ -381,10 +722,10 @@ test("REQ-SBX-GENERAL-003 rolls back a failed fresh migration and can reopen cle
   assert.equal(
     database.read((db) =>
       db
-        .prepare("SELECT version FROM sandbox_security_schema_migrations")
+        .prepare("SELECT version FROM sandbox_security_schema_migrations ORDER BY version DESC LIMIT 1")
         .get()!.version
     ),
-    1
+    2
   );
 });
 
@@ -570,7 +911,10 @@ test("REQ-SBX-GENERAL-003 exposes exact v1 indexes and deployment metadata", (t)
         version: (row as { version: number }).version,
         applied_at: (row as { applied_at: string }).applied_at
       })),
-    [{ version: 1, applied_at: "2026-08-05T00:00:00.000Z" }]
+    [
+      { version: 1, applied_at: "2026-08-05T00:00:00.000Z" },
+      { version: 2, applied_at: "2026-08-05T00:00:00.000Z" }
+    ]
   );
   assert.deepEqual(
     database
