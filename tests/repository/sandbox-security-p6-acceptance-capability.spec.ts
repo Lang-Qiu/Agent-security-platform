@@ -24,6 +24,10 @@ function benchmarkFile(name: string): string {
   return readFileSync(resolve(BENCHMARK_ROOT, name), "utf8");
 }
 
+function repositoryFile(relativePath: string): string {
+  return readFileSync(resolve(REPO_ROOT, relativePath), "utf8");
+}
+
 function importSpecifiers(name: string): readonly string[] {
   const text = benchmarkFile(name);
   const sourceFile = ts.createSourceFile(
@@ -187,6 +191,23 @@ test("REQ-SBX-GENERAL-002 capture candidate module stays production-neutral", ()
   ]);
 });
 
+test("REQ-SBX-GENERAL-002 acceptance gates retain v2 retry sequences and fail-closed policy", () => {
+  const capture = benchmarkFile("capture-live.ts");
+  const replay = benchmarkFile("replay-hermetic.ts");
+  const runbook = repositoryFile(
+    "docs/superpowers/2026-07-26-p6-live-acceptance-operator-runbook.md"
+  );
+
+  assert.match(capture, /sandbox-security-benchmark-candidate-cassette\.v2/u);
+  assert.match(capture, /assertSandboxSecurityBenchmarkAcceptedProviderOutcomes/u);
+  assert.match(replay, /sandbox-security-hermetic-replay-input\.v2/u);
+  assert.match(replay, /validateAttemptSequence/u);
+  assert.match(runbook, /P6 retry amendment/u);
+  assert.match(runbook, /exactly one retry/u);
+  assert.match(runbook, /connection_failed/u);
+  assert.match(runbook, /readiness.*no retry/is);
+});
+
 test("REQ-SBX-GENERAL-002 authority never spreads its own environment into workers", () => {
   const source = benchmarkFile("accept-live.ts");
   // The authority must not inherit its own process environment into any worker;
@@ -230,6 +251,25 @@ test("REQ-SBX-GENERAL-002 sealer re-verifies sealed artifacts against the signed
   assert.match(source, /sealed_candidate_binding_mismatch/u);
   assert.match(source, /sealed_report_binding_mismatch/u);
   assert.match(source, /sealed_manifest_binding_mismatch/u);
+});
+
+test("REQ-SBX-GENERAL-002 live P6 and hermetic replay use the fixed complete-run policy", () => {
+  assert.match(
+    benchmarkFile("evaluate-live-worker.ts"),
+    /report\.decided !== FIXTURE_COUNT/u
+  );
+  assert.match(
+    benchmarkFile("seal-live-worker.ts"),
+    /sealSandboxSecurityCompleteRunCaptureWithReceiptChain/u
+  );
+  assert.match(
+    benchmarkFile("replay-hermetic.ts"),
+    /validateCompleteSandboxSecurityLiveEvidence/u
+  );
+  assert.doesNotMatch(
+    benchmarkFile("replay-hermetic.ts"),
+    /accepted_metrics\.accepted !== true/u
+  );
 });
 
 test("REQ-SBX-GENERAL-002 authority binds the prepare and evaluation chain links", () => {

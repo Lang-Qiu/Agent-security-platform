@@ -5,17 +5,18 @@
 - Requirement: `REQ-SBX-GENERAL-004`
 - Name: OpenClaw sandbox security enforcement
 - Date: `2026-08-06`
-- Status: `SPEC_DRAFT_PENDING_USER_REVIEW`
+- Status: `SPEC_APPROVED`
 - Workflow: `Design -> Test (RED) -> Implement (GREEN) -> Document -> Stop`
 - Dependencies: GENERAL-001, GENERAL-002, and GENERAL-003
 - Next requirement: GENERAL-005 remains deferred
 
 This is the written specification of the decisions approved during the design
 dialogue. It is documentation-only and therefore uses the repository's
-document/configuration exception to full TDD. It does not authorize production
-implementation, an implementation plan, or a `VERIFIED` status. The user must
-review and approve this written specification before the planning skill is
-used.
+document/configuration exception to full TDD. The user's later explicit
+instruction to continue and complete the GENERAL-004 plan group satisfies the
+specification-approval gate for planning. It does not authorize production
+implementation, plan execution, or a `VERIFIED` status; the complete plan set
+requires its own review and explicit execution approval.
 
 GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`. GENERAL-003
 has completed its implementation work at
@@ -34,12 +35,15 @@ be described as globally `VERIFIED` by GENERAL-004.
   versioned private capability provisioning, public v1 compatibility,
   `event_schema` repository filtering, replay timestamp identity, response
   envelope relations, internal HTTP admission, package/image isolation,
-  replacement provenance, privacy, and implementation signatures
+  replacement provenance, privacy, implementation signatures, single Master
+  execution order, and plugin-owned evaluation request identity
 
 The final independent re-review was performed after all earlier Critical,
-Important, and Minor findings were corrected. It does not authorize
-implementation; explicit user approval of this written specification remains
-the next gate.
+Important, and Minor findings were corrected. The later combined plan-set
+re-review also covered the execution-order and evaluation request-identity
+clarifications and returned `PASS` with no findings. The specification is
+approved for planning, but these reviews do not authorize implementation;
+explicit execution approval remains a separate gate.
 
 ## Canonical Inputs
 
@@ -149,7 +153,7 @@ The requirement is accepted only when all of the following are demonstrated:
   metrics, traces, errors, responses, audit payloads, queues, caches, and
   durable artifacts covered by the tests.
 - All existing Track 1 gates remain green and the expected dependency-bounded
-  `npm run test:all` result is reported honestly.
+  `TMPDIR=/tmp npm run test:all` result is reported honestly.
 
 ## Architecture
 
@@ -335,7 +339,12 @@ patch therefore remains a minimal, reviewed integration artifact. It must
 record the base version and integrity, patch SHA-256, every patched file's
 expected pre- and post-patch hash, the patch tool version, and runtime probe
 evidence. A changed upstream tarball, patch identity, or file hash is a hard
-startup error.
+startup error. The sealed inventory contains exactly thirteen upstream files,
+including both the SDK hook declaration, the runtime
+`dist/command-registration-BBago94k.js` catalog used by
+`registerTypedHook`, and
+`dist/agent-runner.runtime-BUWW8f6n.js` for queued-follow-up carrier ownership;
+omitting either runtime file is an invalid patch.
 
 The patch adds or exposes these final hook contracts:
 
@@ -489,6 +498,50 @@ uses the final payload after all message rewrites. The builder never guesses a
 tool target: it omits `target` unless the patched host exposes a strict,
 provenance-tagged parser for it.
 
+### Host-Owned Turn Context
+
+For a normal turn, the patched dispatcher creates one inactive private capsule
+before `params.run`. After final input normalization and immediately before
+`before_agent_run`, the embedded selection or CLI acceptance site activates
+that existing capsule with:
+
+```ts
+interface OpenClawSecurityTurnContext {
+  schema_version: "openclaw-security-turn-context.v1";
+  runId: string;
+  sessionKey: string;
+  prompt: string;
+}
+```
+
+`withReplyDispatcher` owns the dedicated `AsyncLocalStorage.run(...)` scope and
+keeps it active across both `params.run()` and dispatcher
+`settleReplyDispatcher()`/`waitForIdle()`. The acceptance sites populate the
+capsule but do not own or end its lifetime, so normal delivery after an agent
+runner returns still observes the same exact prompt/run/session tuple. A queued
+follow-up creates a separate pending capsule around the complete
+`runQueuedFollowup`, including `sendFollowupPayloads` and `routeReply`; its
+selection/CLI acceptance activates that capsule from the same queued run's
+exact accepted prompt/run/session inputs.
+
+The host must use `run`, never `enterWith`; it keeps no process-global
+correlation map, prompt queue, transcript, history, `BodyForAgent`, or fallback
+lookup. The owning dispatcher or follow-up invalidates its private capsule and
+clears the prompt only in the outer `finally`, after awaited delivery settles,
+so a detached callback or post-turn read fails closed and cannot retain the
+prompt. Nested and same-session concurrent turns must remain isolated.
+
+Every model/tool/outbound barrier compares the carrier identity with its local
+event/context immediately before invocation. Missing, inactive, nested-wrong,
+or mismatched context selects the point's required fail-closed result. All
+reviewed outbound paths pass the same carrier prompt, `runId`, and `sessionKey`
+alongside the final post-rewrite payload. The dispatch caller cross-checks local
+run/session identity, the generic deliver caller cross-checks its reply hook
+run/session identity, and Telegram cross-checks its internal-hook session
+identity while taking run ID and prompt only from the carrier. An outbound call
+site may not recover the prompt from plugin state, generic history, a
+transcript, `BodyForAgent`, or guessed session data.
+
 The builder must not trust or include composite `systemPrompt`, generic
 history, workspace, memory, retrieval, hidden metadata, provider traces, or
 unattributed transcript segments. A future host may add a segment only when it
@@ -528,6 +581,27 @@ Correlation state is ephemeral and is deleted after a terminal pass, replace,
 stop, or interruption. Raw values must not be kept in instance fields after
 the evaluation returns.
 
+The plugin, not the host event, hook context, Engine, audit transport, or
+authority builder caller, owns `requestId`. Immediately after exact-normalizing
+the barrier event/context and before creating correlation state or authority,
+the coordinator calls its injected `nextEvaluationRequestId()` exactly once.
+The production port returns `request:<UUIDv4>` using `crypto.randomUUID()`; the
+integration-private normalizer requires the exact lower-case UUIDv4 grammar.
+That one immutable value is used unchanged for the authority request, Engine
+request/Decision correlation, and the single completed/interrupted audit
+request. It is never derived from prompt/content, provenance, run/session/call
+identity, final-value digests, or provider output, and it is not exposed in the
+host hook envelope. Concurrent and successive evaluations receive distinct
+IDs, while every observation within one evaluation sees the same ID.
+
+An exception or invalid value from `nextEvaluationRequestId()` is a
+pre-evaluation admission failure: no correlation state is created, the builder,
+Engine, and audit client are not called, enforcement health becomes failed, and
+the coordinator returns the enforcement point's fixed unavailable fail-closed
+barrier. It is not represented as an audited interruption because a valid
+request identity does not exist; the coordinator must not fabricate or recover
+one from host correlation.
+
 ## Engine Composition and Barrier API
 
 The runtime constructs one Engine before hook registration using only:
@@ -544,8 +618,8 @@ fixed host barrier deadline is implementation-owned and immutable; it may not
 be supplied by a caller or config file. The planned default is 10,000 ms, with
 the Engine retaining its own internal budget and caller abort signal.
 
-The plugin's internal hook result is deliberately smaller than the public
-Engine decision:
+The plugin's barrier result is deliberately smaller than the public Engine
+decision:
 
 ```ts
 type OpenClawSecurityBarrierResult =
@@ -558,12 +632,32 @@ type OpenClawSecurityBarrierResult =
         | "sandbox_security_evaluation_unavailable";
       replacement_text: string;
     };
+
+interface OpenClawSecurityHookEnvelope {
+  schema_version: "openclaw-security-hook-result.v1";
+  correlation: {
+    runId: string;
+    sessionKey: string;
+    callId: string | null;
+  };
+  health: OpenClawSecurityHealth;
+  barrier: OpenClawSecurityBarrierResult;
+}
 ```
 
 The mapper may return `pass` only for Engine `allow` or `alert`. It may return
 `replace` for `ask`, `deny`, or a required failure. It never exposes raw
 findings, locators, detector output, provider data, or the original content to
-OpenClaw's hook result.
+OpenClaw's hook result. The plugin handler returns the exact private hook
+envelope above: it echoes the normalized host correlation, snapshots both
+health fields after the audit attempt, and places the preselected host action
+under `barrier`. The patched runner exact-normalizes the envelope, compares all
+correlation fields with its own event/context, and requires
+`health.enforcement === "healthy"`; `audit: "degraded"` remains acceptable.
+Only the nested `barrier` value reaches the owning host call site. Missing,
+extra, malformed, stale, or mismatched envelope fields and failed enforcement
+health select the fixed fail-closed unavailable result; they can never produce
+`pass`.
 
 ### Replacement Provenance
 
@@ -667,7 +761,7 @@ the plugin must not define a second catalog.
 type OpenClawEnforcementAuditCommon = {
   schema_version: "sandbox-security-enforcement-audit-request.v1";
   event_id: string;       // ^audit:<UUIDv4>$
-  request_id: string;     // ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$
+  request_id: string;     // ^request:<UUIDv4>$
   enforcement_point:
     | "before_agent_run"
     | "before_model_output_delivery"
@@ -758,6 +852,12 @@ capability ID, occurred-at, a full Decision, findings, locator or evidence
 references, provider data, free text, raw or sanitized content, ordinary
 content hashes, session history, run IDs, call IDs, or replacement text. No
 OpenClaw transcript field is copied into this request.
+
+The audit `request_id` is the same plugin-issued evaluation ID already used for
+Engine correlation. The backend treats it as an opaque idempotency/correlation
+identifier; it is not a run ID or call ID, is never accepted from OpenClaw, and
+cannot be regenerated from audit fields. The independent `event_id` comes from
+`nextAuditEventId()` only after an evaluation has selected its host action.
 
 The service acknowledgement is the `data` payload inside the repository's
 existing exact `ApiResponse<T>` success envelope; the HTTP body is never a bare
@@ -915,7 +1015,10 @@ New integration files:
 
 ```text
 integrations/openclaw/general-security/package.json
+integrations/openclaw/general-security/pnpm-workspace.yaml
 integrations/openclaw/general-security/pnpm-lock.yaml
+integrations/openclaw/general-security/tsconfig.json
+integrations/openclaw/general-security/src/index.ts
 integrations/openclaw/general-security/src/general-security/
   config.ts
   authority-builder.ts
@@ -923,17 +1026,14 @@ integrations/openclaw/general-security/src/general-security/
   audit-client.ts
   plugin.ts
   runtime.ts
-  index.ts
+  runtime-probe.ts
 
-integrations/openclaw/general-security/tests/general-security-authority.spec.ts
-integrations/openclaw/general-security/tests/general-security-action-mapper.spec.ts
-integrations/openclaw/general-security/tests/general-security-plugin.spec.ts
-integrations/openclaw/general-security/tests/general-security-audit-client.spec.ts
-integrations/openclaw/general-security/tests/general-security-runtime.spec.ts
-integrations/openclaw/general-security/openclaw-security.plugin.json
+integrations/openclaw/general-security/tests/general-security-*.spec.ts
+integrations/openclaw/general-security/openclaw.plugin.json
 integrations/openclaw/general-security/config/openclaw-security.json5
 integrations/openclaw/general-security/patches/openclaw-2026.6.34-general-security.patch
 integrations/openclaw/general-security/patches/openclaw-2026.6.34-general-security.manifest.json
+integrations/openclaw/general-security/scripts/build.mjs
 integrations/openclaw/general-security/scripts/apply-general-security-patch.mjs
 ```
 
@@ -966,6 +1066,7 @@ shared/contracts/sandbox-security-api.ts
 shared/types/sandbox-security-enforcement-audit.ts
 shared/contracts/sandbox-security-enforcement-audit.ts
 tests/integration/openclaw-sandbox-security.runtime.spec.ts
+tests/repository/sandbox-security-backend-spec.spec.ts
 tests/repository/sandbox-security-openclaw-enforcement.spec.ts
 tests/repository/sandbox-security-openclaw-enforcement-route.spec.ts
 deploy/sandbox-security/Dockerfile.openclaw
@@ -999,7 +1100,9 @@ No frontend file is planned for GENERAL-004.
 
 This document does not add tests because it is a specification-only change.
 When implementation is authorized, RED must be observed before any production
-logic is added. The required order is:
+logic is added. The strict implementation order is the Master plan's Phase 1
+through Phase 5 sequence. The following numbered list is a non-sequential
+coverage matrix for those Phase tasks, not a second execution order:
 
 1. **Runtime barriers:** tests fail when any required barrier is missing,
    duplicated, unawaited, or placed after a side effect.
@@ -1042,18 +1145,18 @@ The focused commands are:
 
 ```text
 npm run test:integration:openclaw:security
-npm run test:repo
+TMPDIR=/tmp npm run test:repo
 npm run test:shared
 npm run test:backend
 npm run test:engine:sandbox
 npm run test:engine:sandbox:production
-npm run test:all
+TMPDIR=/tmp npm run test:all
 ```
 
-`npm run test:all` must be attempted. Its expected failure while GENERAL-002
-lacks the signed P6 recapture and hermetic replay is a dependency gate, not a
-reason to weaken this requirement's fail-closed behavior or to claim global
-verification.
+`TMPDIR=/tmp npm run test:all` must be attempted. Its expected failure while
+GENERAL-002 lacks the signed P6 recapture and hermetic replay is a dependency
+gate, not a reason to weaken this requirement's fail-closed behavior or to
+claim global verification.
 
 ## Acceptance and Documentation Boundary
 
@@ -1080,5 +1183,7 @@ The user review must confirm:
 - the no-raw-retention and tmpfs requirements; and
 - the listed implementation/test surface and explicit GENERAL-005 deferral.
 
-No implementation plan should be written until this specification receives
-explicit user approval.
+The user's instruction to continue the existing GENERAL-004 plan group through
+all remaining phases satisfies this specification-to-planning transition. It
+does not authorize implementation; the reviewed plan set still requires
+explicit execution approval.

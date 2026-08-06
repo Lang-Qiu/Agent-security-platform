@@ -1,5 +1,24 @@
 # P6 Live Acceptance — Operator Runbook
 
+> P6 retry amendment (2026-08-05): A fresh P6 run permits exactly one retry
+> only after a first-attempt exact `transport_error:connection_failed` outcome,
+> with no more than two sequential attempts per qualification, local, or Judge
+> provider slot. Readiness has no retry, and all other failures have no retry.
+> Historical v4-v8 no-retry records apply only to those historical roots. Current
+> v2 capture/cassette/replay/evidence artifacts preserve and hash the full
+> ordered attempt sequences. A final non-response, final failure, or partial
+> progress remains fail-closed and cannot be resumed, promoted, sealed, or used
+> to generate formal evidence. Use fresh disjoint roots and do not claim live
+> acceptance is complete until a fresh 300-input run, accepted seal, and
+> hermetic replay pass.
+
+> Current complete-run rule (2026-08-06): after a fresh run has all `300`
+> decision results, `decided === 300`, no infrastructure codes, and valid final
+> provider outcomes, live P6 continues to receipt, seal, and P7 even when
+> model-quality metrics miss the frozen thresholds. The actual quality boolean
+> remains in `accepted_metrics.accepted` and is never rewritten. Incomplete,
+> failed, malformed, or partially captured provider outcomes remain fail-closed.
+
 > Status (2026-08-03): the fixed four-worker P6 acceptance pipeline and the
 > approved seven-domain Judge screening amendment are implemented and
 > deterministically GREEN. The P6-only v6 local hardware compatibility
@@ -204,7 +223,7 @@ signs the capture and evaluation receipts:
    emits the content-free capture binding.
 3. `evaluate-live-worker.ts` — uncredentialed; verifies and consumes the signed
    capture receipt, joins candidate decisions with corpus truth, and emits the
-   accepted evaluation binding.
+   complete-run evaluation binding while retaining the quality metrics.
 4. `seal-live-worker.ts` — uncredentialed, no truth-read permission; verifies and
    consumes both signed receipts, publishes `capture.json`, `replay/`, and
    `seal.json`, and persists the canonical receipt chain in `receipt-chain.json`.
@@ -254,8 +273,8 @@ env -u SANDBOX_SECURITY_OLLAMA_MODEL_DIGEST \
 ```
 
 Never print environment values or worker bodies. Expected on success: Judge
-readiness, five warmed Ollama probes, 300 evaluations, accepted metrics, a signed
-seal, and empty successful worker stderr within the P6 v8 `60s` local /
+readiness, five warmed Ollama probes, 300 evaluations, complete-run acceptance,
+the retained quality metrics, a signed seal, and empty successful worker stderr within the P6 v8 `60s` local /
 `300s` Judge / `360s` work profile. Before spending Judge usage, verify all 300
 inputs against the exact `sandbox-security-ollama-local-prompt.v2` request and
 strict production parser; prompt v1 evidence is intentionally rejected.
@@ -264,16 +283,20 @@ For every evaluation that is not rule-short-circuited, a valid Ollama response
 must produce the exact seven-domain obligation set and the existing production
 sanitizer/protocol must send it to Judge. Ordinary production and P7 timing are
 unchanged. A missing, reordered, truncated, timed-out, or otherwise invalid
-provider outcome fails the capture; there is no retry or fallback.
+provider outcome fails the capture. Only the exact first-attempt
+`transport_error:connection_failed` outcome may be retried once; readiness and
+all other failures have no retry or fallback.
 
 All previously listed v4/v5 live-run roots remain permanently rejected. The
 current continuation instruction permits the next 300-input external-service
 run, but no run permits reuse of a rejected root, a different channel/model, or
 any admission relaxation.
 
-The v5-01 authority and roots remain consumed. The active v6 amendment changes
-the local qualification ceiling to `40000ms`; it does not alter readiness,
-provider admission, retry/fallback, or ordinary/P7 timing.
+The v5-01 authority and roots remain consumed. The current active P6 timing
+profile is v8: readiness and qualification are `40000ms`, the local slot is
+`60000ms`, the Judge slot is `300000ms`, and the work budget is `360000ms`.
+This timing profile is separate from the retry policy and does not alter
+ordinary production or P7 timing.
 
 Provider readiness is fail-closed and cold starts can consume the `40000ms`
 readiness ceiling; local qualification and warmed prewarm use a separate

@@ -818,6 +818,20 @@ test("REQ-SBX-GENERAL-002 parent releases the production capture reservation aft
   assert.equal(existsSync(join(bundle.capture_output_root, "candidate")), false);
 });
 
+test("REQ-SBX-P6-RETRY stream child accepts the parent's atomic running projection before readiness", async () => {
+  const tempBundleRoot = tempRoot("ssb-capture-bundle-stream-projection-");
+  const bundle = await prepareSandboxSecurityCaptureBundle({
+    corpus_root: COMMITTED_CORPUS_ROOT,
+    output_root: tempBundleRoot
+  });
+
+  const result = await launchSandboxSecurityCaptureChild({ bundle });
+
+  assert.equal(result.exit_code, 1);
+  assert.match(result.stderr, /missing_live_config/u);
+  assert.doesNotMatch(result.stderr, /capture_output_binding_changed/u);
+});
+
 test("REQ-SBX-GENERAL-002 permissioned capture can write a candidate with output kept write-only", async () => {
   const tempBundleRoot = tempRoot("ssb-capture-bundle-permissioned-smoke-");
   const bundle = await prepareSandboxSecurityCaptureBundle({

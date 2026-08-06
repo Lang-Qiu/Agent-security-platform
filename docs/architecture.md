@@ -980,7 +980,38 @@ the rule slot remains `100ms`. Readiness and qualification/warmed prewarm are
 slots, not retry capacity. The profile is not exported by the frozen core index
 and is not selectable through request data, environment, CLI, ordinary
 production, or P7 hermetic replay. All new P6 evidence and signed bindings
-require this exact v6 record and reject v5 and older profiles.
+require this exact v8 record and reject v7 and older profiles.
+
+### GENERAL-002 P6 retry amendment (2026-08-05)
+
+The active P6 policy permits exactly one retry per provider slot, with at most
+two sequential attempts. Retry is allowed only when the first attempt has the
+exact `transport_error:connection_failed` outcome; no other failure is
+retryable. This rule applies to qualification, local, and Judge provider
+slots. Readiness is outside the captured slot contract and has no retry.
+
+Every attempt is retained in an ordered v2 attempt sequence. The v2 capture,
+cassette, replay, candidate, receipt, seal, and evidence bindings hash the
+complete arrays, and P7 hermetic replay consumes the same sequence. A final
+non-response, final failure, partial progress, or v1 artifact is fail-closed and
+cannot be resumed, promoted, sealed, or used to generate formal evidence.
+Fresh, disjoint capture and evidence roots are required for a new run.
+
+### GENERAL-002 P6 complete-run acceptance amendment (2026-08-06)
+
+For subsequent live rounds, a run that produces all `300` decision projections
+and complete provider outcomes proceeds through the P6 acceptance chain even if
+the model-quality metrics are below the frozen benchmark thresholds. The live
+evaluator requires `decided === 300` and no infrastructure codes. It retains the
+actual quality result in `accepted_metrics.accepted` and preserves its
+canonical hash; this field is not rewritten to make the run appear quality
+passing.
+
+The fixed live sealer and P7 hermetic replay use this complete-run policy. They
+continue to require all candidate, provider-attempt, tree, receipt, privacy,
+and network-isolation bindings. The ordinary quality-gated sealer and validator
+remain unchanged for their existing callers. Incomplete decisions, provider
+failures, malformed attempts, and infrastructure failures remain fail-closed.
 
 The production Ollama adapter binds
 `sandbox-security-ollama-local-prompt.v2`. Its sole v2 addition requires every
@@ -1017,9 +1048,11 @@ normalization retains its independent `512 KiB` limit. This permits a 300-input
 aggregate cassette without relaxing any runtime request boundary.
 
 The truth-aware live evaluator writes its aggregate report, then reduces every
-rejected report or infrastructure outcome to the bounded
-`evaluation_not_accepted` stage code. Detailed threshold assertions remain an
-in-process invariant and cannot expand the worker's cross-process error frame.
+incomplete or infrastructure-failed report to the bounded
+`evaluation_not_accepted` stage code. A complete report may continue with a
+quality-failed `accepted_metrics` payload under the fixed live complete-run
+policy. Detailed threshold assertions remain an in-process invariant and
+cannot expand the worker's cross-process error frame.
 
 The public production construction is
 `createSandboxSecurityProductionEngine`; the sealed benchmark runner is not
@@ -1066,7 +1099,8 @@ document only after its hash, ordered decisions, and staging schema agree. The
 materializer still rejects partial progress and publishes `candidate/` only
 after a complete run; candidate, cassette, receipt, seal, evidence-root, and
 P7 contracts do not consume the progress document. The persistence handshake
-does not add retry, fallback, resume, or scheduling behavior.
+does not independently add retry, fallback, resume, or scheduling behavior;
+the fixed retry policy is owned by the P6 composition layer.
 
 ### Master unique ownership structure
 

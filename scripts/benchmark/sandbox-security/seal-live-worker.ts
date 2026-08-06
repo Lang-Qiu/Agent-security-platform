@@ -11,7 +11,9 @@
 import { basename, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { sealSandboxSecurityAcceptedCaptureWithReceiptChain } from "./seal.ts";
+import {
+  sealSandboxSecurityCompleteRunCaptureWithReceiptChain
+} from "./seal.ts";
 import { hashSandboxSecurityBenchmarkTree } from "./contracts.ts";
 import {
   assertSandboxSecurityLiveRootBinding,
@@ -249,7 +251,7 @@ export async function runSandboxSecuritySealWorker(input: Readonly<{
 
   const evaluationReceiptSha256 =
     hashSandboxSecurityP6AcceptanceReceipt(evaluationReceiptRaw.json);
-  const sealResult = await sealSandboxSecurityAcceptedCaptureWithReceiptChain({
+  const sealResult = await sealSandboxSecurityCompleteRunCaptureWithReceiptChain({
     corpus_root: corpusRoot,
     candidate_capture_root: candidateRoot,
     evaluation_report_path: reportPath,

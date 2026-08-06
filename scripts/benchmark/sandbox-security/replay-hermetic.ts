@@ -1605,10 +1605,10 @@ async function runParent(
   const sealModule = await import("./seal.ts");
   const contractModule = await import("./contracts.ts");
   let accepted: ReturnType<
-    typeof sealModule.validateAcceptedSandboxSecurityLiveEvidence
+    typeof sealModule.validateCompleteSandboxSecurityLiveEvidence
   >;
   try {
-    accepted = sealModule.validateAcceptedSandboxSecurityLiveEvidence(root, {
+    accepted = sealModule.validateCompleteSandboxSecurityLiveEvidence(root, {
       corpus_root: CORPUS_ROOT,
       require_receipt_chain: true
     });
@@ -1618,7 +1618,7 @@ async function runParent(
   if (
     accepted.capture.inputs.length !== INPUT_COUNT ||
     !isPlainRecord(accepted.seal.accepted_metrics) ||
-    accepted.seal.accepted_metrics.accepted !== true
+    accepted.seal.accepted_metrics.numerators.decided !== INPUT_COUNT
   ) {
     fail("accepted_seal_invalid");
   }

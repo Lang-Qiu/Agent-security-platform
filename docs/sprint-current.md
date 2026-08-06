@@ -10,19 +10,34 @@ OpenClaw sandbox security enforcement
 
 ## Status
 
-SPEC_DRAFT_PENDING_USER_REVIEW
+PLAN_REVIEWED_PENDING_USER_APPROVAL
 
 ## Transition Authority
 
 GENERAL-003 is complete at `IMPLEMENTED_PENDING_GLOBAL_P6_GATE`. The user
-instructed the project to begin GENERAL-004 specification writing after the
-GENERAL-003 task group was completed and accepted. The GENERAL-004 design was
-reviewed and approved section by section during the design dialogue. This
-active sprint records the written specification as awaiting explicit user
-review; it does not authorize implementation-plan writing or production code.
+instructed the project to continue the GENERAL-004 plan group after the Phase 4
+plan was written and to complete every remaining plan. That latest explicit
+instruction authorizes implementation-plan writing and supersedes the earlier
+planning hold. It does not authorize production code or plan execution.
 
-This is a documentation-only transition and is therefore exempt from the
-RED/GREEN TDD sequence. No business behavior is changed by this sprint update.
+The GENERAL-004 written specification remains approved. A fresh independent
+completion audit of the five-Phase plan found one Critical runtime-catalog gap
+and one Important outbound turn-context gap. A supplemental lifetime check then
+showed the first context correction ended before dispatcher idle and detached
+queued follow-up delivery. The draft now patches the real native hook catalog,
+locks all thirteen carrier/caller files, keeps normal context through dispatcher
+settlement, and gives each complete queued follow-up its own scoped capsule.
+These corrections are documentation-only and are exempt from the RED/GREEN TDD
+sequence. The next full re-review found two further Important planning gaps: a
+non-sequential coverage list was mislabeled as execution order, and evaluation
+`requestId` lacked a trusted issuer/lifecycle. The draft now makes the Master
+Phase order authoritative and defines one plugin-issued `request:<UUIDv4>` per
+evaluation with fail-closed issuance. Those corrections required another
+independent re-review.
+The final independent re-review returned `PASS` with Critical `0`, Important
+`0`, and Minor `0`, confirming both findings resolved and no regression in the
+27-task/commit ledger or thirteen-file Phase 4 identity. This review does not
+authorize implementation; explicit user approval is still required.
 
 ## Canonical Inputs
 
@@ -33,6 +48,7 @@ RED/GREEN TDD sequence. No business behavior is changed by this sprint update.
 - `docs/superpowers/specs/2026-07-16-sandbox-security-production-detectors-spec.md`
 - `docs/superpowers/specs/2026-08-05-sandbox-security-backend-api-design.md`
 - `docs/superpowers/specs/2026-08-06-sandbox-security-openclaw-enforcement-design.md`
+- `docs/superpowers/plans/2026-08-06-sandbox-security-openclaw-enforcement-004-master.md`
 - `docs/architecture.md`
 - `docs/api-contract.md`
 
@@ -114,29 +130,48 @@ not permit GENERAL-002 or GENERAL-003 to claim `VERIFIED`, and GENERAL-004
 must inherit the same dependency boundary.
 
 The highest valid GENERAL-003 status is
-`IMPLEMENTED_PENDING_GLOBAL_P6_GATE`. `npm run test:all` must still be
-attempted during implementation and its expected dependency-bounded
+`IMPLEMENTED_PENDING_GLOBAL_P6_GATE`. `TMPDIR=/tmp npm run test:all` must still
+be attempted during implementation and its expected dependency-bounded
 fail-closed result reported honestly.
 
 The GENERAL-002 P6 retry amendment is implemented through Task 6
-documentation and permanent repository gates. GENERAL-002 still requires a
-fresh full 300-input P6 capture, an accepted seal and receipt chain, and a
-successful hermetic replay before any `VERIFIED` transition. This fixed P6
+documentation and permanent repository gates. The 2026-08-06 complete-run
+acceptance amendment requires a fresh full 300-input P6 capture with
+`decided === 300`, no infrastructure failure, complete provider attempt
+sequences, an accepted seal and receipt chain, and a successful hermetic replay
+before any `VERIFIED` transition. Model-quality threshold failure is retained
+in `accepted_metrics` but no longer blocks this fixed live evidence path. This
 policy does not authorize caller-configurable retry and does not change
 GENERAL-003's out-of-scope retry rule.
 
 ## Current Work
 
-- The approved written draft is now at
+- The reviewed written specification is at
   `docs/superpowers/specs/2026-08-06-sandbox-security-openclaw-enforcement-design.md`.
 - The final independent read-only specification re-review returned `PASS` with
   zero Critical, Important, or Minor findings after all earlier findings were
   corrected.
+- The complete five-Phase implementation-plan draft is indexed by
+  `docs/superpowers/plans/2026-08-06-sandbox-security-openclaw-enforcement-004-master.md`;
+  Phase 5 closes isolated deployment, tmpfs/privacy, Track 1 regression, durable
+  documentation, and dependency-bounded validation.
+- The fresh independent completion audit returned `FAIL` with Critical `1`,
+  Important `1`, and Minor `0`; its supplemental lifetime check found the first
+  outbound correction incomplete. The draft now includes the native catalog,
+  the exact thirteen-file identity, dispatcher-owned normal-turn lifetime, and
+  queued-follow-up lifetime, and awaits re-review. Every earlier repository-gate,
+  writable-temp, isolation, envelope, and package correction remains in place.
+- The subsequent full re-review confirmed those original issues resolved and
+  returned `FAIL` with Critical `0`, Important `2`, Minor `0` for conflicting
+  execution-order wording and missing trusted evaluation request-ID ownership.
+  Both were corrected before the final re-review.
+- The final independent re-review returned `PASS` with Critical `0`, Important
+  `0`, Minor `0`; both findings are resolved, all earlier findings remain
+  closed, and no new actionable issue was found.
 - No GENERAL-004 production files, tests, architecture/API implementation
   claims, or frontend files have been added.
-- The next gate is explicit user review of the written specification. Only
-  after approval may an implementation plan be written and independently
-  reviewed.
+- The next gate is explicit user approval of the reviewed plan. Implementation
+  has not begun.
 - GENERAL-003 implementation work remains complete through its phase- and
   P6-T4 review gates, bounded by the unresolved GENERAL-002 global P6 gate.
 - The P6 retry amendment remains complete through Task 6 documentation and
@@ -146,8 +181,8 @@ GENERAL-003's out-of-scope retry rule.
 
 ## Next Transition
 
-`SPEC_DRAFT_PENDING_USER_REVIEW` -> `SPEC_APPROVED_PENDING_PLAN`
+`PLAN_REVIEWED_PENDING_USER_APPROVAL` -> `PLAN_APPROVED`
 
-The transition requires the user to review the written spec and explicitly
-approve it. Until then, stop after documentation verification and do not begin
+The transition requires the user's explicit approval to execute this reviewed
+plan. Until then, stop after documentation verification and do not begin
 implementation or the next requirement.

@@ -2054,15 +2054,17 @@ The GENERAL-002 controlled live benchmark uses a production-internal
 budget, a `60000ms` local slot, and a `300000ms` Judge slot. Readiness and
 qualification/warmed prewarm are respectively `40000ms` and `40000ms`. This is
 not a public API profile or request field and does not add retry capacity.
-Candidate manifests and signed evidence require the exact v6 record and reject
-v5 and older records. Ordinary production and P7
+Candidate manifests and signed evidence require the exact v8 record and reject
+v7 and older records. Ordinary production and P7
 replay retain the fixed
 GENERAL-001 budget and `100/1000/4000ms` slots.
 
 Its sealed provider configuration requires
 `local_prompt_version: "sandbox-security-ollama-local-prompt.v2"`. The v2 prompt
 adds an exact no-duplicate-`subject_refs` instruction; the provider response is
-still validated without retry, repair, or deduplication. This is an internal
+still validated without repair or deduplication. The fixed P6 boundary permits
+only one retry after the exact first-attempt `connection_failed` transport
+outcome; this is an internal
 capture/replay binding and not a backend or frontend API field.
 
 The internal candidate decision projection also uses
@@ -2076,9 +2078,12 @@ limits; the production request contract retains its independent `512 KiB`
 boundary.
 
 The internal live evaluator worker exposes only bounded stage diagnostics. A
-report with `accepted !== true` or any infrastructure code maps to
-`sandbox_security_evaluate_worker_reject:evaluation_not_accepted`; detailed
-multi-threshold text is never reflected across the worker boundary.
+report with `decided !== 300` or any infrastructure code maps to
+`sandbox_security_evaluate_worker_reject:evaluation_not_accepted`; a complete
+300-input report may continue even when its retained `accepted_metrics.accepted`
+quality boolean is false. Detailed multi-threshold text is never reflected
+across the worker boundary. The standalone evaluator CLI remains a quality
+metrics tool and may still return its quality-failure exit code.
 
 The internal production factory is
 `createSandboxSecurityProductionEngine`. Hermetic benchmark execution is
@@ -2086,7 +2091,9 @@ invoked separately with `npm run benchmark:sandbox-security:replay`; it is not
 a backend route or a public transport/configuration contract. The explicit
 `npm run benchmark:sandbox-security:qualify:live` command is operator-only and
 is excluded from `test:all`. Replay remains fail-closed until a signed,
-validated P6 capture/evaluation receipt chain and accepted `seal.json` exist.
+validated P6 capture/evaluation receipt chain and complete-run `seal.json`
+exist; the retained quality boolean is reported separately from complete-run
+acceptance.
 The current manually accepted live assessment does not supply those artifacts,
 so it does not establish GENERAL-002 `VERIFIED` status.
 

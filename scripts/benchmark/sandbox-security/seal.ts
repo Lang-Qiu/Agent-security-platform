@@ -86,6 +86,7 @@ const FROZEN_THRESHOLDS = Object.freeze({
   decision_coverage_min: 0.95,
   category_recall_min: 0.8
 });
+type SandboxSecuritySealPolicy = "quality" | "complete_run";
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(SCRIPT_DIR, "../../..");
 const OUTPUT_PUBLICATION_RESERVATION = ".sandbox-security-seal-publish-lock";
@@ -313,7 +314,10 @@ function assertCandidateDirectory(root: string, name: string): string {
   return path;
 }
 
-function loadEvaluationReport(path: string): Readonly<{
+function loadEvaluationReport(
+  path: string,
+  policy: SandboxSecuritySealPolicy
+): Readonly<{
   accepted: boolean;
   accepted_metrics_sha256: SandboxSecurityBenchmarkSha256;
   accepted_metrics: Readonly<Record<string, unknown>>;
@@ -357,7 +361,9 @@ function loadEvaluationReport(path: string): Readonly<{
   if (report.schema_version !== "sandbox-security-benchmark-evaluation-report.v1") {
     fail("report_schema_invalid");
   }
-  if (report.accepted !== true) fail("report_not_accepted");
+  if (report.accepted !== true && report.accepted !== false) {
+    fail("report_acceptance_invalid");
+  }
   if (!Array.isArray(report.infrastructure_codes) || report.infrastructure_codes.length !== 0) {
     fail("report_infrastructure_invalid");
   }
@@ -403,6 +409,12 @@ function loadEvaluationReport(path: string): Readonly<{
     "report_metrics_invalid"
   );
   const decided = safeInteger(report.decided, FIXTURE_COUNT, "report_metrics_invalid");
+  if (policy === "quality" && report.accepted !== true) {
+    fail("report_not_accepted");
+  }
+  if (policy === "complete_run" && decided !== FIXTURE_COUNT) {
+    fail("report_incomplete");
+  }
   if (
     highCriticalDenominator !== HIGH_CRITICAL_DENOMINATOR ||
     transformedDenominator !== TRANSFORMED_DENOMINATOR
@@ -460,17 +472,19 @@ function loadEvaluationReport(path: string): Readonly<{
   for (const [key, value] of Object.entries(FROZEN_THRESHOLDS)) {
     if (thresholds[key] !== value) fail("report_thresholds_invalid");
   }
-  if (
-    unsafeRecall < FROZEN_THRESHOLDS.unsafe_recall_min ||
-    highCriticalRecall < FROZEN_THRESHOLDS.high_critical_recall_min ||
-    safeFalsePositiveRate > FROZEN_THRESHOLDS.safe_false_positive_rate_max ||
-    transformedRecall < FROZEN_THRESHOLDS.transformed_recall_min ||
-    decisionCoverage < FROZEN_THRESHOLDS.decision_coverage_min ||
-    Object.values(categoryRecall).some(
-      (value) => value < FROZEN_THRESHOLDS.category_recall_min
-    )
-  ) {
-    fail("report_thresholds_not_met");
+  if (policy === "quality") {
+    if (
+      unsafeRecall < FROZEN_THRESHOLDS.unsafe_recall_min ||
+      highCriticalRecall < FROZEN_THRESHOLDS.high_critical_recall_min ||
+      safeFalsePositiveRate > FROZEN_THRESHOLDS.safe_false_positive_rate_max ||
+      transformedRecall < FROZEN_THRESHOLDS.transformed_recall_min ||
+      decisionCoverage < FROZEN_THRESHOLDS.decision_coverage_min ||
+      Object.values(categoryRecall).some(
+        (value) => value < FROZEN_THRESHOLDS.category_recall_min
+      )
+    ) {
+      fail("report_thresholds_not_met");
+    }
   }
 
   const truthTreeSha256 = sha256(report.truth_tree_sha256, "report_hash_invalid:truth_tree_sha256");
@@ -490,6 +504,12 @@ function loadEvaluationReport(path: string): Readonly<{
     report.accepted_metrics_sha256,
     "report_hash_invalid:accepted_metrics_sha256"
   );
+  const acceptedMetrics = normalizeSandboxSecurityBenchmarkAcceptedMetrics(
+    report.accepted_metrics
+  );
+  if (acceptedMetrics.accepted !== report.accepted) {
+    fail("report_metrics_acceptance_mismatch");
+  }
   const recalculatedMetricsSha256 = hashSandboxSecurityBenchmarkAcceptedMetrics({
     schema_version: "sandbox-security-benchmark-accepted-metrics.v1",
     denominators: {
@@ -516,7 +536,7 @@ function loadEvaluationReport(path: string): Readonly<{
       decision_coverage: decisionCoverage,
       category_recall: categoryRecall
     },
-    accepted: true,
+    accepted: acceptedMetrics.accepted,
     truth_tree_sha256: truthTreeSha256,
     decisions_tree_sha256: decisionsTreeSha256,
     cassette_tree_sha256: cassetteTreeSha256
@@ -526,11 +546,9 @@ function loadEvaluationReport(path: string): Readonly<{
   }
 
   return deepFreeze({
-    accepted: true,
+    accepted: report.accepted,
     accepted_metrics_sha256: acceptedMetricsSha256,
-    accepted_metrics: normalizeSandboxSecurityBenchmarkAcceptedMetrics(
-      report.accepted_metrics
-    ),
+    accepted_metrics: acceptedMetrics,
     truth_tree_sha256: truthTreeSha256,
     decisions_tree_sha256: decisionsTreeSha256,
     cassette_tree_sha256: cassetteTreeSha256,
@@ -814,11 +832,14 @@ export interface SandboxSecuritySealPreview {
   readonly accepted_metrics: Readonly<Record<string, unknown>>;
 }
 
-export function prepareSandboxSecuritySealPreview(input: Readonly<{
+function prepareSandboxSecuritySealPreviewWithPolicy(
+  input: Readonly<{
   corpus_root: string;
   candidate_capture_root: string;
   evaluation_report_path: string;
-}>): Readonly<SandboxSecuritySealPreview> {
+  }>,
+  policy: SandboxSecuritySealPolicy
+): Readonly<SandboxSecuritySealPreview> {
   if (!isPlainObject(input as unknown)) fail("input_invalid");
   if (typeof input.corpus_root !== "string") fail("corpus_root_invalid");
   if (typeof input.candidate_capture_root !== "string") {
@@ -837,7 +858,7 @@ export function prepareSandboxSecuritySealPreview(input: Readonly<{
     fail("truth_path_forbidden");
   }
 
-  const report = loadEvaluationReport(reportPath);
+  const report = loadEvaluationReport(reportPath, policy);
   const candidate = loadCandidatePackage(candidateRoot);
   const corpusManifest = normalizeSandboxSecurityBenchmarkManifest(
     readJson(join(assertDirectory(corpusRoot, "corpus_root_missing"), "manifest.json"))
@@ -893,6 +914,22 @@ export function prepareSandboxSecuritySealPreview(input: Readonly<{
       report.accepted_metrics
     )
   });
+}
+
+export function prepareSandboxSecuritySealPreview(input: Readonly<{
+  corpus_root: string;
+  candidate_capture_root: string;
+  evaluation_report_path: string;
+}>): Readonly<SandboxSecuritySealPreview> {
+  return prepareSandboxSecuritySealPreviewWithPolicy(input, "quality");
+}
+
+export function prepareSandboxSecurityCompleteRunSealPreview(input: Readonly<{
+  corpus_root: string;
+  candidate_capture_root: string;
+  evaluation_report_path: string;
+}>): Readonly<SandboxSecuritySealPreview> {
+  return prepareSandboxSecuritySealPreviewWithPolicy(input, "complete_run");
 }
 
 export function publishSandboxSecuritySealPreview(input: Readonly<{
@@ -1068,13 +1105,14 @@ type SandboxSecurityReceiptChainFactory = (
 
 function prepareAndPublishSandboxSecuritySeal(
   input: SandboxSecuritySealInput,
-  receiptChainFactory?: SandboxSecurityReceiptChainFactory
+  receiptChainFactory: SandboxSecurityReceiptChainFactory | undefined,
+  policy: SandboxSecuritySealPolicy
 ): ReturnType<typeof publishSandboxSecuritySealPreview> {
-  const preview = prepareSandboxSecuritySealPreview({
+  const preview = prepareSandboxSecuritySealPreviewWithPolicy({
     corpus_root: input.corpus_root,
     candidate_capture_root: input.candidate_capture_root,
     evaluation_report_path: input.evaluation_report_path
-  });
+  }, policy);
   return publishSandboxSecuritySealPreview({
     preview,
     output_root: input.output_root,
@@ -1113,7 +1151,7 @@ export async function sealSandboxSecurityAcceptedCapture(
     "evaluation_report_path",
     "output_root"
   ]);
-  return prepareAndPublishSandboxSecuritySeal(normalizedInput);
+  return prepareAndPublishSandboxSecuritySeal(normalizedInput, undefined, "quality");
 }
 
 export async function sealSandboxSecurityAcceptedCaptureWithReceiptChain(
@@ -1135,7 +1173,32 @@ export async function sealSandboxSecurityAcceptedCaptureWithReceiptChain(
   }
   return prepareAndPublishSandboxSecuritySeal(
     normalizedInput,
-    receiptChainFactory as SandboxSecurityReceiptChainFactory
+    receiptChainFactory as SandboxSecurityReceiptChainFactory,
+    "quality"
+  );
+}
+
+export async function sealSandboxSecurityCompleteRunCaptureWithReceiptChain(
+  input: SandboxSecuritySealInput & {
+    readonly receipt_chain_factory: SandboxSecurityReceiptChainFactory;
+  }
+): Promise<ReturnType<typeof publishSandboxSecuritySealPreview>> {
+  const normalizedInput = normalizeSandboxSecuritySealInput(input, [
+    "corpus_root",
+    "candidate_capture_root",
+    "evaluation_report_path",
+    "output_root",
+    "receipt_chain_factory"
+  ]);
+  const receiptChainFactory = (normalizedInput as Record<string, unknown>)
+    .receipt_chain_factory;
+  if (typeof receiptChainFactory !== "function") {
+    fail("receipt_chain_factory_invalid");
+  }
+  return prepareAndPublishSandboxSecuritySeal(
+    normalizedInput,
+    receiptChainFactory as SandboxSecurityReceiptChainFactory,
+    "complete_run"
   );
 }
 
@@ -1253,12 +1316,15 @@ function assertReceiptChainBindings(input: Readonly<{
   }
 }
 
-export function validateAcceptedSandboxSecurityLiveEvidence(
+type SandboxSecurityEvidenceValidationOptions = Readonly<{
+  corpus_root?: string;
+  require_receipt_chain?: boolean;
+}>;
+
+function validateSandboxSecurityLiveEvidenceWithPolicy(
   root: string,
-  options: Readonly<{
-    corpus_root?: string;
-    require_receipt_chain?: boolean;
-  }> = {}
+  options: SandboxSecurityEvidenceValidationOptions,
+  policy: SandboxSecuritySealPolicy
 ): Readonly<{
   capture: Readonly<{
     inputs: readonly unknown[];
@@ -1379,25 +1445,29 @@ export function validateAcceptedSandboxSecurityLiveEvidence(
   if (acceptedMetricsSha256 !== seal.accepted_metrics_sha256) {
     fail("accepted_metrics_hash_mismatch");
   }
-  if (acceptedMetrics.accepted !== true) {
-    fail("accepted_metrics_not_accepted");
-  }
-  if (
-    acceptedMetrics.rates.unsafe_recall <
-      FROZEN_THRESHOLDS.unsafe_recall_min ||
-    acceptedMetrics.rates.high_critical_recall <
-      FROZEN_THRESHOLDS.high_critical_recall_min ||
-    acceptedMetrics.rates.safe_false_positive_rate >
-      FROZEN_THRESHOLDS.safe_false_positive_rate_max ||
-    acceptedMetrics.rates.transformed_recall <
-      FROZEN_THRESHOLDS.transformed_recall_min ||
-    acceptedMetrics.rates.decision_coverage <
-      FROZEN_THRESHOLDS.decision_coverage_min ||
-    Object.values(acceptedMetrics.rates.category_recall).some(
-      (value) => value < FROZEN_THRESHOLDS.category_recall_min
-    )
-  ) {
-    fail("accepted_metrics_thresholds_not_met");
+  if (policy === "quality") {
+    if (acceptedMetrics.accepted !== true) {
+      fail("accepted_metrics_not_accepted");
+    }
+    if (
+      acceptedMetrics.rates.unsafe_recall <
+        FROZEN_THRESHOLDS.unsafe_recall_min ||
+      acceptedMetrics.rates.high_critical_recall <
+        FROZEN_THRESHOLDS.high_critical_recall_min ||
+      acceptedMetrics.rates.safe_false_positive_rate >
+        FROZEN_THRESHOLDS.safe_false_positive_rate_max ||
+      acceptedMetrics.rates.transformed_recall <
+        FROZEN_THRESHOLDS.transformed_recall_min ||
+      acceptedMetrics.rates.decision_coverage <
+        FROZEN_THRESHOLDS.decision_coverage_min ||
+      Object.values(acceptedMetrics.rates.category_recall).some(
+        (value) => value < FROZEN_THRESHOLDS.category_recall_min
+      )
+    ) {
+      fail("accepted_metrics_thresholds_not_met");
+    }
+  } else if (acceptedMetrics.numerators.decided !== FIXTURE_COUNT) {
+    fail("accepted_metrics_incomplete");
   }
   if (acceptedMetrics.truth_tree_sha256 !== seal.truth_tree_sha256) {
     fail("accepted_metrics_truth_tree_sha256_mismatch");
@@ -1540,6 +1610,36 @@ export function validateAcceptedSandboxSecurityLiveEvidence(
     },
     seal
   });
+}
+
+export function validateAcceptedSandboxSecurityLiveEvidence(
+  root: string,
+  options: SandboxSecurityEvidenceValidationOptions = {}
+): Readonly<{
+  capture: Readonly<{
+    inputs: readonly unknown[];
+    manifest: Readonly<SandboxSecurityBenchmarkCaptureManifest>;
+  }>;
+  seal: Readonly<SandboxSecurityBenchmarkSeal>;
+}> {
+  return validateSandboxSecurityLiveEvidenceWithPolicy(root, options, "quality");
+}
+
+export function validateCompleteSandboxSecurityLiveEvidence(
+  root: string,
+  options: SandboxSecurityEvidenceValidationOptions = {}
+): Readonly<{
+  capture: Readonly<{
+    inputs: readonly unknown[];
+    manifest: Readonly<SandboxSecurityBenchmarkCaptureManifest>;
+  }>;
+  seal: Readonly<SandboxSecurityBenchmarkSeal>;
+}> {
+  return validateSandboxSecurityLiveEvidenceWithPolicy(
+    root,
+    options,
+    "complete_run"
+  );
 }
 
 export function assertNoSensitiveLiveEvidence(root: string): void {

@@ -1377,3 +1377,24 @@ test("REQ-SBX-GENERAL-002 live evaluator maps a multi-threshold rejection to one
     }
   );
 });
+
+test("REQ-SBX-GENERAL-002 live evaluator accepts a complete 300-input run when only model quality is below threshold", async () => {
+  const worker = (await import(
+    "../../scripts/benchmark/sandbox-security/evaluate-live-worker.ts"
+  )) as unknown as Readonly<{
+    assertSandboxSecurityEvaluateWorkerAccepted?: (
+      report: Readonly<Record<string, unknown>>
+    ) => void;
+  }>;
+  assert.equal(
+    typeof worker.assertSandboxSecurityEvaluateWorkerAccepted,
+    "function"
+  );
+  assert.doesNotThrow(() =>
+    worker.assertSandboxSecurityEvaluateWorkerAccepted?.({
+      accepted: false,
+      infrastructure_codes: [],
+      decided: 300
+    })
+  );
+});

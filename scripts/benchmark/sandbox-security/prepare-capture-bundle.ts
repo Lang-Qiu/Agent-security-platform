@@ -901,7 +901,6 @@ export function buildSandboxSecurityCaptureChildCommand(
   if (
     stagingStat.isSymbolicLink() ||
     !stagingStat.isFile() ||
-    stagingStat.size !== 0n ||
     stagingStat.nlink !== 1n
   ) {
     fail("capture_bundle_reject:candidate_staging_invalid");
@@ -992,7 +991,6 @@ export async function launchSandboxSecurityCaptureChild(input: Readonly<{
     fail("capture_bundle_reject:unsupported_launch_argument");
   }
 
-  const command = buildSandboxSecurityCaptureChildCommand(input.bundle);
   const launchLock = join(input.bundle.capture_output_root, CAPTURE_LAUNCH_LOCK_NAME);
   try {
     mkdirSync(launchLock, { mode: 0o700 });
@@ -1008,6 +1006,9 @@ export async function launchSandboxSecurityCaptureChild(input: Readonly<{
     capture_output_root: input.bundle.capture_output_root,
     serialized: `${JSON.stringify(progress)}\n`
   });
+  // The parent owns the atomic progress projection. Build the child command
+  // after the initial write so the child binds to the current staging inode.
+  const command = buildSandboxSecurityCaptureChildCommand(input.bundle);
 
   let outputState: SandboxSecurityCandidateOutputState = Object.freeze({
     progress

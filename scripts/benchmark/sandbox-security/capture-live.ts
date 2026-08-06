@@ -807,20 +807,15 @@ function classifyAcceptanceBlockingProviderOutcome(
       ["ollama", unit.ollama],
       ["judge", unit.judge]
     ] as const) {
-      let blocker: string | undefined;
-      for (const outcome of attempts) {
-        if (outcome.status === "http_error") {
-          blocker = `${slot}_http_error_${outcome.http_status}`;
-        }
-        if (outcome.status === "transport_error") {
-          blocker = `${slot}_transport_error_${outcome.error_code}`;
-        }
-        if (outcome.status === "signal_termination") {
-          blocker = `${slot}_signal_termination_${outcome.termination_reason}`;
-        }
+      const finalAttempt = attempts.at(-1);
+      if (finalAttempt?.status === "http_error") {
+        return `${slot}_http_error_${finalAttempt.http_status}`;
       }
-      if (blocker !== undefined) {
-        return blocker;
+      if (finalAttempt?.status === "transport_error") {
+        return `${slot}_transport_error_${finalAttempt.error_code}`;
+      }
+      if (finalAttempt?.status === "signal_termination") {
+        return `${slot}_signal_termination_${finalAttempt.termination_reason}`;
       }
     }
     const judgeFinal = unit.judge.at(-1);
@@ -1040,7 +1035,8 @@ interface SandboxSecurityBoundCaptureOutput {
 
 function openBoundCaptureOutput(
   captureOutputRoot: string,
-  rawBinding: unknown
+  rawBinding: unknown,
+  allowInitializedFile: boolean
 ): SandboxSecurityBoundCaptureOutput {
   const binding = assertCaptureOutputBinding(rawBinding);
   const path = candidateStagingPath(captureOutputRoot);
@@ -1056,7 +1052,7 @@ function openBoundCaptureOutput(
   const stat = fstatSync(fd, { bigint: true });
   if (
     !stat.isFile() ||
-    stat.size !== 0n ||
+    (!allowInitializedFile && stat.size !== 0n) ||
     stat.nlink !== 1n ||
     captureOutputBindingFromStat(stat) !== binding
   ) {
@@ -1305,11 +1301,15 @@ export async function runSandboxSecurityLiveCapture(
     (productionProvenance
       ? fail("capture_output_binding_invalid")
       : prepareInjectableCaptureOutput(captureOutputRoot));
-  const boundOutput =
-    candidateOutput === "bound_file"
-      ? openBoundCaptureOutput(captureOutputRoot, captureOutputBinding)
-      : null;
-  let boundOutputOpen = boundOutput !== null;
+  // Validate the pre-created staging inode before readiness in both output
+  // modes. Stream mode delegates writes to the parent, but still needs the
+  // child-side binding check to reject a replaced capability.
+  const boundOutput = openBoundCaptureOutput(
+    captureOutputRoot,
+    captureOutputBinding,
+    candidateOutput === "stream"
+  );
+  let boundOutputOpen = true;
 
   async function emitOutputFrame(frame: SandboxSecurityCandidateOutputFrame): Promise<void> {
     if (outputFrameWriter === undefined) {

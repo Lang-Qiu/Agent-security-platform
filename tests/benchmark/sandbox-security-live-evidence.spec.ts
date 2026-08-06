@@ -219,6 +219,21 @@ type SealCommonModule = {
       }>;
     }>;
   }>;
+  validateCompleteSandboxSecurityLiveEvidence: (
+    root: string,
+    options?: Readonly<{
+      corpus_root?: string;
+      require_receipt_chain?: boolean;
+    }>
+  ) => Readonly<{
+    capture: Readonly<{
+      inputs: readonly unknown[];
+      manifest: Readonly<Record<string, unknown>>;
+    }>;
+    seal: Readonly<{
+      accepted_metrics: Readonly<{ accepted: boolean }>;
+    }>;
+  }>;
   assertNoSensitiveLiveEvidence: (root: string) => void;
 };
 
@@ -259,6 +274,11 @@ type SealFixtureModule = SealCommonModule & {
     input: SealFixtureInput
   ) => Promise<SealResult>;
   prepareSandboxSecuritySealPreview: (input: Readonly<{
+    corpus_root: string;
+    candidate_capture_root: string;
+    evaluation_report_path: string;
+  }>) => SealPreview;
+  prepareSandboxSecurityCompleteRunSealPreview: (input: Readonly<{
     corpus_root: string;
     candidate_capture_root: string;
     evaluation_report_path: string;
@@ -645,6 +665,23 @@ function writeAcceptedReport(input: Readonly<{
   const truthTreeSha256 = hashSandboxSecurityBenchmarkTree(
     join(COMMITTED_ROOT, "truth")
   );
+  const qualityAccepted = input.accepted ?? true;
+  const unsafeDetected = qualityAccepted ? 180 : 0;
+  const highCriticalDetected = qualityAccepted ? 60 : 0;
+  const transformedDetected = qualityAccepted ? 54 : 0;
+  const categoryDetected = Object.fromEntries(
+    [
+      "prompt_injection",
+      "jailbreak",
+      "instruction_override",
+      "privilege_escalation",
+      "sensitive_data_exposure",
+      "tool_hijacking",
+      "unsafe_side_effect",
+      "memory_poisoning",
+      "trust_boundary_violation"
+    ].map((category) => [category, qualityAccepted ? 20 : 0])
+  );
   const metricsPayload = Object.freeze({
     schema_version: "sandbox-security-benchmark-accepted-metrics.v1",
     denominators: {
@@ -656,42 +693,29 @@ function writeAcceptedReport(input: Readonly<{
       transformed: 54
     },
     numerators: {
-      unsafe_detected: 180,
-      high_critical_detected: 60,
+      unsafe_detected: unsafeDetected,
+      high_critical_detected: highCriticalDetected,
       safe_false_positives: 0,
-      transformed_detected: 54,
+      transformed_detected: transformedDetected,
       decided: 300,
-      category_detected: Object.freeze({
-        prompt_injection: 20,
-        jailbreak: 20,
-        instruction_override: 20,
-        privilege_escalation: 20,
-        sensitive_data_exposure: 20,
-        tool_hijacking: 20,
-        unsafe_side_effect: 20,
-        memory_poisoning: 20,
-        trust_boundary_violation: 20
-      })
+      category_detected: Object.freeze(categoryDetected)
     },
     rates: {
-      unsafe_recall: 1,
-      high_critical_recall: 1,
+      unsafe_recall: unsafeDetected / 180,
+      high_critical_recall: highCriticalDetected / 60,
       safe_false_positive_rate: 0,
-      transformed_recall: 1,
+      transformed_recall: transformedDetected / 54,
       decision_coverage: 1,
-      category_recall: Object.freeze({
-        prompt_injection: 1,
-        jailbreak: 1,
-        instruction_override: 1,
-        privilege_escalation: 1,
-        sensitive_data_exposure: 1,
-        tool_hijacking: 1,
-        unsafe_side_effect: 1,
-        memory_poisoning: 1,
-        trust_boundary_violation: 1
-      })
+      category_recall: Object.freeze(
+        Object.fromEntries(
+          Object.entries(categoryDetected).map(([category, detected]) => [
+            category,
+            Number(detected) / 20
+          ])
+        )
+      )
     },
-    accepted: input.accepted ?? true,
+    accepted: qualityAccepted,
     truth_tree_sha256: truthTreeSha256,
     decisions_tree_sha256: input.decisionsTreeSha256,
     cassette_tree_sha256: input.cassetteTreeSha256
@@ -707,21 +731,21 @@ function writeAcceptedReport(input: Readonly<{
       coverage: metricsPayload.denominators.coverage,
       category: metricsPayload.denominators.category
     },
-    unsafe_detected: 180,
-    unsafe_recall: 1,
-    high_critical_detected: 60,
+    unsafe_detected: unsafeDetected,
+    unsafe_recall: unsafeDetected / 180,
+    high_critical_detected: highCriticalDetected,
     high_critical_denominator: 60,
-    high_critical_recall: 1,
+    high_critical_recall: highCriticalDetected / 60,
     safe_false_positives: 0,
     safe_false_positive_rate: 0,
-    transformed_detected: 54,
+    transformed_detected: transformedDetected,
     transformed_denominator: 54,
-    transformed_recall: 1,
+    transformed_recall: transformedDetected / 54,
     decided: 300,
     decision_coverage: 1,
     category_detected: metricsPayload.numerators.category_detected,
     category_recall: metricsPayload.rates.category_recall,
-    accepted: input.accepted ?? true,
+    accepted: qualityAccepted,
     accepted_metrics_sha256: acceptedMetricsSha256,
     accepted_metrics: metricsPayload,
     truth_tree_sha256: truthTreeSha256,
@@ -1451,6 +1475,64 @@ test("REQ-SBX-GENERAL-002 sealer accepts an accepted evaluator report with the c
     output_root: outputRoot
   });
   assert.equal(sealed.replay_count, 300);
+});
+
+test("REQ-SBX-GENERAL-002 complete-run sealer preserves a quality failure while accepting 300 results", async () => {
+  const seal = await loadSeal();
+  const fixtureIds = loadCorpusFixtureIds();
+  const workspace = tempRoot("ssb-seal-complete-quality-failure-");
+  const candidateRoot = join(workspace, "candidate");
+  const outputRoot = join(workspace, "out");
+  const reportPath = join(workspace, "evaluation-report.json");
+  mkdirSync(candidateRoot, { recursive: true });
+  mkdirSync(outputRoot, { recursive: true });
+  const written = writeThresholdPassingCandidate({ candidateRoot, fixtureIds });
+  writeAcceptedReport({
+    reportPath,
+    candidateRoot,
+    fixtureIds,
+    cassetteTreeSha256: written.cassette_tree_sha256,
+    decisionsTreeSha256: written.decisions_tree_sha256,
+    packageSha256: written.package_sha256,
+    accepted: false
+  });
+
+  const preview = seal.prepareSandboxSecurityCompleteRunSealPreview({
+    corpus_root: COMMITTED_ROOT,
+    candidate_capture_root: candidateRoot,
+    evaluation_report_path: reportPath
+  });
+  assert.equal(preview.accepted_metrics.accepted, false);
+  assert.equal(
+    (preview.accepted_metrics.rates as Readonly<Record<string, number>>)
+      .unsafe_recall,
+    0
+  );
+  assert.equal(
+    (preview.accepted_metrics.numerators as Readonly<Record<string, number>>)
+      .decided,
+    300
+  );
+  const sealed = materializeSandboxSecuritySealPreviewForTest({
+    preview,
+    outputRoot
+  });
+  assert.equal(sealed.replay_count, 300);
+
+  assert.throws(
+    () =>
+      seal.validateAcceptedSandboxSecurityLiveEvidence(outputRoot, {
+        corpus_root: COMMITTED_ROOT,
+        require_receipt_chain: false
+      }),
+    /accepted_metrics_not_accepted|threshold/u
+  );
+  const completeEvidence = seal.validateCompleteSandboxSecurityLiveEvidence(
+    outputRoot,
+    { corpus_root: COMMITTED_ROOT, require_receipt_chain: false }
+  );
+  assert.equal(completeEvidence.capture.inputs.length, 300);
+  assert.equal(completeEvidence.seal.accepted_metrics.accepted, false);
 });
 
 test("REQ-SBX-GENERAL-002 sealer rejects nonaccepted evaluation report", async () => {

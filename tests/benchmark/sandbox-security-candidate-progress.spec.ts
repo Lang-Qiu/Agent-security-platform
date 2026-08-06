@@ -271,7 +271,7 @@ test("REQ-SBX-GENERAL-002 only accepts complete formal staging after progress ma
     fixtureIds
   );
   const staging = `${JSON.stringify({
-    schema_version: "sandbox-security-benchmark-candidate-staging.v1",
+    schema_version: "sandbox-security-benchmark-candidate-staging.v2",
     capture_manifest: {},
     cassette: {},
     package: {},
@@ -292,6 +292,19 @@ test("REQ-SBX-GENERAL-002 only accepts complete formal staging after progress ma
         fixtureIds
       ),
     /candidate_progress_not_complete|candidate_staging_(?:schema|keys)/i
+  );
+  const legacyStaging = staging.replace(
+    "sandbox-security-benchmark-candidate-staging.v2",
+    "sandbox-security-benchmark-candidate-staging.v1"
+  );
+  assert.throws(
+    () =>
+      assertSandboxSecurityCandidateStagingMatchesProgress(
+        legacyStaging,
+        progress,
+        fixtureIds
+      ),
+    /candidate_staging_schema/i
   );
 });
 
@@ -334,7 +347,7 @@ test("REQ-SBX-GENERAL-002 treats capture_complete as a terminal output frame", a
     fixtureIds
   );
   const stagingSerialized = `${JSON.stringify({
-    schema_version: "sandbox-security-benchmark-candidate-staging.v1",
+    schema_version: "sandbox-security-benchmark-candidate-staging.v2",
     capture_manifest: {},
     cassette: {},
     package: {},

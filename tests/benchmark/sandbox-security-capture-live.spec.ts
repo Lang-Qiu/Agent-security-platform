@@ -1942,6 +1942,42 @@ test("REQ-SBX-P6-RETRY capture-candidate rejects v1 staging and final failed att
   unlinkSync(stagingPath);
 });
 
+test("REQ-SBX-P6-RETRY blocker classification ignores a successful retry attempt", async () => {
+  const ports = fakeLivePorts({ fixtureCount: 1 });
+  const accumulator = {
+    state: "drained",
+    qualification_inventory: [successInventory().outcome],
+    qualification_prewarm: [successPrewarm().outcome],
+    inputs: [
+      {
+        ollama: [
+          {
+            status: "transport_error",
+            error_code: "connection_failed"
+          },
+          successLocalEvaluation().outcome
+        ],
+        judge: [{ status: "http_error", http_status: 503 }]
+      }
+    ],
+    closed_input_count: 1
+  } as const;
+  ports.create_sink = () => ({
+    beginInput() {},
+    record() {},
+    endInput() {},
+    assertDrained() {},
+    snapshot() {
+      return accumulator as never;
+    }
+  });
+
+  await assert.rejects(
+    () => runSandboxSecurityLiveCapture(ports),
+    /provider_outcome_not_acceptance_capable:judge_http_error_503/u
+  );
+});
+
 test("REQ-SBX-GENERAL-002 live capture opens every input envelope before Judge readiness", async () => {
   const ports = fakeLivePorts({ fixtureCount: 3 });
   const inputPrefix = `${ports.input_root}/`;

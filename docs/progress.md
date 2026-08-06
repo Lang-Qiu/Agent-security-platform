@@ -1,3 +1,82 @@
+## 2026-08-06 - REQ-SBX-GENERAL-004 implementation plan independently reviewed
+
+- phase/task: specification plus Master and Phase 1-5 implementation planning
+- status: `PLAN_REVIEWED_PENDING_USER_APPROVAL`
+- documentation exception: this entry records planning/review only; no
+  GENERAL-004 business test or production implementation was added
+- deliverables:
+  - one canonical Master plan and five strictly ordered Phase plans
+  - 27 TDD tasks with an exact 27-entry task-local commit ledger
+  - explicit RED/GREEN ownership, phase gates, final verification order, and
+    the inherited GENERAL-002 P6 dependency boundary
+- review:
+  - independent read-only subagent review was repeated after every actionable
+    finding and after the final repository-verification blocker was corrected
+  - the fresh completion audit found Critical `1`, Important `1`, Minor `0`;
+    its supplemental check found the first outbound lifetime correction still
+    ended too early, and the draft now corrects that residual for re-review
+  - the next full re-review confirmed the earlier issues resolved and found
+    Critical `0`, Important `2`, Minor `0`: conflicting execution-order wording
+    and missing trusted evaluation request-ID ownership; both are corrected and
+    were submitted for final re-review
+  - final independent re-review: `PASS`, Critical `0`, Important `0`, Minor `0`;
+    both latest findings are resolved, every earlier finding remains closed,
+    and no new actionable issue was found
+  - closed areas include real awaited OpenClaw barriers, native plugin/package
+    discovery, hook correlation/health envelope, SQLite/capability/audit
+    boundaries, nested pnpm isolation, patch/image identity, privacy,
+    predecessor permanent-gate ownership, writable-temp test execution, the
+    real native hook catalog, the exact thirteen-file patch identity, and
+    dispatcher/follow-up-scoped prompt/run/session propagation, plus strict
+    Master Phase ordering and plugin-issued per-evaluation request identity
+- verification:
+  - six plan files, 27 task headings, 27 Phase commit messages, and 27 Master
+    ledger entries are exact and ordered
+  - root lock SHA-256, exact OpenClaw compatibility metadata, plan/sprint
+    statuses, stale-name scans, and `git diff --check` pass
+  - `TMPDIR=/tmp npm run test:repo` currently reports `321/334`; the remaining
+    thirteen same-cause failures are the existing GENERAL-003 gate's stale
+    current-sprint ownership, captured as P1-T1's required RED and repair
+- boundary: plan review does not authorize execution; GENERAL-004 remains
+  unimplemented and cannot be reported as `VERIFIED`
+- next: await explicit user approval before changing the Master to
+  `PLAN_APPROVED` or the sprint to `IMPLEMENTATION_IN_PROGRESS`
+
+## 2026-08-06 - REQ-SBX-GENERAL-002 fresh P6 recapture blocked by qualification and Judge credentials
+
+- phase/task: Phase 6 / P6-T4 controlled complete-run recapture
+- status: `BLOCKED_EXTERNAL_PREREQUISITE`; P6 formal acceptance remains absent;
+  GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE` and is not
+  `VERIFIED`
+- fresh roots:
+  - capture: `tmp/sandbox-security-p6-general-002-live-capture-bojQJ3`
+  - evidence: `tmp/sandbox-security-p6-general-002-live-evidence-OXOxc4`
+  - neither root is reusable or acceptance-capable
+- formal capture result:
+  - `sandbox_security_capture_live_reject:transport_aborted`
+  - candidate progress is `failed`, `completed_count=0`, with no decisions;
+    the evidence root is empty and no candidate, report, receipt, seal, or
+    receipt chain was produced
+  - Ollama logs show the first local `/api/chat` request during cold
+    `qwen3:8b` loading ended at approximately the v8 `40000ms` qualification
+    boundary; source tracing identifies the qualification AbortSignal as the
+    failure boundary, not the progress or retry implementation
+- preflight:
+  - Ollama is now warm and serves the pinned digest
+  - `OPENAI_API_KEY` failed content-free probes with HTTP `401` against both
+    the reviewed Doro channel and OpenAI; `XAI_API_KEY` failed the compliant
+    xAI `/v1/models` probe with HTTP `400`
+  - no usable mode-`600` credential env file is present
+  - no formal 300-input run was started after this preflight, and no provider,
+    model, root, retry merge, or progress projection was substituted
+- acceptance rule retained: any fresh run that reaches `300/300` with
+  `decided === 300`, no infrastructure failure, complete provider attempts, and
+  successful receipt/seal/evidence/P7 validation proceeds regardless of the
+  retained model-quality boolean
+- next: provide a valid reviewed-channel mode-`600` credential env file, then
+  use new disjoint roots for the full P6 run and continue receipt, seal,
+  evidence, and P7 validation
+
 ## 2026-08-06 - REQ-SBX-GENERAL-003 P5-T1 HTTP admission and response policy
 
 - phase/task: Phase 5 / P5-T1 Raw Header, Body, Query, and Response Policy
@@ -502,6 +581,62 @@
     GENERAL-003 is not `VERIFIED`
 - next: proceed to P4-T2
 
+## 2026-08-05 - REQ-SBX-GENERAL-002 P6 Retry Amendment implementation
+
+- phase/task: P6 retry amendment / Tasks 1-7; Task 7 deterministic
+  verification and final review are complete
+- status: `TASK_7_COMPLETE_PENDING_LIVE_RECAPTURE`; GENERAL-002 remains
+  `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE` and is not `VERIFIED`
+- policy: each qualification, local, and Judge provider slot allows at most
+  two sequential attempts; only the first exact
+  `transport_error:connection_failed` may retry once; readiness and every
+  other failure remain non-retryable
+- implementation status:
+  - Task 1 completed the v2 attempt-sequence contracts and exact v1 rejection
+  - Task 2 migrated the capture sink to ordered attempt arrays
+  - Task 3 added the fixed live P6 retry loop
+  - Task 4 made P7 hermetic replay consume the exact attempt sequence
+  - Task 5 migrated capture, candidate, evaluation, seal, cassette, and
+    evidence hash bindings to v2 arrays
+  - Task 6 records this policy in durable documentation and repository gates
+  - Task 7 completed deterministic benchmark/repository verification and
+    independent specification and quality review with no findings
+- deterministic validation: the P6 focused suites and full isolation suite
+  passed; `npm run test:repo`, `npm run test:engine:sandbox:production`,
+  `npm run typecheck:benchmark:sandbox-security`, and corpus validation passed;
+  `git diff --check` passed
+- hermetic gate: `npm run benchmark:sandbox-security:replay` returned the
+  expected `sandbox_security_hermetic_replay_reject:failed_closed` because no
+  formally accepted P6 root exists; this is not a formal replay pass
+- acceptance boundary: a fresh full 300-input P6 run has not been rerun. No
+  rejected v8 root, partial progress projection, or retry merge is promoted
+  into a candidate, receipt, seal, evidence root, or formal P7 input.
+- next: perform a fresh disjoint 300-input P6 capture and require an accepted
+  seal and hermetic replay before any `VERIFIED` transition
+
+## 2026-08-06 - REQ-SBX-GENERAL-002 complete-run P6 acceptance amendment
+
+- phase/task: P6 live acceptance policy and receipt/seal/replay continuation
+- status: `IMPLEMENTED_PENDING_FRESH_LIVE_RECAPTURE`; GENERAL-002 remains not
+  `VERIFIED`
+- rule: a fresh run proceeds after exactly `300/300` results when
+  `decided === 300`, infrastructure codes are empty, provider attempt sequences
+  are complete, and all final invoked outcomes are responses; model-quality
+  threshold failure is retained as a metric and does not block this live path
+- implementation:
+  - live evaluator now gates on completeness rather than the quality boolean
+  - fixed live sealer and P7 validator use a separate complete-run policy
+  - `accepted_metrics.accepted` and its canonical hash remain unchanged, so
+    quality results are visible and tamper-bound
+  - default quality-gated sealer and validator behavior remains intact
+- tests:
+  - RED confirmed the live evaluator and complete-run sealer failures before
+    implementation
+  - evaluator, live-evidence, P6 capability, root-binding, and benchmark
+    TypeScript checks pass
+- boundary: no historical capture/evidence root, progress projection, or retry
+  merge is reused; a fresh full live capture and real P7 replay remain required
+  before any `VERIFIED` transition
 
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P2-T1 simulation-only authority builder
 
@@ -9086,7 +9221,7 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   - later execute a fresh full 300-input P6 capture with new capture/evidence
     roots, then produce and validate the evaluator report, signed receipt
     chain, seal, and actual P7 hermetic replay
-  - this temporary release does not authorize reuse of the rejected v8 root or
+- this temporary release does not authorize reuse of the rejected v8 root or
     promotion of `retry-merge-proposal.json`
 
 ## 2026-08-05 - REQ-SBX-GENERAL-003 P2-T3 capability authorization

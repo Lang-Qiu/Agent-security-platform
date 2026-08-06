@@ -638,7 +638,7 @@ export function assertSandboxSecurityCandidateStagingMatchesProgress(
     ["schema_version", "capture_manifest", "cassette", "package", "decisions"],
     "candidate_staging_keys_invalid"
   );
-  if (raw.schema_version !== "sandbox-security-benchmark-candidate-staging.v1") {
+  if (raw.schema_version !== "sandbox-security-benchmark-candidate-staging.v2") {
     fail("candidate_staging_schema_invalid");
   }
   if (!Array.isArray(raw.decisions) || raw.decisions.length !== ids.length) {

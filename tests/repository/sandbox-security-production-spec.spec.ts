@@ -8,6 +8,8 @@ const SEVEN_DOMAIN_AMENDMENT_PATH =
   "docs/superpowers/specs/2026-08-02-sandbox-security-seven-domain-judge-screening-amendment.md";
 const P6_JUDGE_LONG_TAIL_V8_AMENDMENT_PATH =
   "docs/superpowers/specs/2026-08-04-sandbox-security-p6-judge-long-tail-v8-amendment.md";
+const P6_RETRY_AMENDMENT_PATH =
+  "docs/superpowers/specs/2026-08-05-sandbox-security-p6-retry-amendment.md";
 
 function readText(relativePath: string): string {
   return readFileSync(new URL(`../../${relativePath}`, import.meta.url), "utf8");
@@ -270,6 +272,41 @@ test("REQ-SBX-GENERAL-002 P6 v8 Judge long-tail profile is exact and isolated fr
   assert.match(engine, /const DEFAULT_NORMAL_WORK_BUDGET_MS = 5000/);
   assert.match(engine, /const P6_LIVE_CAPTURE_NORMAL_WORK_BUDGET_MS = 360000/);
   assert.match(engine, /const P6_LIVE_CAPTURE_JUDGE_SLOT_TIMEOUT_MS = 300000/);
+});
+
+test("REQ-SBX-GENERAL-002 P6 retry amendment is reflected in durable policy docs", () => {
+  const amendment = readText(P6_RETRY_AMENDMENT_PATH);
+  const architecture = readText("docs/architecture.md");
+  const progress = readText("docs/progress.md");
+  const sprint = readText("docs/sprint-current.md");
+  const runbook = readText(
+    "docs/superpowers/2026-07-26-p6-live-acceptance-operator-runbook.md"
+  );
+  const compactAmendment = amendment.replace(/\s+/g, " ");
+  const compactArchitecture = architecture.replace(/\s+/g, " ");
+  const compactProgress = progress.replace(/\s+/g, " ");
+  const compactSprint = sprint.replace(/\s+/g, " ");
+  const compactRunbook = runbook.replace(/\s+/g, " ");
+
+  assert.match(compactAmendment, /exactly one retry/);
+  assert.match(compactAmendment, /connection_failed/);
+  assert.match(compactAmendment, /sandbox-security-benchmark-capture\.v2/);
+  assert.match(compactAmendment, /final `response` outcome/);
+  assert.match(compactAmendment, /v1 capture manifests.*reject/i);
+  assert.match(
+    compactArchitecture,
+    /P6.*exactly one retry.*connection_failed.*v2.*fail.?closed/i
+  );
+  assert.match(compactProgress, /P6 Retry Amendment.*connection_failed/s);
+  assert.match(compactSprint, /P6 retry amendment.*fresh.*300/i);
+  assert.match(
+    compactRunbook,
+    /P6 retry amendment.*exactly one retry.*connection_failed.*readiness.*no retry/i
+  );
+  assert.doesNotMatch(
+    compactRunbook,
+    /active P6 policy is single.?attempt and no retry/i
+  );
 });
 
 test("REQ-SBX-GENERAL-002 Spec review gate rejects weakened Ollama qualification", () => {
