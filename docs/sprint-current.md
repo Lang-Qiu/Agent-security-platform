@@ -168,10 +168,20 @@ GENERAL-003's out-of-scope retry rule.
 - The final independent re-review returned `PASS` with Critical `0`, Important
   `0`, Minor `0`; both findings are resolved, all earlier findings remain
   closed, and no new actionable issue was found.
-- No GENERAL-004 production files, tests, architecture/API implementation
-  claims, or frontend files have been added.
-- The plan status transition has been recorded; implementation is proceeding
-  through the Phase 1 RED gate.
+- GENERAL-004 Phase 1 is complete through its five task commits and review
+  gate. Phase 2 P2-T1 and P2-T2 are complete through their task commits and
+  review gates; P2-T3 is the next task.
+- P2-T2 added the private enforcement audit repository, explicit legacy
+  `event_schema` writes, public schema filtering, dual-schema purge
+  validation, replay/conflict handling, and real SQLite regression tests.
+- The P2-T2 file list omitted the two existing legacy audit writers in
+  `sqlite-capability.repository.ts` and `sqlite-idempotency.repository.ts`;
+  both received only the required explicit legacy schema column/value change.
+- The plan-required focused P2-T2 suites pass. `npm run test:backend` remains
+  dependency/baseline-bounded and currently reports 499/501, with the known
+  semgrep-missing and task-engine fixture expectation failures; no P2-T2
+  source or test failure is present. `npm run typecheck:backend` remains
+  blocked by the existing campaign/task-center/task-engine/supervision errors.
 - GENERAL-003 implementation work remains complete through its phase- and
   P6-T4 review gates, bounded by the unresolved GENERAL-002 global P6 gate.
 - The P6 retry amendment remains complete through Task 6 documentation and
@@ -182,7 +192,7 @@ GENERAL-003's out-of-scope retry rule.
 ## Next Transition
 
 `PLAN_REVIEWED_PENDING_USER_APPROVAL` -> `PLAN_APPROVED` ->
-`IMPLEMENTATION_IN_PROGRESS`
+`IMPLEMENTATION_IN_PROGRESS` -> `P2-T3_IN_PROGRESS`
 
 The first transition records the user's explicit approval. The second records
 that Phase 1 execution has begun. GENERAL-004 remains the only active

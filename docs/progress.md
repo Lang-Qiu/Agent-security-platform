@@ -9515,3 +9515,47 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
     GENERAL-003 is not `VERIFIED`
 - next: proceed to P4-T1
+
+## 2026-08-07 - REQ-SBX-GENERAL-004 P2-T2 dual-schema audit repositories
+
+- phase/task: Phase 2 / P2-T2
+- status: `COMPLETE_PENDING_P2_T3`
+- implementation:
+  - added the private enforcement-audit repository port and SQLite adapter
+    with exact private event normalization, backend-owned event schema,
+    accepted/replayed acknowledgements, first-timestamp replay, and complete
+    event-ID conflict detection including cross-schema collisions
+  - restricted public audit reads to
+    `sandbox-security-audit-event.v1`; purge now validates both legacy and
+    private schemas before deleting either row in one transaction
+  - made all three production legacy audit writers explicitly persist the
+    legacy event schema; this required two SQL-only writer changes omitted from
+    the P2-T2 file list and did not add private capability behavior
+- files:
+  - `backend/src/modules/sandbox-security/ports/enforcement-audit.repository.ts`
+  - `backend/src/modules/sandbox-security/adapters/sqlite/sqlite-enforcement-audit.repository.ts`
+  - `backend/src/modules/sandbox-security/adapters/sqlite/sqlite-audit.repository.ts`
+  - `backend/src/modules/sandbox-security/adapters/sqlite/sqlite-capability.repository.ts`
+  - `backend/src/modules/sandbox-security/adapters/sqlite/sqlite-idempotency.repository.ts`
+  - `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+  - `backend/tests/sandbox-security-enforcement-audit-repository.spec.ts`
+- tests:
+  - initial repository RED was verified with six intended factory-boundary
+    failures; after implementation the focused enforcement suite passed 7/7
+  - the complete enforcement/audit/SQLite validation passed 65/65
+  - the collision review regression was run RED then GREEN
+  - `git diff --check` passed; backend typecheck still reports only existing
+    campaign/task-center/task-engine/supervision baseline errors
+  - `npm run test:backend` remains 499/501 because of the existing task-engine
+    asset expectation drift and missing `semgrep` binary path
+- reviews:
+  - independent specification review and re-review: PASS
+  - independent quality review found the cross-schema event-ID mapping issue;
+    the regression was added and fixed, then quality re-review returned PASS
+- commit: `8f35ab7` (`feat(sandbox): add enforcement audit repositories`)
+- boundary:
+  - capability issuance/authentication, application service, HTTP admission,
+    and OpenClaw runtime remain P2-T3/P2-T4/P2-T5 work
+  - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
+    GENERAL-003 is not `VERIFIED`
+- next: P2-T3 private capability provisioning and authentication
