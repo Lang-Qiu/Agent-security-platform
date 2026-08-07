@@ -6,6 +6,15 @@
   "activation": {
     "onStartup": true
   },
+  "hooks": [
+    "before_agent_run",
+    "before_model_output_delivery",
+    "before_tool_execution",
+    "before_message_delivery"
+  ],
+  "capabilities": {
+    "conversationAccess": true
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

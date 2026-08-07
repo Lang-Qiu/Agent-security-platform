@@ -46,9 +46,14 @@ export type OpenClawSecurityEvaluationRequestId = string & {
   readonly __openclawSecurityEvaluationRequestId: unique symbol;
 };
 
+export type OpenClawSecurityAuditEventId = string & {
+  readonly __openclawSecurityAuditEventId: unique symbol;
+};
+
 export interface OpenClawSecurityRuntimePorts extends SandboxSecurityRuntimePorts {
   readonly internalAuditOrigins: readonly string[];
   readonly nextEvaluationRequestId: () => unknown;
+  readonly nextAuditEventId: () => unknown;
 }
 
 export interface OpenClawSecurityEngineFactoryInput {
@@ -73,6 +78,15 @@ export interface OpenClawSecurityRuntime {
         kind: "interrupted";
         code: "request_id_unavailable";
       }>;
+  readonly nextAuditEventId: () =>
+    | Readonly<{
+        kind: "issued";
+        eventId: OpenClawSecurityAuditEventId;
+      }>
+    | Readonly<{
+        kind: "interrupted";
+        code: "audit_event_id_unavailable";
+      }>;
   readonly tryEvaluate: (
     request: Readonly<SandboxSecurityEvaluationRequest>
   ) => Promise<Readonly<OpenClawSecurityEvaluationResult>>;
@@ -88,8 +102,20 @@ export type OpenClawSecurityRequestIdIssueResult =
       code: "request_id_unavailable";
     }>;
 
+export type OpenClawSecurityAuditEventIdIssueResult =
+  | Readonly<{
+      kind: "issued";
+      eventId: OpenClawSecurityAuditEventId;
+    }>
+  | Readonly<{
+      kind: "interrupted";
+      code: "audit_event_id_unavailable";
+    }>;
+
 const REQUEST_ID_PATTERN =
   /^request:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const AUDIT_EVENT_ID_PATTERN =
+  /^audit:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 function deepFreeze<T>(value: T, seen = new WeakSet<object>()): T {
   if (value === null || typeof value !== "object" || seen.has(value)) {
@@ -180,12 +206,45 @@ export function issueOpenClawSecurityEvaluationRequestId(
   }
 }
 
+export function normalizeOpenClawSecurityAuditEventId(
+  value: unknown
+): OpenClawSecurityAuditEventId | null {
+  if (typeof value !== "string" || !AUDIT_EVENT_ID_PATTERN.test(value)) {
+    return null;
+  }
+  return value as OpenClawSecurityAuditEventId;
+}
+
+function unavailableAuditEventId(): OpenClawSecurityAuditEventIdIssueResult {
+  return deepFreeze({
+    kind: "interrupted",
+    code: "audit_event_id_unavailable"
+  });
+}
+
+export function issueOpenClawSecurityAuditEventId(
+  next: () => unknown
+): OpenClawSecurityAuditEventIdIssueResult {
+  if (typeof next !== "function") {
+    return unavailableAuditEventId();
+  }
+  try {
+    const eventId = normalizeOpenClawSecurityAuditEventId(next());
+    return eventId === null
+      ? unavailableAuditEventId()
+      : deepFreeze({ kind: "issued", eventId });
+  } catch {
+    return unavailableAuditEventId();
+  }
+}
+
 export function createOpenClawSecurityRuntimePorts(): OpenClawSecurityRuntimePorts {
   return Object.freeze({
     internalAuditOrigins: Object.freeze([
       "http://sandbox-security-backend:3001"
     ]),
     nextEvaluationRequestId: () => `request:${randomUUID()}`,
+    nextAuditEventId: () => `audit:${randomUUID()}`,
     now: () => new Date().toISOString(),
     nextDecisionId: () => `decision:${randomUUID()}`,
     monotonicNowMs: () => performance.now(),
@@ -272,6 +331,16 @@ export async function createOpenClawSecurityRuntime(input: Readonly<{
     return result;
   };
 
+  const nextAuditEventId = (): OpenClawSecurityAuditEventIdIssueResult => {
+    const result = issueOpenClawSecurityAuditEventId(
+      runtimePorts.nextAuditEventId
+    );
+    if (result.kind === "interrupted") {
+      markAuditDegraded(result.code);
+    }
+    return result;
+  };
+
   const tryEvaluate = async (
     request: Readonly<SandboxSecurityEvaluationRequest>
   ): Promise<Readonly<OpenClawSecurityEvaluationResult>> => {
@@ -332,6 +401,7 @@ export async function createOpenClawSecurityRuntime(input: Readonly<{
     health,
     markAuditDegraded,
     markEnforcementFailed,
+    nextAuditEventId,
     nextEvaluationRequestId,
     tryEvaluate
   });

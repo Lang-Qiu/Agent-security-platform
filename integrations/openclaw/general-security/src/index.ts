@@ -72,5 +72,22 @@ export type {
   OpenClawSecurityScheduleTimeout
 } from "./general-security/audit-client.ts";
 
+export {
+  createOpenClawSecurityPlugin,
+  OPENCLAW_SECURITY_HOOK_EVENT_SCHEMA,
+  OPENCLAW_SECURITY_HOOK_NAMES,
+  OPENCLAW_SECURITY_HOOK_PRIORITY,
+  OPENCLAW_SECURITY_HOOK_RESULT_SCHEMA,
+  OPENCLAW_SECURITY_HOOK_TIMEOUT_MS,
+  OPENCLAW_SECURITY_TURN_CONTEXT_SCHEMA
+} from "./general-security/plugin.ts";
+export type {
+  OpenClawSecurityHookEnvelope,
+  OpenClawSecurityHookName,
+  OpenClawSecurityOpaqueRunState,
+  OpenClawSecurityPlugin,
+  OpenClawSecurityPluginApi
+} from "./general-security/plugin.ts";
+
 export * from "./general-security/config.ts";
 export * from "./general-security/runtime.ts";
