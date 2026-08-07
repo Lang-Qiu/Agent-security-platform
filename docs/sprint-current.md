@@ -170,10 +170,20 @@ GENERAL-003's out-of-scope retry rule.
   closed, and no new actionable issue was found.
 - GENERAL-004 Phase 1 is complete through its five task commits and review
   gate. Phase 2 P2-T1 and P2-T2 are complete through their task commits and
-  review gates. P2-T3 is implemented and committed as `81e9aad`, with focused
-  GREEN `49/49`, but its required independent specification and quality
-  reviews are pending because the subagent service reports
-  `agent thread limit reached`; the Phase 2 exit gate is therefore closed.
+  review gates. P2-T3 and P2-T4 are implemented and committed as `81e9aad`
+  and `1e73c1a`; their required independent specification and quality reviews
+  remain pending because the subagent service previously reported
+  `agent thread limit reached`.
+- P2-T5 is implemented in the current workspace. Its independent specification
+  review is PASS; its quality review found three Important and one Minor
+  finding, all corrected with focused regressions, and quality re-review is
+  PASS. The Phase 2 gate remains pending because P2-T3/P2-T4 reviews and the
+  phase review are still required. It adds the strict internal enforcement-
+  event controller, dedicated capacity-2 limiter with six-second refill,
+  production SQLite/module wiring, internal dispatch, and real HTTP coverage.
+  The existing static backend catalog/privacy gate now accounts for the v2
+  migration's transactional temporary table/index definitions and private
+  enforcement contracts.
 - P2-T2 added the private enforcement audit repository, explicit legacy
   `event_schema` writes, public schema filtering, dual-schema purge
   validation, replay/conflict handling, and real SQLite regression tests.
@@ -184,14 +194,14 @@ GENERAL-003's out-of-scope retry rule.
   shape, private capability-issued audit storage, and private-aware revoke
   projection. It preserves public-only administrator fixture construction by
   checking the private service method only for the private schema branch.
-- P2-T3 RED/GREEN and verification evidence is recorded in
-  `docs/progress.md`; no P2-T4 or later Phase production file has been
-  modified.
-- The plan-required focused P2-T2 suites pass. `npm run test:backend` remains
-  dependency/baseline-bounded and currently reports 499/501, with the known
-  semgrep-missing and task-engine fixture expectation failures; no P2-T2
-  source or test failure is present. `npm run typecheck:backend` remains
-  blocked by the existing campaign/task-center/task-engine/supervision errors.
+- P2-T3/P2-T4 RED/GREEN and verification evidence is recorded in
+  `docs/progress.md`; no Phase 3-5 production file has been modified.
+- P2-T5 focused controller/admission, shared body-reader, static gate, and
+  real HTTP suites are green. The latest complete backend command is 546/544;
+  its two failures are the existing missing local `semgrep` and task-engine
+  fixture expectation drift. The new P2-T5 suites have no source or test
+  failures. `npm run typecheck:backend` remains blocked by existing
+  campaign/task-center/task-engine/supervision diagnostics.
 - GENERAL-003 implementation work remains complete through its phase- and
   P6-T4 review gates, bounded by the unresolved GENERAL-002 global P6 gate.
 - The P6 retry amendment remains complete through Task 6 documentation and
@@ -202,7 +212,8 @@ GENERAL-003's out-of-scope retry rule.
 ## Next Transition
 
 `PLAN_REVIEWED_PENDING_USER_APPROVAL` -> `PLAN_APPROVED` ->
-`IMPLEMENTATION_IN_PROGRESS` -> `P2-T3_REVIEW_PENDING` -> `P2-T4_IN_PROGRESS`
+`IMPLEMENTATION_IN_PROGRESS` -> `P2_T5_REVIEWED_PENDING_PHASE_2_GATE` ->
+`PHASE_2_GATE_PENDING`
 
 The first transition records the user's explicit approval. The second records
 that Phase 1 execution has begun. GENERAL-004 remains the only active

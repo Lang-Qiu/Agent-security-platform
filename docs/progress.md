@@ -1,3 +1,91 @@
+# 2026-08-07 - REQ-SBX-GENERAL-004 P2-T5 internal enforcement audit HTTP
+
+- phase/task: Phase 2 / P2-T5
+- status: `P2_T5_REVIEWED_PENDING_PHASE_2_GATE`
+- scope: strict internal controller, module dispatch, dedicated limiter, and
+  real HTTP integration only; no Phase 3-5 OpenClaw production files changed
+- implementation:
+  - added `SandboxSecurityEnforcementAuditController` with bucket -> bearer
+    authentication -> strict JSON body -> shared request normalization ->
+    private stage/profile/composition grant -> async audit service ordering
+  - fixed the private body boundary at 65536 bytes and 5000 ms, reused the
+    existing close-after-response and bounded error envelope, and mapped
+    accepted/replayed acknowledgements to 201/200
+  - added a dedicated capacity-2, one-token-per-six-seconds route bucket and
+    wired the v2 enforcement repository/service/controller through the same
+    production module and SQLite owner
+  - added exactly one internal dispatch branch; the public listener remains
+    unaware of the enforcement-event route and an uncomposed internal route
+    retains the existing 404 behavior
+  - registered the P2 private repository/service/controller and real HTTP
+    integration suites in `test:backend`
+- files:
+  - `backend/src/modules/sandbox-security/sandbox-security-enforcement-audit.controller.ts`
+  - `backend/src/modules/sandbox-security/http-admission.ts`
+  - `backend/src/modules/sandbox-security/token-bucket.ts`
+  - `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+  - `backend/src/internal-app.module.ts`
+  - `backend/tests/main.spec.ts`
+  - `backend/tests/sandbox-security-controller.spec.ts`
+  - `backend/tests/sandbox-security-enforcement-audit-repository.spec.ts`
+  - `backend/tests/sandbox-security-enforcement-audit-controller.spec.ts`
+  - `tests/integration/backend-sandbox-security.api.spec.ts`
+  - `tests/integration/backend-sandbox-security-enforcement-audit.api.spec.ts`
+  - `tests/repository/sandbox-security-backend-spec.spec.ts`
+  - `package.json`
+  - `docs/sprint-current.md`
+  - `docs/progress.md`
+  - `docs/architecture.md`
+  - `docs/api-contract.md`
+- RED evidence:
+  - controller factory RED failed because the module boundary exported no
+    `createSandboxSecurityEnforcementAuditController`
+  - real listener RED returned 404 because `InternalAppModule` still treated
+    the recognized enforcement route as a reserved non-dispatched path
+  - the failures were feature-causal; no import, environment, or test-harness
+    error was used as RED evidence
+- GREEN evidence:
+  - controller admission matrix: `14/14` pass, including ordering, unknown
+    capability before body read, malformed DTO, media/framing 415/413,
+    duplicate JSON keys, deadline 408, rate limit 429, conflict/storage
+    mapping, and 201/200 ack
+  - real enforcement HTTP integration: `5/5` pass, including production
+    SQLite accepted/replay persistence, internal-only ownership, no raw input
+    in unavailable-route responses, and `Connection: close` on 408/413
+  - shared body-reader malformed/duplicate/depth/escape regression: `1/1`
+    pass
+  - private enforcement contract static privacy mutation gate: `15/15` pass
+  - P2 private capability/repository/service/controller focused matrix: `122/122`
+    pass; P2-T5 implementation has no focused failure
+- verification:
+  - `node --experimental-strip-types --test backend/tests/sandbox-security-enforcement-audit-controller.spec.ts tests/integration/backend-sandbox-security-enforcement-audit.api.spec.ts` — pass
+  - `node --experimental-strip-types --test backend/tests/sandbox-security-enforcement-audit-service.spec.ts backend/tests/sandbox-security-enforcement-audit-repository.spec.ts backend/tests/sandbox-security-enforcement-audit-capability.spec.ts` — pass
+  - `npm run test:shared` — `224/224` pass
+  - `npm run test:backend` — latest complete run `546` tests, `544` pass; the
+    two failures are the pre-existing missing local `semgrep` (`spawn semgrep
+    ENOENT`) and task-engine fixture expectation drift
+  - `TMPDIR=/tmp npm run test:repo` — `340/340` pass after updating the static catalog/privacy gate for v2 migration DDL and private enforcement contracts
+  - `npm run typecheck:backend` — exits `2` on existing campaign/task-center/task-engine/supervision/test diagnostics; no P2-T5 diagnostic remains
+  - `git diff --check` — pass
+- review:
+  - P2-T3/P2-T4 independent review evidence remains pending; earlier dispatches
+    failed before producing a verdict due to subagent model/service access
+    errors, so no PASS is claimed
+  - P2-T5 independent specification review: PASS with zero findings
+  - P2-T5 independent quality review found three Important and one Minor
+    findings; all four were verified and corrected, and quality re-review:
+    PASS with zero findings
+- boundary:
+  - the v2 migration static catalog gate required its expected DDL catalog to
+    include transactional `_v2` temporary table/index definitions, and its raw
+    audit-key matcher was narrowed to object-field boundaries so local
+    controller variables are not misclassified; these are requirement-local
+    verification corrections, not storage or security semantic changes
+  - Phase 2 exit gate remains closed until all required task and phase reviews
+    pass; do not enter Phase 3
+- next: capture final repo/typecheck evidence, receive independent P2-T5
+  reviews, fix and re-review findings, then complete the Phase 2 review gate
+
 ## 2026-08-07 - REQ-SBX-GENERAL-004 P2-T3 private capability provisioning and authentication
 
 - phase/task: Phase 2 / P2-T3
@@ -48,11 +136,54 @@
     addressable; no PASS is claimed and the Phase 2 gate remains closed
 - boundary:
   - P2-T4 application service and P2-T5 internal enforcement-event HTTP
-    controller remain unstarted; no later Phase files were changed
+    controller are implemented in later task commits but remain pending their
+    required independent specification and quality reviews; no later Phase
+    files were changed
   - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
     GENERAL-004 is not `VERIFIED`
-- next: obtain the required independent specification review, then the
-  independent quality review; fix and re-review any findings before P2-T4
+- next: obtain the required P2-T3 independent specification and quality
+  reviews, then complete the same review sequence for P2-T4/P2-T5
+
+## 2026-08-07 - REQ-SBX-GENERAL-004 P2-T4 enforcement audit application service
+
+- phase/task: Phase 2 / P2-T4
+- status: `IMPLEMENTED_PENDING_P2_T4_INDEPENDENT_REVIEW`
+- implementation:
+  - added the async enforcement-audit application service with the exact
+    shared request/event/ack normalizers and shared acknowledgement type
+  - injects backend identity and one runtime server timestamp, stores a frozen
+    candidate without `occurred_at`, and delegates the timestamp separately
+  - preserves accepted/replayed first-timestamp acknowledgements and maps
+    unexpected synchronous repository failures to bounded internal errors
+- files:
+  - `backend/src/modules/sandbox-security/enforcement-audit.service.ts`
+  - `backend/src/modules/sandbox-security/sandbox-security.types.ts`
+  - `backend/src/modules/sandbox-security/sandbox-security.module.ts`
+  - `backend/tests/sandbox-security-enforcement-audit-service.spec.ts`
+- RED/GREEN evidence:
+  - service factory RED failed because the required export was absent
+  - focused service matrix is green (`7/7`), including completed/interrupted
+    projection, identity/time ownership, exact ack keys, stable errors, and
+    rejected Promise behavior for synchronous repository failures
+- verification:
+  - the P2 private capability/repository/service/controller matrix is
+    `122/122` pass in the latest focused run
+  - `npm run typecheck:backend` has no P2-T4 source diagnostic; the remaining
+    diagnostics are existing campaign/task-center/task-engine/supervision/test
+    baseline errors
+  - `git diff --check` passes
+- review:
+  - required independent specification and quality reviews remain pending;
+    earlier attempts ended before a verdict because the subagent service did
+    not provide an accessible reviewer model
+- boundary:
+  - P2-T5 owns HTTP admission and internal dispatch; no Phase 3-5 production
+    files were changed
+  - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
+    GENERAL-004 is not `VERIFIED`
+- commit: `1e73c1a` (`feat(sandbox): persist enforcement audit events`)
+- next: obtain independent specification review, then quality review, before
+  the Phase 2 gate
 
 ## 2026-08-06 - REQ-SBX-GENERAL-004 implementation plan independently reviewed
 

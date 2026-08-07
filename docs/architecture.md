@@ -237,14 +237,15 @@ engines/<engine-name>/
 
 以上基线用于平台骨架阶段的契约与测试落地，后续如果项目级工具链决策变化，应先更新 `metadata.md` 再统一调整。
 
-## GENERAL-003 Sandbox Security Module Boundary
+## GENERAL-003/004 Sandbox Security Module Boundary
 
 GENERAL-003 的后端能力以可注入的 `SandboxSecurityModule` 作为唯一平台边界。
 公共监听器只 dispatch evaluation 与 subject-scoped audit-read，内部监听器只
 dispatch capability issue/revoke 与 audit purge；capability issue 在同一既有
 route 上按精确 `schema_version` 分派 GENERAL-003 公共 v1 与 GENERAL-004
 私有 enforcement-audit DTO；未注入模块时，已识别的沙箱路由
-返回固定的通用 `INTERNAL_ERROR` 内部错误，不构造隐式默认模块。
+返回固定的通用错误，不构造隐式默认模块；既有 public/admin 路由使用
+`INTERNAL_ERROR`，未组合的 enforcement route 保持 `NOT_FOUND`。
 revoke 路由的 capability-id segment 由路由到 controller 原样传递，应用层不提前
 decode。
 
@@ -259,6 +260,15 @@ scope、全部 Engine stages、单一 profile 和当前 production composition�
 SQLite transaction 内写入 capability 与私有 `capability_issued` event。GENERAL-003
 public v1 authorizer/read surface 不接受该 scope；既有 revoke boundary 仅返回无
 token 的私有记录并保持 legacy revoke audit semantics。
+
+GENERAL-004 的 enforcement audit controller 只挂载到 internal listener 的
+`POST /internal/sandbox/security/enforcement-events`。它使用同一个注入的
+`SandboxSecurityModule` 和 SQLite owner，但通过独立的私有 repository、认证 grant
+和 capacity-2 token bucket admission；public router 不识别该路径。请求先完成
+严格 bearer/body admission，再由 shared normalizer 和 capability grant 检查，服务
+只向 repository 写入 backend 注入 identity/server time 的 content-free candidate。
+accepted/replayed ack 分别返回 201/200，存储错误和 conflict 使用既有 bounded HTTP
+error envelope。
 
 后端扩展 runtime 不能直接传入 GENERAL-002。`toSandboxSecurityEngineRuntime`
 每次生成冻结的普通对象，且只包含 Engine 要求顺序的

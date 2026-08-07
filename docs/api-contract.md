@@ -2147,6 +2147,7 @@ bootstrap-administrator capability and retention operations.
 | internal | `POST /internal/sandbox/security/capabilities` | `Authorization: Bearer <bootstrap-admin-token>` | exact public or private JSON issue DTO; 65536 raw bytes; 5000 ms body deadline | `201 ApiResponse<SandboxSecurityCapabilityIssueResult | SandboxSecurityEnforcementAuditCapabilityIssueResult>` |
 | internal | `POST /internal/sandbox/security/capabilities/:capabilityId/revoke` | `Authorization: Bearer <bootstrap-admin-token>` | bodyless; one percent-decode of the path ID | `200 ApiResponse<SandboxSecurityCapabilityPublicRecord>` |
 | internal | `POST /internal/sandbox/security/audit-events/purge` | `Authorization: Bearer <bootstrap-admin-token>` | bodyless; fixed 90-day retention and 1000-row batch | `200 ApiResponse<SandboxSecurityAuditPurgeResult>` |
+| internal | `POST /internal/sandbox/security/enforcement-events` | `Authorization: Bearer <dedicated enforcement capability>` with `sandbox_security:enforcement:audit:write` | exact content-free `sandbox-security-enforcement-audit-request.v1`; 65536 raw bytes; 5000 ms body deadline; capacity 2, refill 1 token/6 seconds | `201/200 ApiResponse<OpenClawEnforcementAuditAck>` (`accepted`/`replayed`) |
 
 Public capabilities are opaque `sbxcap_v1.<43 base64url characters>` values and
 are never returned by audit routes. Internal routes are not dispatched by the
@@ -2162,6 +2163,17 @@ interface ApiResponse<T> {
   request_id: string;
 }
 ```
+
+The enforcement-event route is internal-listener-only and never accepts the
+bootstrap administrator credential as its event bearer. Its closed request
+union and acknowledgement are defined in
+[`shared/types/sandbox-security-enforcement-audit.ts`](../shared/types/sandbox-security-enforcement-audit.ts)
+and normalized by
+[`shared/contracts/sandbox-security-enforcement-audit.ts`](../shared/contracts/sandbox-security-enforcement-audit.ts).
+The backend injects `subject_id`, `authorization_scope_id`, `capability_id`, and
+`occurred_at`; those fields are not accepted from the request. Replay returns
+the first stored timestamp, while a changed content-free candidate under the
+same event ID returns `409` without echoing request data.
 
 ### DTO Matrix
 
