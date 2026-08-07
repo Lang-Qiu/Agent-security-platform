@@ -347,7 +347,7 @@ index b21ff5b..bf570c4 100644
  		runInboundClaimForPlugin,
  		runInboundClaimForPluginOutcome,
 diff --git a/dist/lifecycle-hook-helpers-Dowa8zK4.js b/dist/lifecycle-hook-helpers-Dowa8zK4.js
-index 5a72ef4..de59b3d 100644
+index 5a72ef4..6991b8a 100644
 --- a/dist/lifecycle-hook-helpers-Dowa8zK4.js
 +++ b/dist/lifecycle-hook-helpers-Dowa8zK4.js
 @@ -4,6 +4,7 @@ import { t as createSubsystemLogger } from "./subsystem-CYwCorYs.js";
@@ -459,8 +459,8 @@ index 5a72ef4..de59b3d 100644
 +	};
 +	const floorDecision = () => buildDecision({
 +		outcome: "replace",
-+		replacement_code: "sandbox_security_evaluation_unavailable",
-+		replacement_text: OPENCLAW_SECURITY_FIXED_REPLACEMENT_TEXTS.sandbox_security_evaluation_unavailable
++		replacement_code: "security_review_required",
++		replacement_text: OPENCLAW_SECURITY_FIXED_REPLACEMENT_TEXTS.security_review_required
 +	});
 +	const turn = readOpenClawSecurityTurnContext();
 +	if (turn === null) return floorDecision();

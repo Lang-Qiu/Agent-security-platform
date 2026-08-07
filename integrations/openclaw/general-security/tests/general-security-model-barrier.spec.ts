@@ -32,9 +32,6 @@ const FIXED_REPLACEMENT_MARKER = "openclaw-security-fixed-replacement.v1";
 
 const REVIEW_TEXT = "Security review required. This action was not completed.";
 const BLOCKED_TEXT = "Blocked by sandbox security policy.";
-const UNAVAILABLE_TEXT =
-  "Security evaluation unavailable. This action was not completed.";
-
 const LIFECYCLE_FILE = "lifecycle-hook-helpers-Dowa8zK4.js";
 const SELECTION_FILE = "selection-DopzNY3I.js";
 const CLI_FILE = "cli-runner-B0eKIePw.js";
@@ -397,7 +394,7 @@ test("REQ-SBX-GENERAL-004 P4-T4 observation-only path passes when no barrier hoo
 // Failure floors and correlation drift
 // ---------------------------------------------------------------------------
 
-test("REQ-SBX-GENERAL-004 P4-T4 a missing carrier floors to the fixed unavailable replacement", async () => {
+test("REQ-SBX-GENERAL-004 P4-T4 a missing carrier floors to the fixed ask replacement", async () => {
   const c = await carrier();
   const runner = fakeHookRunner(() => passDecision());
   // No capsule scope at all: read must fail closed and never deliver original.
@@ -407,8 +404,8 @@ test("REQ-SBX-GENERAL-004 P4-T4 a missing carrier floors to the fixed unavailabl
     hookRunner: runner
   });
   assert.equal(decision.outcome, "replace");
-  assert.equal(decision.replacement_code, "sandbox_security_evaluation_unavailable");
-  assert.equal(decision.text, UNAVAILABLE_TEXT);
+  assert.equal(decision.replacement_code, "security_review_required");
+  assert.equal(decision.text, REVIEW_TEXT);
   assert.equal(decision.provenance, FIXED_REPLACEMENT_MARKER);
   assert.equal(
     runner.observations.length,
@@ -417,7 +414,7 @@ test("REQ-SBX-GENERAL-004 P4-T4 a missing carrier floors to the fixed unavailabl
   );
 });
 
-test("REQ-SBX-GENERAL-004 P4-T4 an inactive capsule floors to the fixed unavailable replacement", async () => {
+test("REQ-SBX-GENERAL-004 P4-T4 an inactive capsule floors to the fixed ask replacement", async () => {
   const c = await carrier();
   const runner = fakeHookRunner(() => passDecision());
   const capsule = c.createCapsule();
@@ -430,11 +427,11 @@ test("REQ-SBX-GENERAL-004 P4-T4 an inactive capsule floors to the fixed unavaila
     })
   );
   assert.equal(decision.outcome, "replace");
-  assert.equal(decision.replacement_code, "sandbox_security_evaluation_unavailable");
+  assert.equal(decision.replacement_code, "security_review_required");
   assert.equal(runner.observations.length, 0);
 });
 
-test("REQ-SBX-GENERAL-004 P4-T4 run/session correlation drift floors closed", async () => {
+test("REQ-SBX-GENERAL-004 P4-T4 run/session correlation drift floors to ask", async () => {
   const c = await carrier();
   for (const drift of [
     { event: modelEvent({ runId: "run-other" }), ctx: modelCtx() },
@@ -452,7 +449,7 @@ test("REQ-SBX-GENERAL-004 P4-T4 run/session correlation drift floors closed", as
       });
     });
     assert.equal(decision.outcome, "replace");
-    assert.equal(decision.replacement_code, "sandbox_security_evaluation_unavailable");
+    assert.equal(decision.replacement_code, "security_review_required");
     assert.equal(
       runner.observations.length,
       0,
@@ -461,7 +458,7 @@ test("REQ-SBX-GENERAL-004 P4-T4 run/session correlation drift floors closed", as
   }
 });
 
-test("REQ-SBX-GENERAL-004 P4-T4 a thrown barrier floors to the fixed unavailable replacement", async () => {
+test("REQ-SBX-GENERAL-004 P4-T4 a thrown barrier floors to the fixed ask replacement", async () => {
   const c = await carrier();
   const runner = fakeHookRunner(() => {
     throw new Error("engine exploded");
@@ -476,7 +473,7 @@ test("REQ-SBX-GENERAL-004 P4-T4 a thrown barrier floors to the fixed unavailable
     });
   });
   assert.equal(decision.outcome, "replace");
-  assert.equal(decision.replacement_code, "sandbox_security_evaluation_unavailable");
+  assert.equal(decision.replacement_code, "security_review_required");
 });
 
 test("REQ-SBX-GENERAL-004 P4-T4 a malformed barrier decision floors closed", async () => {
@@ -506,7 +503,7 @@ test("REQ-SBX-GENERAL-004 P4-T4 a malformed barrier decision floors closed", asy
     assert.equal(decision.outcome, "replace");
     assert.equal(
       decision.replacement_code,
-      "sandbox_security_evaluation_unavailable",
+      "security_review_required",
       `a malformed decision ${JSON.stringify(bad)} must floor closed`
     );
   }
