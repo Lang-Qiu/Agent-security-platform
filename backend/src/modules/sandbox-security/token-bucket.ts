@@ -81,6 +81,19 @@ export function createSandboxSecurityTokenBucket(input: Readonly<{
   };
 }
 
+export function createSandboxSecurityEnforcementAuditTokenBucket(input: Readonly<{
+  initial_monotonic_ms: number;
+}>): SandboxSecurityTokenBucket {
+  if (input === null || typeof input !== "object") {
+    throw new TypeError("enforcement audit token bucket input is required");
+  }
+  return createSandboxSecurityTokenBucket({
+    capacity: 2,
+    refill_tokens_per_second: 1 / 6,
+    initial_monotonic_ms: input.initial_monotonic_ms
+  });
+}
+
 interface CapabilityLimiterEntry {
   readonly capability_id: string;
   readonly expires_at_ms: number;

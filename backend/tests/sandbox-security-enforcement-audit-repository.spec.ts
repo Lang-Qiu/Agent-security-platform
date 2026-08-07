@@ -523,3 +523,24 @@ test("REQ-SBX-GENERAL-004 private repository fails closed on corrupted private J
     }
   );
 });
+
+test("REQ-SBX-GENERAL-004 maps an operational enforcement repository failure to storage unavailable", () => {
+  const factory = enforcementFactory();
+  assert.equal(typeof factory, "function");
+  const database = {
+    transaction() {
+      throw new Error("sqlite unavailable");
+    },
+    read() {
+      throw new Error("sqlite unavailable");
+    }
+  } as unknown as SqliteSandboxSecurityDatabase;
+  const repository = factory!({ database });
+  assert.throws(
+    () => repository.append({ candidate: completedCandidate(), occurred_at: TIME_A }),
+    (error: unknown) => {
+      assert.equal((error as { code?: unknown }).code, "SANDBOX_SECURITY_STORAGE_UNAVAILABLE");
+      return true;
+    }
+  );
+});

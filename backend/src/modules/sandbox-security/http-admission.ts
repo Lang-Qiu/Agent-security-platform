@@ -43,6 +43,10 @@ const CAPABILITY_TOKEN_PATTERN = /^sbxcap_v1\.[A-Za-z0-9_-]{43}$/;
 const IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9._~-]{16,128}$/;
 const CONTENT_LENGTH_PATTERN = /^(0|[1-9][0-9]*)$/;
 const AUDIT_LIMIT_PATTERN = /^[1-9][0-9]{0,2}$/;
+const MAX_JSON_NESTING = 128;
+
+export const SANDBOX_SECURITY_ENFORCEMENT_AUDIT_BODY_LIMIT = 65536 as const;
+export const SANDBOX_SECURITY_ENFORCEMENT_AUDIT_BODY_DEADLINE_MS = 5000 as const;
 
 const HTTP_MESSAGES: Readonly<Record<SandboxSecurityHttpErrorCode, string>> = {
   SANDBOX_SECURITY_INVALID_REQUEST: "Invalid sandbox security request",
@@ -108,6 +112,132 @@ function invalidRequest(): SandboxSecurityHttpError {
     code: "SANDBOX_SECURITY_INVALID_REQUEST",
     statusCode: 400
   });
+}
+
+function rejectDuplicateJsonKeys(input: string): void {
+  let cursor = 0;
+
+  const skipWhitespace = (): void => {
+    while (
+      cursor < input.length &&
+      (input[cursor] === " " || input[cursor] === "\t" ||
+        input[cursor] === "\n" || input[cursor] === "\r")
+    ) {
+      cursor += 1;
+    }
+  };
+
+  const readString = (): string => {
+    const start = cursor;
+    if (input[cursor] !== '"') throw invalidRequest();
+    cursor += 1;
+    while (cursor < input.length) {
+      const character = input[cursor];
+      if (character === '"') {
+        cursor += 1;
+        try {
+          const value = JSON.parse(input.slice(start, cursor));
+          if (typeof value !== "string") throw invalidRequest();
+          return value;
+        } catch {
+          throw invalidRequest();
+        }
+      }
+      if (character === "\\") {
+        cursor += 1;
+        if (cursor >= input.length) throw invalidRequest();
+        if (input[cursor] === "u") {
+          cursor += 1;
+          if (cursor + 4 > input.length) throw invalidRequest();
+          for (let index = 0; index < 4; index += 1) {
+            if (!/[0-9A-Fa-f]/.test(input[cursor + index] ?? "")) {
+              throw invalidRequest();
+            }
+          }
+          cursor += 4;
+        } else if ('"\\/bfnrt'.includes(input[cursor] ?? "")) {
+          cursor += 1;
+        } else {
+          throw invalidRequest();
+        }
+        continue;
+      }
+      if (character.charCodeAt(0) < 0x20) throw invalidRequest();
+      cursor += 1;
+    }
+    throw invalidRequest();
+  };
+
+  const readPrimitive = (): void => {
+    const start = cursor;
+    while (
+      cursor < input.length &&
+      ![" ", "\t", "\n", "\r", ",", "]", "}"].includes(input[cursor] ?? "")
+    ) {
+      cursor += 1;
+    }
+    if (cursor === start) throw invalidRequest();
+  };
+
+  const readValue = (depth: number): void => {
+    if (depth > MAX_JSON_NESTING) throw invalidRequest();
+    skipWhitespace();
+    const character = input[cursor];
+    if (character === "{") {
+      cursor += 1;
+      skipWhitespace();
+      const keys = new Set<string>();
+      if (input[cursor] === "}") {
+        cursor += 1;
+        return;
+      }
+      while (true) {
+        const key = readString();
+        if (keys.has(key)) throw invalidRequest();
+        keys.add(key);
+        skipWhitespace();
+        if (input[cursor] !== ":") throw invalidRequest();
+        cursor += 1;
+        readValue(depth + 1);
+        skipWhitespace();
+        if (input[cursor] === "}") {
+          cursor += 1;
+          return;
+        }
+        if (input[cursor] !== ",") throw invalidRequest();
+        cursor += 1;
+        skipWhitespace();
+      }
+    }
+    if (character === "[") {
+      cursor += 1;
+      skipWhitespace();
+      if (input[cursor] === "]") {
+        cursor += 1;
+        return;
+      }
+      while (true) {
+        readValue(depth + 1);
+        skipWhitespace();
+        if (input[cursor] === "]") {
+          cursor += 1;
+          return;
+        }
+        if (input[cursor] !== ",") throw invalidRequest();
+        cursor += 1;
+        skipWhitespace();
+      }
+    }
+    if (character === '"') {
+      readString();
+      return;
+    }
+    readPrimitive();
+  };
+
+  readValue(0);
+  skipWhitespace();
+  if (cursor !== input.length) throw invalidRequest();
 }
 
 function readHeaderMap(
@@ -461,6 +591,7 @@ export async function readSandboxSecurityJsonBody(
   if (decoded.trim() === "") throw invalidRequest();
   let value: unknown;
   try {
+    rejectDuplicateJsonKeys(decoded);
     value = JSON.parse(decoded);
   } catch {
     throw invalidRequest();

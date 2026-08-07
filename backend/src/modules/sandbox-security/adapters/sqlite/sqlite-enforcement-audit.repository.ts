@@ -35,6 +35,13 @@ function internalError(): SandboxSecurityServiceError {
   });
 }
 
+function storageUnavailableError(): SandboxSecurityServiceError {
+  return createSandboxSecurityServiceError({
+    code: "SANDBOX_SECURITY_STORAGE_UNAVAILABLE",
+    audit_rejection_code: "storage_unavailable"
+  });
+}
+
 function conflictError(): SandboxSecurityServiceError {
   return createSandboxSecurityServiceError({
     code: "SANDBOX_SECURITY_IDEMPOTENCY_CONFLICT",
@@ -189,50 +196,55 @@ export function createSqliteSandboxSecurityEnforcementAuditRepository(input: Rea
         // converting hostile accessor/proxy failures to a bounded error.
         const normalized = normalizeCandidate(value);
         const candidateBytes = canonicalCandidate(normalized.candidate);
-        return database.transaction((sqlite) => {
-          const schemaRow = sqlite
-            .prepare(
-              `SELECT event_schema
-               FROM sandbox_security_audit_events
-               WHERE event_id = ?`
-            )
-            .get(normalized.event.event_id) as { event_schema?: unknown } | undefined;
-
-          if (schemaRow !== undefined) {
-            if (schemaRow.event_schema === LEGACY_EVENT_SCHEMA) {
-              throw conflictError();
-            }
-            if (schemaRow.event_schema !== EVENT_SCHEMA) {
-              throw internalError();
-            }
-            const row = sqlite
+        try {
+          return database.transaction((sqlite) => {
+            const schemaRow = sqlite
               .prepare(
-                `SELECT event_schema, event_id, event_type,
-                  visibility_subject_id, authorization_scope_id, capability_id,
-                  occurred_at, event_json
+                `SELECT event_schema
                  FROM sandbox_security_audit_events
-                 WHERE event_schema = ? AND event_id = ?`
+                 WHERE event_id = ?`
               )
-              .get(EVENT_SCHEMA, normalized.event.event_id) as EnforcementAuditRow | undefined;
-            if (row === undefined) throw internalError();
-            const stored = parseStoredEvent(row);
-            if (canonicalCandidate(withoutOccurredAt(stored)) !== candidateBytes) {
-              throw conflictError();
-            }
-            return {
-              event_id: stored.event_id,
-              status: "replayed" as const,
-              occurred_at: stored.occurred_at
-            };
-          }
+              .get(normalized.event.event_id) as { event_schema?: unknown } | undefined;
 
-          insertEvent(sqlite, normalized.event);
-          return {
-            event_id: normalized.event.event_id,
-            status: "accepted" as const,
-            occurred_at: normalized.event.occurred_at
-          };
-        });
+            if (schemaRow !== undefined) {
+              if (schemaRow.event_schema === LEGACY_EVENT_SCHEMA) {
+                throw conflictError();
+              }
+              if (schemaRow.event_schema !== EVENT_SCHEMA) {
+                throw internalError();
+              }
+              const row = sqlite
+                .prepare(
+                  `SELECT event_schema, event_id, event_type,
+                    visibility_subject_id, authorization_scope_id, capability_id,
+                    occurred_at, event_json
+                   FROM sandbox_security_audit_events
+                   WHERE event_schema = ? AND event_id = ?`
+                )
+                .get(EVENT_SCHEMA, normalized.event.event_id) as EnforcementAuditRow | undefined;
+              if (row === undefined) throw internalError();
+              const stored = parseStoredEvent(row);
+              if (canonicalCandidate(withoutOccurredAt(stored)) !== candidateBytes) {
+                throw conflictError();
+              }
+              return {
+                event_id: stored.event_id,
+                status: "replayed" as const,
+                occurred_at: stored.occurred_at
+              };
+            }
+
+            insertEvent(sqlite, normalized.event);
+            return {
+              event_id: normalized.event.event_id,
+              status: "accepted" as const,
+              occurred_at: normalized.event.occurred_at
+            };
+          });
+        } catch (error) {
+          if (isSandboxSecurityServiceError(error)) throw error;
+          throw storageUnavailableError();
+        }
       } catch (error) {
         if (isSandboxSecurityServiceError(error)) throw error;
         throw internalError();

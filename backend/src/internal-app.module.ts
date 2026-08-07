@@ -283,9 +283,22 @@ export class InternalAppModule {
           return;
 
         case "enforcementAudit":
-          // The real controller is owned by Phase 2; keep the reserved path
-          // non-hanging and fail closed until that dispatch exists.
-          throw new DomainError("Route not found", "NOT_FOUND", 404);
+          if (!this.sandboxSecurityModule) {
+            throw new DomainError(
+              "Route not found",
+              "NOT_FOUND",
+              404
+            );
+          }
+          writeJsonResponse(
+            response,
+            await this.sandboxSecurityModule.enforcementAuditController.enforcementAudit(
+              request,
+              requestId
+            ),
+            request
+          );
+          return;
       }
     } catch (error) {
       if (error instanceof SandboxSecurityHttpError) {

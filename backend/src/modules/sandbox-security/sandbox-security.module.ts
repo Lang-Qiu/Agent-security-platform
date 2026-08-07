@@ -3,6 +3,10 @@ import type { IncomingMessage } from "node:http";
 import type { HttpResponse } from "../../common/http/http-response.ts";
 import { createSandboxSecurityAdminController } from "./sandbox-security-admin.controller.ts";
 import { createSandboxSecurityController } from "./sandbox-security.controller.ts";
+import {
+  createSandboxSecurityEnforcementAuditController,
+  type SandboxSecurityEnforcementAuditController
+} from "./sandbox-security-enforcement-audit.controller.ts";
 import type { SandboxSecurityAuditRepository } from "./ports/audit.repository.ts";
 import type { SandboxSecurityEvaluationGateway } from "./ports/evaluation.gateway.ts";
 import type { SandboxSecurityRuntimePort } from "./ports/runtime.ts";
@@ -32,8 +36,10 @@ import {
   createSandboxSecurityEvaluationService
 } from "./evaluation.service.ts";
 import { createSandboxSecurityAuditService } from "./audit.service.ts";
+import { createSandboxSecurityEnforcementAuditService } from "./enforcement-audit.service.ts";
 import {
   createSandboxSecurityCapabilityLimiterRegistry,
+  createSandboxSecurityEnforcementAuditTokenBucket,
   createSandboxSecurityTokenBucket
 } from "./token-bucket.ts";
 import { createSandboxSecurityEngineConcurrencyLimiter } from "./engine-concurrency.ts";
@@ -56,6 +62,9 @@ import {
 import {
   createSqliteSandboxSecurityAuditRepository
 } from "./adapters/sqlite/sqlite-audit.repository.ts";
+import {
+  createSqliteSandboxSecurityEnforcementAuditRepository
+} from "./adapters/sqlite/sqlite-enforcement-audit.repository.ts";
 import {
   createSandboxSecurityAuditProjector
 } from "./audit-projector.ts";
@@ -124,6 +133,7 @@ export {
 export { createSandboxSecurityEnforcementAuditService } from "./enforcement-audit.service.ts";
 export {
   createSandboxSecurityCapabilityLimiterRegistry,
+  createSandboxSecurityEnforcementAuditTokenBucket,
   createSandboxSecurityTokenBucket
 } from "./token-bucket.ts";
 export {
@@ -170,6 +180,9 @@ export { createSandboxSecurityController } from "./sandbox-security.controller.t
 export {
   createSandboxSecurityAdminController
 } from "./sandbox-security-admin.controller.ts";
+export {
+  createSandboxSecurityEnforcementAuditController
+} from "./sandbox-security-enforcement-audit.controller.ts";
 
 export interface SandboxSecurityPublicController {
   evaluate(request: IncomingMessage, requestId: string): Promise<HttpResponse>;
@@ -193,6 +206,7 @@ export interface SandboxSecurityAdminController {
 export interface SandboxSecurityModule {
   publicController: SandboxSecurityPublicController;
   adminController: SandboxSecurityAdminController;
+  enforcementAuditController: SandboxSecurityEnforcementAuditController;
   close(): Promise<void>;
 }
 
@@ -252,6 +266,11 @@ export async function createSandboxSecurityProductionModule(input: Readonly<{
       database
     });
     const auditRepository = createSqliteSandboxSecurityAuditRepository({ database });
+    const enforcementAuditRepository = createSqliteSandboxSecurityEnforcementAuditRepository({ database });
+    const enforcementAuditService = createSandboxSecurityEnforcementAuditService({
+      repository: enforcementAuditRepository,
+      runtime
+    });
     maintenance = createSandboxSecurityIdempotencyMaintenance({
       repository: idempotencyRepository,
       runtime,
@@ -311,6 +330,9 @@ export async function createSandboxSecurityProductionModule(input: Readonly<{
       refill_tokens_per_second: 1,
       initial_monotonic_ms: runtime.monotonicNowMs()
     });
+    const enforcementAuditBucket = createSandboxSecurityEnforcementAuditTokenBucket({
+      initial_monotonic_ms: runtime.monotonicNowMs()
+    });
     return createSandboxSecurityModule({
       database,
       composition_binding: gateway.composition_binding,
@@ -323,6 +345,9 @@ export async function createSandboxSecurityProductionModule(input: Readonly<{
       audit_projector: auditProjector,
       global_bucket: globalBucket,
       administrator_bucket: administratorBucket,
+      enforcement_audit_authenticator: authenticator,
+      enforcement_audit_service: enforcementAuditService,
+      enforcement_audit_bucket: enforcementAuditBucket,
       capability_limiters: capabilityLimiters,
       runtime
     });
@@ -348,6 +373,9 @@ export interface SandboxSecurityModuleDependencies {
   audit_projector: SandboxSecurityAuditProjector;
   global_bucket: SandboxSecurityTokenBucket;
   administrator_bucket: SandboxSecurityTokenBucket;
+  enforcement_audit_authenticator: SandboxSecurityEnforcementAuditAuthenticator;
+  enforcement_audit_service: SandboxSecurityEnforcementAuditService;
+  enforcement_audit_bucket: SandboxSecurityTokenBucket;
   capability_limiters: SandboxSecurityCapabilityLimiterRegistry;
   runtime: SandboxSecurityRuntimePort;
 }
@@ -382,11 +410,19 @@ export function createSandboxSecurityModule(
     administrator_bucket: dependencies.administrator_bucket,
     runtime: dependencies.runtime
   });
+  const enforcementAuditController = createSandboxSecurityEnforcementAuditController({
+    authenticator: dependencies.enforcement_audit_authenticator,
+    service: dependencies.enforcement_audit_service,
+    enforcement_bucket: dependencies.enforcement_audit_bucket,
+    runtime: dependencies.runtime,
+    composition_binding: dependencies.composition_binding
+  });
 
   let closed = false;
   return {
     publicController,
     adminController,
+    enforcementAuditController,
     async close(): Promise<void> {
       if (closed) return;
       const errors: unknown[] = [];

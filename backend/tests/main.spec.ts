@@ -21,6 +21,9 @@ function createStructuralSandboxSecurityModule(): SandboxSecurityModule {
       async revoke() { return { statusCode: 200, body: {} }; },
       async purge() { return { statusCode: 200, body: {} }; }
     },
+    enforcementAuditController: {
+      async enforcementAudit() { return { statusCode: 201, body: {} }; }
+    },
     async close() {}
   } as SandboxSecurityModule;
 }

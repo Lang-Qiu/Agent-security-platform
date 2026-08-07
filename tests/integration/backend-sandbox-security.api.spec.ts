@@ -35,8 +35,10 @@ import type {
 } from "../../backend/src/modules/sandbox-security/sandbox-security.types.ts";
 import type { SandboxSecurityAuditRepository } from "../../backend/src/modules/sandbox-security/ports/audit.repository.ts";
 import type { SandboxSecurityRequest, SandboxSecurityDecision } from "../../backend/src/modules/sandbox-security/sandbox-security.types.ts";
+import type { SandboxSecurityEnforcementAuditRequest } from "../../shared/types/sandbox-security-enforcement-audit.ts";
 
 const PUBLIC_TOKEN = `sbxcap_v1.${"a".repeat(43)}`;
+const PRIVATE_TOKEN = `sbxcap_v1.${"b".repeat(43)}`;
 const ADMIN_TOKEN = "admin-test-token";
 const PRODUCTION_ADMIN_TOKEN = Buffer.from(
   "0123456789abcdef0123456789abcdef",
@@ -153,6 +155,17 @@ function createDependencies(calls: string[], options: Readonly<{
 }> = {}) {
   const capability = createCapability();
   const runtime = createRuntime();
+  const enforcementCapability = {
+    capability_id: "capability:123e4567-e89b-42d3-a456-426614174001",
+    subject_id: "openclaw:general-security",
+    authorization_scope_id: "authscope:hmac-sha256:" + "c".repeat(64),
+    scopes: ["sandbox_security:enforcement:audit:write"],
+    allowed_stages: ["user_input", "model_output", "tool_request"],
+    allowed_policy_profile_ids: ["sandbox-security-balanced.v1"],
+    composition_binding: COMPOSITION_BINDING,
+    issued_at: "2026-08-06T00:00:00.000Z",
+    expires_at: "2026-08-06T01:00:00.000Z"
+  } as const;
   const authenticator = {
     authenticateToken(token: string): SandboxSecurityCapabilityAuthenticationResult {
       calls.push(`authenticate:${token}`);
@@ -181,6 +194,15 @@ function createDependencies(calls: string[], options: Readonly<{
           code: "SANDBOX_SECURITY_ADMIN_UNAUTHORIZED"
         });
       }
+    },
+    authenticateEnforcementAuditToken(token: string) {
+      calls.push(`authenticate_enforcement:${token}`);
+      if (token !== PRIVATE_TOKEN) return { kind: "unknown" as const };
+      return { kind: "authorized" as const, capability: enforcementCapability };
+    },
+    requireEnforcementAuditGrant() {
+      calls.push("enforcement_grant");
+      return enforcementCapability;
     }
   };
 
@@ -276,6 +298,17 @@ function createDependencies(calls: string[], options: Readonly<{
     read: (operation) => operation({} as never),
     checkpointAndClose: () => calls.push("database-close")
   };
+  const enforcementAuditService = {
+    async appendEnforcementEvent(request: SandboxSecurityEnforcementAuditRequest, identity: typeof enforcementCapability) {
+      calls.push(`enforcement-append:${request.request_id}:${identity.capability_id}`);
+      return {
+        schema_version: "sandbox-security-enforcement-audit-ack.v1" as const,
+        event_id: request.event_id,
+        status: "accepted" as const,
+        occurred_at: runtime.now()
+      };
+    }
+  };
 
   return {
     database,
@@ -289,6 +322,9 @@ function createDependencies(calls: string[], options: Readonly<{
     audit_projector: projector,
     global_bucket: createAllowedBucket(),
     administrator_bucket: createAllowedBucket(),
+    enforcement_audit_authenticator: authenticator,
+    enforcement_audit_service: enforcementAuditService,
+    enforcement_audit_bucket: createAllowedBucket(),
     capability_limiters: createAllowedCapabilityLimiter(),
     runtime
   };

@@ -52,15 +52,21 @@ const SQLITE_TABLES = [
   "sandbox_security_capability_stages",
   "sandbox_security_capability_profiles",
   "sandbox_security_idempotency_records",
-  "sandbox_security_audit_events"
+  "sandbox_security_audit_events",
+  "sandbox_security_capability_scopes_v2",
+  "sandbox_security_audit_events_v2"
 ] as const;
 const SQLITE_INDEXES = [
   "sandbox_security_idempotency_expiry_idx",
+  "sandbox_security_audit_visibility_order_idx",
+  "sandbox_security_audit_retention_idx",
   "sandbox_security_audit_visibility_order_idx",
   "sandbox_security_audit_retention_idx"
 ] as const;
 const SQLITE_INDEX_CATALOG = [
   "CREATE INDEX sandbox_security_idempotency_expiry_idx ON sandbox_security_idempotency_records(expires_at);",
+  "CREATE INDEX sandbox_security_audit_visibility_order_idx ON sandbox_security_audit_events( visibility_subject_id, occurred_at DESC, event_id DESC);",
+  "CREATE INDEX sandbox_security_audit_retention_idx ON sandbox_security_audit_events(occurred_at, event_id);",
   "CREATE INDEX sandbox_security_audit_visibility_order_idx ON sandbox_security_audit_events( visibility_subject_id, occurred_at DESC, event_id DESC);",
   "CREATE INDEX sandbox_security_audit_retention_idx ON sandbox_security_audit_events(occurred_at, event_id);"
 ] as const;
@@ -85,6 +91,11 @@ const SQLITE_CHECK_CATALOG = [
   "CHECK (expires_at > created_at)",
   "CHECK ( (status = 'completed' AND response_json IS NOT NULL AND length(response_json) BETWEEN 2 AND 16777216) OR (status IN ('in_progress', 'interrupted') AND response_json IS NULL) )",
   "CHECK (event_type IN ( 'evaluation_completed', 'evaluation_replayed', 'evaluation_interrupted', 'request_rejected', 'capability_issued', 'capability_revoked', 'audit_read', 'audit_purged'))",
+  "CHECK (length(visibility_subject_id) BETWEEN 1 AND 64)",
+  "CHECK (length(event_json) BETWEEN 2 AND 65536)",
+  "CHECK (scope IN ( 'sandbox_security:evaluate', 'sandbox_security:audit:read', 'sandbox_security:enforcement:audit:write'))",
+  "CHECK (event_schema IN ( 'sandbox-security-audit-event.v1', 'sandbox-security-enforcement-audit-event.v1'))",
+  "CHECK (event_type IN ( 'evaluation_completed', 'evaluation_replayed', 'evaluation_interrupted', 'request_rejected', 'capability_issued', 'capability_revoked', 'audit_read', 'audit_purged', 'enforcement_completed', 'enforcement_interrupted'))",
   "CHECK (length(visibility_subject_id) BETWEEN 1 AND 64)",
   "CHECK (length(event_json) BETWEEN 2 AND 65536)"
 ] as const;
@@ -120,18 +131,24 @@ function readSnapshot(): SandboxSecurityBackendSnapshot {
     "backend/src/modules/sandbox-security/sandbox-security.module.ts",
     "backend/src/modules/sandbox-security/sandbox-security.controller.ts",
     "backend/src/modules/sandbox-security/sandbox-security-admin.controller.ts",
+    "backend/src/modules/sandbox-security/sandbox-security-enforcement-audit.controller.ts",
     "backend/src/modules/sandbox-security/audit.service.ts",
+    "backend/src/modules/sandbox-security/enforcement-audit.service.ts",
     "backend/src/modules/sandbox-security/simulation-authority.ts",
     "backend/src/modules/sandbox-security/adapters/production-evaluation.gateway.ts",
     "backend/src/modules/sandbox-security/adapters/sqlite/sqlite-migrations.ts",
     "backend/src/modules/sandbox-security/adapters/sqlite/sqlite-audit.repository.ts",
+    "backend/src/modules/sandbox-security/adapters/sqlite/sqlite-enforcement-audit.repository.ts",
+    "backend/src/modules/sandbox-security/ports/enforcement-audit.repository.ts",
     "backend/src/modules/sandbox-security/adapters/sqlite/sqlite-idempotency.repository.ts",
     "backend/src/modules/sandbox-security/audit-projector.ts",
     "backend/src/modules/sandbox-security/sandbox-security.types.ts",
     "backend/src/modules/sandbox-security/sandbox-security.config.ts",
     "shared/index.ts",
     "shared/types/sandbox-security-api.ts",
+    "shared/types/sandbox-security-enforcement-audit.ts",
     "shared/contracts/sandbox-security-api.ts",
+    "shared/contracts/sandbox-security-enforcement-audit.ts",
     "shared/contracts/sandbox-security-request.ts",
     CANONICAL_SPEC_PATH,
     PROGRESS_PATH
@@ -277,11 +294,16 @@ function assertSandboxSecurityBackendBoundaries(
   const auditSources = [
     source("backend/src/modules/sandbox-security/audit-projector.ts"),
     source("backend/src/modules/sandbox-security/adapters/sqlite/sqlite-audit.repository.ts"),
+    source("backend/src/modules/sandbox-security/adapters/sqlite/sqlite-enforcement-audit.repository.ts"),
+    source("backend/src/modules/sandbox-security/enforcement-audit.service.ts"),
+    source("backend/src/modules/sandbox-security/sandbox-security-enforcement-audit.controller.ts"),
     source("shared/types/sandbox-security-api.ts"),
-    source("shared/contracts/sandbox-security-api.ts")
+    source("shared/types/sandbox-security-enforcement-audit.ts"),
+    source("shared/contracts/sandbox-security-api.ts"),
+    source("shared/contracts/sandbox-security-enforcement-audit.ts")
   ];
   const forbiddenAuditKeyPattern = new RegExp(
-    `(?:^|[\\s,{])(?:${FORBIDDEN_AUDIT_KEYS.join("|")})\\s*[:?]`,
+    `(?:^|[,{]\\s*)(?:["']?(?:${FORBIDDEN_AUDIT_KEYS.join("|")})["']?)\\s*[:?]`,
     "mi"
   );
   for (const text of auditSources) {
@@ -594,6 +616,24 @@ test("REQ-SBX-GENERAL-003 repository gate rejects raw token, idempotency, conten
       () => assertSandboxSecurityBackendBoundaries(mutated),
       /raw-content key/,
       key
+    );
+  }
+});
+
+test("REQ-SBX-GENERAL-004 repository gate scans private enforcement audit contracts", () => {
+  for (const path of [
+    "shared/types/sandbox-security-enforcement-audit.ts",
+    "shared/contracts/sandbox-security-enforcement-audit.ts"
+  ]) {
+    const mutated = mutateSnapshot(
+      readSnapshot(),
+      path,
+      (source) => `${source}\nconst forbiddenAuditEvent = { token: "sentinel" };\n`
+    );
+    assert.throws(
+      () => assertSandboxSecurityBackendBoundaries(mutated),
+      /raw-content key/,
+      path
     );
   }
 });

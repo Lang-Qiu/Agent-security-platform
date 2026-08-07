@@ -909,6 +909,43 @@ test("REQ-SBX-GENERAL-003 rejects malformed/empty JSON and canonical length viol
   }
 });
 
+test("REQ-SBX-GENERAL-004 shared body admission rejects duplicate and malformed JSON structures", async () => {
+  let nested = "0";
+  for (let index = 0; index < 130; index += 1) nested = `[${nested}]`;
+  const bodies = [
+    '{"action":"allow","action":"allow"}',
+    '{"outer":{"key":1,"key":1}}',
+    `{"outer":[{"key":1,"key":1}],"depth":${nested}}`,
+    '{"action":"\\uZZZZ"}',
+    '{"action":truex}'
+  ];
+  for (const body of bodies) {
+    const request = makeRawRequest({
+      rawHeaders: ["Content-Type", "application/json", "Content-Length", String(Buffer.byteLength(body))],
+      chunks: [Buffer.from(body)]
+    });
+    await assert.rejects(
+      () => sandboxSecurityBoundary.readSandboxSecurityJsonBody(request, {
+        max_bytes: 65536,
+        deadline_ms: 5000
+      }),
+      hasHttpError(400, "SANDBOX_SECURITY_INVALID_REQUEST")
+    );
+  }
+  const valid = '{"action":"allow","nested":{"value":[1,2,3]}}';
+  const validRequest = makeRawRequest({
+    rawHeaders: ["Content-Type", "application/json", "Content-Length", String(Buffer.byteLength(valid))],
+    chunks: [Buffer.from(valid)]
+  });
+  assert.deepEqual(
+    (await sandboxSecurityBoundary.readSandboxSecurityJsonBody(validRequest, {
+      max_bytes: 65536,
+      deadline_ms: 5000
+    })).value,
+    { action: "allow", nested: { value: [1, 2, 3] } }
+  );
+});
+
 test("REQ-SBX-GENERAL-003 body admission times out and rejects caller abort", async () => {
   const slow = new EventEmitter() as unknown as StreamFixture;
   slow.rawHeaders = ["Content-Type", "application/json", "Transfer-Encoding", "chunked"];
