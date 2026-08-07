@@ -107,6 +107,7 @@ test("REQ-SBX-GENERAL-004 isolates OpenClaw package roots", () => {
       "pnpm-workspace.yaml",
       "scripts",
       "src",
+      "tests",
       "tsconfig.json"
     ]
   );
