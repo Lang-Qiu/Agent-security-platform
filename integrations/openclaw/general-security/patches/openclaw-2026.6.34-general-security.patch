@@ -1,0 +1,300 @@
+diff --git a/dist/command-registration-BBago94k.js b/dist/command-registration-BBago94k.js
+index cd4cfe2..4e05f9a 100644
+--- a/dist/command-registration-BBago94k.js
++++ b/dist/command-registration-BBago94k.js
+@@ -139,6 +139,9 @@ const PLUGIN_HOOK_NAMES = [
+ 	"reply_dispatch",
+ 	"before_install",
+ 	"before_agent_run",
++	"before_model_output_delivery",
++	"before_tool_execution",
++	"before_message_delivery",
+ 	"resolve_exec_env"
+ ];
+ const DEPRECATED_PLUGIN_HOOKS = {
+@@ -173,7 +176,10 @@ const CONVERSATION_HOOK_NAMES = [
+ 	"llm_output",
+ 	"before_agent_finalize",
+ 	"agent_end",
+-	"before_agent_run"
++	"before_agent_run",
++	"before_model_output_delivery",
++	"before_tool_execution",
++	"before_message_delivery"
+ ];
+ const conversationHookNameSet = new Set(CONVERSATION_HOOK_NAMES);
+ const isConversationHookName = (hookName) => conversationHookNameSet.has(hookName);
+diff --git a/dist/hook-runner-global-D_43rcnU.js b/dist/hook-runner-global-D_43rcnU.js
+index b21ff5b..bf570c4 100644
+--- a/dist/hook-runner-global-D_43rcnU.js
++++ b/dist/hook-runner-global-D_43rcnU.js
+@@ -269,6 +269,114 @@ function getHooksForNameAndPlugin(registry, hookName, pluginId) {
+ /**
+ * Create a hook runner for a specific registry.
+ */
++//#region general-security final barrier
++const OPENCLAW_SECURITY_PLUGIN_ID = "agent-security-sandbox-general";
++const OPENCLAW_SECURITY_ENVELOPE_SCHEMA = "openclaw-security-hook-result.v1";
++const OPENCLAW_SECURITY_BARRIER_DEADLINE_MS = 10000;
++const OPENCLAW_SECURITY_REPLACEMENT_TEXTS = {
++	security_review_required: "Security review required. This action was not completed.",
++	sandbox_security_policy_blocked: "Blocked by sandbox security policy.",
++	sandbox_security_evaluation_unavailable: "Security evaluation unavailable. This action was not completed."
++};
++const openClawSecurityUnavailableBarrier = () => Object.freeze({
++	outcome: "replace",
++	replacement_code: "sandbox_security_evaluation_unavailable",
++	replacement_text: OPENCLAW_SECURITY_REPLACEMENT_TEXTS.sandbox_security_evaluation_unavailable
++});
++const isOpenClawSecurityRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
++const hasOpenClawSecurityExactKeys = (value, keys) => {
++	if (!isOpenClawSecurityRecord(value)) return false;
++	const own = Reflect.ownKeys(value);
++	if (own.length !== keys.length) return false;
++	for (const key of keys) {
++		if (!Object.hasOwn(value, key)) return false;
++		const descriptor = Object.getOwnPropertyDescriptor(value, key);
++		if (!descriptor || !descriptor.enumerable || !("value" in descriptor)) return false;
++	}
++	return own.every((key) => typeof key === "string" && keys.includes(key));
++};
++const isOpenClawSecurityIdentifier = (value) => typeof value === "string" && value.length > 0 && value.length <= 128;
++const normalizeOpenClawSecurityBarrier = (value) => {
++	if (hasOpenClawSecurityExactKeys(value, ["outcome"]) && value.outcome === "pass") return Object.freeze({ outcome: "pass" });
++	if (!hasOpenClawSecurityExactKeys(value, [
++		"outcome",
++		"replacement_code",
++		"replacement_text"
++	]) || value.outcome !== "replace") return null;
++	const expected = Object.hasOwn(OPENCLAW_SECURITY_REPLACEMENT_TEXTS, value.replacement_code) ? OPENCLAW_SECURITY_REPLACEMENT_TEXTS[value.replacement_code] : void 0;
++	if (typeof expected !== "string" || value.replacement_text !== expected) return null;
++	return Object.freeze({
++		outcome: "replace",
++		replacement_code: value.replacement_code,
++		replacement_text: value.replacement_text
++	});
++};
++const normalizeOpenClawSecurityEnvelope = (value) => {
++	if (!hasOpenClawSecurityExactKeys(value, [
++		"schema_version",
++		"correlation",
++		"health",
++		"barrier"
++	]) || value.schema_version !== OPENCLAW_SECURITY_ENVELOPE_SCHEMA) return null;
++	const correlation = value.correlation;
++	if (!hasOpenClawSecurityExactKeys(correlation, [
++		"runId",
++		"sessionKey",
++		"callId"
++	]) || !isOpenClawSecurityIdentifier(correlation.runId) || !isOpenClawSecurityIdentifier(correlation.sessionKey) || correlation.callId !== null && !isOpenClawSecurityIdentifier(correlation.callId)) return null;
++	const health = value.health;
++	if (!hasOpenClawSecurityExactKeys(health, ["enforcement", "audit"]) || health.enforcement !== "healthy" && health.enforcement !== "failed" || health.audit !== "healthy" && health.audit !== "degraded") return null;
++	const barrier = normalizeOpenClawSecurityBarrier(value.barrier);
++	if (barrier === null) return null;
++	return Object.freeze({
++		schema_version: OPENCLAW_SECURITY_ENVELOPE_SCHEMA,
++		correlation: Object.freeze({
++			runId: correlation.runId,
++			sessionKey: correlation.sessionKey,
++			callId: correlation.callId
++		}),
++		health: Object.freeze({
++			enforcement: health.enforcement,
++			audit: health.audit
++		}),
++		barrier
++	});
++};
++const readOpenClawSecurityHostCorrelation = (event, ctx, expectsCallId) => {
++	if (!isOpenClawSecurityRecord(event)) return null;
++	const context = isOpenClawSecurityRecord(ctx) ? ctx : null;
++	const runId = isOpenClawSecurityIdentifier(event.runId) ? event.runId : context && isOpenClawSecurityIdentifier(context.runId) ? context.runId : null;
++	const sessionKey = isOpenClawSecurityIdentifier(event.sessionKey) ? event.sessionKey : context && isOpenClawSecurityIdentifier(context.sessionKey) ? context.sessionKey : null;
++	if (runId === null || sessionKey === null) return null;
++	if (expectsCallId) {
++		if (!isOpenClawSecurityIdentifier(event.callId)) return null;
++		return Object.freeze({
++			runId,
++			sessionKey,
++			callId: event.callId
++		});
++	}
++	if (event.callId !== void 0 && event.callId !== null) return null;
++	return Object.freeze({
++		runId,
++		sessionKey,
++		callId: null
++	});
++};
++const awaitOpenClawSecurityBarrier = async (promise) => {
++	let timer;
++	const deadline = new Promise((_resolve, reject) => {
++		timer = setTimeout(() => {
++			reject(/* @__PURE__ */ new Error(`openclaw security barrier timed out after ${OPENCLAW_SECURITY_BARRIER_DEADLINE_MS}ms`));
++		}, OPENCLAW_SECURITY_BARRIER_DEADLINE_MS);
++	});
++	try {
++		return await Promise.race([promise, deadline]);
++	} finally {
++		if (timer) clearTimeout(timer);
++	}
++};
++//#endregion
+ function createHookRunner(registry, options = {}) {
+ 	const logger = options.logger;
+ 	const catchErrors = options.catchErrors ?? true;
+@@ -785,40 +893,58 @@ function createHookRunner(registry, options = {}) {
+ 		return runVoidHook("message_sent", event, ctx);
+ 	}
+ 	/**
+-	* Run before_agent_run gate hook.
+-	* Fires after session resolution and workspace preparation, before model inference.
+-	* Returns the most-restrictive pass/block decision from all handlers.
+-	* Handlers that return void are treated as pass.
++	* Run one closed general-security final barrier.
++	*
++	* The general-security plugin is the only accepted handler: the barrier
++	* filters to its exact plugin ID, requires exactly one registration, awaits
++	* it for a fixed deadline, exact-normalizes only the private envelope,
++	* compares the envelope correlation against host-owned event/context
++	* identity, requires healthy enforcement, and returns only the nested
++	* barrier. Degraded audit health is accepted and never alters the barrier.
++	* Every transport, envelope, correlation, or enforcement-health failure
++	* deterministically yields the fixed unavailable replacement; none can
++	* become `pass`. This runner never authors a replacement provenance marker.
++	*/
++	const runOpenClawSecurityBarrier = async (hookName, event, ctx, expectsCallId) => {
++		const hostCorrelation = readOpenClawSecurityHostCorrelation(event, ctx, expectsCallId);
++		if (hostCorrelation === null) return openClawSecurityUnavailableBarrier();
++		const hooks = getHooksForNameAndPlugin(registry, hookName, OPENCLAW_SECURITY_PLUGIN_ID);
++		if (hooks.length !== 1) return openClawSecurityUnavailableBarrier();
++		let envelope;
++		try {
++			envelope = normalizeOpenClawSecurityEnvelope(await awaitOpenClawSecurityBarrier(Promise.resolve(hooks[0].handler(event, ctx))));
++		} catch (err) {
++			logger?.error?.(`[hooks] ${hookName} security barrier failed: ${formatHookErrorForLog(err)}`);
++			return openClawSecurityUnavailableBarrier();
++		}
++		if (envelope === null) return openClawSecurityUnavailableBarrier();
++		if (envelope.correlation.runId !== hostCorrelation.runId || envelope.correlation.sessionKey !== hostCorrelation.sessionKey || envelope.correlation.callId !== hostCorrelation.callId) return openClawSecurityUnavailableBarrier();
++		if (envelope.health.enforcement !== "healthy") return openClawSecurityUnavailableBarrier();
++		return envelope.barrier;
++	};
++	/**
++	* Run the awaited final user-input security barrier.
+ 	*/
+ 	async function runBeforeAgentRun(event, ctx) {
+-		let winningPluginId;
+-		const decision = await runModifyingHook("before_agent_run", event, ctx, {
+-			mergeResults: (_acc, next, reg) => {
+-				if (next === void 0 || next === null) {
+-					const normalized = {
+-						outcome: "block",
+-						reason: "before_agent_run returned an invalid decision"
+-					};
+-					winningPluginId = reg.pluginId;
+-					return normalized;
+-				}
+-				const normalized = isHookDecision(next) ? next : {
+-					outcome: "block",
+-					reason: "before_agent_run returned an invalid decision"
+-				};
+-				const merged = !_acc || normalized.outcome === "block" && _acc.outcome !== "block" ? normalized : _acc;
+-				if (merged === normalized) winningPluginId = reg.pluginId;
+-				return merged;
+-			},
+-			mergeNullResults: true,
+-			shouldStop: (result) => result?.outcome === "block",
+-			terminalLabel: "gate-decision"
+-		});
+-		if (!decision) return;
+-		return {
+-			decision,
+-			pluginId: winningPluginId ?? "unknown"
+-		};
++		return runOpenClawSecurityBarrier("before_agent_run", event, ctx, false);
++	}
++	/**
++	* Run the awaited final assistant-projection security barrier.
++	*/
++	async function runBeforeModelOutputDelivery(event, ctx) {
++		return runOpenClawSecurityBarrier("before_model_output_delivery", event, ctx, false);
++	}
++	/**
++	* Run the awaited final tool-parameter security barrier.
++	*/
++	async function runBeforeToolExecution(event, ctx) {
++		return runOpenClawSecurityBarrier("before_tool_execution", event, ctx, true);
++	}
++	/**
++	* Run the awaited final outbound-message security barrier.
++	*/
++	async function runBeforeMessageDelivery(event, ctx) {
++		return runOpenClawSecurityBarrier("before_message_delivery", event, ctx, false);
+ 	}
+ 	/**
+ 	* Run before_tool_call hook.
+@@ -1043,6 +1169,9 @@ function createHookRunner(registry, options = {}) {
+ 		runAfterCompaction,
+ 		runBeforeReset,
+ 		runBeforeAgentRun,
++		runBeforeModelOutputDelivery,
++		runBeforeToolExecution,
++		runBeforeMessageDelivery,
+ 		runInboundClaim,
+ 		runInboundClaimForPlugin,
+ 		runInboundClaimForPluginOutcome,
+diff --git a/dist/plugin-sdk/hook-types-H9SC6W-p.d.ts b/dist/plugin-sdk/hook-types-H9SC6W-p.d.ts
+index f4a80fd..5c305b0 100644
+--- a/dist/plugin-sdk/hook-types-H9SC6W-p.d.ts
++++ b/dist/plugin-sdk/hook-types-H9SC6W-p.d.ts
+@@ -342,8 +342,8 @@ type PluginHookName = "before_model_resolve" | "agent_turn_prepare" | "before_pr
+  * session-binding adapters before `subagent_spawned` fires. Use
+  * `subagent_spawned` for post-launch observation in new plugins.
+  */
+-| "subagent_spawning" | "subagent_delivery_target" | "subagent_spawned" | "subagent_ended" /** @deprecated Use gateway_stop. */ | "deactivate" | "gateway_start" | "gateway_stop" | "heartbeat_prompt_contribution" | "cron_changed" | "before_dispatch" | "reply_dispatch" | "before_install" | "before_agent_run" | "resolve_exec_env";
+-declare const PLUGIN_HOOK_NAMES: readonly ["before_model_resolve", "agent_turn_prepare", "before_prompt_build", "before_agent_start", "before_agent_reply", "model_call_started", "model_call_ended", "llm_input", "llm_output", "before_agent_finalize", "agent_end", "before_compaction", "after_compaction", "before_reset", "inbound_claim", "message_received", "message_sending", "reply_payload_sending", "message_sent", "before_tool_call", "after_tool_call", "tool_result_persist", "before_message_write", "session_start", "session_end", "subagent_spawning", "subagent_delivery_target", "subagent_spawned", "subagent_ended", "deactivate", "gateway_start", "gateway_stop", "heartbeat_prompt_contribution", "cron_changed", "before_dispatch", "reply_dispatch", "before_install", "before_agent_run", "resolve_exec_env"];
++| "subagent_spawning" | "subagent_delivery_target" | "subagent_spawned" | "subagent_ended" /** @deprecated Use gateway_stop. */ | "deactivate" | "gateway_start" | "gateway_stop" | "heartbeat_prompt_contribution" | "cron_changed" | "before_dispatch" | "reply_dispatch" | "before_install" | "before_agent_run" | "before_model_output_delivery" | "before_tool_execution" | "before_message_delivery" | "resolve_exec_env";
++declare const PLUGIN_HOOK_NAMES: readonly ["before_model_resolve", "agent_turn_prepare", "before_prompt_build", "before_agent_start", "before_agent_reply", "model_call_started", "model_call_ended", "llm_input", "llm_output", "before_agent_finalize", "agent_end", "before_compaction", "after_compaction", "before_reset", "inbound_claim", "message_received", "message_sending", "reply_payload_sending", "message_sent", "before_tool_call", "after_tool_call", "tool_result_persist", "before_message_write", "session_start", "session_end", "subagent_spawning", "subagent_delivery_target", "subagent_spawned", "subagent_ended", "deactivate", "gateway_start", "gateway_stop", "heartbeat_prompt_contribution", "cron_changed", "before_dispatch", "reply_dispatch", "before_install", "before_agent_run", "before_model_output_delivery", "before_tool_execution", "before_message_delivery", "resolve_exec_env"];
+ type DeprecatedPluginHookName = "subagent_spawning" | "deactivate";
+ type PluginHookDeprecation = {
+   replacement: string;
+@@ -368,7 +368,7 @@ declare const isPluginHookName: (hookName: unknown) => hookName is PluginHookNam
+ declare const PROMPT_INJECTION_HOOK_NAMES: readonly ["agent_turn_prepare", "before_prompt_build", "before_agent_start", "heartbeat_prompt_contribution"];
+ type PromptInjectionHookName = (typeof PROMPT_INJECTION_HOOK_NAMES)[number];
+ declare const isPromptInjectionHookName: (hookName: PluginHookName) => boolean;
+-declare const CONVERSATION_HOOK_NAMES: readonly ["before_model_resolve", "before_agent_reply", "llm_input", "llm_output", "before_agent_finalize", "agent_end", "before_agent_run"];
++declare const CONVERSATION_HOOK_NAMES: readonly ["before_model_resolve", "before_agent_reply", "llm_input", "llm_output", "before_agent_finalize", "agent_end", "before_agent_run", "before_model_output_delivery", "before_tool_execution", "before_message_delivery"];
+ type ConversationHookName = (typeof CONVERSATION_HOOK_NAMES)[number];
+ declare const isConversationHookName: (hookName: PluginHookName) => boolean;
+ type PluginHookAgentContext = {
+@@ -1132,4 +1132,27 @@ type PluginHookRegistration<K extends PluginHookName = PluginHookName> = {
+   source: string;
+ };
+ //#endregion
+-export { PluginHookModelCallEndedEvent as $, PluginHookMessageSendingResult as $t, PluginHookBeforeMessageWriteEvent as A, PluginHookToolResultPersistResult as At, PluginHookGatewayCronJob as B, PluginAgentTurnPrepareEvent as Bt, PluginHookBeforeInstallContext as C, PluginHookSubagentSpawningResult as Ct, PluginHookBeforeInstallResult as D, PluginHookToolKind as Dt, PluginHookBeforeInstallRequest as E, PluginHookToolInputKind as Et, PluginHookCronChangedEvent as F, PromptInjectionHookName as Ft, PluginHookGatewayCronUpdateInput as G, PluginNextTurnInjectionEnqueueResult as Gt, PluginHookGatewayCronRemoveResult as H, PluginHeartbeatPromptContributionEvent as Ht, PluginHookDeprecation as I, isConversationHookName as It, PluginHookHandlerMap as J, PluginHookInboundClaimContext as Jt, PluginHookGatewayStartEvent as K, PluginNextTurnInjectionRecord as Kt, PluginHookGatewayContext as L, isDeprecatedPluginHookName as Lt, PluginHookBeforeResetEvent as M, PluginInstallRequestKind as Mt, PluginHookBeforeToolCallEvent as N, PluginInstallSourcePathKind as Nt, PluginHookBeforeInstallSkill as O, PluginHookToolResultPersistContext as Ot, PluginHookContextWindowSource as P, PluginInstallTargetType as Pt, PluginHookModelCallBaseEvent as Q, PluginHookMessageSendingEvent as Qt, PluginHookGatewayCronCreateInput as R, isPluginHookName as Rt, PluginHookBeforeInstallBuiltinScan as S, PluginHookSubagentSpawningEvent as St, PluginHookBeforeInstallPlugin as T, PluginHookToolContext as Tt, PluginHookGatewayCronRunStatus as U, PluginHeartbeatPromptContributionResult as Ut, PluginHookGatewayCronJobState as V, PluginAgentTurnPrepareResult as Vt, PluginHookGatewayCronService as W, PluginNextTurnInjection as Wt, PluginHookLlmInputEvent as X, PluginHookMessageContext as Xt, PluginHookInboundClaimResult as Y, PluginHookInboundClaimEvent as Yt, PluginHookLlmOutputEvent as Z, PluginHookMessageReceivedEvent as Zt, PluginHookBeforeAgentRunResult as _, ReplyDispatchKind as _n, PluginHookSubagentContext as _t, DeprecatedPluginHookName as a, PluginHookBeforeToolCallResult as an, PluginHookReplyDispatchResult as at, PluginHookBeforeDispatchEvent as b, ReplyFollowupAdmissionBarrierTimeoutPolicy as bn, PluginHookSubagentEndedEvent as bt, PluginHookAfterCompactionEvent as c, PluginHookBeforeAgentStartOverrideResult as cn, PluginHookReplyPayloadSendingEvent as ct, PluginHookAgentEndEvent as d, PluginHookBeforeModelResolveEvent as dn, PluginHookResolveExecEnvContext as dt, PluginHookMessageSentEvent as en, PluginHookModelCallStartedEvent as et, PluginHookBeforeAgentFinalizeEvent as f, PluginHookBeforeModelResolveResult as fn, PluginHookResolveExecEnvEvent as ft, PluginHookBeforeAgentRunEvent as g, ReplyDispatchBeforeDeliver as gn, PluginHookSessionStartEvent as gt, PluginHookBeforeAgentReplyResult as h, stripPromptMutationFieldsFromLegacyHookResult as hn, PluginHookSessionEndReason as ht, DEPRECATED_PLUGIN_HOOK_NAMES as i, PluginApprovalResolutions as in, PluginHookReplyDispatchEvent as it, PluginHookBeforeMessageWriteResult as j, PluginInstallFinding as jt, PluginHookBeforeInstallSkillInstallSpec as k, PluginHookToolResultPersistEvent as kt, PluginHookAfterToolCallEvent as l, PluginHookBeforeAgentStartResult as ln, PluginHookReplyPayloadSendingResult as lt, PluginHookBeforeAgentReplyEvent as m, PluginHookBeforePromptBuildResult as mn, PluginHookSessionEndEvent as mt, ConversationHookName as n, InputGateDecision as nn, PluginHookRegistration as nt, PLUGIN_HOOK_NAMES as o, PLUGIN_PROMPT_MUTATION_RESULT_FIELDS as on, PluginHookReplyPayload as ot, PluginHookBeforeAgentFinalizeResult as p, PluginHookBeforePromptBuildEvent as pn, PluginHookSessionContext as pt, PluginHookGatewayStopEvent as q, PluginJsonValue as qt, DEPRECATED_PLUGIN_HOOKS as r, PluginApprovalResolution as rn, PluginHookReplyDispatchContext as rt, PROMPT_INJECTION_HOOK_NAMES as s, PluginHookBeforeAgentStartEvent as sn, PluginHookReplyPayloadSendingContext as st, CONVERSATION_HOOK_NAMES as t, GateHookResult as tn, PluginHookName as tt, PluginHookAgentContext as u, PluginHookBeforeModelResolveAttachment as un, PluginHookReplyUsageState as ut, PluginHookBeforeCompactionEvent as v, ReplyDispatchRuntimeInfo as vn, PluginHookSubagentDeliveryTargetEvent as vt, PluginHookBeforeInstallEvent as w, PluginHookSubagentTargetKind as wt, PluginHookBeforeDispatchResult as x, PluginHookSubagentSpawnedEvent as xt, PluginHookBeforeDispatchContext as y, ReplyDispatcher as yn, PluginHookSubagentDeliveryTargetResult as yt, PluginHookGatewayCronDeliveryStatus as z, isPromptInjectionHookName as zt };
+\ No newline at end of file
++export { PluginHookModelCallEndedEvent as $, PluginHookMessageSendingResult as $t, PluginHookBeforeMessageWriteEvent as A, PluginHookToolResultPersistResult as At, PluginHookGatewayCronJob as B, PluginAgentTurnPrepareEvent as Bt, PluginHookBeforeInstallContext as C, PluginHookSubagentSpawningResult as Ct, PluginHookBeforeInstallResult as D, PluginHookToolKind as Dt, PluginHookBeforeInstallRequest as E, PluginHookToolInputKind as Et, PluginHookCronChangedEvent as F, PromptInjectionHookName as Ft, PluginHookGatewayCronUpdateInput as G, PluginNextTurnInjectionEnqueueResult as Gt, PluginHookGatewayCronRemoveResult as H, PluginHeartbeatPromptContributionEvent as Ht, PluginHookDeprecation as I, isConversationHookName as It, PluginHookHandlerMap as J, PluginHookInboundClaimContext as Jt, PluginHookGatewayStartEvent as K, PluginNextTurnInjectionRecord as Kt, PluginHookGatewayContext as L, isDeprecatedPluginHookName as Lt, PluginHookBeforeResetEvent as M, PluginInstallRequestKind as Mt, PluginHookBeforeToolCallEvent as N, PluginInstallSourcePathKind as Nt, PluginHookBeforeInstallSkill as O, PluginHookToolResultPersistContext as Ot, PluginHookContextWindowSource as P, PluginInstallTargetType as Pt, PluginHookModelCallBaseEvent as Q, PluginHookMessageSendingEvent as Qt, PluginHookGatewayCronCreateInput as R, isPluginHookName as Rt, PluginHookBeforeInstallBuiltinScan as S, PluginHookSubagentSpawningEvent as St, PluginHookBeforeInstallPlugin as T, PluginHookToolContext as Tt, PluginHookGatewayCronRunStatus as U, PluginHeartbeatPromptContributionResult as Ut, PluginHookGatewayCronJobState as V, PluginAgentTurnPrepareResult as Vt, PluginHookGatewayCronService as W, PluginNextTurnInjection as Wt, PluginHookLlmInputEvent as X, PluginHookMessageContext as Xt, PluginHookInboundClaimResult as Y, PluginHookInboundClaimEvent as Yt, PluginHookLlmOutputEvent as Z, PluginHookMessageReceivedEvent as Zt, PluginHookBeforeAgentRunResult as _, ReplyDispatchKind as _n, PluginHookSubagentContext as _t, DeprecatedPluginHookName as a, PluginHookBeforeToolCallResult as an, PluginHookReplyDispatchResult as at, PluginHookBeforeDispatchEvent as b, ReplyFollowupAdmissionBarrierTimeoutPolicy as bn, PluginHookSubagentEndedEvent as bt, PluginHookAfterCompactionEvent as c, PluginHookBeforeAgentStartOverrideResult as cn, PluginHookReplyPayloadSendingEvent as ct, PluginHookAgentEndEvent as d, PluginHookBeforeModelResolveEvent as dn, PluginHookResolveExecEnvContext as dt, PluginHookMessageSentEvent as en, PluginHookModelCallStartedEvent as et, PluginHookBeforeAgentFinalizeEvent as f, PluginHookBeforeModelResolveResult as fn, PluginHookResolveExecEnvEvent as ft, PluginHookBeforeAgentRunEvent as g, ReplyDispatchBeforeDeliver as gn, PluginHookSessionStartEvent as gt, PluginHookBeforeAgentReplyResult as h, stripPromptMutationFieldsFromLegacyHookResult as hn, PluginHookSessionEndReason as ht, DEPRECATED_PLUGIN_HOOK_NAMES as i, PluginApprovalResolutions as in, PluginHookReplyDispatchEvent as it, PluginHookBeforeMessageWriteResult as j, PluginInstallFinding as jt, PluginHookBeforeInstallSkillInstallSpec as k, PluginHookToolResultPersistEvent as kt, PluginHookAfterToolCallEvent as l, PluginHookBeforeAgentStartResult as ln, PluginHookReplyPayloadSendingResult as lt, PluginHookBeforeAgentReplyEvent as m, PluginHookBeforePromptBuildResult as mn, PluginHookSessionEndEvent as mt, ConversationHookName as n, InputGateDecision as nn, PluginHookRegistration as nt, PLUGIN_HOOK_NAMES as o, PLUGIN_PROMPT_MUTATION_RESULT_FIELDS as on, PluginHookReplyPayload as ot, PluginHookBeforeAgentFinalizeResult as p, PluginHookBeforePromptBuildEvent as pn, PluginHookSessionContext as pt, PluginHookGatewayStopEvent as q, PluginJsonValue as qt, DEPRECATED_PLUGIN_HOOKS as r, PluginApprovalResolution as rn, PluginHookReplyDispatchContext as rt, PROMPT_INJECTION_HOOK_NAMES as s, PluginHookBeforeAgentStartEvent as sn, PluginHookReplyPayloadSendingContext as st, CONVERSATION_HOOK_NAMES as t, GateHookResult as tn, PluginHookName as tt, PluginHookAgentContext as u, PluginHookBeforeModelResolveAttachment as un, PluginHookReplyUsageState as ut, PluginHookBeforeCompactionEvent as v, ReplyDispatchRuntimeInfo as vn, PluginHookSubagentDeliveryTargetEvent as vt, PluginHookBeforeInstallEvent as w, PluginHookSubagentTargetKind as wt, PluginHookBeforeDispatchResult as x, PluginHookSubagentSpawnedEvent as xt, PluginHookBeforeDispatchContext as y, ReplyDispatcher as yn, PluginHookSubagentDeliveryTargetResult as yt, PluginHookGatewayCronDeliveryStatus as z, isPromptInjectionHookName as zt };
++type OpenClawSecurityBarrierResult = {
++	outcome: "pass";
++} | {
++	outcome: "replace";
++	replacement_code: "security_review_required" | "sandbox_security_policy_blocked" | "sandbox_security_evaluation_unavailable";
++	replacement_text: string;
++};
++type OpenClawSecurityHealth = {
++	enforcement: "healthy" | "failed";
++	audit: "healthy" | "degraded";
++};
++type OpenClawSecurityHookCorrelation = {
++	runId: string;
++	sessionKey: string;
++	callId: string | null;
++};
++type OpenClawSecurityHookEnvelope = {
++	schema_version: "openclaw-security-hook-result.v1";
++	correlation: OpenClawSecurityHookCorrelation;
++	health: OpenClawSecurityHealth;
++	barrier: OpenClawSecurityBarrierResult;
++};
++export type { OpenClawSecurityBarrierResult, OpenClawSecurityHealth, OpenClawSecurityHookCorrelation, OpenClawSecurityHookEnvelope };
