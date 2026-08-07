@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { Buffer } from "node:buffer";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import type {
@@ -7,6 +11,7 @@ import type {
   OpenClawEnforcementAuditAck
 } from "../../shared/index.ts";
 import type { SandboxSecurityRuntimePort } from "../src/modules/sandbox-security/ports/runtime.ts";
+import type { SqliteSandboxSecurityDatabase } from "../src/modules/sandbox-security/ports/sqlite-database.ts";
 import type { OpenClawEnforcementAuditIdentity } from "../src/modules/sandbox-security/sandbox-security.types.ts";
 import {
   createSandboxSecurityServiceError,
@@ -117,6 +122,51 @@ function serviceWith(
   now: () => string = () => NOW
 ) {
   return getFactory()({ repository, runtime: runtime(now) });
+}
+
+function sqliteEnforcementRepository(database: SqliteSandboxSecurityDatabase): RecordingRepository {
+  const factory = (boundary as unknown as Record<string, unknown>)
+    .createSqliteSandboxSecurityEnforcementAuditRepository;
+  assert.equal(typeof factory, "function");
+  return (factory as (input: Readonly<{ database: SqliteSandboxSecurityDatabase }>) => RecordingRepository)({
+    database
+  });
+}
+
+function seedCapability(database: SqliteSandboxSecurityDatabase): void {
+  database.transaction((sqlite) => {
+    sqlite
+      .prepare(
+        `INSERT INTO sandbox_security_capabilities(
+          capability_id, subject_id, token_digest, scope_seed,
+          issued_at, expires_at, revoked_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        IDENTITY.capability_id,
+        IDENTITY.subject_id,
+        `sha256:${"c".repeat(64)}`,
+        Buffer.from(new Uint8Array(32)),
+        NOW,
+        "2026-08-07T01:00:00.000Z",
+        null
+      );
+    sqlite
+      .prepare(
+        "INSERT INTO sandbox_security_capability_scopes(capability_id, scope) VALUES (?, ?)"
+      )
+      .run(IDENTITY.capability_id, "sandbox_security:enforcement:audit:write");
+    sqlite
+      .prepare(
+        "INSERT INTO sandbox_security_capability_stages(capability_id, stage) VALUES (?, ?)"
+      )
+      .run(IDENTITY.capability_id, "user_input");
+    sqlite
+      .prepare(
+        "INSERT INTO sandbox_security_capability_profiles(capability_id, policy_profile_id) VALUES (?, ?)"
+      )
+      .run(IDENTITY.capability_id, "sandbox-security-balanced.v1");
+  });
 }
 
 test("REQ-SBX-GENERAL-004 exposes the enforcement audit service factory", () => {
@@ -243,6 +293,55 @@ test("REQ-SBX-GENERAL-004 accepts interrupted projections with backend identity"
     interruption_code: INTERRUPTED_REQUEST.interruption_code,
     applied_fail_closed_action: INTERRUPTED_REQUEST.applied_fail_closed_action
   });
+});
+
+test("REQ-SBX-GENERAL-004 preserves the first replay time and propagates service conflicts", async (t) => {
+  const parent = mkdtempSync(join(tmpdir(), "sandbox-security-enforcement-service-"));
+  t.after(() => rmSync(parent, { recursive: true, force: true }));
+  const database = (boundary as unknown as {
+    openSandboxSecuritySqliteDatabase: (input: Readonly<{
+      path: string;
+      deployment_key_id: string;
+      now: () => string;
+    }>) => SqliteSandboxSecurityDatabase;
+  }).openSandboxSecuritySqliteDatabase({
+    path: join(parent, "security.db"),
+    deployment_key_id: `deployment-key:hmac-sha256:${"a".repeat(64)}`,
+    now: () => NOW
+  });
+  t.after(() => {
+    if (database.state === "open") database.checkpointAndClose();
+  });
+  seedCapability(database);
+
+  const repository = sqliteEnforcementRepository(database);
+  const times = [NOW, REPLAYED_AT, REPLAYED_AT];
+  const service = serviceWith(repository, () => times.shift() ?? REPLAYED_AT);
+  const accepted = await service.appendEnforcementEvent(COMPLETED_REQUEST, IDENTITY);
+  const replayed = await service.appendEnforcementEvent(COMPLETED_REQUEST, IDENTITY);
+
+  assert.deepEqual(accepted, {
+    schema_version: "sandbox-security-enforcement-audit-ack.v1",
+    event_id: COMPLETED_REQUEST.event_id,
+    status: "accepted",
+    occurred_at: NOW
+  });
+  assert.deepEqual(replayed, {
+    schema_version: "sandbox-security-enforcement-audit-ack.v1",
+    event_id: COMPLETED_REQUEST.event_id,
+    status: "replayed",
+    occurred_at: NOW
+  });
+
+  const conflictingRequest = {
+    ...COMPLETED_REQUEST,
+    elapsed_ms: COMPLETED_REQUEST.elapsed_ms + 1
+  } satisfies SandboxSecurityEnforcementAuditRequest;
+  await assert.rejects(
+    () => service.appendEnforcementEvent(conflictingRequest, IDENTITY),
+    (error: unknown) =>
+      (error as { code?: unknown }).code === "SANDBOX_SECURITY_IDEMPOTENCY_CONFLICT"
+  );
 });
 
 test("REQ-SBX-GENERAL-004 calls runtime.now once and preserves stable repository errors", async () => {
