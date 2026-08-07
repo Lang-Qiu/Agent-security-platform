@@ -298,3 +298,232 @@ index f4a80fd..5c305b0 100644
 +	barrier: OpenClawSecurityBarrierResult;
 +};
 +export type { OpenClawSecurityBarrierResult, OpenClawSecurityHealth, OpenClawSecurityHookCorrelation, OpenClawSecurityHookEnvelope };
+diff --git a/dist/cli-runner-B0eKIePw.js b/dist/cli-runner-B0eKIePw.js
+index 28a31d9..8096f5a 100644
+--- a/dist/cli-runner-B0eKIePw.js
++++ b/dist/cli-runner-B0eKIePw.js
+@@ -14,7 +14,7 @@ import { i as buildGenericCliContextEngineHostSupport } from "./host-compat-BibW
+ import { a as finalizeHarnessContextEngineTurn, d as runAgentEndSideEffects, l as waitForDeferredTurnMaintenanceForSession, n as bootstrapHarnessContextEngine, s as runHarnessContextEngineMaintenance, u as awaitAgentEndSideEffects } from "./context-engine-lifecycle-BHLvvk9q.js";
+ import { n as buildAgentHookContextIdentityFields, t as buildAgentHookContextChannelFields } from "./hook-agent-context-ugCMMoT5.js";
+ import "./embedded-agent-helpers-uCYK89ck.js";
+-import { a as runAgentHarnessLlmInputHook, o as runAgentHarnessLlmOutputHook, s as buildAgentHookContext } from "./lifecycle-hook-helpers-Dowa8zK4.js";
++import { a as runAgentHarnessLlmInputHook, o as runAgentHarnessLlmOutputHook, s as buildAgentHookContext, activateOpenClawSecurityTurnCapsule, createOpenClawSecurityFixedReplacement } from "./lifecycle-hook-helpers-Dowa8zK4.js";
+ import { t as buildEmbeddedRunPayloads } from "./payloads-CpuaeKbz.js";
+ import { n as getCliMessagingDeliveryEvidence, t as attachCliMessagingDeliveryEvidence } from "./delivery-evidence-Cmz7UHq4.js";
+ import { i as formatCliBackendOutputDigest, r as cliBackendLog } from "./log-CYYTJQ53.js";
+@@ -747,6 +747,11 @@ async function runPreparedCliAgent(context) {
+ 		};
+ 		if (hasBeforeAgentRunHooks && hookRunner) {
+ 			let beforeRunResult;
++			activateOpenClawSecurityTurnCapsule({
++				prompt: params.prompt,
++				runId: params.runId,
++				sessionKey: params.sessionKey
++			});
+ 			try {
+ 				beforeRunResult = await hookRunner.runBeforeAgentRun({
+ 					prompt: params.prompt,
+@@ -776,12 +781,12 @@ async function runPreparedCliAgent(context) {
+ 				});
+ 				return buildBlockedBeforeAgentRunResult(blockMessage);
+ 			}
+-			const beforeRunDecision = beforeRunResult?.decision;
+-			if (beforeRunDecision?.outcome === "block") {
+-				const blockMessage = resolveBlockMessage(beforeRunDecision, { blockedBy: beforeRunResult?.pluginId ?? "unknown" });
++			if (beforeRunResult?.outcome === "replace") {
++				const openClawSecurityReplacement = createOpenClawSecurityFixedReplacement(beforeRunResult);
++				const blockMessage = openClawSecurityReplacement.text;
+ 				await persistBlockedBeforeAgentRun({
+ 					message: blockMessage,
+-					pluginId: beforeRunResult?.pluginId ?? "unknown"
++					pluginId: beforeRunResult.replacement_code
+ 				});
+ 				await runCliAgentEndHook(params, {
+ 					event: buildBlockedAgentEndEvent(blockMessage),
+diff --git a/dist/dispatch-BSYjC-fp.js b/dist/dispatch-BSYjC-fp.js
+index bb9cefc..51114b7 100644
+--- a/dist/dispatch-BSYjC-fp.js
++++ b/dist/dispatch-BSYjC-fp.js
+@@ -66,6 +66,7 @@ import { t as resolveRoutedDeliveryThreadId } from "./routed-delivery-thread-DbB
+ import { n as resolveStoredModelOverride } from "./stored-model-override-D4Rq-lSd.js";
+ import { t as finalizeInboundContext } from "./inbound-context-cqPd3Tht.js";
+ import crypto from "node:crypto";
++import { createOpenClawSecurityTurnCapsule, runWithOpenClawSecurityTurnCapsule, invalidateOpenClawSecurityTurnCapsule } from "./lifecycle-hook-helpers-Dowa8zK4.js";
+ //#region src/auto-reply/dispatch-dispatcher.ts
+ /** Mark a dispatcher complete, wait for pending work, then run optional cleanup. */
+ async function settleReplyDispatcher(params) {
+@@ -78,11 +79,18 @@ async function settleReplyDispatcher(params) {
+ }
+ /** Run work with a dispatcher and always drain it before returning or throwing. */
+ async function withReplyDispatcher(params) {
+-	try {
+-		return await params.run();
+-	} finally {
+-		await settleReplyDispatcher(params);
+-	}
++	const openClawSecurityTurnCapsule = createOpenClawSecurityTurnCapsule();
++	return runWithOpenClawSecurityTurnCapsule(openClawSecurityTurnCapsule, async () => {
++		try {
++			return await params.run();
++		} finally {
++			try {
++				await settleReplyDispatcher(params);
++			} finally {
++				invalidateOpenClawSecurityTurnCapsule();
++			}
++		}
++	});
+ }
+ //#endregion
+ //#region src/channels/plugins/exec-approval-local.ts
+diff --git a/dist/lifecycle-hook-helpers-Dowa8zK4.js b/dist/lifecycle-hook-helpers-Dowa8zK4.js
+index 5a72ef4..0cc4384 100644
+--- a/dist/lifecycle-hook-helpers-Dowa8zK4.js
++++ b/dist/lifecycle-hook-helpers-Dowa8zK4.js
+@@ -4,6 +4,7 @@ import { t as createSubsystemLogger } from "./subsystem-CYwCorYs.js";
+ import { t as getGlobalHookRunner } from "./hook-runner-global-D_43rcnU.js";
+ import { n as buildAgentHookContextIdentityFields } from "./hook-agent-context-ugCMMoT5.js";
+ import { createHash } from "node:crypto";
++import { AsyncLocalStorage } from "node:async_hooks";
+ //#region src/agents/harness/hook-context.ts
+ /** Builds the sparse hook context object passed to agent harness plugin hooks. */
+ function buildAgentHookContext(params) {
+@@ -174,4 +175,89 @@ function isBeforeAgentFinalizeRetry(value) {
+ 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+ }
+ //#endregion
+-export { runAgentHarnessLlmInputHook as a, runAgentHarnessBeforeAgentFinalizeHook as i, getAgentHarnessHookRunner as n, runAgentHarnessLlmOutputHook as o, runAgentHarnessAgentEndHook as r, buildAgentHookContext as s, awaitAgentHarnessAgentEndHook as t };
++//#region src/agents/harness/openclaw-security-turn-context.ts
++/**
++* Host-only awaited turn-context carrier for the general-security barrier.
++*
++* A capsule is created pending (holds no prompt), activated exactly once with
++* the host-owned prompt/runId/sessionKey tuple, read only while it is in scope
++* and live, and invalidated so that no prompt bytes survive on the object.
++* The carrier uses AsyncLocalStorage run scoping only; it never recovers turn
++* state from any other source.
++*/
++const OPENCLAW_SECURITY_TURN_CONTEXT_STORE = new AsyncLocalStorage();
++const OPENCLAW_SECURITY_TURN_CONTEXT_SCHEMA = "openclaw-security-turn-context.v1";
++const OPENCLAW_SECURITY_FIXED_REPLACEMENT_MARKER = "openclaw-security-fixed-replacement.v1";
++const OPENCLAW_SECURITY_FIXED_REPLACEMENT_TEXTS = {
++	security_review_required: "Security review required. This action was not completed.",
++	sandbox_security_policy_blocked: "Blocked by sandbox security policy.",
++	sandbox_security_evaluation_unavailable: "Security evaluation unavailable. This action was not completed."
++};
++const isOpenClawSecurityPlainRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
++const openClawSecurityHasExactKeys = (value, keys) => {
++	if (!isOpenClawSecurityPlainRecord(value)) return false;
++	const own = Reflect.ownKeys(value);
++	if (own.length !== keys.length) return false;
++	for (const key of keys) if (!Object.hasOwn(value, key)) return false;
++	return own.every((key) => typeof key === "string" && keys.includes(key));
++};
++const isOpenClawSecurityNonEmptyString = (value) => typeof value === "string" && value.length > 0;
++function createOpenClawSecurityTurnCapsule() {
++	return {
++		active: false,
++		invalidated: false,
++		context: null,
++		replacement: null
++	};
++}
++function runWithOpenClawSecurityTurnCapsule(capsule, fn) {
++	return OPENCLAW_SECURITY_TURN_CONTEXT_STORE.run(capsule, fn);
++}
++function activateOpenClawSecurityTurnCapsule(input) {
++	const capsule = OPENCLAW_SECURITY_TURN_CONTEXT_STORE.getStore();
++	if (!capsule) throw new Error("openclaw security turn capsule is not in scope");
++	if (capsule.active || capsule.invalidated) throw new Error("openclaw security turn capsule was already activated");
++	if (!openClawSecurityHasExactKeys(input, ["prompt", "runId", "sessionKey"])) throw new Error("openclaw security turn tuple is malformed");
++	if (!isOpenClawSecurityNonEmptyString(input.prompt) || !isOpenClawSecurityNonEmptyString(input.runId) || !isOpenClawSecurityNonEmptyString(input.sessionKey)) throw new Error("openclaw security turn tuple is malformed");
++	const tuple = Object.freeze({
++		schema_version: OPENCLAW_SECURITY_TURN_CONTEXT_SCHEMA,
++		prompt: input.prompt,
++		runId: input.runId,
++		sessionKey: input.sessionKey
++	});
++	capsule.context = tuple;
++	capsule.active = true;
++	return tuple;
++}
++function readOpenClawSecurityTurnContext() {
++	const capsule = OPENCLAW_SECURITY_TURN_CONTEXT_STORE.getStore();
++	if (!capsule || !capsule.active || capsule.invalidated || capsule.context === null) return null;
++	return capsule.context;
++}
++function invalidateOpenClawSecurityTurnCapsule() {
++	const capsule = OPENCLAW_SECURITY_TURN_CONTEXT_STORE.getStore();
++	if (!capsule) return;
++	capsule.active = false;
++	capsule.invalidated = true;
++	capsule.context = null;
++}
++function createOpenClawSecurityFixedReplacement(barrier) {
++	if (!openClawSecurityHasExactKeys(barrier, ["outcome", "replacement_code", "replacement_text"]) || barrier.outcome !== "replace") throw new Error("openclaw security fixed replacement was rejected");
++	const expected = Object.hasOwn(OPENCLAW_SECURITY_FIXED_REPLACEMENT_TEXTS, barrier.replacement_code) ? OPENCLAW_SECURITY_FIXED_REPLACEMENT_TEXTS[barrier.replacement_code] : void 0;
++	if (typeof expected !== "string" || barrier.replacement_text !== expected) throw new Error("openclaw security fixed replacement was rejected");
++	const envelope = Object.freeze({
++		text: expected,
++		replacement_code: barrier.replacement_code,
++		provenance: OPENCLAW_SECURITY_FIXED_REPLACEMENT_MARKER
++	});
++	const capsule = OPENCLAW_SECURITY_TURN_CONTEXT_STORE.getStore();
++	if (capsule) capsule.replacement = envelope;
++	return envelope;
++}
++function readOpenClawSecurityFixedReplacement() {
++	const capsule = OPENCLAW_SECURITY_TURN_CONTEXT_STORE.getStore();
++	if (!capsule || !capsule.replacement) return null;
++	return capsule.replacement;
++}
++//#endregion
++export { runAgentHarnessLlmInputHook as a, runAgentHarnessBeforeAgentFinalizeHook as i, getAgentHarnessHookRunner as n, runAgentHarnessLlmOutputHook as o, runAgentHarnessAgentEndHook as r, buildAgentHookContext as s, awaitAgentHarnessAgentEndHook as t, createOpenClawSecurityTurnCapsule, runWithOpenClawSecurityTurnCapsule, activateOpenClawSecurityTurnCapsule, readOpenClawSecurityTurnContext, invalidateOpenClawSecurityTurnCapsule, createOpenClawSecurityFixedReplacement, readOpenClawSecurityFixedReplacement };
+diff --git a/dist/selection-DopzNY3I.js b/dist/selection-DopzNY3I.js
+index e2cbc34..a0a5acf 100644
+--- a/dist/selection-DopzNY3I.js
++++ b/dist/selection-DopzNY3I.js
+@@ -163,7 +163,7 @@ import { t as collectTextContentBlocks } from "./content-blocks-DRK0dze4.js";
+ import { _ as sanitizeToolResult, a as collectMessagingMediaUrlsFromRecord, c as extractMessagingToolSendResult, d as extractToolErrorMessage, f as extractToolResultMediaArtifact, g as sanitizeToolArgs, h as isToolResultTimedOut, i as buildToolLifecycleErrorResult, l as extractMessagingToolSourceReplyPayload, m as filterToolResultMediaUrls, n as isDeliveredMessageToolOnlySourceReplyResult, o as collectMessagingMediaUrlsFromToolResult, p as extractToolResultText, r as isDeliveredMessagingToolResult, s as extractMessagingToolSend, u as extractToolErrorCode, v as isToolResultError, y as readToolResultDetails } from "./embedded-agent-message-tool-source-reply-DdZ0Jj0x.js";
+ import { a as isSameToolMutationAction, t as buildToolMutationState } from "./tool-mutation-BioMabQh.js";
+ import { t as EmbeddedBlockChunker } from "./embedded-agent-block-chunker-DH4NVUQq.js";
+-import { i as runAgentHarnessBeforeAgentFinalizeHook } from "./lifecycle-hook-helpers-Dowa8zK4.js";
++import { i as runAgentHarnessBeforeAgentFinalizeHook, activateOpenClawSecurityTurnCapsule, createOpenClawSecurityFixedReplacement } from "./lifecycle-hook-helpers-Dowa8zK4.js";
+ import { i as resolveAgentPromptSurfaceForSessionKey, n as appendModelIdentitySystemPrompt, r as buildModelIdentityPromptLine } from "./system-prompt-config-918fq8Rs.js";
+ import { t as collectRuntimeChannelCapabilities } from "./runtime-capabilities-B2jAhFpY.js";
+ import { n as filterRuntimeCompatibleTools } from "./tool-schema-projection-Bld_BaX8.js";
+@@ -13418,6 +13418,11 @@ async function runEmbeddedAttempt(params) {
+ 					if (hookRunner?.hasHooks("before_agent_run")) {
+ 						const beforeRunMessages = cloneHookMessages(hookMessagesForCurrentPrompt);
+ 						let beforeRunResult;
++						activateOpenClawSecurityTurnCapsule({
++							prompt: promptForModel,
++							runId: params.runId,
++							sessionKey: params.sessionKey
++						});
+ 						try {
+ 							beforeRunResult = await hookRunner.runBeforeAgentRun({
+ 								prompt: promptForModel,
+@@ -13446,16 +13451,15 @@ async function runEmbeddedAttempt(params) {
+ 							promptErrorSource = "hook:before_agent_run";
+ 							skipPromptSubmission = true;
+ 						}
+-						const beforeRunDecision = beforeRunResult?.decision;
+-						const beforeRunPluginId = beforeRunResult?.pluginId ?? "unknown";
+-						if (beforeRunDecision?.outcome === "block") {
++						if (beforeRunResult?.outcome === "replace") {
++							const openClawSecurityReplacement = createOpenClawSecurityFixedReplacement(beforeRunResult);
+ 							beforeAgentRunBlocked = true;
+-							beforeAgentRunBlockedBy = beforeRunPluginId;
+-							const blockReplacementMsg = resolveBlockMessage(beforeRunDecision, { blockedBy: beforeRunPluginId });
+-							log$2.warn(`before_agent_run hook blocked by ${beforeRunPluginId}`);
++							beforeAgentRunBlockedBy = beforeRunResult.replacement_code;
++							const blockReplacementMsg = openClawSecurityReplacement.text;
++							log$2.warn(`before_agent_run hook replaced by ${beforeRunResult.replacement_code}`);
+ 							await persistBlockedBeforeAgentRun({
+ 								message: blockReplacementMsg,
+-								pluginId: beforeRunPluginId
++								pluginId: beforeRunResult.replacement_code
+ 							});
+ 							promptError = new Error(blockReplacementMsg);
+ 							promptErrorSource = "hook:before_agent_run";
