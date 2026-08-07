@@ -13,7 +13,10 @@ import {
 import type {
   SandboxSecurityProductionCompositionBinding
 } from "../../../../shared/types/sandbox-security-enforcement-audit.ts";
-import type { SandboxSecurityCapabilityRepository } from "./ports/capability.repository.ts";
+import type {
+  SandboxSecurityCapabilityRepository,
+  SandboxSecurityEnforcementAuditCapabilityRepository
+} from "./ports/capability.repository.ts";
 import {
   createSandboxSecurityServiceError
 } from "./sandbox-security.errors.ts";
@@ -354,6 +357,7 @@ function tokenDigest(token: string): `sha256:${string}` {
 
 export function createSandboxSecurityCapabilityAuthenticator(input: Readonly<{
   repository: SandboxSecurityCapabilityRepository;
+  enforcement_audit_repository: SandboxSecurityEnforcementAuditCapabilityRepository;
   hmac: SandboxSecurityHmacService;
   production_mode: SandboxSecurityProductionMode;
   bootstrap_admin_token: string;
@@ -364,6 +368,8 @@ export function createSandboxSecurityCapabilityAuthenticator(input: Readonly<{
     typeof input !== "object" ||
     !input.repository ||
     typeof input.repository.findByTokenDigest !== "function" ||
+    !input.enforcement_audit_repository ||
+    typeof input.enforcement_audit_repository.findEnforcementAuditByTokenDigest !== "function" ||
     !input.hmac ||
     typeof input.hmac.authorizationScopeId !== "function" ||
     !AUTHORIZATION_MODES.includes(input.production_mode) ||
@@ -374,6 +380,7 @@ export function createSandboxSecurityCapabilityAuthenticator(input: Readonly<{
   }
 
   const repository = input.repository;
+  const enforcementAuditRepository = input.enforcement_audit_repository;
   const hmac = input.hmac;
   const productionMode = input.production_mode;
   const bootstrapAdminToken = input.bootstrap_admin_token;
@@ -435,7 +442,7 @@ export function createSandboxSecurityCapabilityAuthenticator(input: Readonly<{
         return { kind: "unknown" };
       }
       const digest = tokenDigest(token);
-      const rawRecord = repository.findByTokenDigest(digest);
+      const rawRecord = enforcementAuditRepository.findEnforcementAuditByTokenDigest(digest);
       const record = normalizeEnforcementPersistenceRecord(rawRecord, digest);
       if (record === null) return { kind: "unknown" };
       const authorizationScopeId = privateAuthorizationScopeId(

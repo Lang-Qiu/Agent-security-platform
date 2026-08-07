@@ -96,6 +96,12 @@ function makeRepository(record: SandboxSecurityCapabilityPersistenceRecord | nul
     },
     revokeWithAudit() {
       return null;
+    },
+    findEnforcementAuditByTokenDigest() {
+      return null;
+    },
+    revokeEnforcementAudit() {
+      return null;
     }
   };
 }
@@ -259,6 +265,12 @@ function makeCapabilityServiceFixture(input: Readonly<{
     findByTokenDigest() {
       return null;
     },
+    findEnforcementAuditByTokenDigest() {
+      return null;
+    },
+    revokeEnforcementAudit() {
+      return null;
+    },
     revokeWithAudit(value) {
       state.revoked.push({ capability_id: value.capability_id, revoked_at: value.revoked_at });
       if (state.revoke_error !== undefined) throw state.revoke_error;
@@ -292,7 +304,8 @@ function makeCapabilityServiceFixture(input: Readonly<{
 
   const create = get<(
     value: Readonly<{
-      repository: SandboxSecurityCapabilityRepository & SandboxSecurityEnforcementAuditCapabilityRepository;
+      repository: SandboxSecurityCapabilityRepository;
+      enforcement_audit_repository: SandboxSecurityEnforcementAuditCapabilityRepository;
       hmac: SandboxSecurityHmacService;
       production_mode: "local";
       runtime: SandboxSecurityRuntimePort;
@@ -302,6 +315,7 @@ function makeCapabilityServiceFixture(input: Readonly<{
   ) => SandboxSecurityCapabilityService>("createSandboxSecurityCapabilityService");
   const service = create({
     repository,
+    enforcement_audit_repository: repository,
     hmac,
     production_mode: "local",
     runtime,
@@ -380,6 +394,7 @@ test("REQ-SBX-GENERAL-003 rejects duplicate, sparse, inherited, and accessor gra
 test("REQ-SBX-GENERAL-003 authenticates unknown and malformed tokens as unknown", () => {
   const create = get<(input: Readonly<{
     repository: ReturnType<typeof makeRepository>;
+    enforcement_audit_repository: ReturnType<typeof makeRepository>;
     hmac: SandboxSecurityHmacService;
     production_mode: "local";
     bootstrap_admin_token: string;
@@ -387,6 +402,7 @@ test("REQ-SBX-GENERAL-003 authenticates unknown and malformed tokens as unknown"
   }>) => any>("createSandboxSecurityCapabilityAuthenticator");
   const authenticator = create({
     repository: makeRepository(makeRecord()),
+    enforcement_audit_repository: makeRepository(null),
     hmac: makeHmac(),
     production_mode: "local",
     bootstrap_admin_token: "admin-secret",
@@ -406,14 +422,15 @@ test("REQ-SBX-GENERAL-004 public v1 authenticator rejects a private enforcement 
     composition_binding: "sandbox-security-production-composition.v1:local"
   } as unknown as SandboxSecurityPrivateCapabilityPersistenceRecord;
   const repository = makeRepository(null) as unknown as {
-    findByTokenDigest(
+    findEnforcementAuditByTokenDigest(
       digest: `sha256:${string}`
     ): SandboxSecurityPrivateCapabilityPersistenceRecord | null;
   };
-  repository.findByTokenDigest = () => privateRecord;
+  repository.findEnforcementAuditByTokenDigest = () => privateRecord;
   const create = get<(input: any) => any>("createSandboxSecurityCapabilityAuthenticator");
   const authenticator = create({
     repository,
+    enforcement_audit_repository: repository,
     hmac: makeHmac(),
     production_mode: "local",
     bootstrap_admin_token: "admin-secret",
@@ -427,6 +444,7 @@ test("REQ-SBX-GENERAL-003 returns content-free known-denied and authorized proje
   const record = makeRecord();
   const authenticator = create({
     repository: makeRepository(record),
+    enforcement_audit_repository: makeRepository(null),
     hmac: makeHmac(),
     production_mode: "local",
     bootstrap_admin_token: "admin-secret",
@@ -451,6 +469,7 @@ test("REQ-SBX-GENERAL-003 returns content-free known-denied and authorized proje
 
   const expired = create({
     repository: makeRepository(makeRecord({ expires_at: NOW })),
+    enforcement_audit_repository: makeRepository(null),
     hmac: makeHmac(),
     production_mode: "local",
     bootstrap_admin_token: "admin-secret",
@@ -473,6 +492,7 @@ test("REQ-SBX-GENERAL-003 returns content-free known-denied and authorized proje
 
   const revoked = create({
     repository: makeRepository(makeRecord({ revoked_at: "2026-08-05T11:59:00.000Z" })),
+    enforcement_audit_repository: makeRepository(null),
     hmac: makeHmac(),
     production_mode: "local",
     bootstrap_admin_token: "admin-secret",
@@ -495,6 +515,7 @@ test("REQ-SBX-GENERAL-003 returns content-free known-denied and authorized proje
 
   const changedMode = create({
     repository: makeRepository(record),
+    enforcement_audit_repository: makeRepository(null),
     hmac: makeHmac(),
     production_mode: "rule_only",
     bootstrap_admin_token: "admin-secret",
@@ -513,6 +534,7 @@ test("REQ-SBX-GENERAL-003 checks scope before stage and profile grants", () => {
   const create = get<(input: any) => any>("createSandboxSecurityCapabilityAuthenticator");
   const authenticator = create({
     repository: makeRepository(makeRecord()),
+    enforcement_audit_repository: makeRepository(null),
     hmac: makeHmac(),
     production_mode: "local",
     bootstrap_admin_token: "admin-secret",
@@ -545,6 +567,7 @@ test("REQ-SBX-GENERAL-003 authenticates bootstrap administrators with fixed dige
   const create = get<(input: any) => any>("createSandboxSecurityCapabilityAuthenticator");
   const authenticator = create({
     repository: makeRepository(makeRecord()),
+    enforcement_audit_repository: makeRepository(null),
     hmac: makeHmac(),
     production_mode: "local",
     bootstrap_admin_token: "admin-secret",

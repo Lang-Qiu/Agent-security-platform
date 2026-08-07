@@ -372,7 +372,7 @@ function assertEnforcementCapabilityIssuedEvent(
 function assertCapabilityRevokedEvent(
   event: SandboxSecurityAuditEvent,
   record: Readonly<Pick<
-    SandboxSecurityPrivateCapabilityPersistenceRecord,
+    SandboxSecurityCapabilityPersistenceRecord,
     "subject_id" | "capability_id" | "revoked_at"
   >>
 ): Extract<SandboxSecurityAuditEvent, { event_type: "capability_revoked" }> {
@@ -561,6 +561,22 @@ function readByDigest(
   return readRecordByRow(database, row, tokenDigest);
 }
 
+function readPublicByDigest(
+  database: DatabaseSync,
+  tokenDigest: `sha256:${string}`
+): SandboxSecurityCapabilityPersistenceRecord | null {
+  const record = readByDigest(database, tokenDigest);
+  return record !== null && !("composition_binding" in record) ? record : null;
+}
+
+function readEnforcementByDigest(
+  database: DatabaseSync,
+  tokenDigest: `sha256:${string}`
+): SandboxSecurityEnforcementAuditCapabilityPersistenceRecord | null {
+  const record = readByDigest(database, tokenDigest);
+  return record !== null && "composition_binding" in record ? record : null;
+}
+
 function readById(
   database: DatabaseSync,
   capabilityId: string
@@ -574,6 +590,22 @@ function readById(
     )
     .get(capabilityId) as CapabilityRow | undefined;
   return readRecordByRow(database, row, null);
+}
+
+function readPublicById(
+  database: DatabaseSync,
+  capabilityId: string
+): SandboxSecurityCapabilityPersistenceRecord | null {
+  const record = readById(database, capabilityId);
+  return record !== null && !("composition_binding" in record) ? record : null;
+}
+
+function readEnforcementById(
+  database: DatabaseSync,
+  capabilityId: string
+): SandboxSecurityEnforcementAuditCapabilityPersistenceRecord | null {
+  const record = readById(database, capabilityId);
+  return record !== null && "composition_binding" in record ? record : null;
 }
 
 function internalError(): SandboxSecurityServiceError {
@@ -709,22 +741,74 @@ export function createSqliteSandboxSecurityCapabilityRepository(input: Readonly<
       }
     },
 
-    findByTokenDigest(tokenDigest): Readonly<SandboxSecurityPrivateCapabilityPersistenceRecord> | null {
+    findEnforcementAuditByTokenDigest(tokenDigest): Readonly<SandboxSecurityEnforcementAuditCapabilityPersistenceRecord> | null {
       if (typeof tokenDigest !== "string" || !TOKEN_DIGEST_PATTERN.test(tokenDigest)) {
         return null;
       }
       try {
-        const record = database.read((sqlite) => readByDigest(sqlite, tokenDigest));
+        const record = database.read((sqlite) => readEnforcementByDigest(sqlite, tokenDigest));
         if (record === null) return null;
-        return "composition_binding" in record
-          ? cloneEnforcementRecord(record)
-          : cloneRecord(record);
+        return cloneEnforcementRecord(record);
       } catch {
         throw internalError();
       }
     },
 
-    revokeWithAudit(input): Readonly<SandboxSecurityPrivateCapabilityPersistenceRecord> | null {
+    findByTokenDigest(tokenDigest): Readonly<SandboxSecurityCapabilityPersistenceRecord> | null {
+      if (typeof tokenDigest !== "string" || !TOKEN_DIGEST_PATTERN.test(tokenDigest)) {
+        return null;
+      }
+      try {
+        const record = database.read((sqlite) => readPublicByDigest(sqlite, tokenDigest));
+        if (record === null) return null;
+        return cloneRecord(record);
+      } catch {
+        throw internalError();
+      }
+    },
+
+    revokeEnforcementAudit(input): Readonly<SandboxSecurityEnforcementAuditCapabilityPersistenceRecord> | null {
+      if (
+        input === null ||
+        typeof input !== "object" ||
+        typeof input.capability_id !== "string" ||
+        !CAPABILITY_ID_PATTERN.test(input.capability_id) ||
+        !isStrictUtcMillisecondTimestamp(input.revoked_at)
+      ) {
+        throw internalError();
+      }
+      try {
+        const result = database.transaction((sqlite) => {
+          const current = readEnforcementById(sqlite, input.capability_id);
+          if (current === null) return null;
+          if (current.revoked_at !== null) {
+            return cloneEnforcementRecord(current);
+          }
+          const next = normalizeEnforcementPersistenceRecord(
+            { ...current, revoked_at: input.revoked_at },
+            current.token_digest
+          );
+          if (next === null) throw internalError();
+          sqlite
+            .prepare(
+              "UPDATE sandbox_security_capabilities SET revoked_at = ? WHERE capability_id = ? AND revoked_at IS NULL"
+            )
+            .run(next.revoked_at, next.capability_id);
+          return cloneEnforcementRecord(next);
+        });
+        return result;
+      } catch (error) {
+        if (
+          isSandboxSecurityServiceError(error) &&
+          error.code === "SANDBOX_SECURITY_INTERNAL_ERROR"
+        ) {
+          throw error;
+        }
+        throw internalError();
+      }
+    },
+
+    revokeWithAudit(input): Readonly<SandboxSecurityCapabilityPersistenceRecord> | null {
       if (
         input === null ||
         typeof input !== "object" ||
@@ -737,31 +821,9 @@ export function createSqliteSandboxSecurityCapabilityRepository(input: Readonly<
       }
       try {
         const result = database.transaction((sqlite) => {
-          const current = readById(sqlite, input.capability_id);
+          const current = readPublicById(sqlite, input.capability_id);
           if (current === null) return null;
-          if (current.revoked_at !== null) {
-            return "composition_binding" in current
-              ? cloneEnforcementRecord(current)
-              : cloneRecord(current);
-          }
-          if ("composition_binding" in current) {
-            const next = normalizeEnforcementPersistenceRecord(
-              { ...current, revoked_at: input.revoked_at },
-              current.token_digest
-            );
-            if (next === null) throw internalError();
-            const event = assertCapabilityRevokedEvent(
-              normalizedEvent(input.create_event(cloneEnforcementRecord(next))),
-              next
-            );
-            sqlite
-              .prepare(
-                "UPDATE sandbox_security_capabilities SET revoked_at = ? WHERE capability_id = ? AND revoked_at IS NULL"
-              )
-              .run(next.revoked_at, next.capability_id);
-            insertAuditEvent(sqlite, event);
-            return cloneEnforcementRecord(next);
-          }
+          if (current.revoked_at !== null) return cloneRecord(current);
           const next = normalizePersistenceRecord(
             { ...current, revoked_at: input.revoked_at },
             current.token_digest

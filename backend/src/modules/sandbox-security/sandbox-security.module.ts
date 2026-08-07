@@ -290,6 +290,7 @@ export async function createSandboxSecurityProductionModule(input: Readonly<{
     });
     const authenticator = createSandboxSecurityCapabilityAuthenticator({
       repository: capabilityRepository,
+      enforcement_audit_repository: capabilityRepository,
       hmac,
       production_mode: configuration.production_mode,
       bootstrap_admin_token: configuration.admin_bootstrap_token,
@@ -297,6 +298,7 @@ export async function createSandboxSecurityProductionModule(input: Readonly<{
     });
     const capabilityService = createSandboxSecurityCapabilityService({
       repository: capabilityRepository,
+      enforcement_audit_repository: capabilityRepository,
       hmac,
       production_mode: configuration.production_mode,
       runtime,

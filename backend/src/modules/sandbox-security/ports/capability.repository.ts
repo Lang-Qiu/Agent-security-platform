@@ -2,8 +2,7 @@ import type { SandboxSecurityAuditEvent } from "../../../../../shared/types/sand
 import type { SandboxSecurityEnforcementAuditCapabilityIssuedEvent } from "../../../../../shared/types/sandbox-security-enforcement-audit.ts";
 import type { SandboxSecurityEnforcementAuditCapabilityPersistenceRecord } from "../dto/enforcement-audit-capability.ts";
 import type {
-  SandboxSecurityCapabilityPersistenceRecord,
-  SandboxSecurityPrivateCapabilityPersistenceRecord
+  SandboxSecurityCapabilityPersistenceRecord
 } from "../sandbox-security.types.ts";
 
 export interface SandboxSecurityCapabilityRepository {
@@ -13,17 +12,14 @@ export interface SandboxSecurityCapabilityRepository {
   ): void;
   findByTokenDigest(
     tokenDigest: `sha256:${string}`
-  ): Readonly<SandboxSecurityPrivateCapabilityPersistenceRecord> | null;
+  ): Readonly<SandboxSecurityCapabilityPersistenceRecord> | null;
   revokeWithAudit(input: Readonly<{
     capability_id: string;
     revoked_at: string;
     create_event(
-      record: Readonly<
-        SandboxSecurityCapabilityPersistenceRecord |
-        SandboxSecurityEnforcementAuditCapabilityPersistenceRecord
-      >
+      record: Readonly<SandboxSecurityCapabilityPersistenceRecord>
     ): Readonly<SandboxSecurityAuditEvent>;
-  }>): Readonly<SandboxSecurityPrivateCapabilityPersistenceRecord> | null;
+  }>): Readonly<SandboxSecurityCapabilityPersistenceRecord> | null;
 }
 
 export interface SandboxSecurityEnforcementAuditCapabilityRepository {
@@ -31,4 +27,11 @@ export interface SandboxSecurityEnforcementAuditCapabilityRepository {
     record: Readonly<SandboxSecurityEnforcementAuditCapabilityPersistenceRecord>,
     event: Readonly<SandboxSecurityEnforcementAuditCapabilityIssuedEvent>
   ): void;
+  findEnforcementAuditByTokenDigest(
+    tokenDigest: `sha256:${string}`
+  ): Readonly<SandboxSecurityEnforcementAuditCapabilityPersistenceRecord> | null;
+  revokeEnforcementAudit(input: Readonly<{
+    capability_id: string;
+    revoked_at: string;
+  }>): Readonly<SandboxSecurityEnforcementAuditCapabilityPersistenceRecord> | null;
 }

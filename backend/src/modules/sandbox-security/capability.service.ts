@@ -36,7 +36,6 @@ import type {
   SandboxSecurityEnforcementAuditCapabilityService,
   SandboxSecurityHmacService,
   SandboxSecurityNormalizedCapabilityIssueRequest,
-  SandboxSecurityPrivateCapabilityPersistenceRecord,
   SandboxSecurityProductionMode
 } from "./sandbox-security.types.ts";
 
@@ -331,7 +330,8 @@ function enforcementCapabilityRecord(
 }
 
 function assertDependencies(input: Readonly<{
-  repository: SandboxSecurityCapabilityRepository & SandboxSecurityEnforcementAuditCapabilityRepository;
+  repository: SandboxSecurityCapabilityRepository;
+  enforcement_audit_repository: SandboxSecurityEnforcementAuditCapabilityRepository;
   hmac: SandboxSecurityHmacService;
   production_mode: SandboxSecurityProductionMode;
   runtime: SandboxSecurityRuntimePort;
@@ -344,8 +344,11 @@ function assertDependencies(input: Readonly<{
     input.repository === null ||
     typeof input.repository !== "object" ||
     typeof input.repository.issueWithAudit !== "function" ||
-    typeof input.repository.issueEnforcementAuditWithAudit !== "function" ||
     typeof input.repository.revokeWithAudit !== "function" ||
+    input.enforcement_audit_repository === null ||
+    typeof input.enforcement_audit_repository !== "object" ||
+    typeof input.enforcement_audit_repository.issueEnforcementAuditWithAudit !== "function" ||
+    typeof input.enforcement_audit_repository.revokeEnforcementAudit !== "function" ||
     input.hmac === null ||
     typeof input.hmac !== "object" ||
     typeof input.hmac.authorizationScopeId !== "function" ||
@@ -369,7 +372,8 @@ function assertDependencies(input: Readonly<{
 }
 
 export function createSandboxSecurityCapabilityService(input: Readonly<{
-  repository: SandboxSecurityCapabilityRepository & SandboxSecurityEnforcementAuditCapabilityRepository;
+  repository: SandboxSecurityCapabilityRepository;
+  enforcement_audit_repository: SandboxSecurityEnforcementAuditCapabilityRepository;
   hmac: SandboxSecurityHmacService;
   production_mode: SandboxSecurityProductionMode;
   runtime: SandboxSecurityRuntimePort;
@@ -383,7 +387,7 @@ export function createSandboxSecurityCapabilityService(input: Readonly<{
   const runtime = input.runtime;
   const auditProjector = input.audit_projector;
   const capabilityLimiters = input.capability_limiters;
-  const enforcementRepository = repository;
+  const enforcementRepository = input.enforcement_audit_repository;
 
   return {
     issue(request): Readonly<SandboxSecurityCapabilityIssueResult> {
@@ -573,15 +577,34 @@ export function createSandboxSecurityCapabilityService(input: Readonly<{
         if (typeof capabilityId !== "string") throw internalError();
         const revokedAt = runtime.now();
         if (!isStrictUtcMillisecondTimestamp(revokedAt)) throw internalError();
-        let record: Readonly<SandboxSecurityPrivateCapabilityPersistenceRecord> | null;
+        let record: Readonly<
+          SandboxSecurityCapabilityPersistenceRecord |
+          SandboxSecurityEnforcementAuditCapabilityPersistenceRecord
+        > | null;
         try {
-          record = repository.revokeWithAudit({
+          record = enforcementRepository.revokeEnforcementAudit({
             capability_id: capabilityId,
-            revoked_at: revokedAt,
-            create_event: (target) => {
-              if ("composition_binding" in target) {
-                const normalized = copyEnforcementRecord(target);
-                enforcementCapabilityRecord(normalized, compositionBinding(productionMode));
+            revoked_at: revokedAt
+          });
+          if (record === null) {
+            record = repository.revokeWithAudit({
+              capability_id: capabilityId,
+              revoked_at: revokedAt,
+              create_event: (target) => {
+                const normalized = copyRecordArrays(target);
+                if (
+                  !(target.scope_seed instanceof Uint8Array) ||
+                  target.scope_seed.byteLength !== 32 ||
+                  !isStrictUtcMillisecondTimestamp(normalized.revoked_at) ||
+                  !CAPABILITY_ID_PATTERN.test(normalized.capability_id) ||
+                  !isStrictUtcMillisecondTimestamp(normalized.issued_at) ||
+                  !isStrictUtcMillisecondTimestamp(normalized.expires_at) ||
+                  !(normalized.scope_seed instanceof Uint8Array) ||
+                  normalized.scope_seed.byteLength !== 32
+                ) {
+                  throw internalError();
+                }
+                publicRecord(normalized);
                 const authorizationScopeId = hmac.authorizationScopeId(
                   new Uint8Array(normalized.scope_seed),
                   productionMode
@@ -595,10 +618,7 @@ export function createSandboxSecurityCapabilityService(input: Readonly<{
                 const occurredAt = runtime.now();
                 if (!isStrictUtcMillisecondTimestamp(occurredAt)) throw internalError();
                 const auditEventId = runtime.nextAuditEventId();
-                if (
-                  typeof auditEventId !== "string" ||
-                  !AUDIT_EVENT_ID_PATTERN.test(auditEventId)
-                ) {
+                if (typeof auditEventId !== "string" || !AUDIT_EVENT_ID_PATTERN.test(auditEventId)) {
                   throw internalError();
                 }
                 return auditProjector.capabilityRevoked({
@@ -607,49 +627,11 @@ export function createSandboxSecurityCapabilityService(input: Readonly<{
                   subject_id: normalized.subject_id,
                   authorization_scope_id: authorizationScopeId,
                   capability_id: normalized.capability_id,
-                  revoked_at: normalized.revoked_at as string
+                  revoked_at: normalized.revoked_at
                 });
               }
-              const normalized = copyRecordArrays(target);
-              if (
-                !(target.scope_seed instanceof Uint8Array) ||
-                target.scope_seed.byteLength !== 32 ||
-                !isStrictUtcMillisecondTimestamp(normalized.revoked_at) ||
-                !CAPABILITY_ID_PATTERN.test(normalized.capability_id) ||
-                !isStrictUtcMillisecondTimestamp(normalized.issued_at) ||
-                !isStrictUtcMillisecondTimestamp(normalized.expires_at) ||
-                !(normalized.scope_seed instanceof Uint8Array) ||
-                normalized.scope_seed.byteLength !== 32
-              ) {
-                throw internalError();
-              }
-              publicRecord(normalized);
-              const authorizationScopeId = hmac.authorizationScopeId(
-                new Uint8Array(normalized.scope_seed),
-                productionMode
-              );
-              if (
-                typeof authorizationScopeId !== "string" ||
-                !AUTHORIZATION_SCOPE_PATTERN.test(authorizationScopeId)
-              ) {
-                throw internalError();
-              }
-              const occurredAt = runtime.now();
-              if (!isStrictUtcMillisecondTimestamp(occurredAt)) throw internalError();
-              const auditEventId = runtime.nextAuditEventId();
-              if (typeof auditEventId !== "string" || !AUDIT_EVENT_ID_PATTERN.test(auditEventId)) {
-                throw internalError();
-              }
-              return auditProjector.capabilityRevoked({
-                event_id: auditEventId,
-                occurred_at: occurredAt,
-                subject_id: normalized.subject_id,
-                authorization_scope_id: authorizationScopeId,
-                capability_id: normalized.capability_id,
-                revoked_at: normalized.revoked_at
-              });
-            }
-          });
+            });
+          }
         } catch {
           throw internalError();
         }

@@ -24,6 +24,12 @@ import type {
 import type {
   SandboxSecurityProductionCompositionBinding
 } from "../../shared/types/sandbox-security-enforcement-audit.ts";
+import type { SandboxSecurityCapabilityRepository } from "../src/modules/sandbox-security/ports/capability.repository.ts";
+
+type PublicCapabilityRepository =
+  Parameters<typeof boundary.createSandboxSecurityCapabilityAuthenticator>[0]["repository"];
+type EnforcementCapabilityRepository =
+  Parameters<typeof boundary.createSandboxSecurityCapabilityAuthenticator>[0]["enforcement_audit_repository"];
 
 const REQUEST = {
   schema_version:
@@ -282,6 +288,17 @@ function privateCapabilityRecord(
   } as SandboxSecurityEnforcementAuditCapabilityPersistenceRecord;
 }
 
+test("REQ-SBX-GENERAL-004 keeps private persistence out of the public repository port", () => {
+  const privateRecord = privateCapabilityRecord();
+  const publicRepository: SandboxSecurityCapabilityRepository = {
+    issueWithAudit() {},
+    // @ts-expect-error private persistence records are not public repository records
+    findByTokenDigest: () => privateRecord,
+    revokeWithAudit: () => null
+  };
+  assert.equal(typeof publicRepository.findByTokenDigest, "function");
+});
+
 test("REQ-SBX-GENERAL-004 enforcement audit capability is issued atomically with a private audit row", (t) => {
   const parent = mkdtempSync(join(tmpdir(), "sandbox-security-enforcement-capability-"));
   t.after(() => rmSync(parent, { recursive: true, force: true }));
@@ -298,6 +315,7 @@ test("REQ-SBX-GENERAL-004 enforcement audit capability is issued atomically with
   const repository = boundary.createSqliteSandboxSecurityCapabilityRepository!({ database });
   const capabilityService = boundary.createSandboxSecurityCapabilityService!({
     repository,
+    enforcement_audit_repository: repository,
     hmac,
     production_mode: "rule_only",
     runtime: privateRuntime([
@@ -309,6 +327,7 @@ test("REQ-SBX-GENERAL-004 enforcement audit capability is issued atomically with
   });
   const authenticator = boundary.createSandboxSecurityCapabilityAuthenticator!({
     repository,
+    enforcement_audit_repository: repository,
     hmac,
     production_mode: "rule_only",
     bootstrap_admin_token: "admin-secret",
@@ -380,13 +399,17 @@ test("REQ-SBX-GENERAL-004 enforcement audit capability is issued atomically with
 test("REQ-SBX-GENERAL-004 private capability authentication is isolated from public v1 scopes", () => {
   const record = privateCapabilityRecord();
   const hmac = boundary.createSandboxSecurityHmacService!(new Uint8Array(32).fill(7));
-  const repository = {
+  const repositorySource = {
     issueWithAudit() {},
-    findByTokenDigest: () => record,
+    findByTokenDigest: () => null,
+    findEnforcementAuditByTokenDigest: () => record,
     revokeWithAudit: () => null
-  } as unknown as Parameters<typeof boundary.createSandboxSecurityCapabilityAuthenticator>[0]["repository"];
+  };
+  const repository = repositorySource as unknown as PublicCapabilityRepository;
+  const enforcementAuditRepository = repositorySource as unknown as EnforcementCapabilityRepository;
   const authenticator = boundary.createSandboxSecurityCapabilityAuthenticator!({
     repository,
+    enforcement_audit_repository: enforcementAuditRepository,
     hmac,
     production_mode: "rule_only",
     bootstrap_admin_token: "admin-secret",
@@ -443,13 +466,17 @@ test("REQ-SBX-GENERAL-004 private capability authentication fails closed for exp
     [privateCapabilityRecord({ issued_at: "2026-08-05T00:00:00.000Z", expires_at: PRIVATE_NOW }), "capability_expired"],
     [privateCapabilityRecord({ revoked_at: "2026-08-06T00:30:00.000Z" }), "capability_revoked"]
   ] as const) {
-    const repository = {
+    const repositorySource = {
       issueWithAudit() {},
-      findByTokenDigest: () => record,
+      findByTokenDigest: () => null,
+      findEnforcementAuditByTokenDigest: () => record,
       revokeWithAudit: () => null
-    } as unknown as Parameters<typeof boundary.createSandboxSecurityCapabilityAuthenticator>[0]["repository"];
+    };
+    const repository = repositorySource as unknown as PublicCapabilityRepository;
+    const enforcementAuditRepository = repositorySource as unknown as EnforcementCapabilityRepository;
     const authenticator = boundary.createSandboxSecurityCapabilityAuthenticator!({
       repository,
+      enforcement_audit_repository: enforcementAuditRepository,
       hmac,
       production_mode: "rule_only",
       bootstrap_admin_token: "admin-secret",
@@ -477,6 +504,7 @@ test("REQ-SBX-GENERAL-004 revokes a private capability through the existing serv
   const repository = boundary.createSqliteSandboxSecurityCapabilityRepository!({ database });
   const capabilityService = boundary.createSandboxSecurityCapabilityService!({
     repository,
+    enforcement_audit_repository: repository,
     hmac,
     production_mode: "rule_only",
     runtime: privateRuntime([
@@ -488,6 +516,7 @@ test("REQ-SBX-GENERAL-004 revokes a private capability through the existing serv
   });
   const authenticator = boundary.createSandboxSecurityCapabilityAuthenticator!({
     repository,
+    enforcement_audit_repository: repository,
     hmac,
     production_mode: "rule_only",
     bootstrap_admin_token: "admin-secret",
@@ -518,12 +547,30 @@ test("REQ-SBX-GENERAL-004 revokes a private capability through the existing serv
       {
         event_schema: "sandbox-security-enforcement-audit-event.v1",
         event_type: "capability_issued"
-      },
-      {
-        event_schema: "sandbox-security-audit-event.v1",
-        event_type: "capability_revoked"
       }
     ]
+  );
+
+  const publicAuditRepository = boundary.createSqliteSandboxSecurityAuditRepository!({ database });
+  const publicAuditProjector = boundary.createSandboxSecurityAuditProjector!();
+  const publicRead = publicAuditRepository.listAndRecordRead({
+    visibility_subject_id: REQUEST.subject_id,
+    after: null,
+    limit: 100,
+    create_event: ({ returned_count, next_cursor_present }) => publicAuditProjector.auditRead({
+      event_id: "audit:00000000-0000-4000-8000-000000000012",
+      occurred_at: PRIVATE_NOW,
+      subject_id: REQUEST.subject_id,
+      authorization_scope_id: "authscope:hmac-sha256:" + "a".repeat(64),
+      capability_id: CAPABILITY_ID,
+      returned_count,
+      next_cursor_present,
+      elapsed_ms: 0
+    })
+  });
+  assert.equal(
+    publicRead.events.some((event) => event.capability_id === issued.capability_id),
+    false
   );
 });
 
