@@ -44,6 +44,57 @@
   - GENERAL-003 and GENERAL-004 retain their own independent review and global
     gates; no later requirement was auto-verified by this entry
 
+# 2026-08-07 - REQ-SBX-GENERAL-004 P3-T1 immutable runtime and evaluation identity
+
+- phase/task: Phase 3 / P3-T1
+- status: `COMPLETE_PENDING_P3_T2`
+- scope: immutable plugin configuration, public Engine construction, bounded
+  runtime health/concurrency, and plugin-private evaluation request identity;
+  no P3-T2+ or OpenClaw patch production files changed
+- TDD evidence:
+  - RED: the new focused suite first failed `14/14` because the config,
+    runtime, and request-ID exports were absent; the failure was feature-causal
+  - GREEN: the initial implementation passed `14/14`; a review regression then
+    failed at `14/15` when runtime dispatch minted a second evaluation ID
+  - the minimal lifecycle correction moved request-ID minting to the exposed
+    plugin/runtime port and made Engine dispatch validate the builder-supplied
+    ID; the focused suite now passes `15/15`
+- implementation:
+  - added exact four-key frozen configuration normalization with fixed profile,
+    mode, internal-origin/path, and bearer-token catalogs
+  - added one public-index production Engine construction, independent health
+    domains, four immediate slots with no queue, fixed 10000 ms caller abort,
+    fail-closed Engine results, and correlation validation
+  - added lower-case `request:<UUIDv4>` normalization/issuance and a
+    crypto-backed production port with no ID history
+  - extended the nested package repository gate to recognize its planned
+    `tests/` directory
+- files:
+  - `integrations/openclaw/general-security/src/general-security/config.ts`
+  - `integrations/openclaw/general-security/src/general-security/runtime.ts`
+  - `integrations/openclaw/general-security/src/index.ts`
+  - `integrations/openclaw/general-security/tests/general-security-config-runtime.spec.ts`
+  - `tests/repository/sandbox-security-openclaw-package.spec.ts`
+- verification:
+  - P3-T1 focused suite: `15/15`
+  - integration typecheck: pass
+  - nested general-security build: pass
+  - sandbox Engine regression: `1030/1030`
+  - `TMPDIR=/tmp npm run test:repo`: `340/340`
+  - `git diff --check`: pass
+- review:
+  - main-thread specification and quality review found no Critical or
+    Important issue after closing the second-request-ID regression
+  - two independent `gpt-5.6-luna` review attempts could not produce a verdict
+    because the selected model was at service capacity; no external PASS is
+    claimed
+- boundary:
+  - P3-T2 authoritative request builder and all later P3/P4/P5 work remain
+    unstarted; GENERAL-004 is not `VERIFIED`
+  - GENERAL-003 remains `IMPLEMENTED_PENDING_GLOBAL_P6_GATE`
+- commit: `618d54f` (`feat(openclaw): create sandbox security runtime`)
+- next: P3-T2 authoritative request builder after the task boundary
+
 # 2026-08-07 - REQ-SBX-GENERAL-004 Phase 2 review-fix cycle
 
 - phase/task: Phase 2 / P2-T1 through P2-T5 review closure

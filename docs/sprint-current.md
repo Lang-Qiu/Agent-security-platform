@@ -209,22 +209,33 @@ retry and does not change GENERAL-003's out-of-scope retry rule.
   0 Minor` task reviews. The Phase 2 final gate review returned ALLOW; its
   documentation-only Minor was corrected, and no Phase 3 production file has
   been modified.
+- GENERAL-004 P3-T1 is implemented and committed as `618d54f`; it adds the
+  immutable config/runtime, public-index Engine composition, four-slot
+  no-queue limit, fixed caller timeout, independent health domains, and
+  plugin-private evaluation request-ID issuer. Its focused suite is `15/15`,
+  the nested integration typecheck/build pass, the sandbox Engine regression is
+  `1030/1030`, and the repository gate is `340/340`.
+- The main-thread P3-T1 review found no Critical or Important issue. Two
+  independent Luna reviewer attempts were unavailable because the selected
+  model was at capacity; no external review PASS is claimed. P3-T2 has not
+  started.
 - GENERAL-003 implementation work remains complete through its phase- and
   P6-T4 review gates; its own global P6 gate remains outstanding, but the
   GENERAL-002 dependency is now satisfied.
 - The P6 retry amendment remains complete through Task 6 documentation and
   repository gates. The fresh formal 300-projection capture and P7 replay are
   now recorded as accepted for GENERAL-002.
-- GENERAL-002 is `VERIFIED`. GENERAL-004 Phase 2 is complete, but do not claim
-  `VERIFIED` for GENERAL-004 until its global completion gate passes; GENERAL-003
-  remains at its own global P6 gate.
+- GENERAL-002 is `VERIFIED`. GENERAL-004 Phase 2 and P3-T1 are complete, but
+  do not claim `VERIFIED` for GENERAL-004 until its global completion gate
+  passes; GENERAL-003 remains at its own global P6 gate.
 
 ## Next Transition
 
 `PLAN_REVIEWED_PENDING_USER_APPROVAL` -> `PLAN_APPROVED` ->
 `IMPLEMENTATION_IN_PROGRESS` -> `P2_T5_REVIEWED_PENDING_PHASE_2_GATE` ->
-`PHASE_2_GATE_PENDING` -> `PHASE_2_COMPLETE_PENDING_NEXT_PHASE_APPROVAL`
+`PHASE_2_GATE_PENDING` -> `PHASE_2_COMPLETE_PENDING_NEXT_PHASE_APPROVAL` ->
+`PHASE_3_IN_PROGRESS` -> `P3_T1_COMPLETE_PENDING_P3_T2`
 
 The first transition records the user's explicit approval. The second records
 that Phase 1 execution has begun. GENERAL-004 remains the only active
-requirement; Phase 3 has not started and no later requirement may start.
+requirement; P3-T2 and later phases have not started.
