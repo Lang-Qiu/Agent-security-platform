@@ -48,5 +48,18 @@ export type {
   OpenClawSecurityCorrelation
 } from "./general-security/authority-builder.ts";
 
+export {
+  mapDecision,
+  OPENCLAW_SECURITY_ENFORCEMENT_POINTS,
+  OPENCLAW_SECURITY_FAILURE_CODES
+} from "./general-security/action-mapper.ts";
+export type {
+  OpenClawSecurityActionMapping,
+  OpenClawSecurityBarrierResult,
+  OpenClawSecurityDecisionInput,
+  OpenClawSecurityEnforcementPoint,
+  OpenClawSecurityFailureCode
+} from "./general-security/action-mapper.ts";
+
 export * from "./general-security/config.ts";
 export * from "./general-security/runtime.ts";
