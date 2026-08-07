@@ -585,7 +585,7 @@ function assertExactHermeticChildPermissions(
       dirname(childOption(options, "--truth-root")),
       join(dirname(childOption(options, "--truth-root")), "manifest.json"),
       dirname(childOption(options, "--projection-root")),
-      childOption(options, "--expected-metrics")
+      dirname(childOption(options, "--expected-metrics"))
     ];
   const readScopes = permissionFlagValues("--allow-fs-read");
   const writeScopes = permissionFlagValues("--allow-fs-write");
@@ -748,7 +748,7 @@ export function buildHermeticReplayChildCommands(
     dirname(input.truth_root),
     corpusManifest,
     evaluatorCaptureRoot(input.projection_root),
-    input.expected_metrics
+    dirname(input.expected_metrics)
   ];
   const common = Object.freeze([
     "--no-warnings",
@@ -1719,10 +1719,12 @@ async function runParent(
     mkdirSync(projectionRoot, { recursive: true, mode: 0o700 });
     const evaluatorCorpusRoot = join(stagingRoot, "evaluator-corpus");
     const evaluatorTruthRoot = join(evaluatorCorpusRoot, "truth");
+    const expectedMetricsRoot = join(stagingRoot, "expected-metrics");
     mkdirSync(evaluatorTruthRoot, { recursive: true, mode: 0o700 });
+    mkdirSync(expectedMetricsRoot, { recursive: true, mode: 0o700 });
     const replayInputPath = join(engineRoot, "replay-input.json");
     const sealedConfigPath = join(engineRoot, "sealed-config.json");
-    const expectedMetricsPath = join(stagingRoot, "expected-metrics.json");
+    const expectedMetricsPath = join(expectedMetricsRoot, "metrics.json");
     const engineResultPath = join(stagingRoot, "engine-result.json");
     const evaluatorResultPath = join(stagingRoot, "evaluator-result.json");
     const sourceInputRoot = join(CORPUS_ROOT, "inputs");
