@@ -61,5 +61,16 @@ export type {
   OpenClawSecurityFailureCode
 } from "./general-security/action-mapper.ts";
 
+export {
+  createOpenClawSecurityAuditClient
+} from "./general-security/audit-client.ts";
+export type {
+  OpenClawSecurityAuditAppendResult,
+  OpenClawSecurityAuditClient,
+  OpenClawSecurityAuditFailureCode,
+  OpenClawSecurityAuditTransport,
+  OpenClawSecurityScheduleTimeout
+} from "./general-security/audit-client.ts";
+
 export * from "./general-security/config.ts";
 export * from "./general-security/runtime.ts";
