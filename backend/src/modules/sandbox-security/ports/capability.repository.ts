@@ -4,6 +4,7 @@ import type { SandboxSecurityEnforcementAuditCapabilityPersistenceRecord } from 
 import type {
   SandboxSecurityCapabilityPersistenceRecord
 } from "../sandbox-security.types.ts";
+import type { SandboxSecurityProductionCompositionBinding } from "../../../../../shared/types/sandbox-security-enforcement-audit.ts";
 
 export interface SandboxSecurityCapabilityRepository {
   issueWithAudit(
@@ -33,5 +34,6 @@ export interface SandboxSecurityEnforcementAuditCapabilityRepository {
   revokeEnforcementAudit(input: Readonly<{
     capability_id: string;
     revoked_at: string;
+    composition_binding: SandboxSecurityProductionCompositionBinding;
   }>): Readonly<SandboxSecurityEnforcementAuditCapabilityPersistenceRecord> | null;
 }

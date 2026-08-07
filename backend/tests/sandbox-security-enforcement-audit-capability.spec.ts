@@ -574,6 +574,62 @@ test("REQ-SBX-GENERAL-004 revokes a private capability through the existing serv
   );
 });
 
+test("REQ-SBX-GENERAL-004 does not commit a private revoke when composition validation fails", (t) => {
+  const parent = mkdtempSync(join(tmpdir(), "sandbox-security-enforcement-revoke-composition-"));
+  t.after(() => rmSync(parent, { recursive: true, force: true }));
+  const database = boundary.openSandboxSecuritySqliteDatabase!({
+    path: join(parent, "security.db"),
+    deployment_key_id: "deployment-key:hmac-sha256:" + "a".repeat(64),
+    now: () => PRIVATE_NOW
+  });
+  t.after(() => {
+    if (database.state === "open") database.checkpointAndClose();
+  });
+
+  const hmac = boundary.createSandboxSecurityHmacService!(new Uint8Array(32).fill(7));
+  const repository = boundary.createSqliteSandboxSecurityCapabilityRepository!({ database });
+  const issueService = boundary.createSandboxSecurityCapabilityService!({
+    repository,
+    enforcement_audit_repository: repository,
+    hmac,
+    production_mode: "rule_only",
+    runtime: privateRuntime(),
+    audit_projector: privateProjector(),
+    capability_limiters: privateLimiter()
+  });
+  const issued = issueService.issueEnforcementAudit(REQUEST);
+  const removed: string[] = [];
+  const revokeService = boundary.createSandboxSecurityCapabilityService!({
+    repository,
+    enforcement_audit_repository: repository,
+    hmac,
+    production_mode: "local",
+    runtime: privateRuntime(),
+    audit_projector: privateProjector(),
+    capability_limiters: {
+      consume: () => ({ allowed: true }),
+      remove: (capabilityId) => removed.push(capabilityId),
+      size: () => 0
+    }
+  });
+
+  assert.throws(
+    () => revokeService.revoke(issued.capability_id),
+    (error: unknown) =>
+      error instanceof Error &&
+      (error as { code?: unknown }).code === "SANDBOX_SECURITY_INTERNAL_ERROR"
+  );
+  assert.equal(
+    database.read((sqlite) =>
+      sqlite
+        .prepare("SELECT revoked_at FROM sandbox_security_capabilities WHERE capability_id = ?")
+        .get(issued.capability_id) as { revoked_at: string | null }
+    ).revoked_at,
+    null
+  );
+  assert.deepEqual(removed, []);
+});
+
 test("REQ-SBX-GENERAL-004 public v1 capability issuance rejects the private scope literal", () => {
   const normalize = Reflect.get(boundary, "normalizeSandboxSecurityCapabilityIssueRequest") as (value: unknown) => unknown;
   assert.equal(normalize({

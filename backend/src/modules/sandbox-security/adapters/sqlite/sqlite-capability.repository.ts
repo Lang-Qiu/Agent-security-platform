@@ -777,10 +777,16 @@ export function createSqliteSandboxSecurityCapabilityRepository(input: Readonly<
       ) {
         throw internalError();
       }
+      if (!COMPOSITION_BINDINGS.includes(input.composition_binding)) {
+        throw internalError();
+      }
       try {
         const result = database.transaction((sqlite) => {
           const current = readEnforcementById(sqlite, input.capability_id);
           if (current === null) return null;
+          if (current.composition_binding !== input.composition_binding) {
+            throw internalError();
+          }
           if (current.revoked_at !== null) {
             return cloneEnforcementRecord(current);
           }

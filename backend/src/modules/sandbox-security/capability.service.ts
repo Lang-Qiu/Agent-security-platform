@@ -388,6 +388,7 @@ export function createSandboxSecurityCapabilityService(input: Readonly<{
   const auditProjector = input.audit_projector;
   const capabilityLimiters = input.capability_limiters;
   const enforcementRepository = input.enforcement_audit_repository;
+  const expectedComposition = compositionBinding(productionMode);
 
   return {
     issue(request): Readonly<SandboxSecurityCapabilityIssueResult> {
@@ -584,7 +585,8 @@ export function createSandboxSecurityCapabilityService(input: Readonly<{
         try {
           record = enforcementRepository.revokeEnforcementAudit({
             capability_id: capabilityId,
-            revoked_at: revokedAt
+            revoked_at: revokedAt,
+            composition_binding: expectedComposition
           });
           if (record === null) {
             record = repository.revokeWithAudit({
@@ -640,7 +642,7 @@ export function createSandboxSecurityCapabilityService(input: Readonly<{
         }
         if (record.revoked_at === null) throw internalError();
         const projected = "composition_binding" in record
-          ? enforcementCapabilityRecord(record, compositionBinding(productionMode))
+          ? enforcementCapabilityRecord(record, expectedComposition)
           : publicRecord(record);
         capabilityLimiters.remove(capabilityId);
         return projected;
