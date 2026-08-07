@@ -443,17 +443,22 @@ export type SandboxSecurityCallResult<T> =
 // returning, so it is never null. These choices are enforced by the Phase 2 and
 // Phase 4 test suites.
 
-export async function submitSandboxSecurityEvaluation(input: {
-  request: SandboxSecurityRequest;
-  session: CapabilitySession;
+// Function names match the Phase 2 plan test imports (authoritative RED tests).
+export async function evaluateSandboxSecurityRequest(input: {
+  capabilityToken: string;
   idempotencyKey: string;
+  requestId: string;
+  stage: SandboxSecurityStage;
+  policyProfileId: SandboxSecurityPolicyProfileId;
+  contentItems: SandboxSecuritySubmittedContentItem[];
+  toolRequest?: SandboxSecurityToolRequest;
   options?: ApiClientOptions;
 }): Promise<SandboxSecurityCallResult<SandboxSecurityDecision>>;
 
-export async function fetchSandboxSecurityAuditPage(input: {
-  session: CapabilitySession;
-  limit: number;                  // 1..100
-  cursor: string | null;
+export async function readSandboxSecurityAuditPage(input: {
+  capabilityToken: string;
+  limit: number;                  // clamped to 1..100
+  cursor?: string | null;
   options?: ApiClientOptions;
 }): Promise<SandboxSecurityCallResult<SandboxSecurityAuditPage>>;
 ```
