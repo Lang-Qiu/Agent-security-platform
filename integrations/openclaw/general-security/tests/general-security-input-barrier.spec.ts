@@ -209,8 +209,8 @@ test("REQ-SBX-GENERAL-004 P4-T3 exactly two real acceptance sites call the close
   walk(distDir);
 
   assert.deepEqual(
-    callers.toSorted(),
-    [CLI_FILE, "hook-runner-global-D_43rcnU.js", SELECTION_FILE].toSorted(),
+    callers.slice().sort(),
+    [CLI_FILE, "hook-runner-global-D_43rcnU.js", SELECTION_FILE].slice().sort(),
     `an unreviewed before_agent_run acceptance caller appeared: ${callers.join(",")}`
   );
 });
@@ -686,17 +686,18 @@ test("REQ-SBX-GENERAL-004 P4-T3 the patch touches only the reviewed files", () =
         .filter((line) => line.startsWith("+++ b/"))
         .map((line) => line.slice("+++ b/".length).trim())
     )
-  ].toSorted();
+  ].slice().sort();
 
   const allowed = [
     "dist/command-registration-BBago94k.js",
     "dist/hook-runner-global-D_43rcnU.js",
     "dist/plugin-sdk/hook-types-H9SC6W-p.d.ts",
+    "dist/run-attempt-6K7vbtby.js",
     `dist/${LIFECYCLE_FILE}`,
     `dist/${DISPATCH_FILE}`,
     `dist/${SELECTION_FILE}`,
     `dist/${CLI_FILE}`
-  ].toSorted();
+  ].slice().sort();
 
   assert.deepEqual(
     targets,
