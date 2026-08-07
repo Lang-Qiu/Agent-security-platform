@@ -552,8 +552,13 @@ tasks, and result anchors are present; adding a group must not remove them.
 ```text
 frontend/src/app/routes.tsx
 frontend/src/app/navigation.tsx
+frontend/src/layouts/ConsoleLayout.tsx
 frontend/src/app/sandbox-security-navigation.spec.tsx
 ```
+
+`ConsoleLayout.tsx` carries the one-line `defaultOpenKeys` change from Step 2.
+Omitting it leaves the sandbox-security group collapsed and the navigation test
+cannot go green (CSSMotion returns null for a never-opened group).
 
 Suggested message:
 `feat(frontend): register sandbox security routes and navigation`

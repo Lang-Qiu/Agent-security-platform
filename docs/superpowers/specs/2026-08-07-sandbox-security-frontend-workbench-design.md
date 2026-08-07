@@ -431,26 +431,31 @@ export interface CapabilitySession {
   readonly bearerToken: string;   // memory only, never persisted
 }
 
-export type SandboxSecurityRequestOutcome<T> =
-  | { status: "ok"; data: T }
-  | { status: "error"; errorCode: SandboxSecurityErrorCode | null;
-      httpStatus: number | null; retryAfterSeconds: number | null }
-  | { status: "invalid" }         // response failed shared normalization
-  | { status: "unavailable" };    // transport failure
+export type SandboxSecurityCallResult<T> =
+  | { kind: "ok"; data: T }
+  | { kind: "error"; errorCode: string | null;
+      httpStatus: number; retryAfterSeconds: number | null }
+  | { kind: "invalid" }           // response failed shared normalization
+  | { kind: "unavailable" };      // transport failure
+
+// Discriminant is `kind` (not `status`). `httpStatus` is always present on the
+// error branch — the transport layer derives it from the HTTP response before
+// returning, so it is never null. These choices are enforced by the Phase 2 and
+// Phase 4 test suites.
 
 export async function submitSandboxSecurityEvaluation(input: {
   request: SandboxSecurityRequest;
   session: CapabilitySession;
   idempotencyKey: string;
   options?: ApiClientOptions;
-}): Promise<SandboxSecurityRequestOutcome<SandboxSecurityDecision>>;
+}): Promise<SandboxSecurityCallResult<SandboxSecurityDecision>>;
 
 export async function fetchSandboxSecurityAuditPage(input: {
   session: CapabilitySession;
   limit: number;                  // 1..100
   cursor: string | null;
   options?: ApiClientOptions;
-}): Promise<SandboxSecurityRequestOutcome<SandboxSecurityAuditPage>>;
+}): Promise<SandboxSecurityCallResult<SandboxSecurityAuditPage>>;
 ```
 
 Both normalize through `shared/` before returning and return `invalid` rather

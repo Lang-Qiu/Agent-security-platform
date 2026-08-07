@@ -319,7 +319,26 @@ sentinel, never narrow the channel list, and never add a test-only conditional.
 
 - [ ] **Step 4: Add the static storage gate**
 
-Extend `tests/repository/sandbox-security-frontend-spec.spec.ts` from Phase 1:
+Extend `tests/repository/sandbox-security-frontend-spec.spec.ts` from Phase 1.
+Add the `collectSourceFiles` helper near the top of that file (after the existing
+`read` helper), then add the gate test:
+
+```ts
+// Add after the existing `read` helper in sandbox-security-frontend-spec.spec.ts:
+import { readdirSync, statSync } from "node:fs";
+
+function collectSourceFiles(relativePath: string): string[] {
+  const url = new URL(`../../${relativePath}`, import.meta.url);
+  const entry = statSync(url, { throwIfNoEntry: false });
+  if (!entry) return [];
+  if (entry.isFile()) return [relativePath];
+  return (readdirSync(url, { recursive: true }) as string[])
+    .filter((name) => name.endsWith(".ts") || name.endsWith(".tsx"))
+    .map((name) => `${relativePath}/${name}`);
+}
+```
+
+Then add the gate test:
 
 ```ts
 test("REQ-SBX-GENERAL-005 new frontend code writes no browser storage", () => {

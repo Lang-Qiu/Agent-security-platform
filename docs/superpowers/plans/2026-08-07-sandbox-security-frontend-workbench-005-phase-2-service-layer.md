@@ -54,8 +54,9 @@ normalizers from `shared/contracts/sandbox-security` and
 wsl -e bash -lc 'cd /Agent-security-platform && TMPDIR=/tmp npm run test --prefix frontend'
 ```
 
-Expected: 16 files green (15 pre-existing + `console-theme.spec.ts`), 221
-pre-existing tests plus Phase 1's new cases. Any other result blocks this Phase.
+Expected: 17 files green (15 pre-existing + `console-theme.spec.ts` +
+`console-theme.provider.spec.tsx`), 221 pre-existing tests plus Phase 1's new
+cases. Any other result blocks this Phase.
 
 ---
 
@@ -457,10 +458,12 @@ describe("REQ-SBX-GENERAL-005 limit pre-flight", () => {
     // Build a flat array of > SANDBOX_SECURITY_MAX_JSON_NODES nodes. Depth
     // stays at 2 so this isolates the node rule from the depth rule.
     const wide = Array.from({ length: SANDBOX_SECURITY_MAX_JSON_NODES + 50 }, (_, i) => i);
+    // Use camelCase `contentItems` — matching every other test in this file.
+    // snake_case `content_items` would be ignored by the function, triggering
+    // the wrong violation (empty items) instead of json_nodes.
     const result = validateEvaluationRequest({
       stage: "user_input",
-      policy_profile_id: "sandbox-security-balanced.v1",
-      content_items: [
+      contentItems: [
         {
           source_id: "src-1",
           claimed_source_type: "user_input",
