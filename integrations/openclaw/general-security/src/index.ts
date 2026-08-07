@@ -39,5 +39,14 @@ export type {
   OpenClawSecurityRuntimePorts
 } from "./general-security/runtime.ts";
 
+export {
+  buildOpenClawSecurityEvaluationRequest
+} from "./general-security/authority-builder.ts";
+export type {
+  OpenClawSecurityAssistantProjection,
+  OpenClawSecurityBarrierObservation,
+  OpenClawSecurityCorrelation
+} from "./general-security/authority-builder.ts";
+
 export * from "./general-security/config.ts";
 export * from "./general-security/runtime.ts";
