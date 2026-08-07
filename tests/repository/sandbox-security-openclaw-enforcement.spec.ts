@@ -35,7 +35,7 @@ test("REQ-SBX-GENERAL-004 keeps one reviewed spec and five ordered plans", () =>
     sprint,
     /## Status\s+(IMPLEMENTATION_IN_PROGRESS|IMPLEMENTED_PENDING_GLOBAL_P6_GATE)/
   );
-  assert.match(sprint, /PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE/);
+  assert.match(sprint, /GENERAL-002 is `VERIFIED`/);
 
   const discoveredPhasePlans = readdirSync(
     new URL("../../docs/superpowers/plans/", import.meta.url)

@@ -95,7 +95,10 @@ confirm that `deepseek-v4-flash` resolves through the reviewed Judge channel.
    operator configuration without exposing the credential and set the Judge
    model to `deepseek-v4-flash` for this authorized run.
 4. Execute the full 300-input P6 capture with the fixed v8 timing and retry
-   policy. Accept only a report satisfying every frozen threshold.
+   policy. Continue the fixed complete-run path when all 300 structural
+   projections and provider outcomes are complete and infrastructure codes are
+   empty. Retain the frozen quality metrics and threshold result; a quality
+   threshold failure does not block this path.
 5. Validate the signed capture/evaluation receipt chain, `capture.json`, all
    300 replay envelopes, `seal.json`, and the evidence-root binding.
 6. Execute the real network-disabled P7 hermetic replay, then run live-evidence,

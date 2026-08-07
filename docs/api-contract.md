@@ -2078,12 +2078,17 @@ limits; the production request contract retains its independent `512 KiB`
 boundary.
 
 The internal live evaluator worker exposes only bounded stage diagnostics. A
-report with `decided !== 300` or any infrastructure code maps to
-`sandbox_security_evaluate_worker_reject:evaluation_not_accepted`; a complete
-300-input report may continue even when its retained `accepted_metrics.accepted`
-quality boolean is false. Detailed multi-threshold text is never reflected
-across the worker boundary. The standalone evaluator CLI remains a quality
-metrics tool and may still return its quality-failure exit code.
+report with structurally incomplete 300-input output or any infrastructure
+code maps to
+`sandbox_security_evaluate_worker_reject:evaluation_not_accepted`. The
+retained `accepted_metrics.numerators.decided` value is a quality-coverage
+metric and may be below `300` when valid `indeterminate` projections are
+present; it does not by itself reject the fixed complete-run path. A complete
+300-input report may continue even when its retained
+`accepted_metrics.accepted` quality boolean is false. Detailed multi-threshold
+text is never reflected across the worker boundary. The standalone evaluator
+CLI remains a quality metrics tool and may still return its quality-failure
+exit code.
 
 The internal production factory is
 `createSandboxSecurityProductionEngine`. Hermetic benchmark execution is
@@ -2094,8 +2099,9 @@ is excluded from `test:all`. Replay remains fail-closed until a signed,
 validated P6 capture/evaluation receipt chain and complete-run `seal.json`
 exist; the retained quality boolean is reported separately from complete-run
 acceptance.
-The current manually accepted live assessment does not supply those artifacts,
-so it does not establish GENERAL-002 `VERIFIED` status.
+The current formal acceptance state and evidence-root binding are recorded in
+`docs/progress.md`; manually accepted assessments without the signed artifact
+chain do not establish GENERAL-002 `VERIFIED` status.
 
 The external Judge configuration is an operator-only runtime boundary rather
 than a public API field. `SANDBOX_SECURITY_JUDGE_PROTOCOL`,

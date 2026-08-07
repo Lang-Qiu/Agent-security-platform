@@ -19,6 +19,9 @@ type ReplayEnvelope = Readonly<{
 }>;
 
 type HermeticModule = {
+  manifestToCandidateCaptureManifest?: (
+    manifest: Readonly<Record<string, unknown>>
+  ) => Readonly<Record<string, unknown>>;
   validateAndStripReplayEnvelopes: (
     manifest: Readonly<{
       fixture_ids: readonly string[];
@@ -47,6 +50,15 @@ type HermeticModule = {
     decision_projection_tree_sha256: string;
     metrics: Readonly<Record<string, unknown>>;
   }>>;
+  assertSandboxSecurityHermeticReplayCompleteRun: (input: Readonly<{
+    input_count: number;
+    accepted_metrics: unknown;
+  }>) => void;
+  hasSandboxSecurityHermeticReadPermission: (
+    scope: string,
+    hasPermission: (reference: string) => boolean,
+    representative?: string
+  ) => boolean;
 };
 
 async function hermeticModule(): Promise<HermeticModule> {
@@ -204,7 +216,7 @@ test("REQ-SBX-GENERAL-002 hermetic child commands separate Engine and evaluator 
     sealed_config: "/tmp/staging/engine-workspace/sealed-config.json",
     projection_root: "/tmp/staging/evaluator-capture/decisions",
     truth_root: "/tmp/staging/evaluator-corpus/truth",
-    expected_metrics: "/tmp/staging/expected-metrics.json",
+    expected_metrics: "/tmp/staging/expected-metrics/metrics.json",
     result_path: "/tmp/staging/result.json"
   });
   assert.doesNotMatch(commands.engine.args.join(" "), /truth|evaluate\.ts/i);
@@ -232,6 +244,24 @@ test("REQ-SBX-GENERAL-002 hermetic child commands separate Engine and evaluator 
     engineReads.some((arg) => arg.endsWith("/engines/sandbox/src/security/canonical-json.ts")),
     "Engine must be able to load canonical JSON"
   );
+  for (const directory of ["base-filter", "monitoring", "simulated-tools"]) {
+    assert.ok(
+      engineReads.includes(
+        `--allow-fs-read=${join(REPO_ROOT, "engines/sandbox/src", directory)}`
+      ),
+      `Engine must be able to load the ${directory} runtime dependency`
+    );
+  }
+  assert.doesNotMatch(
+    engineReads.join("\n"),
+    /\/anonymous-inputs(?:\n|$)/u,
+    "The Engine parent workspace scope already covers the generated input subtree"
+  );
+  assert.doesNotMatch(
+    evaluatorReads.join("\n"),
+    /\/(?:evaluator-capture\/decisions|evaluator-corpus\/truth)(?:\n|$)/u,
+    "Evaluator parent roots already cover their generated child subtrees"
+  );
   assert.doesNotMatch(
     engineReads.join("\n"),
     /\/scripts\/benchmark\/sandbox-security(?:\n|$)/u
@@ -246,7 +276,7 @@ test("REQ-SBX-GENERAL-002 hermetic child commands separate Engine and evaluator 
   );
   assert.match(
     evaluatorReads.join("\n"),
-    /\/expected-metrics\.json$/u
+    /\/expected-metrics$/u
   );
   assert.throws(
     () => module.buildHermeticReplayChildCommands({
@@ -257,11 +287,49 @@ test("REQ-SBX-GENERAL-002 hermetic child commands separate Engine and evaluator 
       sealed_config: "/tmp/staging/engine-workspace/sealed-config.json",
       projection_root: "/tmp/staging/evaluator-capture/decisions",
       truth_root: "/tmp/staging/evaluator-corpus/truth",
-      expected_metrics: "/tmp/staging/expected-metrics.json",
+      expected_metrics: "/tmp/staging/expected-metrics/metrics.json",
       result_path: "/tmp/staging/result.json"
     }),
     /path|binding|root|invalid|overlap/i
   );
+});
+
+test("REQ-SBX-GENERAL-002 evaluator reads expected metrics through an isolated directory scope", async () => {
+  const module = await hermeticModule();
+  const paths = {
+    root: "/tmp/accepted",
+    staging_root: "/tmp/staging",
+    input_root: "/tmp/staging/engine-workspace/anonymous-inputs",
+    replay_input: "/tmp/staging/engine-workspace/replay-input.json",
+    sealed_config: "/tmp/staging/engine-workspace/sealed-config.json",
+    projection_root: "/tmp/staging/evaluator-capture/decisions",
+    truth_root: "/tmp/staging/evaluator-corpus/truth",
+    expected_metrics: "/tmp/staging/expected-metrics/metrics.json",
+    result_path: "/tmp/staging/result.json"
+  };
+  const commands = module.buildHermeticReplayChildCommands(paths);
+  const evaluatorReads = commands.evaluator.args.filter((arg) =>
+    arg.startsWith("--allow-fs-read=")
+  );
+  assert.ok(
+    evaluatorReads.includes("--allow-fs-read=/tmp/staging/expected-metrics"),
+    "evaluator must read the isolated expected-metrics directory root"
+  );
+  assert.doesNotMatch(
+    evaluatorReads.join("\n"),
+    /\/expected-metrics\/metrics\.json$/u,
+    "evaluator must not rely on a file scope when fs-snapshot binds the parent root"
+  );
+  for (const expected_metrics of [
+    "/tmp/staging/engine-workspace/expected-metrics/metrics.json",
+    "/tmp/staging/evaluator-corpus/truth/expected-metrics/metrics.json",
+    "/tmp/staging/metrics.json"
+  ]) {
+    assert.throws(
+      () => module.buildHermeticReplayChildCommands({ ...paths, expected_metrics }),
+      /overlap|workspace|expected|root|invalid/i
+    );
+  }
 });
 
 test("REQ-SBX-GENERAL-002 hermetic child entrypoint enforces the exact generated filesystem scopes", () => {
@@ -273,6 +341,54 @@ test("REQ-SBX-GENERAL-002 hermetic child entrypoint enforces the exact generated
   assert.match(replay, /permissionFlagValues\("--allow-fs-read"\)/u);
   assert.match(replay, /sameStrings\(readScopes, expectedReadScopes\)/u);
   assert.match(replay, /sameStrings\(writeScopes, \[resultPath\]\)/u);
+});
+
+test("REQ-SBX-GENERAL-002 hermetic permission checks tolerate overlapping directory and file read scopes", async () => {
+  const module = await hermeticModule();
+  assert.equal(
+    typeof module.hasSandboxSecurityHermeticReadPermission,
+    "function"
+  );
+  const directory = "/tmp/security";
+  const file = "/tmp/security/canonical-json.ts";
+  const checked: string[] = [];
+  assert.equal(
+    module.hasSandboxSecurityHermeticReadPermission(directory, (reference) => {
+      checked.push(reference);
+      return reference === `${directory}/`;
+    }),
+    true
+  );
+  assert.deepEqual(checked, [directory, `${directory}/`]);
+  const fallbackChecked: string[] = [];
+  assert.equal(
+    module.hasSandboxSecurityHermeticReadPermission(directory, (reference) => {
+      fallbackChecked.push(reference);
+      return reference === `${directory}/index.ts`;
+    }, `${directory}/index.ts`),
+    true
+  );
+  assert.deepEqual(
+    fallbackChecked,
+    [directory, `${directory}/`, `${directory}/index.ts`]
+  );
+  assert.equal(
+    module.hasSandboxSecurityHermeticReadPermission(file, (reference) =>
+      reference === file
+    ),
+    true
+  );
+});
+
+test("REQ-SBX-GENERAL-002 hermetic permission checks do not use Node's false-positive root read probe", () => {
+  const replay = readFileSync(
+    join(REPO_ROOT, "scripts/benchmark/sandbox-security/replay-hermetic.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(
+    replay,
+    /permission\.has\("fs\.read", "\/"\)/u
+  );
 });
 
 test("REQ-SBX-GENERAL-002 network attempt count is derived from an OS isolation proof", () => {
@@ -396,6 +512,48 @@ test("REQ-SBX-GENERAL-002 replay keeps expected metrics outside the evaluator ca
   );
 });
 
+test("REQ-SBX-GENERAL-002 replay rebuilds the evaluator candidate capture manifest", async () => {
+  const module = await hermeticModule();
+  assert.equal(typeof module.manifestToCandidateCaptureManifest, "function");
+  const candidate = module.manifestToCandidateCaptureManifest!({
+    schema_version: "sandbox-security-benchmark-capture.v2",
+    benchmark_manifest_sha256: "c".repeat(64),
+    sources_lock_sha256: "d".repeat(64),
+    inputs_tree_sha256: SHA,
+    decisions_tree_sha256: "e".repeat(64),
+    cassette_tree_sha256: "f".repeat(64),
+    execution_profile_id: "sandbox-security-p6-live-capture.v8",
+    readiness_timeout_ms: 40000,
+    qualification_timeout_ms: 40000,
+    local_detector_slot_timeout_ms: 60000,
+    judge_detector_slot_timeout_ms: 300000,
+    normal_work_budget_ms: 360000,
+    ollama_model: "qwen3:8b",
+    ollama_digest: `sha256:${"1".repeat(64)}`,
+    ollama_qualification: { inventory: [], prewarm: [] },
+    judge_protocol_id: "openai_chat_completions_v1",
+    judge_endpoint_policy_id: "sandbox-security-operator-https-fqdn-v1",
+    judge_base_url: "https://judge.example.test",
+    judge_endpoint_url: "https://judge.example.test/v1/chat/completions",
+    judge_requested_model: "judge-model",
+    judge_resolved_model: "judge-model",
+    judge_binding_sha256: BINDING,
+    local_prompt_version: "sandbox-security-ollama-local-prompt.v2",
+    judge_prompt_version: "sandbox-security-openai-judge-prompt.v2",
+    local_schema_version: "sandbox-security-local-model.v1",
+    judge_schema_version: "sandbox-security-judge.v1",
+    rule_catalog_version: "sandbox-security-rule-catalog.v1",
+    sanitizer_version: "sandbox-security-deterministic-sanitizer.v1"
+  });
+
+  assert.equal(candidate.fixture_count, 300);
+  assert.equal(candidate.inputs_tree_sha256, SHA);
+  assert.equal("benchmark_manifest_sha256" in candidate, false);
+  assert.equal("sources_lock_sha256" in candidate, false);
+  assert.equal("decisions_tree_sha256" in candidate, false);
+  assert.equal("cassette_tree_sha256" in candidate, false);
+});
+
 test("REQ-SBX-GENERAL-002 hermetic replay fails closed when accepted evidence is absent", async () => {
   const module = await hermeticModule();
   const root = mkdtempSync(join(tmpdir(), "sandbox-security-hermetic-red-"));
@@ -407,6 +565,31 @@ test("REQ-SBX-GENERAL-002 hermetic replay fails closed when accepted evidence is
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("REQ-SBX-GENERAL-002 hermetic replay accepts complete quality-failed metrics with indeterminate outputs", async () => {
+  const module = await hermeticModule();
+  assert.equal(typeof module.assertSandboxSecurityHermeticReplayCompleteRun, "function");
+  assert.doesNotThrow(() =>
+    module.assertSandboxSecurityHermeticReplayCompleteRun({
+      input_count: 300,
+      accepted_metrics: {
+        accepted: false,
+        numerators: { decided: 298 }
+      }
+    })
+  );
+  assert.throws(
+    () =>
+      module.assertSandboxSecurityHermeticReplayCompleteRun({
+        input_count: 299,
+        accepted_metrics: {
+          accepted: false,
+          numerators: { decided: 298 }
+        }
+      }),
+    /accepted_seal_invalid|complete|count/i
+  );
 });
 
 test("REQ-SBX-GENERAL-002 hermetic replay fails closed when staging cleanup fails", async () => {

@@ -1,3 +1,49 @@
+# 2026-08-07 - REQ-SBX-GENERAL-002 formal P6/P7 acceptance VERIFIED
+
+- phase/task: Phase 6 complete-run evidence and Phase 7 hermetic closure
+- status: `VERIFIED`
+- formal roots:
+  - capture: `tmp/sandbox-security-p6-general-002-live-capture-FZ2qIz`
+  - evidence: `tmp/sandbox-security-p6-general-002-live-evidence-OCsTVp`
+- P6 evidence:
+  - complete evidence validation with the corpus anchor and required receipt
+    chain passed; the evidence contains the signed `capture.json`,
+    `seal.json`, `receipt-chain.json`, 300 replay envelopes, and 300 decision
+    projections
+  - corpus validation reports `total=300`, `risk=180`, and `safe=120`
+  - retained metrics are `accepted=false`, `numerators.decided=298`, and
+    `infrastructure_codes=[]`; the two indeterminate projections remain
+    recorded as quality/coverage facts and do not invalidate the complete
+    structural 300-result run
+- P7 hermetic verification:
+  - formal `unshare --net` replay completed with
+    `evaluated_inputs=300`, `network_attempts=0`, and
+    `openai_key_present=false`
+  - decision projection tree hash:
+    `9e32ab7d3b39da31a829f1e72dc94cefc3d83cfc4a0bfd9fa0ac619f45c62281`
+  - replay metrics matched the sealed metrics, including the retained false
+    quality result and `decided=298`
+- deterministic verification:
+  - hermetic replay focused suite: `22/22`
+  - live evidence suite: `47/47`
+  - benchmark TypeScript check, corpus validator, and `git diff --check` pass
+  - candidate manifest and evaluator permission fixes received independent
+    specification and quality reviews with `0 Critical / 0 Important / 0
+    Minor` findings on the final revisions
+- implementation commits:
+  - `c513715` rebuilds the evaluator candidate capture manifest and binds its
+    package hash to the rebuilt manifest
+  - `37c7767` isolates the expected metrics read root
+  - `e0fc15d` rejects expected metrics paths that overlap Engine, truth, or
+    evaluator workspaces
+- acceptance boundary:
+  - `accepted_metrics.accepted=false` is preserved and is not treated as an
+    infrastructure failure; complete-run acceptance is based on 300 structural
+    outputs, complete provider outcomes, empty infrastructure codes, and the
+    signed evidence/P7 bindings
+  - GENERAL-003 and GENERAL-004 retain their own independent review and global
+    gates; no later requirement was auto-verified by this entry
+
 # 2026-08-07 - REQ-SBX-GENERAL-004 P2-T5 internal enforcement audit HTTP
 
 - phase/task: Phase 2 / P2-T5

@@ -248,7 +248,7 @@ test("REQ-SBX-GENERAL-002 durable docs separate live qualification from ordinary
   assert.match(text, /(?:never|not|excluded|排除).{0,80}test:all/isu);
 });
 
-test("REQ-SBX-GENERAL-002 durable docs record the pending P6 boundary and reviewed P7 status", () => {
+test("REQ-SBX-GENERAL-002 durable docs record formal P6 and reviewed P7 status", () => {
   const text = [
     readFileSync(join(REPO_ROOT, "docs/sprint-current.md"), "utf8"),
     readFileSync(join(REPO_ROOT, "docs/progress.md"), "utf8")
@@ -259,6 +259,6 @@ test("REQ-SBX-GENERAL-002 durable docs record the pending P6 boundary and review
     text,
     /durable documentation contains no raw provider payload[\s\S]{0,120}(?:benchmark truth|oracle output)/iu
   );
-  assert.match(text, /P6 formal acceptance[^\n]*(?:absent|missing|未)/iu);
-  assert.match(text, /GENERAL-002[^\n]*not[^\n]*VERIFIED/iu);
+  assert.match(text, /P6 evidence:/u);
+  assert.match(text, /GENERAL-002 is `VERIFIED`/u);
 });

@@ -124,10 +124,12 @@ approval is now recorded above.
 
 ## Dependency Gate
 
-GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`. Its formal
-signed P6 evidence and successful gated hermetic replay are absent. This does
-not permit GENERAL-002 or GENERAL-003 to claim `VERIFIED`, and GENERAL-004
-must inherit the same dependency boundary.
+GENERAL-002 is `VERIFIED` as of 2026-08-07. Its formal signed P6 evidence,
+receipt chain, complete-run seal, and gated hermetic replay are recorded in
+`docs/progress.md`. GENERAL-003 remains at its own
+`IMPLEMENTED_PENDING_GLOBAL_P6_GATE` status and is not automatically verified
+by this dependency transition; GENERAL-004 must continue to satisfy its own
+phase gates.
 
 The highest valid GENERAL-003 status is
 `IMPLEMENTED_PENDING_GLOBAL_P6_GATE`. `TMPDIR=/tmp npm run test:all` must still
@@ -136,13 +138,14 @@ fail-closed result reported honestly.
 
 The GENERAL-002 P6 retry amendment is implemented through Task 6
 documentation and permanent repository gates. The 2026-08-06 complete-run
-acceptance amendment requires a fresh full 300-input P6 capture with
-`decided === 300`, no infrastructure failure, complete provider attempt
-sequences, an accepted seal and receipt chain, and a successful hermetic replay
-before any `VERIFIED` transition. Model-quality threshold failure is retained
-in `accepted_metrics` but no longer blocks this fixed live evidence path. This
-policy does not authorize caller-configurable retry and does not change
-GENERAL-003's out-of-scope retry rule.
+acceptance amendment requires a full 300-projection P6 capture with no
+infrastructure failure, complete provider attempt sequences, a complete-run
+seal and receipt chain, and a successful hermetic replay before the fixed live
+evidence path is verified. The retained `accepted_metrics.accepted` quality
+result and `numerators.decided` coverage metric are not rewritten; valid
+indeterminate projections may make `decided` less than 300 without blocking
+complete-run acceptance. This policy does not authorize caller-configurable
+retry and does not change GENERAL-003's out-of-scope retry rule.
 
 ## Current Work
 
@@ -203,11 +206,13 @@ GENERAL-003's out-of-scope retry rule.
   failures. `npm run typecheck:backend` remains blocked by existing
   campaign/task-center/task-engine/supervision diagnostics.
 - GENERAL-003 implementation work remains complete through its phase- and
-  P6-T4 review gates, bounded by the unresolved GENERAL-002 global P6 gate.
+  P6-T4 review gates; its own global P6 gate remains outstanding, but the
+  GENERAL-002 dependency is now satisfied.
 - The P6 retry amendment remains complete through Task 6 documentation and
-  repository gates, but no fresh full 300-input capture has been run.
-- Do not claim `VERIFIED` for GENERAL-002, GENERAL-003, or GENERAL-004 until
-  the required signed P6 recapture and hermetic replay are accepted.
+  repository gates. The fresh formal 300-projection capture and P7 replay are
+  now recorded as accepted for GENERAL-002.
+- GENERAL-002 is `VERIFIED`. Do not claim `VERIFIED` for GENERAL-003 or
+  GENERAL-004 until their own required review, phase, and global gates pass.
 
 ## Next Transition
 

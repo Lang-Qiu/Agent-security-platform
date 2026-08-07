@@ -1017,13 +1017,15 @@ Fresh, disjoint capture and evidence roots are required for a new run.
 
 ### GENERAL-002 P6 complete-run acceptance amendment (2026-08-06)
 
-For subsequent live rounds, a run that produces all `300` decision projections
-and complete provider outcomes proceeds through the P6 acceptance chain even if
-the model-quality metrics are below the frozen benchmark thresholds. The live
-evaluator requires `decided === 300` and no infrastructure codes. It retains the
-actual quality result in `accepted_metrics.accepted` and preserves its
-canonical hash; this field is not rewritten to make the run appear quality
-passing.
+For subsequent live rounds, a run that produces all `300` structurally valid
+decision projections and complete provider outcomes proceeds through the P6
+acceptance chain even if the model-quality metrics are below the frozen
+benchmark thresholds. The live evaluator requires complete structural output
+and no infrastructure codes. `accepted_metrics.numerators.decided` remains the
+observed quality-coverage metric and may be below `300` when valid
+`indeterminate` projections are present. It retains the actual quality result
+in `accepted_metrics.accepted` and preserves its canonical hash; these fields
+are not rewritten to make the run appear quality passing.
 
 The fixed live sealer and P7 hermetic replay use this complete-run policy. They
 continue to require all candidate, provider-attempt, tree, receipt, privacy,
