@@ -674,6 +674,7 @@ function validateChildPathMap(input: Readonly<Record<string, string>>): Hermetic
   const engineWorkspaceRoot = dirname(paths.replay_input);
   const evaluatorCaptureRootPath = dirname(paths.projection_root);
   const evaluatorCorpusRoot = dirname(paths.truth_root);
+  const expectedMetricsRoot = dirname(paths.expected_metrics);
   if (isPathWithin(root, stagingRoot) || isPathWithin(stagingRoot, root)) {
     fail("root_staging_overlap");
   }
@@ -683,6 +684,16 @@ function validateChildPathMap(input: Readonly<Record<string, string>>): Hermetic
     !isPathWithin(evaluatorCaptureRootPath, paths.projection_root) ||
     !isPathWithin(evaluatorCorpusRoot, paths.truth_root) ||
     isPathWithin(evaluatorCaptureRootPath, paths.expected_metrics) ||
+    expectedMetricsRoot === stagingRoot ||
+    [
+      engineWorkspaceRoot,
+      evaluatorCaptureRootPath,
+      evaluatorCorpusRoot
+    ].some(
+      (workspaceRoot) =>
+        isPathWithin(workspaceRoot, expectedMetricsRoot) ||
+        isPathWithin(expectedMetricsRoot, workspaceRoot)
+    ) ||
     isPathWithin(engineWorkspaceRoot, evaluatorCaptureRootPath) ||
     isPathWithin(evaluatorCaptureRootPath, engineWorkspaceRoot) ||
     isPathWithin(engineWorkspaceRoot, evaluatorCorpusRoot) ||
