@@ -52,6 +52,18 @@ const ENGINE_PRODUCTION_ROOT = resolve(
   SCRIPT_ROOT,
   "../../../engines/sandbox/src/security-production"
 );
+const ENGINE_BASE_FILTER_ROOT = resolve(
+  SCRIPT_ROOT,
+  "../../../engines/sandbox/src/base-filter"
+);
+const ENGINE_MONITORING_ROOT = resolve(
+  SCRIPT_ROOT,
+  "../../../engines/sandbox/src/monitoring"
+);
+const ENGINE_SIMULATED_TOOLS_ROOT = resolve(
+  SCRIPT_ROOT,
+  "../../../engines/sandbox/src/simulated-tools"
+);
 const SHARED_ROOT = resolve(SCRIPT_ROOT, "../../../shared");
 const REPLAY_TRANSPORT_PATH = join(SCRIPT_ROOT, "replay-transport.ts");
 const FS_SNAPSHOT_PATH = join(SCRIPT_ROOT, "fs-snapshot.ts");
@@ -232,6 +244,30 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
     !Array.isArray(value) &&
     Object.getPrototypeOf(value) === Object.prototype
   );
+}
+
+export function hasSandboxSecurityHermeticReadPermission(
+  scope: string,
+  hasPermission: (reference: string) => boolean,
+  representative?: string
+): boolean {
+  if (hasPermission(scope)) return true;
+  const directoryReference = scope.endsWith(sep) ? scope : `${scope}${sep}`;
+  if (directoryReference !== scope && hasPermission(directoryReference)) return true;
+  return representative !== undefined && hasPermission(representative);
+}
+
+export function assertSandboxSecurityHermeticReplayCompleteRun(input: Readonly<{
+  input_count: number;
+  accepted_metrics: unknown;
+}>): void {
+  if (
+    !isPlainRecord(input) ||
+    input.input_count !== INPUT_COUNT ||
+    !isPlainRecord(input.accepted_metrics)
+  ) {
+    fail("accepted_seal_invalid");
+  }
 }
 
 function exactRecord(value: unknown, keys: readonly string[]): JsonRecord {
@@ -531,9 +567,11 @@ function assertExactHermeticChildPermissions(
       CONTRACTS_PATH,
       ENGINE_SECURITY_ROOT,
       ENGINE_PRODUCTION_ROOT,
+      ENGINE_BASE_FILTER_ROOT,
+      ENGINE_MONITORING_ROOT,
+      ENGINE_SIMULATED_TOOLS_ROOT,
       SHARED_ROOT,
       PROC_NET_ROOT,
-      childOption(options, "--input-root"),
       dirname(childOption(options, "--replay-input")),
       dirname(childOption(options, "--sealed-config"))
     ]
@@ -545,10 +583,8 @@ function assertExactHermeticChildPermissions(
       CONTRACTS_PATH,
       SHARED_ROOT,
       dirname(childOption(options, "--truth-root")),
-      childOption(options, "--truth-root"),
       join(dirname(childOption(options, "--truth-root")), "manifest.json"),
       dirname(childOption(options, "--projection-root")),
-      childOption(options, "--projection-root"),
       childOption(options, "--expected-metrics")
     ];
   const readScopes = permissionFlagValues("--allow-fs-read");
@@ -576,10 +612,24 @@ function assertExactHermeticChildPermissions(
     }
   ).permission;
   try {
+    const readScopeRepresentatives = child === "engine"
+      ? new Map<string, string>([
+        [ENGINE_SECURITY_ROOT, join(ENGINE_SECURITY_ROOT, "index.ts")],
+        [ENGINE_BASE_FILTER_ROOT, join(ENGINE_BASE_FILTER_ROOT, "index.ts")],
+        [ENGINE_MONITORING_ROOT, join(ENGINE_MONITORING_ROOT, "index.ts")],
+        [ENGINE_SIMULATED_TOOLS_ROOT, join(ENGINE_SIMULATED_TOOLS_ROOT, "index.ts")],
+        [dirname(childOption(options, "--replay-input")), childOption(options, "--replay-input")]
+      ])
+      : new Map<string, string>();
     if (
       permission === undefined ||
-      expectedReadScopes.some((scope) => !permission.has("fs.read", scope)) ||
-      permission.has("fs.read", "/") ||
+      expectedReadScopes.some((scope) =>
+        !hasSandboxSecurityHermeticReadPermission(
+          scope,
+          (reference) => permission?.has("fs.read", reference) ?? false,
+          readScopeRepresentatives.get(scope)
+        )
+      ) ||
       !permission.has("fs.write", resultPath) ||
       permission.has("fs.write", dirname(resultPath)) ||
       permission.has("net") ||
@@ -679,9 +729,11 @@ export function buildHermeticReplayChildCommands(
     CONTRACTS_PATH,
     ENGINE_SECURITY_ROOT,
     ENGINE_PRODUCTION_ROOT,
+    ENGINE_BASE_FILTER_ROOT,
+    ENGINE_MONITORING_ROOT,
+    ENGINE_SIMULATED_TOOLS_ROOT,
     SHARED_ROOT,
     PROC_NET_ROOT,
-    input.input_root,
     dirname(input.replay_input),
     dirname(input.sealed_config)
   ];
@@ -694,10 +746,8 @@ export function buildHermeticReplayChildCommands(
     CONTRACTS_PATH,
     SHARED_ROOT,
     dirname(input.truth_root),
-    input.truth_root,
     corpusManifest,
     evaluatorCaptureRoot(input.projection_root),
-    input.projection_root,
     input.expected_metrics
   ];
   const common = Object.freeze([
@@ -1597,6 +1647,38 @@ function manifestToSealedConfig(manifest: JsonRecord): JsonRecord {
   });
 }
 
+export function manifestToCandidateCaptureManifest(
+  manifest: JsonRecord
+): JsonRecord {
+  return Object.freeze({
+    schema_version: manifest.schema_version,
+    inputs_tree_sha256: manifest.inputs_tree_sha256,
+    fixture_count: INPUT_COUNT,
+    execution_profile_id: manifest.execution_profile_id,
+    readiness_timeout_ms: manifest.readiness_timeout_ms,
+    qualification_timeout_ms: manifest.qualification_timeout_ms,
+    local_detector_slot_timeout_ms: manifest.local_detector_slot_timeout_ms,
+    judge_detector_slot_timeout_ms: manifest.judge_detector_slot_timeout_ms,
+    normal_work_budget_ms: manifest.normal_work_budget_ms,
+    ollama_model: manifest.ollama_model,
+    ollama_digest: manifest.ollama_digest,
+    ollama_qualification: manifest.ollama_qualification,
+    judge_protocol_id: manifest.judge_protocol_id,
+    judge_endpoint_policy_id: manifest.judge_endpoint_policy_id,
+    judge_base_url: manifest.judge_base_url,
+    judge_endpoint_url: manifest.judge_endpoint_url,
+    judge_requested_model: manifest.judge_requested_model,
+    judge_resolved_model: manifest.judge_resolved_model,
+    judge_binding_sha256: manifest.judge_binding_sha256,
+    local_prompt_version: manifest.local_prompt_version,
+    judge_prompt_version: manifest.judge_prompt_version,
+    local_schema_version: manifest.local_schema_version,
+    judge_schema_version: manifest.judge_schema_version,
+    rule_catalog_version: manifest.rule_catalog_version,
+    sanitizer_version: manifest.sanitizer_version
+  });
+}
+
 async function runParent(
   root: string,
   abortSignal?: AbortSignal
@@ -1615,16 +1697,16 @@ async function runParent(
   } catch {
     fail("live_evidence_missing");
   }
-  if (
-    accepted.capture.inputs.length !== INPUT_COUNT ||
-    !isPlainRecord(accepted.seal.accepted_metrics) ||
-    accepted.seal.accepted_metrics.numerators.decided !== INPUT_COUNT
-  ) {
-    fail("accepted_seal_invalid");
-  }
+  assertSandboxSecurityHermeticReplayCompleteRun({
+    input_count: accepted.capture.inputs.length,
+    accepted_metrics: accepted.seal.accepted_metrics
+  });
   const fixtureIds = expectedFixtureIds();
   const manifest = accepted.capture.manifest;
   const sealedConfig = manifestToSealedConfig(manifest as unknown as JsonRecord);
+  const candidateManifest = manifestToCandidateCaptureManifest(
+    manifest as unknown as JsonRecord
+  );
   const stagingRoot = mkdtempSync(
     join(dirname(resolve(root)), ".sandbox-security-hermetic-")
   );
@@ -1721,7 +1803,11 @@ async function runParent(
         })
       )
     });
-    writeJson(join(evaluatorRoot, "capture-manifest.json"), stagingRoot, manifest);
+    writeJson(
+      join(evaluatorRoot, "capture-manifest.json"),
+      stagingRoot,
+      candidateManifest
+    );
     writeJson(join(evaluatorRoot, "cassette.json"), stagingRoot, cassette);
 
     const paths: HermeticReplayPaths = Object.freeze({
@@ -1779,14 +1865,13 @@ async function runParent(
     const cassetteTreeSha256 = contractModule.hashSandboxSecurityBenchmarkCandidateCassette(
       cassette
     );
-    const captureManifestSha256 = contractModule.hashSandboxSecurityBenchmarkCanonicalJson(
-      manifest
-    );
+    const captureManifestSha256 =
+      contractModule.hashSandboxSecurityBenchmarkCanonicalJson(candidateManifest);
     const packageJson = Object.freeze({
       schema_version: "sandbox-security-benchmark-candidate-package.v1",
       fixture_count: INPUT_COUNT,
       provenance: "production_permissioned_v1",
-      inputs_tree_sha256: manifest.inputs_tree_sha256,
+      inputs_tree_sha256: candidateManifest.inputs_tree_sha256,
       decisions_tree_sha256: decisionsTreeSha256,
       cassette_tree_sha256: cassetteTreeSha256,
       capture_manifest_sha256: captureManifestSha256
