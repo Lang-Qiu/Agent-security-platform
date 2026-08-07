@@ -1,3 +1,152 @@
+diff --git a/dist/agent-tools.before-tool-call-59sE70R-.js b/dist/agent-tools.before-tool-call-59sE70R-.js
+index bb14f66..34cd79b 100644
+--- a/dist/agent-tools.before-tool-call-59sE70R-.js
++++ b/dist/agent-tools.before-tool-call-59sE70R-.js
+@@ -12,6 +12,7 @@ import { _ as PluginApprovalResolutions } from "./command-registration-BBago94k.
+ import { h as getPluginSessionExtensionStateSync } from "./registry-BiuJAn1Z.js";
+ import { s as getActivePluginRegistry } from "./runtime-DGlFdyGW.js";
+ import { f as getGlobalHookRunnerRegistry, t as getGlobalHookRunner } from "./hook-runner-global-D_43rcnU.js";
++import { createOpenClawSecurityFixedReplacement, readOpenClawSecurityTurnContext } from "./lifecycle-hook-helpers-Dowa8zK4.js";
+ import { i as resolveSandboxInputPath } from "./sandbox-paths-lIFb9EBl.js";
+ import { i as listChannelPlugins, t as getChannelPlugin } from "./registry-BxD52xuY2.js";
+ import "./plugins-B7CoaAGS.js";
+@@ -1494,6 +1495,95 @@ async function runBeforeToolCallHook(args) {
+ 		};
+ 	}
+ }
++const OPENCLAW_SECURITY_TOOL_BARRIER_MARKER = "openclaw-security-tool-barrier.v1";
++const OPENCLAW_SECURITY_TOOL_BARRIER_SYMBOL = Symbol(OPENCLAW_SECURITY_TOOL_BARRIER_MARKER);
++const OPENCLAW_SECURITY_TOOL_DENY_TEXT = "Blocked by sandbox security policy.";
++function createOpenClawSecurityToolFloor() {
++	const replacement = createOpenClawSecurityFixedReplacement({
++		outcome: "replace",
++		replacement_code: "sandbox_security_policy_blocked",
++		replacement_text: OPENCLAW_SECURITY_TOOL_DENY_TEXT
++	});
++	return Object.freeze({
++		outcome: "replace",
++		text: replacement.text,
++		replacement_code: replacement.replacement_code,
++		provenance: replacement.provenance,
++		marker: OPENCLAW_SECURITY_TOOL_BARRIER_MARKER
++	});
++}
++async function runOpenClawSecurityToolBarrier(params) {
++	const turn = readOpenClawSecurityTurnContext();
++	const ctx = params?.ctx;
++	const toolName = typeof params?.toolName === "string" ? params.toolName.trim() : "";
++	const toolCallId = typeof params?.toolCallId === "string" ? params.toolCallId.trim() : "";
++	const toolParams = params?.params;
++	if (!turn || !isPlainObject(ctx) || ctx.runId !== turn.runId || ctx.sessionKey !== turn.sessionKey || !toolName || !toolCallId || !isPlainObject(toolParams)) return createOpenClawSecurityToolFloor();
++	if (Object.hasOwn(toolParams, OPENCLAW_SECURITY_TOOL_BARRIER_SYMBOL)) return createOpenClawSecurityToolFloor();
++	try {
++		Object.defineProperty(toolParams, OPENCLAW_SECURITY_TOOL_BARRIER_SYMBOL, {
++			value: true,
++			enumerable: false,
++			configurable: false
++		});
++	} catch {
++		return createOpenClawSecurityToolFloor();
++	}
++	let toolArguments;
++	try {
++		toolArguments = structuredClone(toolParams);
++	} catch {
++		return createOpenClawSecurityToolFloor();
++	}
++	const hookRunner = params?.hookRunner ?? getGlobalHookRunner();
++	let hasBarrier = false;
++	try {
++		hasBarrier = hookRunner?.hasHooks("before_tool_execution") === true;
++	} catch {
++		return createOpenClawSecurityToolFloor();
++	}
++	if (!hasBarrier || typeof hookRunner?.runBeforeToolExecution !== "function") return createOpenClawSecurityToolFloor();
++	const assistant = Object.freeze({
++		schema_version: "openclaw-security-assistant-projection.v1",
++		text_parts: Object.freeze([]),
++		tool_calls: Object.freeze([Object.freeze({
++			call_id: toolCallId,
++			tool_name: toolName,
++			arguments: toolArguments
++		})])
++	});
++	const event = Object.freeze({
++		schema_version: "openclaw-security-hook-event.v1",
++		runId: turn.runId,
++		sessionKey: turn.sessionKey,
++		callId: toolCallId,
++		assistant,
++		tool: Object.freeze({
++			call_id: toolCallId,
++			tool_name: toolName,
++			arguments: toolArguments
++		})
++	});
++	let decision;
++	try {
++		decision = await hookRunner.runBeforeToolExecution(event, turn);
++	} catch {
++		return createOpenClawSecurityToolFloor();
++	}
++	if (isPlainObject(decision) && Reflect.ownKeys(decision).length === 1 && decision.outcome === "pass") return Object.freeze({ outcome: "pass" });
++	try {
++		const replacement = createOpenClawSecurityFixedReplacement(decision);
++		return Object.freeze({
++			outcome: "replace",
++			text: replacement.text,
++			replacement_code: replacement.replacement_code,
++			provenance: replacement.provenance,
++			marker: OPENCLAW_SECURITY_TOOL_BARRIER_MARKER
++		});
++	} catch {
++		return createOpenClawSecurityToolFloor();
++	}
++}
+ /** Wrap a tool execute function with before_tool_call hooks and diagnostics. */
+ function wrapToolWithBeforeToolCallHook(tool, ctx, options = {}) {
+ 	const execute = tool.execute;
+@@ -1583,9 +1673,32 @@ function wrapToolWithBeforeToolCallHook(tool, ctx, options = {}) {
+ 				hookParams,
+ 				adjustedParams: outcome.params
+ 			});
+-			executeParams = tool.finalizeBeforeToolCallParams?.(executeParams, preparedParams) ?? executeParams;
+-			recordAdjustedParamsForToolCall(toolCallId, executeParams, ctx?.runId);
+ 			const normalizedToolName = normalizeToolName(toolName || "tool");
++			executeParams = tool.finalizeBeforeToolCallParams?.(executeParams, preparedParams) ?? executeParams;
++				const openClawSecurityToolDecision = await runOpenClawSecurityToolBarrier({
++					toolName: normalizedToolName,
++					params: executeParams,
++					toolCallId,
++					ctx
++				});
++				if (openClawSecurityToolDecision.outcome === "replace") {
++					const blockedResult = buildBlockedToolResult({
++						reason: openClawSecurityToolDecision.text,
++						deniedReason: "sandbox-security",
++						toolCallId,
++						runId: ctx?.runId
++					});
++					await recordLoopOutcome({
++						ctx,
++						toolName: normalizedToolName,
++						toolParams: executeParams,
++						toolCallId,
++						result: blockedResult,
++						toolCallOrdinal
++					});
++					return blockedResult;
++				}
++				recordAdjustedParamsForToolCall(toolCallId, executeParams, ctx?.runId);
+ 			const trace = ctx?.trace ? freezeDiagnosticTraceContext(createChildDiagnosticTraceContext(ctx.trace)) : void 0;
+ 			const eventBase = {
+ 				...ctx?.runId && { runId: ctx.runId },
+@@ -1759,4 +1872,4 @@ function toLintErrorObject(value, fallbackMessage) {
+ 	return error;
+ }
+ //#endregion
+-export { resolveChannelReactionGuidance as A, normalizeCodeModeExecBeforeHookParams as C, listChannelSupportedActions as D, listChannelAgentTools as E, consumeStructuredReplaySafeToolCall as F, peekAdjustedParamsForToolCall as I, getChannelAgentToolMeta as M, consumeAdjustedParamsForToolCall as N, resolveChannelMessageToolHints as O, consumePreExecutionBlockedToolCall as P, markCodeModeControlTool as S, listAllChannelSupportedActions as T, setToolTerminalPresentation as _, getBeforeToolCallPolicyDiagnosticState as a, getCodeModeExecBeforeHookMetadata as b, isToolWrappedWithBeforeToolCallHook as c, requestDeferredPluginToolApproval as d, rewrapToolWithBeforeToolCallHook as f, copyToolTerminalPresentation as g, wrapToolWithBeforeToolCallHook as h, finalizeToolTerminalPresentation as i, copyChannelAgentToolMeta as j, resolveChannelPromptCapabilities as k, recordAdjustedParamsForToolCall as l, setBeforeToolCallDiagnosticsEnabled as m, cancelDeferredPluginToolApproval as n, hasBeforeToolCallPolicy as o, runBeforeToolCallHook as p, copyBeforeToolCallHookMarker as r, isBeforeToolCallBlockedError as s, buildBlockedToolResult as t, recordStructuredReplayTrustForToolCall as u, CODE_MODE_EXEC_TOOL_NAME as v, reconcileCodeModeExecBeforeHookParams as w, isCodeModeControlTool as x, CODE_MODE_WAIT_TOOL_NAME as y };
++export { resolveChannelReactionGuidance as A, normalizeCodeModeExecBeforeHookParams as C, listChannelSupportedActions as D, listChannelAgentTools as E, consumeStructuredReplaySafeToolCall as F, peekAdjustedParamsForToolCall as I, getChannelAgentToolMeta as M, consumeAdjustedParamsForToolCall as N, resolveChannelMessageToolHints as O, consumePreExecutionBlockedToolCall as P, markCodeModeControlTool as S, listAllChannelSupportedActions as T, setToolTerminalPresentation as _, getBeforeToolCallPolicyDiagnosticState as a, getCodeModeExecBeforeHookMetadata as b, isToolWrappedWithBeforeToolCallHook as c, requestDeferredPluginToolApproval as d, rewrapToolWithBeforeToolCallHook as f, copyToolTerminalPresentation as g, wrapToolWithBeforeToolCallHook as h, finalizeToolTerminalPresentation as i, copyChannelAgentToolMeta as j, resolveChannelPromptCapabilities as k, recordAdjustedParamsForToolCall as l, setBeforeToolCallDiagnosticsEnabled as m, cancelDeferredPluginToolApproval as n, hasBeforeToolCallPolicy as o, runBeforeToolCallHook as p, copyBeforeToolCallHookMarker as r, isBeforeToolCallBlockedError as s, buildBlockedToolResult as t, recordStructuredReplayTrustForToolCall as u, CODE_MODE_EXEC_TOOL_NAME as v, reconcileCodeModeExecBeforeHookParams as w, isCodeModeControlTool as x, CODE_MODE_WAIT_TOOL_NAME as y, runOpenClawSecurityToolBarrier };
 diff --git a/dist/cli-runner-B0eKIePw.js b/dist/cli-runner-B0eKIePw.js
 index 28a31d9..38d0452 100644
 --- a/dist/cli-runner-B0eKIePw.js
@@ -347,7 +496,7 @@ index b21ff5b..bf570c4 100644
  		runInboundClaimForPlugin,
  		runInboundClaimForPluginOutcome,
 diff --git a/dist/lifecycle-hook-helpers-Dowa8zK4.js b/dist/lifecycle-hook-helpers-Dowa8zK4.js
-index 5a72ef4..6991b8a 100644
+index 5a72ef4..e387b5e 100644
 --- a/dist/lifecycle-hook-helpers-Dowa8zK4.js
 +++ b/dist/lifecycle-hook-helpers-Dowa8zK4.js
 @@ -4,6 +4,7 @@ import { t as createSubsystemLogger } from "./subsystem-CYwCorYs.js";
@@ -358,7 +507,7 @@ index 5a72ef4..6991b8a 100644
  //#region src/agents/harness/hook-context.ts
  /** Builds the sparse hook context object passed to agent harness plugin hooks. */
  function buildAgentHookContext(params) {
-@@ -174,4 +175,137 @@ function isBeforeAgentFinalizeRetry(value) {
+@@ -174,4 +175,185 @@ function isBeforeAgentFinalizeRetry(value) {
  	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
  }
  //#endregion
@@ -447,6 +596,51 @@ index 5a72ef4..6991b8a 100644
 +	if (!capsule || !capsule.replacement) return null;
 +	return capsule.replacement;
 +}
++const openClawSecurityNormalizeModelToolCall = (value) => {
++	if (!isOpenClawSecurityPlainRecord(value)) return null;
++	const callId = typeof value.call_id === "string" ? value.call_id : value.id;
++	const toolName = typeof value.tool_name === "string" ? value.tool_name : value.name;
++	if (typeof callId !== "string" || callId.length === 0 || typeof toolName !== "string" || toolName.length === 0 || !Object.hasOwn(value, "arguments") || value.arguments === void 0) return null;
++	let argumentsValue;
++	try {
++		argumentsValue = structuredClone(value.arguments);
++	} catch {
++		return null;
++	}
++	return { call_id: callId, tool_name: toolName, arguments: argumentsValue };
++};
++const openClawSecurityNormalizeModelAssistant = (event) => {
++	if (!Array.isArray(event.assistantTexts) || event.assistantTexts.some((text) => typeof text !== "string")) return null;
++	const lastAssistant = event.lastAssistant;
++	if (lastAssistant !== void 0 && lastAssistant !== null && !isOpenClawSecurityPlainRecord(lastAssistant)) return null;
++	let toolCalls = [];
++	if (lastAssistant !== void 0 && lastAssistant !== null) {
++		if (Object.hasOwn(lastAssistant, "toolCalls") && Object.hasOwn(lastAssistant, "content")) return null;
++		if (Object.hasOwn(lastAssistant, "toolCalls")) {
++			if (!Array.isArray(lastAssistant.toolCalls)) return null;
++			toolCalls = lastAssistant.toolCalls.map(openClawSecurityNormalizeModelToolCall);
++			if (toolCalls.some((call) => call === null)) return null;
++		} else if (Object.hasOwn(lastAssistant, "content")) {
++			if (!Array.isArray(lastAssistant.content)) return null;
++			for (const block of lastAssistant.content) {
++				if (!isOpenClawSecurityPlainRecord(block) || typeof block.type !== "string") return null;
++				if (block.type === "text") {
++					if (typeof block.text !== "string") return null;
++					continue;
++				}
++				if (block.type !== "toolCall" && block.type !== "tool_call" && block.type !== "toolUse" && block.type !== "tool_use" && block.type !== "functionCall" && block.type !== "function_call") return null;
++				const call = openClawSecurityNormalizeModelToolCall(block);
++				if (call === null) return null;
++				toolCalls.push(call);
++			}
++		}
++	}
++	return Object.freeze({
++		schema_version: "openclaw-security-assistant-projection.v1",
++		text_parts: Object.freeze([...event.assistantTexts]),
++		tool_calls: Object.freeze(toolCalls.map((call) => Object.freeze(call)))
++	});
++};
 +async function runOpenClawSecurityModelOutputBarrier(params) {
 +	const buildDecision = (barrier) => {
 +		const envelope = createOpenClawSecurityFixedReplacement(barrier);
@@ -467,23 +661,26 @@ index 5a72ef4..6991b8a 100644
 +	const event = isOpenClawSecurityPlainRecord(params?.event) ? params.event : null;
 +	const ctx = isOpenClawSecurityPlainRecord(params?.ctx) ? params.ctx : null;
 +	if (event === null || ctx === null) return floorDecision();
-+	if (event.runId !== turn.runId || ctx.runId !== turn.runId || ctx.sessionKey !== turn.sessionKey) return floorDecision();
++	if (event.runId !== turn.runId || Object.hasOwn(event, "sessionKey") && event.sessionKey !== turn.sessionKey || ctx.runId !== turn.runId || ctx.sessionKey !== turn.sessionKey) return floorDecision();
++	const assistant = openClawSecurityNormalizeModelAssistant(event);
++	if (assistant === null) return floorDecision();
 +	const hookRunner = params?.hookRunner ?? getGlobalHookRunner();
-+	if (!hookRunner?.hasHooks("before_model_output_delivery") || typeof hookRunner.runBeforeModelOutputDelivery !== "function") return Object.freeze({ outcome: "pass" });
-+	const lastAssistant = isOpenClawSecurityPlainRecord(event.lastAssistant) ? event.lastAssistant : null;
-+	const toolCalls = Array.isArray(event.tool_calls) ? event.tool_calls : lastAssistant && Array.isArray(lastAssistant.toolCalls) ? lastAssistant.toolCalls : [];
-+	const assistantTexts = Array.isArray(event.assistantTexts) ? event.assistantTexts : [];
++	let hasBarrier = false;
++	try {
++		hasBarrier = hookRunner?.hasHooks("before_model_output_delivery") === true;
++	} catch {
++		return floorDecision();
++	}
++	if (!hasBarrier || typeof hookRunner?.runBeforeModelOutputDelivery !== "function") return floorDecision();
 +	const observation = {
-+		schema_version: OPENCLAW_SECURITY_TURN_CONTEXT_SCHEMA,
-+		prompt: turn.prompt,
++		schema_version: "openclaw-security-hook-event.v1",
 +		runId: turn.runId,
 +		sessionKey: turn.sessionKey,
-+		assistantTexts,
-+		tool_calls: toolCalls
++		assistant
 +	};
 +	let decision;
 +	try {
-+		decision = await hookRunner.runBeforeModelOutputDelivery(observation, ctx);
++		decision = await hookRunner.runBeforeModelOutputDelivery(observation, turn);
 +	} catch {
 +		return floorDecision();
 +	}
@@ -661,3 +858,47 @@ index e2cbc34..9dbadc5 100644
  				runId: params.runId,
  				sessionId: params.sessionId,
  				provider: params.provider,
+diff --git a/dist/tool-split-BKKaUdyz.js b/dist/tool-split-BKKaUdyz.js
+index cd96ff0..7d99e6c 100644
+--- a/dist/tool-split-BKKaUdyz.js
++++ b/dist/tool-split-BKKaUdyz.js
+@@ -4,7 +4,7 @@ import { n as logError, t as logDebug } from "./logger-CMT3LC79.js";
+ import { t as sanitizeForConsole } from "./console-sanitize-Bf1BpkZq.js";
+ import { f as payloadTextResult, l as jsonResult } from "./common-CiyB9F5_.js";
+ import { m as normalizeToolName } from "./tool-policy-Cm3NCEHp.js";
+-import { C as normalizeCodeModeExecBeforeHookParams, b as getCodeModeExecBeforeHookMetadata, c as isToolWrappedWithBeforeToolCallHook, l as recordAdjustedParamsForToolCall, p as runBeforeToolCallHook, s as isBeforeToolCallBlockedError, t as buildBlockedToolResult, u as recordStructuredReplayTrustForToolCall, w as reconcileCodeModeExecBeforeHookParams } from "./agent-tools.before-tool-call-59sE70R-.js";
++import { C as normalizeCodeModeExecBeforeHookParams, b as getCodeModeExecBeforeHookMetadata, c as isToolWrappedWithBeforeToolCallHook, l as recordAdjustedParamsForToolCall, p as runBeforeToolCallHook, s as isBeforeToolCallBlockedError, t as buildBlockedToolResult, u as recordStructuredReplayTrustForToolCall, w as reconcileCodeModeExecBeforeHookParams, runOpenClawSecurityToolBarrier } from "./agent-tools.before-tool-call-59sE70R-.js";
+ import { createHash } from "node:crypto";
+ //#region src/agents/agent-tool-definition-adapter.ts
+ /**
+@@ -247,12 +247,24 @@ function toToolDefinitions(tools, hookContext) {
+ 							hookParams,
+ 							adjustedParams: hookOutcome.params
+ 						});
+-						executeParams = finalizeToolParamsBeforeExecute({
+-							tool,
+-							executeParams,
+-							preparedParams
+-						});
+-						recordAdjustedParamsForToolCall(toolCallId, executeParams, hookContext?.runId);
++							executeParams = finalizeToolParamsBeforeExecute({
++								tool,
++								executeParams,
++								preparedParams
++							});
++							const openClawSecurityToolDecision = await runOpenClawSecurityToolBarrier({
++								toolName: normalizedName,
++								params: executeParams,
++								toolCallId,
++								ctx: hookContext
++							});
++							if (openClawSecurityToolDecision.outcome === "replace") return buildBlockedToolResult({
++								reason: openClawSecurityToolDecision.text,
++								deniedReason: "sandbox-security",
++								toolCallId,
++								runId: hookContext?.runId
++							});
++							recordAdjustedParamsForToolCall(toolCallId, executeParams, hookContext?.runId);
+ 					}
+ 					return normalizeToolExecutionResult({
+ 						toolName: normalizedName,

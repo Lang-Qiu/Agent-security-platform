@@ -696,7 +696,9 @@ test("REQ-SBX-GENERAL-004 P4-T3 the patch touches only the reviewed files", () =
     `dist/${LIFECYCLE_FILE}`,
     `dist/${DISPATCH_FILE}`,
     `dist/${SELECTION_FILE}`,
-    `dist/${CLI_FILE}`
+    `dist/${CLI_FILE}`,
+    "dist/agent-tools.before-tool-call-59sE70R-.js",
+    "dist/tool-split-BKKaUdyz.js"
   ].slice().sort();
 
   assert.deepEqual(

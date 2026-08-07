@@ -1,0 +1,2 @@
+# Embedded unified patches intentionally contain source context with tab indentation.
+integrations/openclaw/general-security/patches/*.patch whitespace=-space-before-tab

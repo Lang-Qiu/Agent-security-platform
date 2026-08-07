@@ -29,6 +29,10 @@ type RecordValue = Record<string, unknown>;
 
 const OPENCLAW_VERSION = "2026.6.34";
 const FIXED_REPLACEMENT_MARKER = "openclaw-security-fixed-replacement.v1";
+const TURN_CONTEXT_SCHEMA = "openclaw-security-turn-context.v1";
+const HOOK_EVENT_SCHEMA = "openclaw-security-hook-event.v1";
+const ASSISTANT_PROJECTION_SCHEMA =
+  "openclaw-security-assistant-projection.v1";
 
 const REVIEW_TEXT = "Security review required. This action was not completed.";
 const BLOCKED_TEXT = "Blocked by sandbox security policy.";
@@ -186,6 +190,7 @@ type FakeHookRunner = {
   hasHooks: (name: string) => boolean;
   runBeforeModelOutputDelivery: (event: RecordValue, ctx: RecordValue) => Promise<RecordValue>;
   observations: RecordValue[];
+  contexts: RecordValue[];
 };
 
 function fakeHookRunner(
@@ -194,11 +199,14 @@ function fakeHookRunner(
 ): FakeHookRunner {
   const hasBarrier = options.hasBarrier ?? true;
   const observations: RecordValue[] = [];
+  const contexts: RecordValue[] = [];
   return {
     observations,
+    contexts,
     hasHooks: (name: string) => hasBarrier && name === "before_model_output_delivery",
-    runBeforeModelOutputDelivery: async (event: RecordValue) => {
+    runBeforeModelOutputDelivery: async (event: RecordValue, ctx: RecordValue) => {
       observations.push(event);
+      contexts.push(ctx);
       return await decide();
     }
   };
@@ -231,7 +239,13 @@ function modelEvent(overrides: RecordValue = {}): RecordValue {
     assistantTexts: ["final answer"],
     lastAssistant: {
       role: "assistant",
-      toolCalls: [{ name: "read_file", arguments: { path: "/etc/secret" } }]
+      toolCalls: [
+        {
+          id: "call-1",
+          name: "read_file",
+          arguments: { path: "/etc/secret" }
+        }
+      ]
     },
     ...overrides
   };
@@ -345,7 +359,7 @@ test("REQ-SBX-GENERAL-004 P4-T4 a pass decision delivers the original output", a
   assert.deepEqual(decision, { outcome: "pass" });
 });
 
-test("REQ-SBX-GENERAL-004 P4-T4 the observation carries the turn tuple and exact projection", async () => {
+test("REQ-SBX-GENERAL-004 P4-T4 the barrier sends the exact plugin event and turn context", async () => {
   const c = await carrier();
   const runner = fakeHookRunner(() => passDecision());
   const capsule = c.createCapsule();
@@ -361,16 +375,33 @@ test("REQ-SBX-GENERAL-004 P4-T4 the observation carries the turn tuple and exact
   });
   assert.equal(runner.observations.length, 1);
   const obs = runner.observations[0];
-  assert.equal(obs.prompt, "please read the secret file");
-  assert.equal(obs.runId, "run-1");
-  assert.equal(obs.sessionKey, "session-1");
-  assert.deepEqual(obs.assistantTexts, ["final answer"]);
-  assert.deepEqual(obs.tool_calls, [
-    { name: "read_file", arguments: { path: "/etc/secret" } }
+  assert.deepEqual(obs, {
+    schema_version: HOOK_EVENT_SCHEMA,
+    runId: "run-1",
+    sessionKey: "session-1",
+    assistant: {
+      schema_version: ASSISTANT_PROJECTION_SCHEMA,
+      text_parts: ["final answer"],
+      tool_calls: [
+        {
+          call_id: "call-1",
+          tool_name: "read_file",
+          arguments: { path: "/etc/secret" }
+        }
+      ]
+    }
+  });
+  assert.deepEqual(runner.contexts, [
+    {
+      schema_version: TURN_CONTEXT_SCHEMA,
+      prompt: "please read the secret file",
+      runId: "run-1",
+      sessionKey: "session-1"
+    }
   ]);
 });
 
-test("REQ-SBX-GENERAL-004 P4-T4 observation-only path passes when no barrier hook is registered", async () => {
+test("REQ-SBX-GENERAL-004 P4-T4 a missing barrier hook floors to the fixed ask replacement", async () => {
   const c = await carrier();
   const runner = fakeHookRunner(() => reviewDecision(), { hasBarrier: false });
   const capsule = c.createCapsule();
@@ -382,12 +413,50 @@ test("REQ-SBX-GENERAL-004 P4-T4 observation-only path passes when no barrier hoo
       hookRunner: runner
     });
   });
-  assert.deepEqual(decision, { outcome: "pass" });
+  assert.equal(decision.outcome, "replace");
+  assert.equal(decision.replacement_code, "security_review_required");
+  assert.equal(decision.text, REVIEW_TEXT);
   assert.equal(
     runner.observations.length,
     0,
     "the barrier hook must not be invoked when unregistered"
   );
+});
+
+test("REQ-SBX-GENERAL-004 P4-T4 a malformed projection or hook runner floors closed", async () => {
+  const c = await carrier();
+  const cases: Array<{ event?: RecordValue; hookRunner: RecordValue }> = [
+    {
+      event: modelEvent({ assistantTexts: "not-an-array" }),
+      hookRunner: fakeHookRunner(() => passDecision())
+    },
+    {
+      event: modelEvent({
+        lastAssistant: {
+          role: "assistant",
+          toolCalls: [{ name: "read_file", arguments: undefined }]
+        }
+      }),
+      hookRunner: fakeHookRunner(() => passDecision())
+    },
+    {
+      hookRunner: { hasHooks: () => true }
+    }
+  ];
+
+  for (const current of cases) {
+    const capsule = c.createCapsule();
+    const decision = await c.runWithCapsule(capsule, async () => {
+      c.activate(activeTuple());
+      return c.runModelOutputBarrier({
+        event: current.event ?? modelEvent(),
+        ctx: modelCtx(),
+        hookRunner: current.hookRunner
+      });
+    });
+    assert.equal(decision.outcome, "replace");
+    assert.equal(decision.replacement_code, "security_review_required");
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -536,8 +605,8 @@ test("REQ-SBX-GENERAL-004 P4-T4 concurrent same-session barriers cannot cross pr
         ctx: modelCtx({ runId: `run-${label}`, sessionKey: "session-shared" }),
         hookRunner: runner
       });
-      const obs = runner.observations[0];
-      seen.set(obs.runId as string, obs.prompt as string);
+      const context = runner.contexts[0];
+      seen.set(context.runId as string, context.prompt as string);
       c.invalidate();
     });
   };
@@ -569,8 +638,8 @@ test("REQ-SBX-GENERAL-004 P4-T4 a nested turn restores the outer carrier for the
       hookRunner: outerRunner
     });
   });
-  assert.equal(innerRunner.observations[0].prompt, "inner");
-  assert.equal(outerRunner.observations[0].prompt, "outer");
+  assert.equal(innerRunner.contexts[0].prompt, "inner");
+  assert.equal(outerRunner.contexts[0].prompt, "outer");
 });
 
 // ---------------------------------------------------------------------------
@@ -673,9 +742,11 @@ test("REQ-SBX-GENERAL-004 P4-T4 the patch touches only the reviewed files", () =
     "dist/plugin-sdk/hook-types-H9SC6W-p.d.ts",
     `dist/${LIFECYCLE_FILE}`,
     "dist/dispatch-BSYjC-fp.js",
+    "dist/agent-tools.before-tool-call-59sE70R-.js",
     `dist/${SELECTION_FILE}`,
     `dist/${CLI_FILE}`,
-    `dist/${RUN_ATTEMPT_FILE}`
+    `dist/${RUN_ATTEMPT_FILE}`,
+    "dist/tool-split-BKKaUdyz.js"
   ].slice().sort();
 
   assert.deepEqual(
