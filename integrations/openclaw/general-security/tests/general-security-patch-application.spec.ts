@@ -15,9 +15,18 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-const patchModule = (await import(
-  "../scripts/apply-general-security-patch.mjs"
-).catch(() => ({}))) as Record<string, unknown>;
+// Resolved at runtime so the `.mjs` script is not a statically analyzable
+// specifier. The script is plain ESM with no declaration file, and adding one
+// would create a file outside this requirement's ownership map.
+const PATCH_SCRIPT_HREF = new URL(
+  "../scripts/apply-general-security-patch.mjs",
+  import.meta.url
+).href;
+
+const patchModule = (await import(PATCH_SCRIPT_HREF).catch(() => ({}))) as Record<
+  string,
+  unknown
+>;
 
 type RecordValue = Record<string, unknown>;
 type Fixture = {
