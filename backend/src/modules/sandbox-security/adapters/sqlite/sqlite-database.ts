@@ -5,6 +5,7 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import type { SqliteSandboxSecurityDatabase } from "../../ports/sqlite-database.ts";
 import {
   applySandboxSecurityMigrations,
+  requiresSandboxSecurityForeignKeyRebuild,
   runSandboxSecurityQuickCheck
 } from "./sqlite-migrations.ts";
 
@@ -146,10 +147,13 @@ export function openSandboxSecuritySqliteDatabase(input: Readonly<{
     assertRegularArtifact(configured.databasePath, "database");
     assertSidecarBoundary(configured.databasePath, configured.parentPath);
 
-    // SQLite cannot toggle foreign-key enforcement inside a transaction. The
-    // migration itself runs under the exclusive startup transaction and
-    // performs PRAGMA foreign_key_check before this setting is restored.
-    database.exec("PRAGMA foreign_keys = OFF");
+    // SQLite cannot toggle foreign-key enforcement inside a transaction. Only
+    // fresh/v1 databases need the bounded table rebuild that requires it.
+    const requiresForeignKeyRebuild =
+      requiresSandboxSecurityForeignKeyRebuild(database);
+    if (requiresForeignKeyRebuild) {
+      database.exec("PRAGMA foreign_keys = OFF");
+    }
     database.exec("BEGIN IMMEDIATE");
     applySandboxSecurityMigrations({
       database,
@@ -160,7 +164,9 @@ export function openSandboxSecuritySqliteDatabase(input: Readonly<{
     assertRegularArtifact(configured.databasePath, "database");
     assertSidecarBoundary(configured.databasePath, configured.parentPath);
     database.exec("COMMIT");
-    database.exec("PRAGMA foreign_keys = ON");
+    if (requiresForeignKeyRebuild) {
+      database.exec("PRAGMA foreign_keys = ON");
+    }
     if (database.prepare("PRAGMA foreign_keys").get()!.foreign_keys !== 1) {
       throw new Error("sandbox security SQLite foreign keys could not be restored");
     }

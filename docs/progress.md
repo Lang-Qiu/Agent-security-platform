@@ -44,10 +44,64 @@
   - GENERAL-003 and GENERAL-004 retain their own independent review and global
     gates; no later requirement was auto-verified by this entry
 
+# 2026-08-07 - REQ-SBX-GENERAL-004 Phase 2 review-fix cycle
+
+- phase/task: Phase 2 / P2-T1 through P2-T5 review closure
+- status: `PHASE_2_COMPLETE_PENDING_NEXT_PHASE_APPROVAL`
+- scope: SQLite v2 migration boundary and internal enforcement admission race;
+  no Phase 3-5 production files changed
+- TDD corrections:
+  - removed the v2 audit `event_schema` DEFAULT and added a missing-discriminator
+    RED/GREEN regression; all v2 writers and v2 fixtures now supply an explicit
+    schema while the immutable v1 fixture remains unchanged
+  - added a migration-state RED/GREEN matrix proving `foreign_keys` is disabled
+    only for fresh or fully validated v1 rebuilds; malformed, partial, unknown,
+    and validated v2 states keep the setting enabled
+  - added a revoke-after-auth RED/GREEN controller regression; the bearer is
+    authenticated before body read and re-authenticated after normalization
+    before grant, identity validation, and audit append
+- files:
+  - `backend/src/modules/sandbox-security/adapters/sqlite/sqlite-migrations.ts`
+  - `backend/src/modules/sandbox-security/adapters/sqlite/sqlite-database.ts`
+  - `backend/src/modules/sandbox-security/sandbox-security-enforcement-audit.controller.ts`
+  - `backend/tests/sandbox-security-sqlite.spec.ts`
+  - `backend/tests/sandbox-security-enforcement-audit-controller.spec.ts`
+- verification:
+  - SQLite migration/regression suite: `40/40`
+  - controller suite: `17/17`; real enforcement HTTP: `5/5`
+  - capability/admin suites: `51/51`; service/repository/SQLite combined: `56/56`
+  - final P2 focused matrix after the re-auth regression: `129/129`
+  - `TMPDIR=/tmp npm run test:repo`: `340/340`; `npm run test:shared`: `224/224`
+  - `npm run test:backend`: `552` tests, `550` pass; the two failures remain the
+    known local Semgrep `ENOENT` and task-engine fixture expectation drift
+  - `npm run typecheck:backend`: existing campaign/task-center/task-engine/
+    supervision/test diagnostics only; no P2 diagnostic
+  - `TMPDIR=/tmp npm run test:all` was attempted and progressed through the
+    repository, shared, sandbox-engine, benchmark typecheck, and corpus gates;
+    it failed closed at hermetic replay with
+    `sandbox_security_hermetic_replay_reject:failed_closed` (exit `1`), the
+    dependency-bounded result required while no new P2 failure was reported
+  - `git diff --check`: pass
+- independent review:
+  - P2-T1 SQLite specification re-review: PASS; quality/security re-review:
+    PASS; both `0 Critical / 0 Important / 0 Minor`
+  - P2-T3 specification re-review: PASS; quality/security re-review: PASS;
+    both `0 Critical / 0 Important / 0 Minor`
+  - P2-T4 specification review: PASS; quality/security review: PASS; both
+    `0 Critical / 0 Important / 0 Minor`
+  - P2-T5 specification review: PASS; quality/security re-review: PASS; both
+    `0 Critical / 0 Important / 0 Minor`
+- boundary:
+  - final Phase 2 gate review: PASS with `0 Critical / 0 Important / 0 Minor`
+    and `ALLOW`; the earlier documentation-only Minor was corrected and
+    re-reviewed; no Phase 3 work starts in this turn
+  - GENERAL-003 remains `IMPLEMENTED_PENDING_GLOBAL_P6_GATE`, and GENERAL-004
+    is not `VERIFIED`
+
 # 2026-08-07 - REQ-SBX-GENERAL-004 P2-T5 internal enforcement audit HTTP
 
 - phase/task: Phase 2 / P2-T5
-- status: `P2_T5_REVIEWED_PENDING_PHASE_2_GATE`
+- status: `P2_T5_REVIEWED`
 - scope: strict internal controller, module dispatch, dedicated limiter, and
   real HTTP integration only; no Phase 3-5 OpenClaw production files changed
 - implementation:
@@ -114,9 +168,6 @@
   - `npm run typecheck:backend` — exits `2` on existing campaign/task-center/task-engine/supervision/test diagnostics; no P2-T5 diagnostic remains
   - `git diff --check` — pass
 - review:
-  - P2-T3/P2-T4 independent review evidence remains pending; earlier dispatches
-    failed before producing a verdict due to subagent model/service access
-    errors, so no PASS is claimed
   - P2-T5 independent specification review: PASS with zero findings
   - P2-T5 independent quality review found three Important and one Minor
     findings; all four were verified and corrected, and quality re-review:
@@ -127,15 +178,14 @@
     audit-key matcher was narrowed to object-field boundaries so local
     controller variables are not misclassified; these are requirement-local
     verification corrections, not storage or security semantic changes
-  - Phase 2 exit gate remains closed until all required task and phase reviews
-    pass; do not enter Phase 3
-- next: capture final repo/typecheck evidence, receive independent P2-T5
-  reviews, fix and re-review findings, then complete the Phase 2 review gate
+  - the P2-T5 task review and Phase 2 gate are closed; Phase 3 remained
+    unopened until the review-fix closure was committed and its entry gate ran
+- next: complete the Phase 2 closure commit, then run the Phase 3 entry gate
 
 ## 2026-08-07 - REQ-SBX-GENERAL-004 P2-T3 private capability provisioning and authentication
 
 - phase/task: Phase 2 / P2-T3
-- status: `IMPLEMENTED_PENDING_P2_T3_INDEPENDENT_REVIEW`
+- status: `IMPLEMENTED_REVIEWED`
 - implementation:
   - added the exact private enforcement-audit capability issue schema and
     branch-specific result while keeping the GENERAL-003 v1 DTO union closed
@@ -176,24 +226,21 @@
     diagnostic remains; `git diff --check` passes
 - commit: `81e9aad` (`feat(sandbox): provision enforcement audit capabilities`)
 - review:
-  - independent specification and quality review dispatch was attempted
-    repeatedly, but `multi_agent_v1__spawn_agent` returns
-    `agent thread limit reached` and the listed prior agent IDs are not
-    addressable; no PASS is claimed and the Phase 2 gate remains closed
+  - independent specification re-review: PASS with `0 Critical / 0 Important /
+    0 Minor`
+  - quality/security re-review: PASS with `0 Critical / 0 Important / 0 Minor`
 - boundary:
   - P2-T4 application service and P2-T5 internal enforcement-event HTTP
-    controller are implemented in later task commits but remain pending their
-    required independent specification and quality reviews; no later Phase
-    files were changed
+    controller are implemented in later task commits and independently
+    reviewed; no later Phase files were changed
   - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
     GENERAL-004 is not `VERIFIED`
-- next: obtain the required P2-T3 independent specification and quality
-  reviews, then complete the same review sequence for P2-T4/P2-T5
+- next: stop at the Phase 2 boundary pending explicit next-phase direction
 
 ## 2026-08-07 - REQ-SBX-GENERAL-004 P2-T4 enforcement audit application service
 
 - phase/task: Phase 2 / P2-T4
-- status: `IMPLEMENTED_PENDING_P2_T4_INDEPENDENT_REVIEW`
+- status: `IMPLEMENTED_REVIEWED`
 - implementation:
   - added the async enforcement-audit application service with the exact
     shared request/event/ack normalizers and shared acknowledgement type
@@ -219,17 +266,16 @@
     baseline errors
   - `git diff --check` passes
 - review:
-  - required independent specification and quality reviews remain pending;
-    earlier attempts ended before a verdict because the subagent service did
-    not provide an accessible reviewer model
+  - independent specification review: PASS with `0 Critical / 0 Important /
+    0 Minor`
+  - quality/security review: PASS with `0 Critical / 0 Important / 0 Minor`
 - boundary:
   - P2-T5 owns HTTP admission and internal dispatch; no Phase 3-5 production
     files were changed
   - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
     GENERAL-004 is not `VERIFIED`
 - commit: `1e73c1a` (`feat(sandbox): persist enforcement audit events`)
-- next: obtain independent specification review, then quality review, before
-  the Phase 2 gate
+- next: stop at the Phase 2 boundary pending explicit next-phase direction
 
 ## 2026-08-06 - REQ-SBX-GENERAL-004 implementation plan independently reviewed
 

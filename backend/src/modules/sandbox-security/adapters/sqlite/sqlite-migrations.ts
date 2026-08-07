@@ -140,7 +140,7 @@ CREATE TABLE sandbox_security_capability_scopes_v2 (
 const SANDBOX_SECURITY_V2_AUDIT_TABLE_SQL = `
 CREATE TABLE sandbox_security_audit_events_v2 (
   event_id TEXT PRIMARY KEY,
-  event_schema TEXT NOT NULL DEFAULT 'sandbox-security-audit-event.v1' CHECK (event_schema IN (
+  event_schema TEXT NOT NULL CHECK (event_schema IN (
     'sandbox-security-audit-event.v1',
     'sandbox-security-enforcement-audit-event.v1')),
   event_type TEXT NOT NULL CHECK (event_type IN (
@@ -331,6 +331,34 @@ function readMigrationRows(database: DatabaseSync): Array<{
   return database
     .prepare("SELECT version, applied_at FROM sandbox_security_schema_migrations ORDER BY version")
     .all() as Array<{ version: number; applied_at: string }>;
+}
+
+function hasValidatedV1MigrationState(database: DatabaseSync): boolean {
+  try {
+    if (currentSchemaVersion(database) !== 1) {
+      return false;
+    }
+    assertV1Objects(database);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function requiresSandboxSecurityForeignKeyRebuild(
+  database: DatabaseSync
+): boolean {
+  const hasMigrationTable = hasObject(
+    database,
+    "table",
+    "sandbox_security_schema_migrations"
+  );
+  if (!hasMigrationTable) {
+    return !listObjects(database, "table").some((name) =>
+      name.startsWith("sandbox_security_")
+    );
+  }
+  return hasValidatedV1MigrationState(database);
 }
 
 function currentSchemaVersion(database: DatabaseSync): SupportedSchemaVersion {

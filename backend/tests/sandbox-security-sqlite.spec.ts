@@ -23,6 +23,7 @@ import {
   SANDBOX_SECURITY_SCHEMA_VERSION,
   SANDBOX_SECURITY_V1_SCHEMA_SQL
 } from "../src/modules/sandbox-security/adapters/sqlite/sqlite-migrations.ts";
+import * as sqliteMigrations from "../src/modules/sandbox-security/adapters/sqlite/sqlite-migrations.ts";
 import type {
   SandboxSecurityAuditEvent,
   SandboxSecurityCapabilityPersistenceRecord
@@ -388,6 +389,85 @@ test("REQ-SBX-GENERAL-004 migrates a v1 fixture to schema v2 without rewriting l
     database.read((sqlite) => sqlite.prepare("PRAGMA foreign_keys").get()!.foreign_keys),
     1
   );
+});
+
+test("REQ-SBX-GENERAL-004 requires an explicit event schema on every v2 audit insert", (t) => {
+  const fixture = createPrivateDatabaseFixture();
+  const database = boundary.openSandboxSecuritySqliteDatabase!({
+    path: fixture.databasePath,
+    deployment_key_id: FIXED_DEPLOYMENT_KEY_ID,
+    now: () => ISSUED_AT
+  });
+  t.after(() => closeAndRemove(fixture.parentPath, database));
+
+  assert.throws(() => {
+    database.transaction((sqlite) => {
+      sqlite
+        .prepare(
+          `INSERT INTO sandbox_security_audit_events(
+            event_id, event_type, visibility_subject_id, occurred_at, event_json
+          ) VALUES (?, ?, ?, ?, ?)`
+        )
+        .run(
+          "audit:00000000-0000-4000-8000-000000000099",
+          "capability_issued",
+          "subject",
+          ISSUED_AT,
+          "{}"
+        );
+    });
+  });
+});
+
+test("REQ-SBX-GENERAL-004 disables foreign keys only for fresh or v1 rebuilds", () => {
+  const migrationModule = sqliteMigrations as typeof sqliteMigrations & {
+    requiresSandboxSecurityForeignKeyRebuild?: (database: DatabaseSync) => boolean;
+  };
+  assert.equal(typeof migrationModule.requiresSandboxSecurityForeignKeyRebuild, "function");
+  const requiresRebuild = migrationModule.requiresSandboxSecurityForeignKeyRebuild!;
+
+  const fresh = new DatabaseSync(":memory:");
+  const v1 = new DatabaseSync(":memory:");
+  const v2 = new DatabaseSync(":memory:");
+  const incomplete = new DatabaseSync(":memory:");
+  const malformedV1 = new DatabaseSync(":memory:");
+  try {
+    v1.exec(SANDBOX_SECURITY_V1_SCHEMA_SQL);
+    v1
+      .prepare(
+        "INSERT INTO sandbox_security_schema_migrations(version, applied_at) VALUES (?, ?)"
+      )
+      .run(1, ISSUED_AT);
+    v2.exec(
+      "CREATE TABLE sandbox_security_schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);"
+    );
+    v2
+      .prepare(
+        "INSERT INTO sandbox_security_schema_migrations(version, applied_at) VALUES (?, ?), (?, ?)"
+      )
+      .run(1, ISSUED_AT, 2, ISSUED_AT);
+    incomplete.exec("CREATE TABLE sandbox_security_partial (id INTEGER PRIMARY KEY)");
+    malformedV1.exec(
+      "CREATE TABLE sandbox_security_schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);"
+    );
+    malformedV1
+      .prepare(
+        "INSERT INTO sandbox_security_schema_migrations(version, applied_at) VALUES (?, ?)"
+      )
+      .run(1, "");
+
+    assert.equal(requiresRebuild(fresh), true);
+    assert.equal(requiresRebuild(v1), true);
+    assert.equal(requiresRebuild(v2), false);
+    assert.equal(requiresRebuild(incomplete), false);
+    assert.equal(requiresRebuild(malformedV1), false);
+  } finally {
+    fresh.close();
+    v1.close();
+    v2.close();
+    incomplete.close();
+    malformedV1.close();
+  }
 });
 
 test("REQ-SBX-GENERAL-004 rerunning a validated schema v2 database is a no-op", (t) => {
@@ -868,7 +948,8 @@ test("REQ-SBX-GENERAL-003 enforces every v1 catalog and state CHECK constraint",
     "2026-08-05T00:01:00.000Z"
   );
   insert(
-    "INSERT INTO sandbox_security_audit_events(event_id, event_type, visibility_subject_id, occurred_at, event_json) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO sandbox_security_audit_events(event_schema, event_id, event_type, visibility_subject_id, occurred_at, event_json) VALUES (?, ?, ?, ?, ?, ?)",
+    "sandbox-security-audit-event.v1",
     "audit:invalid",
     "invalid",
     "subject",
@@ -876,7 +957,8 @@ test("REQ-SBX-GENERAL-003 enforces every v1 catalog and state CHECK constraint",
     "{}"
   );
   insert(
-    "INSERT INTO sandbox_security_audit_events(event_id, event_type, visibility_subject_id, occurred_at, event_json) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO sandbox_security_audit_events(event_schema, event_id, event_type, visibility_subject_id, occurred_at, event_json) VALUES (?, ?, ?, ?, ?, ?)",
+    "sandbox-security-audit-event.v1",
     "audit:invalid",
     "audit_read",
     "subject",
@@ -1342,10 +1424,11 @@ function insertAuditEventRow(
   database.transaction((db) => {
     db.prepare(
       `INSERT INTO sandbox_security_audit_events(
-        event_id, event_type, visibility_subject_id, authorization_scope_id,
+        event_schema, event_id, event_type, visibility_subject_id, authorization_scope_id,
         capability_id, occurred_at, event_json
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
+      "sandbox-security-audit-event.v1",
       event.event_id,
       typedOverrides.event_type ?? event.event_type,
       typedOverrides.visibility_subject_id ?? event.subject_id,
@@ -1457,7 +1540,7 @@ test("REQ-SBX-GENERAL-003 rejects invalid or cross-wired stored audit rows witho
   const { repository, database } = auditRepositoryFixture(t);
   const valid = interruptedAuditEvent({ event_id: "audit:bad-json", subject_id: AUDIT_SUBJECT_A, authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, occurred_at: "2026-08-05T12:00:00.000Z" });
   database.transaction((db) => {
-    db.prepare("INSERT INTO sandbox_security_audit_events(event_id,event_type,visibility_subject_id,authorization_scope_id,capability_id,occurred_at,event_json) VALUES (?,?,?,?,?,?,?)").run(valid.event_id, valid.event_type, AUDIT_SUBJECT_A, AUDIT_SCOPE_A, CAPABILITY_ID, valid.occurred_at, "not-json");
+    db.prepare("INSERT INTO sandbox_security_audit_events(event_schema,event_id,event_type,visibility_subject_id,authorization_scope_id,capability_id,occurred_at,event_json) VALUES (?,?,?,?,?,?,?,?)").run("sandbox-security-audit-event.v1", valid.event_id, valid.event_type, AUDIT_SUBJECT_A, AUDIT_SCOPE_A, CAPABILITY_ID, valid.occurred_at, "not-json");
   });
   assert.throws(() => repository.listAndRecordRead({
     visibility_subject_id: AUDIT_SUBJECT_A,
@@ -1520,13 +1603,13 @@ test("REQ-SBX-GENERAL-003 returns defensive audit copies and supports append", (
 test("REQ-SBX-GENERAL-003 purges at most 1000 old rows with a fixed 90-day audit event", (t) => {
   const { repository, database } = auditRepositoryFixture(t);
   database.transaction((db) => {
-    const insert = db.prepare("INSERT INTO sandbox_security_audit_events(event_id,event_type,visibility_subject_id,authorization_scope_id,capability_id,occurred_at,event_json) VALUES (?,?,?,?,?,?,?)");
+    const insert = db.prepare("INSERT INTO sandbox_security_audit_events(event_schema,event_id,event_type,visibility_subject_id,authorization_scope_id,capability_id,occurred_at,event_json) VALUES (?,?,?,?,?,?,?,?)");
     for (let index = 0; index < 1002; index += 1) {
       const event = interruptedAuditEvent({ event_id: `audit:old-${index}`, subject_id: AUDIT_SUBJECT_A, authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, occurred_at: "2026-04-01T00:00:00.000Z" });
-      insert.run(event.event_id, event.event_type, event.subject_id, event.authorization_scope_id, event.capability_id, event.occurred_at, JSON.stringify(event));
+      insert.run("sandbox-security-audit-event.v1", event.event_id, event.event_type, event.subject_id, event.authorization_scope_id, event.capability_id, event.occurred_at, JSON.stringify(event));
     }
     const recent = interruptedAuditEvent({ event_id: "audit:recent", subject_id: AUDIT_SUBJECT_A, authorization_scope_id: AUDIT_SCOPE_A, capability_id: CAPABILITY_ID, occurred_at: "2026-08-01T00:00:00.000Z" });
-    insert.run(recent.event_id, recent.event_type, recent.subject_id, recent.authorization_scope_id, recent.capability_id, recent.occurred_at, JSON.stringify(recent));
+    insert.run("sandbox-security-audit-event.v1", recent.event_id, recent.event_type, recent.subject_id, recent.authorization_scope_id, recent.capability_id, recent.occurred_at, JSON.stringify(recent));
   });
   const first = repository.purgeExpiredWithAudit({
     cutoff: "2026-05-01T00:00:00.000Z",

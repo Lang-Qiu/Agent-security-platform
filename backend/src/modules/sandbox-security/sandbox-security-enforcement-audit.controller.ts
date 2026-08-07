@@ -223,9 +223,19 @@ export function createSandboxSecurityEnforcementAuditController(input: Readonly<
         const normalized = normalizeSandboxSecurityEnforcementAuditRequest(body.value);
         if (normalized === null) throw invalidRequestError();
 
+        let refreshedAuthentication: SandboxSecurityEnforcementAuditCapabilityAuthenticationResult;
+        try {
+          refreshedAuthentication = authenticator.authenticateEnforcementAuditToken(token);
+        } catch (error) {
+          if (isSandboxSecurityServiceError(error)) throw mapError(error);
+          throw internalError();
+        }
+        const refreshedCapability = authorizedCapability(refreshedAuthentication);
+        requireEnforcementAuditScope(refreshedCapability);
+
         let granted: SandboxSecurityEnforcementAuditAuthorizedCapability;
         try {
-          granted = authenticator.requireEnforcementAuditGrant(capability, {
+          granted = authenticator.requireEnforcementAuditGrant(refreshedCapability, {
             stage: normalized.stage,
             policy_profile_id: normalized.policy_profile_id,
             composition_binding: normalized.composition_binding
@@ -236,9 +246,9 @@ export function createSandboxSecurityEnforcementAuditController(input: Readonly<
         if (
           granted === null ||
           typeof granted !== "object" ||
-          granted.capability_id !== capability.capability_id ||
-          granted.subject_id !== capability.subject_id ||
-          granted.authorization_scope_id !== capability.authorization_scope_id ||
+          granted.capability_id !== refreshedCapability.capability_id ||
+          granted.subject_id !== refreshedCapability.subject_id ||
+          granted.authorization_scope_id !== refreshedCapability.authorization_scope_id ||
           granted.composition_binding !== compositionBinding
         ) {
           throw internalError();

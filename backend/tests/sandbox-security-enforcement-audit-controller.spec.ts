@@ -83,6 +83,7 @@ interface FixtureState {
   bodyReads: number;
   bucketAllowed: boolean;
   authentication: "authorized" | "unknown";
+  authenticationSequence: readonly ("authorized" | "unknown")[] | null;
   authenticationError: "none" | "unexpected";
   privateScope: "authorized" | "wrong";
   grantError: SandboxSecurityServiceError | null;
@@ -169,6 +170,7 @@ function makeFixture(overrides: Partial<FixtureState> = {}) {
     bodyReads: 0,
     bucketAllowed: true,
     authentication: "authorized",
+    authenticationSequence: null,
     authenticationError: "none",
     privateScope: "authorized",
     grantError: null,
@@ -187,7 +189,12 @@ function makeFixture(overrides: Partial<FixtureState> = {}) {
       if (state.authenticationError === "unexpected") {
         throw new Error("authenticator failure");
       }
-      if (state.authentication === "unknown") return { kind: "unknown" };
+      const authenticationAttempt = state.calls.filter((call) =>
+        call.startsWith("authenticate:")
+      ).length - 1;
+      const authentication = state.authenticationSequence?.[authenticationAttempt] ??
+        state.authentication;
+      if (authentication === "unknown") return { kind: "unknown" };
       if (state.privateScope === "wrong") {
         return {
           kind: "authorized",
@@ -281,10 +288,30 @@ test("REQ-SBX-GENERAL-004 admits and acknowledges a private enforcement event in
   assert.deepEqual(fixture.state.calls, [
     "bucket:100",
     `authenticate:${PRIVATE_TOKEN}`,
+    `authenticate:${PRIVATE_TOKEN}`,
     "grant",
     `append:${EVENT_ID}:${IDENTITY.capability_id}`
   ]);
   assert.equal(fixture.state.bodyReads, 1);
+});
+
+test("REQ-SBX-GENERAL-004 re-authenticates after body read before granting a revoked token", async () => {
+  const fixture = makeFixture({
+    authenticationSequence: ["authorized", "unknown"]
+  });
+  await assert.rejects(
+    () => fixture.controller.enforcementAudit(
+      requestFrom(fixture.state),
+      "request-http-revoked-after-auth"
+    ),
+    (error: unknown) => isHttp(error, 401, "SANDBOX_SECURITY_UNAUTHORIZED")
+  );
+  assert.equal(fixture.state.bodyReads, 1);
+  assert.deepEqual(fixture.state.calls, [
+    "bucket:100",
+    `authenticate:${PRIVATE_TOKEN}`,
+    `authenticate:${PRIVATE_TOKEN}`
+  ]);
 });
 
 test("REQ-SBX-GENERAL-004 rejects unknown private capability before reading the body", async () => {

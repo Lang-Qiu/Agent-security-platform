@@ -174,19 +174,18 @@ retry and does not change GENERAL-003's out-of-scope retry rule.
 - GENERAL-004 Phase 1 is complete through its five task commits and review
   gate. Phase 2 P2-T1 and P2-T2 are complete through their task commits and
   review gates. P2-T3 and P2-T4 are implemented and committed as `81e9aad`
-  and `1e73c1a`; their required independent specification and quality reviews
-  remain pending because the subagent service previously reported
-  `agent thread limit reached`.
+  and `1e73c1a`; their independent specification and quality reviews both
+  passed with zero Critical, Important, and Minor findings.
 - P2-T5 is implemented in the current workspace. Its independent specification
   review is PASS; its quality review found three Important and one Minor
   finding, all corrected with focused regressions, and quality re-review is
-  PASS. The Phase 2 gate remains pending because P2-T3/P2-T4 reviews and the
-  phase review are still required. It adds the strict internal enforcement-
-  event controller, dedicated capacity-2 limiter with six-second refill,
-  production SQLite/module wiring, internal dispatch, and real HTTP coverage.
-  The existing static backend catalog/privacy gate now accounts for the v2
-  migration's transactional temporary table/index definitions and private
-  enforcement contracts.
+  PASS. The current review-fix cycle adds explicit v2 `event_schema`, bounded
+  foreign-key suspension, and body-read re-authentication before grant/append.
+  It adds the strict internal enforcement-event controller, dedicated
+  capacity-2 limiter with six-second refill, production SQLite/module wiring,
+  internal dispatch, and real HTTP coverage. The existing static backend
+  catalog/privacy gate accounts for the v2 migration's transactional
+  temporary table/index definitions and private enforcement contracts.
 - P2-T2 added the private enforcement audit repository, explicit legacy
   `event_schema` writes, public schema filtering, dual-schema purge
   validation, replay/conflict handling, and real SQLite regression tests.
@@ -200,26 +199,32 @@ retry and does not change GENERAL-003's out-of-scope retry rule.
 - P2-T3/P2-T4 RED/GREEN and verification evidence is recorded in
   `docs/progress.md`; no Phase 3-5 production file has been modified.
 - P2-T5 focused controller/admission, shared body-reader, static gate, and
-  real HTTP suites are green. The latest complete backend command is 546/544;
-  its two failures are the existing missing local `semgrep` and task-engine
-  fixture expectation drift. The new P2-T5 suites have no source or test
-  failures. `npm run typecheck:backend` remains blocked by existing
-  campaign/task-center/task-engine/supervision diagnostics.
+  real HTTP suites are green. The final P2 focused matrix is `129/129`, and
+  the complete backend command is `552/550`; its two failures are the existing
+  missing local `semgrep` and task-engine fixture expectation drift. The new
+  P2 suites have no source or test failures. `npm run typecheck:backend` remains
+  blocked by existing campaign/task-center/task-engine/supervision diagnostics.
+- The P2 review-fix cycle is documented in `docs/progress.md`; SQLite and
+  controller re-review findings are closed with `0 Critical / 0 Important /
+  0 Minor` task reviews. The Phase 2 final gate review returned ALLOW; its
+  documentation-only Minor was corrected, and no Phase 3 production file has
+  been modified.
 - GENERAL-003 implementation work remains complete through its phase- and
   P6-T4 review gates; its own global P6 gate remains outstanding, but the
   GENERAL-002 dependency is now satisfied.
 - The P6 retry amendment remains complete through Task 6 documentation and
   repository gates. The fresh formal 300-projection capture and P7 replay are
   now recorded as accepted for GENERAL-002.
-- GENERAL-002 is `VERIFIED`. Do not claim `VERIFIED` for GENERAL-003 or
-  GENERAL-004 until their own required review, phase, and global gates pass.
+- GENERAL-002 is `VERIFIED`. GENERAL-004 Phase 2 is complete, but do not claim
+  `VERIFIED` for GENERAL-004 until its global completion gate passes; GENERAL-003
+  remains at its own global P6 gate.
 
 ## Next Transition
 
 `PLAN_REVIEWED_PENDING_USER_APPROVAL` -> `PLAN_APPROVED` ->
 `IMPLEMENTATION_IN_PROGRESS` -> `P2_T5_REVIEWED_PENDING_PHASE_2_GATE` ->
-`PHASE_2_GATE_PENDING`
+`PHASE_2_GATE_PENDING` -> `PHASE_2_COMPLETE_PENDING_NEXT_PHASE_APPROVAL`
 
 The first transition records the user's explicit approval. The second records
 that Phase 1 execution has begun. GENERAL-004 remains the only active
-requirement, and no later requirement may start.
+requirement; Phase 3 has not started and no later requirement may start.
