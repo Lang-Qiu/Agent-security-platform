@@ -1,6 +1,66 @@
 {
-  policyProfileId: "${SANDBOX_SECURITY_POLICY_PROFILE_ID}",
-  productionMode: "${SANDBOX_SECURITY_PRODUCTION_MODE}",
-  auditEndpoint: "${SANDBOX_SECURITY_AUDIT_ENDPOINT}",
-  auditCapabilityToken: "${SANDBOX_SECURITY_AUDIT_CAPABILITY_TOKEN}"
+  "gateway": {
+    "mode": "local",
+    "bind": "loopback",
+    "port": 19001
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "/workspace"
+    }
+  },
+  "tools": {
+    "profile": "minimal"
+  },
+  "skills": {
+    "allowBundled": []
+  },
+  "plugins": {
+    "allow": ["agent-security-sandbox-general"],
+    "load": {
+      "paths": ["/opt/openclaw-general-security"]
+    },
+    "entries": {
+      "agent-security-sandbox-general": {
+        "enabled": true,
+        "hooks": {
+          "allowConversationAccess": true
+        },
+        "config": {
+          "policyProfileId": "${SANDBOX_SECURITY_POLICY_PROFILE_ID}",
+          "productionMode": "${SANDBOX_SECURITY_PRODUCTION_MODE}",
+          "auditEndpoint": "${SANDBOX_SECURITY_AUDIT_ENDPOINT}",
+          "auditCapabilityToken": "${SANDBOX_SECURITY_AUDIT_CAPABILITY_TOKEN}"
+        }
+      }
+    }
+  },
+  "session": {
+    "store": "/run/openclaw-security/sessions.json"
+  },
+  "logging": {
+    "level": "error",
+    "consoleLevel": "error",
+    "redactSensitive": "tools"
+  },
+  "diagnostics": {
+    "enabled": false,
+    "memoryPressureSnapshot": false,
+    "otel": {
+      "enabled": false,
+      "captureContent": false,
+      "traces": false,
+      "metrics": false,
+      "logs": false
+    },
+    "cacheTrace": {
+      "enabled": false,
+      "includeMessages": false,
+      "includePrompt": false,
+      "includeSystem": false
+    }
+  },
+  "transcripts": {
+    "enabled": false
+  }
 }

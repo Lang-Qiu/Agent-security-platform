@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 type RecordValue = Record<string, unknown>;
@@ -66,4 +74,85 @@ test("REQ-SBX-GENERAL-004 P4-T8 runtime probe identity is tied to the standalone
     (openclawManifest.bin as RecordValue).openclaw,
     "openclaw.mjs"
   );
+});
+
+test("REQ-SBX-GENERAL-004 P5-T1 rejects a tampered patch before runtime registration", async () => {
+  const probe = (await import(
+    "../../integrations/openclaw/general-security/src/general-security/runtime-probe.ts"
+  )) as RecordValue;
+  const runProbe = probe.runOpenClawSecurityRuntimeProbe;
+  assert.equal(typeof runProbe, "function", "runtime probe must be exported");
+
+  const sourceManifest = JSON.parse(
+    readFileSync(
+      path.join(
+        PACKAGE_ROOT,
+        "patches/openclaw-2026.6.34-general-security.manifest.json"
+      ),
+      "utf8"
+    )
+  ) as RecordValue;
+  const patchEntries = sourceManifest.files as Array<RecordValue>;
+  const tempRoot = mkdtempSync(path.join(tmpdir(), "g4-p5t1-tamper-"));
+  const packageRoot = path.join(tempRoot, "package");
+  const openclawRoot = path.join(packageRoot, "node_modules", "openclaw");
+  try {
+    mkdirSync(path.join(packageRoot, "patches"), { recursive: true });
+    mkdirSync(path.join(openclawRoot, "dist", "plugin-sdk"), {
+      recursive: true
+    });
+    cpSync(
+      path.join(PACKAGE_ROOT, "patches/openclaw-2026.6.34-general-security.manifest.json"),
+      path.join(packageRoot, "patches/openclaw-2026.6.34-general-security.manifest.json")
+    );
+    cpSync(
+      path.join(PACKAGE_ROOT, "patches/openclaw-2026.6.34-general-security.patch"),
+      path.join(packageRoot, "patches/openclaw-2026.6.34-general-security.patch")
+    );
+    cpSync(
+      path.join(PACKAGE_ROOT, "node_modules/openclaw/package.json"),
+      path.join(openclawRoot, "package.json")
+    );
+    cpSync(
+      path.join(PACKAGE_ROOT, "node_modules/openclaw/openclaw.mjs"),
+      path.join(openclawRoot, "openclaw.mjs")
+    );
+    for (const entry of patchEntries) {
+      const relativePath = String(entry.path);
+      const source = path.join(PACKAGE_ROOT, "node_modules/openclaw", relativePath);
+      const target = path.join(openclawRoot, relativePath);
+      mkdirSync(path.dirname(target), { recursive: true });
+      cpSync(source, target);
+    }
+
+    const patchPath = path.join(
+      packageRoot,
+      "patches/openclaw-2026.6.34-general-security.patch"
+    );
+    writeFileSync(
+      patchPath,
+      Buffer.concat([readFileSync(patchPath), Buffer.from("\n")])
+    );
+    const registrationCalls: unknown[] = [];
+
+    await assert.rejects(
+      () =>
+        (runProbe as Function)({
+          packageRoot,
+          execFileSync: (...args: unknown[]) => {
+            registrationCalls.push(args);
+            return "{}";
+          },
+          dynamicProbe: async () => ({})
+        }),
+      /patch digest does not match the sealed manifest/
+    );
+    assert.deepEqual(
+      registrationCalls,
+      [],
+      "tampered patch must fail before the nested CLI can register the plugin"
+    );
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
 });

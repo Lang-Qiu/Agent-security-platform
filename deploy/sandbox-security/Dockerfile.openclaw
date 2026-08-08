@@ -1,0 +1,65 @@
+FROM node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90 AS builder
+
+WORKDIR /build
+
+RUN apt-get update \
+  && apt-get install --no-install-recommends -y ca-certificates git \
+  && rm -rf /var/lib/apt/lists/* \
+  && corepack enable \
+  && corepack prepare pnpm@10.0.0 --activate
+
+COPY integrations/openclaw/general-security/package.json /build/integrations/openclaw/general-security/package.json
+COPY integrations/openclaw/general-security/pnpm-lock.yaml /build/integrations/openclaw/general-security/pnpm-lock.yaml
+COPY integrations/openclaw/general-security/pnpm-workspace.yaml /build/integrations/openclaw/general-security/pnpm-workspace.yaml
+COPY integrations/openclaw/general-security/tsconfig.json /build/integrations/openclaw/general-security/tsconfig.json
+COPY integrations/openclaw/general-security/openclaw.plugin.json /build/integrations/openclaw/general-security/openclaw.plugin.json
+COPY integrations/openclaw/general-security/config /build/integrations/openclaw/general-security/config
+COPY integrations/openclaw/general-security/patches /build/integrations/openclaw/general-security/patches
+COPY integrations/openclaw/general-security/scripts /build/integrations/openclaw/general-security/scripts
+COPY integrations/openclaw/general-security/src /build/integrations/openclaw/general-security/src
+COPY shared /build/shared
+COPY engines/sandbox/src /build/engines/sandbox/src
+
+WORKDIR /build/integrations/openclaw/general-security
+
+RUN pnpm install --frozen-lockfile
+RUN node scripts/apply-general-security-patch.mjs node_modules/openclaw
+RUN pnpm run build
+RUN node --input-type=module -e 'import("./dist/index.js").then(({ verifyProductionRuntimeIdentity }) => verifyProductionRuntimeIdentity({ packageRoot: process.cwd() })).catch((error) => { console.error(error.name); process.exitCode = 1; })'
+RUN node --input-type=module -e 'import("./dist/index.js").then(({ runOpenClawSecurityRuntimeProbe }) => runOpenClawSecurityRuntimeProbe({ packageRoot: process.cwd() })).catch((error) => { console.error(error.name); process.exitCode = 1; })'
+RUN pnpm prune --prod
+
+FROM node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90 AS runtime
+
+WORKDIR /opt/openclaw-general-security
+
+RUN apt-get update \
+  && apt-get install --no-install-recommends -y ca-certificates git \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build/integrations/openclaw/general-security/package.json /opt/openclaw-general-security/package.json
+COPY --from=builder /build/integrations/openclaw/general-security/node_modules /opt/openclaw-general-security/node_modules
+COPY --from=builder /build/integrations/openclaw/general-security/dist /opt/openclaw-general-security/dist
+COPY --from=builder /build/integrations/openclaw/general-security/openclaw.plugin.json /opt/openclaw-general-security/openclaw.plugin.json
+COPY --from=builder /build/integrations/openclaw/general-security/config /opt/openclaw-general-security/config
+COPY --from=builder /build/integrations/openclaw/general-security/patches /opt/openclaw-general-security/patches
+COPY --from=builder /build/integrations/openclaw/general-security/scripts/apply-general-security-patch.mjs /opt/openclaw-general-security/scripts/apply-general-security-patch.mjs
+
+RUN mkdir -p /run/openclaw-security /tmp/openclaw /workspace \
+  && chown -R node:node /opt/openclaw-general-security /run/openclaw-security /tmp/openclaw /workspace \
+  && chmod a-w /opt/openclaw-general-security/openclaw.plugin.json \
+    /opt/openclaw-general-security/config/openclaw-security.json5 \
+    /opt/openclaw-general-security/patches/openclaw-2026.6.34-general-security.patch \
+    /opt/openclaw-general-security/patches/openclaw-2026.6.34-general-security.manifest.json
+
+ENV HOME=/tmp/openclaw/home
+ENV TMPDIR=/tmp/openclaw
+ENV OPENCLAW_STATE_DIR=/run/openclaw-security
+ENV OPENCLAW_CONFIG_PATH=/opt/openclaw-general-security/config/openclaw-security.json5
+
+RUN test "$(node node_modules/openclaw/openclaw.mjs --version)" = "2026.6.34"
+
+USER node
+
+ENTRYPOINT ["node", "--input-type=module", "-e"]
+CMD ["import { spawnSync } from 'node:child_process'; const runtime = await import('/opt/openclaw-general-security/dist/index.js'); await runtime.runOpenClawSecurityRuntimeProbe({ packageRoot: '/opt/openclaw-general-security' }); const child = spawnSync(process.execPath, ['/opt/openclaw-general-security/node_modules/openclaw/openclaw.mjs', 'gateway', '--bind', 'loopback', '--port', '19001'], { stdio: 'inherit' }); if (child.error) throw child.error; process.exitCode = child.status ?? 1;"]
