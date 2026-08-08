@@ -53,7 +53,7 @@ export function ContentItemRow({
         onChange={(media_type) => onChange({ ...item, media_type })}
         options={MEDIA_TYPES.map((type) => ({ value: type, label: type }))}
       />
-      <label htmlFor={valueFieldId}>内容</label>
+      <label htmlFor={valueFieldId}>内容值</label>
       <Input.TextArea
         id={valueFieldId}
         rows={3}
