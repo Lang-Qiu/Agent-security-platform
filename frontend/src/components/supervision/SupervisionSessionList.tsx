@@ -16,12 +16,12 @@ import { RiskTag } from "../RiskTag";
 const { Text } = Typography;
 
 const STATUS_ICON_CONFIG: Record<TaskStatus, { icon: ReactNode; color: string }> = {
-  pending: { icon: <ClockCircleOutlined />, color: "#d48806" },
-  running: { icon: <SyncOutlined />, color: "#1677ff" },
-  finished: { icon: <CheckCircleOutlined />, color: "#52c41a" },
-  failed: { icon: <CloseCircleOutlined />, color: "#ff4d4f" },
-  blocked: { icon: <StopOutlined />, color: "#fa541c" },
-  partial_success: { icon: <ExclamationCircleOutlined />, color: "#faad14" }
+  pending: { icon: <ClockCircleOutlined />, color: "var(--console-severity-medium)" },
+  running: { icon: <SyncOutlined />, color: "var(--console-severity-low)" },
+  finished: { icon: <CheckCircleOutlined />, color: "var(--console-action-allow)" },
+  failed: { icon: <CloseCircleOutlined />, color: "var(--console-severity-critical)" },
+  blocked: { icon: <StopOutlined />, color: "var(--console-severity-high)" },
+  partial_success: { icon: <ExclamationCircleOutlined />, color: "var(--console-severity-medium)" }
 };
 
 function CompactStatusIndicator({ status }: { status: TaskStatus }) {

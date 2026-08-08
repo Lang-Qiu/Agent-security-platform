@@ -48,7 +48,7 @@ function RuleHitItem({ hit }: { hit: SkillsStaticRuleHit }) {
           ) : null}
         </div>
         {hit.code_snippet ? (
-          <pre style={{ margin: "4px 0", padding: "4px 8px", background: "#f5f5f5", borderRadius: 4, fontSize: 12 }}>
+          <pre style={{ margin: "4px 0", padding: "4px 8px", background: "var(--console-surface-raised)", borderRadius: 4, fontSize: 12 }}>
             {hit.code_snippet}
           </pre>
         ) : null}
