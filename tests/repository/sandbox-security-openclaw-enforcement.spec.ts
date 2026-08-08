@@ -177,3 +177,115 @@ test("REQ-SBX-GENERAL-004 P5-T1 config closes plugin identity, startup inputs, a
   assert.equal(raw.includes("--raw-stream"), false);
   assert.equal(raw.includes("2026.6.10"), false);
 });
+
+type ComposeService = {
+  build?: { context?: string; dockerfile?: string };
+  profiles?: string[];
+  ports?: unknown;
+  volumes?: unknown;
+  tmpfs?: string[];
+  read_only?: boolean;
+  user?: string;
+  init?: boolean;
+  cap_drop?: string[];
+  security_opt?: string[];
+  cpus?: string | number;
+  mem_limit?: string;
+  pids_limit?: number;
+  networks?: string[];
+  environment?: Record<string, string>;
+  healthcheck?: { test?: string[]; interval?: string; timeout?: string; retries?: number };
+  restart?: string;
+  stop_signal?: string;
+};
+
+test("REQ-SBX-GENERAL-004 P5-T2 Compose keeps one isolated non-durable runtime", () => {
+  const raw = readOptional(
+    "deploy/sandbox-security/compose.openclaw-security.yml"
+  );
+  assert.notEqual(raw, "", "protected runtime Compose file must exist");
+  const compose = YAML.parse(raw) as {
+    services?: Record<string, ComposeService>;
+    networks?: Record<string, { name?: string; external?: boolean; internal?: boolean }>;
+  };
+  const serviceNames = Object.keys(compose.services ?? {});
+  assert.deepEqual(serviceNames, ["openclaw-security"]);
+  const service = compose.services?.["openclaw-security"];
+  assert.ok(service);
+  assert.deepEqual(service.profiles, ["sandbox-security"]);
+  assert.deepEqual(service.build, {
+    context: "../..",
+    dockerfile: "deploy/sandbox-security/Dockerfile.openclaw"
+  });
+  assert.equal("ports" in service, false);
+  assert.equal("volumes" in service, false);
+  assert.deepEqual(service.tmpfs?.slice().sort(), [
+    "/run/openclaw-security",
+    "/tmp/openclaw",
+    "/workspace"
+  ]);
+  assert.equal(service.read_only, true);
+  assert.equal(service.user, "node");
+  assert.equal(service.init, true);
+  assert.deepEqual(service.cap_drop, ["ALL"]);
+  assert.deepEqual(service.security_opt, ["no-new-privileges:true"]);
+  assert.equal(service.cpus, "2");
+  assert.equal(service.mem_limit, "1g");
+  assert.equal(service.pids_limit, 256);
+  assert.deepEqual(service.networks, ["sandbox-security-internal-audit"]);
+  assert.deepEqual(Object.keys(compose.networks ?? {}), [
+    "sandbox-security-internal-audit"
+  ]);
+  assert.deepEqual(compose.networks?.["sandbox-security-internal-audit"], {
+    name: "sandbox-security-internal-audit",
+    external: true
+  });
+
+  assert.deepEqual(service.environment, {
+    OPENCLAW_CONFIG_PATH:
+      "/opt/openclaw-general-security/config/openclaw-security.json5",
+    OPENCLAW_STATE_DIR: "/run/openclaw-security",
+    SANDBOX_SECURITY_POLICY_PROFILE_ID:
+      "${SANDBOX_SECURITY_POLICY_PROFILE_ID}",
+    SANDBOX_SECURITY_PRODUCTION_MODE: "${SANDBOX_SECURITY_PRODUCTION_MODE}",
+    SANDBOX_SECURITY_AUDIT_ENDPOINT:
+      "http://sandbox-security-backend:3001/internal/sandbox/security/enforcement-events",
+    SANDBOX_SECURITY_AUDIT_CAPABILITY_TOKEN:
+      "${SANDBOX_SECURITY_AUDIT_CAPABILITY_TOKEN}"
+  });
+  assert.equal(raw.includes("${SANDBOX_SECURITY_AUDIT_CAPABILITY_TOKEN:-"), false);
+  assert.equal(/sbxcap_v1\.[A-Za-z0-9_-]{43}/.test(raw), false);
+  assert.equal(/track1|integrations\/openclaw\/config|2026\.6\.10/i.test(raw), false);
+
+  assert.deepEqual(service.healthcheck?.test?.slice(0, 3), [
+    "CMD",
+    "node",
+    "--input-type=module"
+  ]);
+  assert.match(service.healthcheck?.test?.join(" ") ?? "", /runOpenClawSecurityRuntimeProbe/);
+  assert.equal(service.healthcheck?.interval, "30s");
+  assert.equal(service.healthcheck?.timeout, "15s");
+  assert.equal(service.healthcheck?.retries, 3);
+  assert.equal(service.restart, "no");
+  assert.equal(service.stop_signal, "SIGTERM");
+});
+
+test("REQ-SBX-GENERAL-004 P5-T2 runbook documents dedicated capability and ephemeral startup", () => {
+  const runbook = readOptional("deploy/sandbox-security/README.md");
+  assert.notEqual(runbook, "", "protected runtime runbook must exist");
+  assert.match(runbook, /docker compose[\s\S]+sandbox-security[\s\S]+config/);
+  assert.match(runbook, /docker compose[\s\S]+build openclaw-security/);
+  assert.match(runbook, /sandbox-security-backend/);
+  assert.match(runbook, /docker network create[\s\S]+--internal[\s\S]+sandbox-security-internal-audit/);
+  assert.match(runbook, /sandbox_security:enforcement:audit:write/);
+  assert.match(runbook, /sbxcap_v1/);
+  assert.match(runbook, /3600|one hour|1 hour/i);
+  assert.match(runbook, /tmpfs/);
+  assert.match(runbook, /no (named or anonymous )?volume|no durable/i);
+  assert.match(runbook, /audit[ -]degraded/i);
+  assert.match(runbook, /SIGTERM|docker compose[\s\S]+stop/);
+  assert.match(runbook, /plugins inspect agent-security-sandbox-general/);
+  assert.match(runbook, /egress[\s\S]+out of scope|out of scope[\s\S]+egress/i);
+  assert.equal(/sbxcap_v1\.[A-Za-z0-9_-]{43}/.test(runbook), false);
+  assert.equal(/bootstrap.*token|admin.*token.*config/i.test(runbook), false);
+});

@@ -19,6 +19,10 @@ const PACKAGE_ROOT = path.resolve(
 );
 const PLUGIN_ID = "agent-security-sandbox-general";
 const OPENCLAW_VERSION = "2026.6.34";
+const DOCKERFILE_PATH = path.resolve(
+  import.meta.dirname,
+  "../../deploy/sandbox-security/Dockerfile.openclaw"
+);
 
 test("REQ-SBX-GENERAL-004 P4-T8 real nested CLI probe accepts the patched general-security runtime", async () => {
   const probe = (await import(
@@ -155,4 +159,17 @@ test("REQ-SBX-GENERAL-004 P5-T1 rejects a tampered patch before runtime registra
   } finally {
     rmSync(tempRoot, { recursive: true, force: true });
   }
+});
+
+test("REQ-SBX-GENERAL-004 P5-T2 gates gateway startup behind the four-barrier probe", () => {
+  const dockerfile = readFileSync(DOCKERFILE_PATH, "utf8");
+  const probeIndex = dockerfile.indexOf("runOpenClawSecurityRuntimeProbe");
+  const gatewayIndex = dockerfile.indexOf("'gateway'");
+  assert.ok(probeIndex >= 0, "startup must invoke the sealed runtime probe");
+  assert.ok(gatewayIndex > probeIndex, "gateway must start only after the probe resolves");
+  assert.match(dockerfile, /spawnSync\(process\.execPath/);
+  assert.match(dockerfile, /process\.exitCode = child\.status/);
+  assert.match(dockerfile, /ENV TMPDIR=\/tmp\/openclaw/);
+  assert.match(dockerfile, /ENV OPENCLAW_STATE_DIR=\/run\/openclaw-security/);
+  assert.match(dockerfile, /USER node/);
 });

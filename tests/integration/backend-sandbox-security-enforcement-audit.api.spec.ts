@@ -248,8 +248,7 @@ test("REQ-SBX-GENERAL-004 accepts enforcement audit only on the internal listene
         method: "POST",
         headers: {
           authorization: `Bearer ${PRIVATE_TOKEN}`,
-          "content-type": "application/json",
-          "content-length": String(Buffer.byteLength(body))
+          "content-type": "application/json"
         },
         body
       }
