@@ -1,9 +1,31 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import test from "node:test";
 
 const read = (path: string) =>
   readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
+
+function collectSourceFiles(relativePath: string): string[] {
+  const url = new URL(`../../${relativePath}`, import.meta.url);
+  const entry = statSync(url, { throwIfNoEntry: false });
+  if (!entry) return [];
+  if (entry.isFile()) return [relativePath];
+  return (readdirSync(url, { recursive: true }) as string[])
+    .filter((name) => name.endsWith(".ts") || name.endsWith(".tsx"))
+    .filter((name) => !name.endsWith(".spec.ts") && !name.endsWith(".spec.tsx"))
+    .map((name) => `${relativePath}/${name}`);
+}
+
+// The gate targets executable code, not prose: a JSDoc line explaining the
+// privacy guarantee ("writes nothing to localStorage or sessionStorage") is
+// documentation, not a storage write. Strip block and line comments before the
+// scan so the gate keeps full teeth on real code (any actual storage call
+// survives stripping) without flagging a comment that names the API to forbid it.
+function stripComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+}
 
 const SPEC =
   "docs/superpowers/specs/2026-08-07-sandbox-security-frontend-workbench-design.md";
@@ -58,4 +80,26 @@ test("REQ-SBX-GENERAL-005 registers its gate in test:repo", () => {
     rootPackage.scripts?.["test:repo"] ?? "",
     /sandbox-security-frontend-spec\.spec\.ts/
   );
+});
+
+test("REQ-SBX-GENERAL-005 new frontend code writes no browser storage", () => {
+  const roots = [
+    "frontend/src/pages/SandboxSecurityWorkbenchPage.tsx",
+    "frontend/src/pages/SandboxSecurityAuditPage.tsx",
+    "frontend/src/services/sandbox-security-service.ts",
+    "frontend/src/components/sandbox-security"
+  ];
+  const offenders: string[] = [];
+  for (const relative of roots) {
+    for (const file of collectSourceFiles(relative)) {
+      const source = stripComments(read(file));
+      if (/(localStorage|sessionStorage|indexedDB|document\.cookie)/.test(source)) {
+        offenders.push(file);
+      }
+      if (/history\.(pushState|replaceState)/.test(source)) {
+        offenders.push(file);
+      }
+    }
+  }
+  assert.deepEqual(offenders, []);
 });
