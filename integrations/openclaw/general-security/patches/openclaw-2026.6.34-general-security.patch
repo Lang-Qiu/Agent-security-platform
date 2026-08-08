@@ -1,5 +1,47 @@
+diff --git a/dist/agent-runner.runtime-BUWW8f6n.js b/dist/agent-runner.runtime-BUWW8f6n.js
+index 5f89241..1ad689d 100644
+--- a/dist/agent-runner.runtime-BUWW8f6n.js
++++ b/dist/agent-runner.runtime-BUWW8f6n.js
+@@ -69,6 +69,7 @@ import { n as createReplyToModeFilterForChannel, o as resolveReplyToMode, t as c
+ import "./embedded-agent-helpers-uCYK89ck.js";
+ import { n as filterMessagingToolMediaDuplicates, r as resolveMessagingToolPayloadDedupe, t as filterMessagingToolDuplicates } from "./reply-payloads-dedupe-C3cwsqeJ.js";
+ import { n as routeReply, t as isRoutableChannel } from "./route-reply-BNe8txSq.js";
++import { activateOpenClawSecurityTurnCapsule, createOpenClawSecurityTurnCapsule, invalidateOpenClawSecurityTurnCapsule, runWithOpenClawSecurityTurnCapsule } from "./lifecycle-hook-helpers-Dowa8zK4.js";
+ import { o as runWithModelFallback } from "./model-fallback-BZZj7sGv.js";
+ import { c as setCliSessionId, n as clearCliSession, r as getCliSessionBinding, s as setCliSessionBinding } from "./cli-session-BfABgzht.js";
+ import "./sandbox-CsOwXLpl.js";
+@@ -2771,6 +2772,11 @@ function createFollowupRunner(params) {
+ 				}
+ 			}
+ 			const runId = crypto.randomUUID();
++			activateOpenClawSecurityTurnCapsule({
++				prompt: queued.prompt,
++				runId,
++				sessionKey: run.sessionKey ?? sessionKey
++			});
+ 			const shouldSurfaceToControlUi = isInternalMessageChannel(resolveOriginMessageProvider({
+ 				originatingChannel: queued.originatingChannel,
+ 				provider: run.messageProvider
+@@ -3442,7 +3448,16 @@ function createFollowupRunner(params) {
+ 			typing.markDispatchIdle();
+ 		}
+ 	};
+-	return async (queued) => queued.queuedExecutionContext ? await queued.queuedExecutionContext(() => runQueuedFollowup(queued)) : await runQueuedFollowup(queued);
++	return async (queued) => {
++		const openClawSecurityFollowupCapsule = createOpenClawSecurityTurnCapsule();
++		return await runWithOpenClawSecurityTurnCapsule(openClawSecurityFollowupCapsule, async () => {
++			try {
++				return queued.queuedExecutionContext ? await queued.queuedExecutionContext(() => runQueuedFollowup(queued)) : await runQueuedFollowup(queued);
++			} finally {
++				invalidateOpenClawSecurityTurnCapsule();
++			}
++		});
++	};
+ }
+ //#endregion
+ //#region src/auto-reply/reply/pending-tool-task-drain.ts
 diff --git a/dist/agent-tools.before-tool-call-59sE70R-.js b/dist/agent-tools.before-tool-call-59sE70R-.js
-index bb14f66..34cd79b 100644
+index bb14f66..58568a3 100644
 --- a/dist/agent-tools.before-tool-call-59sE70R-.js
 +++ b/dist/agent-tools.before-tool-call-59sE70R-.js
 @@ -12,6 +12,7 @@ import { _ as PluginApprovalResolutions } from "./command-registration-BBago94k.
@@ -250,19 +292,160 @@ index cd4cfe2..4e05f9a 100644
  ];
  const conversationHookNameSet = new Set(CONVERSATION_HOOK_NAMES);
  const isConversationHookName = (hookName) => conversationHookNameSet.has(hookName);
+diff --git a/dist/deliver-CJEsHkyF.js b/dist/deliver-CJEsHkyF.js
+index 3c6b12e..d43de90 100644
+--- a/dist/deliver-CJEsHkyF.js
++++ b/dist/deliver-CJEsHkyF.js
+@@ -2,6 +2,7 @@ import { i as formatErrorMessage } from "./errors-CaUClLPg.js";
+ import { a as emitInternalDiagnosticEvent } from "./diagnostic-events-CLCyIzm6.js";
+ import { t as createSubsystemLogger } from "./subsystem-CYwCorYs.js";
+ import { t as getGlobalHookRunner, u as fireAndForgetHook } from "./hook-runner-global-D_43rcnU.js";
++import { readOpenClawSecurityTurnContext, runOpenClawSecurityOutboundBarrier as runOpenClawSecurityOutboundBarrierCore } from "./lifecycle-hook-helpers-Dowa8zK4.js";
+ import { i as copyReplyPayloadMetadata } from "./reply-payload-HLWc9ssO.js";
+ import { m as triggerInternalHook, n as createInternalHookEvent } from "./internal-hooks-CiYwipLA.js";
+ import { t as resolveMirroredTranscriptText } from "./transcript-mirror-BUJrk10q.js";
+@@ -51,6 +52,18 @@ async function runReplyPayloadSendingHook(params) {
+ 	const payload = result?.payload ?? params.payload;
+ 	return copyReplyPayloadMetadata(params.payload, payload);
+ }
++async function runOpenClawSecurityOutboundBarrier(params) {
++	const turn = readOpenClawSecurityTurnContext();
++	const hookRunId = params?.replyPayloadSendingHook?.runId;
++	const hookSessionKey = params?.replyPayloadSendingHook?.sessionKey;
++	if (turn !== null && (hookRunId !== void 0 && hookRunId !== turn.runId || hookSessionKey !== void 0 && hookSessionKey !== turn.sessionKey)) return runOpenClawSecurityOutboundBarrierCore({ ...params, ctx: turn, runId: "__correlation_mismatch__", sessionKey: "__correlation_mismatch__" });
++	return runOpenClawSecurityOutboundBarrierCore({
++		...params,
++		ctx: params?.ctx ?? turn,
++		runId: hookRunId ?? params?.runId ?? turn?.runId,
++		sessionKey: hookSessionKey ?? params?.sessionKey ?? turn?.sessionKey
++	});
++}
+ //#endregion
+ //#region src/channels/message/rendered-batch.ts
+ function countMedia(payload) {
+@@ -1180,6 +1193,15 @@ async function deliverOutboundPayloadsCore(params) {
+ 				continue;
+ 			}
+ 			deliveryPayload = hookResult.payload;
++			const openClawSecurityOutboundDecision = await runOpenClawSecurityOutboundBarrier({
++				payload: deliveryPayload,
++				ctx: readOpenClawSecurityTurnContext(),
++				runId: params.replyPayloadSendingHook?.runId ?? params.runId,
++				sessionKey: params.replyPayloadSendingHook?.sessionKey ?? params.sessionKey,
++				replyPayloadSendingHook: params.replyPayloadSendingHook,
++				hookRunner
++			});
++			if (openClawSecurityOutboundDecision.outcome === "replace") deliveryPayload = { text: openClawSecurityOutboundDecision.text };
+ 			const renderedPayload = stripInternalRuntimeScaffoldingFromPayload(await renderPresentationForDelivery(await getDeliveryHandler(buildPayloadSummary(deliveryPayload).mediaUrls), deliveryPayload));
+ 			const renderedHandler = await getDeliveryHandler(buildPayloadSummary(renderedPayload).mediaUrls);
+ 			const normalizedEffectivePayload = renderedHandler.normalizePayload ? renderedHandler.normalizePayload(renderedPayload) : renderedPayload;
+@@ -1437,4 +1459,4 @@ async function deliverOutboundPayloadsCore(params) {
+ 	return results;
+ }
+ //#endregion
+-export { createRenderedMessageBatch as a, throwIfAborted as i, deliverOutboundPayloadsInternal as n, runReplyPayloadSendingHook as o, resolveOutboundDurableFinalDeliverySupport as r, isOutboundDeliveryError as s, deliverOutboundPayloads as t };
++export { createRenderedMessageBatch as a, throwIfAborted as i, deliverOutboundPayloadsInternal as n, runReplyPayloadSendingHook as o, resolveOutboundDurableFinalDeliverySupport as r, isOutboundDeliveryError as s, runOpenClawSecurityOutboundBarrier, deliverOutboundPayloads as t };
+diff --git a/dist/delivery-CExBlTq2.js b/dist/delivery-CExBlTq2.js
+index 59e347d..00a5e1b 100644
+--- a/dist/delivery-CExBlTq2.js
++++ b/dist/delivery-CExBlTq2.js
+@@ -2,6 +2,7 @@ import { i as formatErrorMessage } from "./errors-CaUClLPg.js";
+ import { a as root } from "./secure-temp-dir-XAWcZnE2.js";
+ import { r as logVerbose, s as warn, t as danger } from "./globals-C-cvQH14.js";
+ import { t as getGlobalHookRunner, u as fireAndForgetHook } from "./hook-runner-global-D_43rcnU.js";
++import { readOpenClawSecurityTurnContext, runOpenClawSecurityOutboundBarrier as runOpenClawSecurityOutboundBarrierCore } from "./lifecycle-hook-helpers-Dowa8zK4.js";
+ import { m as triggerInternalHook, n as createInternalHookEvent } from "./internal-hooks-CiYwipLA.js";
+ import { c as kindFromMime, s as isGifMedia } from "./mime-C8mVE2Bw.js";
+ import { n as probeVideoDimensions } from "./media-services-CG1_-bAI.js";
+@@ -706,6 +707,17 @@ function emitTelegramMessageSentHooks(params) {
+ 		enabled: hookRunner?.hasHooks("message_sent") ?? false
+ 	});
+ }
++async function runOpenClawSecurityTelegramMessageBarrier(params) {
++	const turn = readOpenClawSecurityTurnContext();
++	const internalSessionKey = params?.sessionKeyForInternalHooks;
++	if (turn !== null && internalSessionKey !== void 0 && internalSessionKey !== turn.sessionKey) return runOpenClawSecurityOutboundBarrierCore({ ...params, ctx: turn, runId: "__correlation_mismatch__", sessionKey: "__correlation_mismatch__" });
++	return runOpenClawSecurityOutboundBarrierCore({
++		...params,
++		ctx: params?.ctx ?? turn,
++		runId: params?.runId ?? turn?.runId,
++		sessionKey: internalSessionKey ?? params?.sessionKey ?? turn?.sessionKey
++	});
++}
+ async function deliverReplies(params) {
+ 	const progress = {
+ 		hasReplied: false,
+@@ -741,11 +753,11 @@ async function deliverReplies(params) {
+ 	}));
+ 	for (const originalReply of normalizedReplies) {
+ 		let reply = originalReply;
+-		const mediaList = reply?.mediaUrls?.length ? reply.mediaUrls : reply?.mediaUrl ? [reply.mediaUrl] : [];
+-		const hasMedia = mediaList.length > 0;
+-		const presentation = normalizeMessagePresentation(reply?.presentation);
+-		const interactive = reply?.interactive;
+-		const resolvedReplyText = resolveTelegramInteractiveTextFallback({
++		let mediaList = reply?.mediaUrls?.length ? reply.mediaUrls : reply?.mediaUrl ? [reply.mediaUrl] : [];
++		let hasMedia = mediaList.length > 0;
++		let presentation = normalizeMessagePresentation(reply?.presentation);
++		let interactive = reply?.interactive;
++		let resolvedReplyText = resolveTelegramInteractiveTextFallback({
+ 			text: reply?.text,
+ 			interactive,
+ 			presentation
+@@ -754,8 +766,8 @@ async function deliverReplies(params) {
+ 			...reply,
+ 			text: resolvedReplyText
+ 		};
+-		const telegramData = reply.channelData?.telegram;
+-		const reactionEmoji = typeof telegramData?.reaction?.emoji === "string" ? telegramData.reaction.emoji : void 0;
++		let telegramData = reply.channelData?.telegram;
++		let reactionEmoji = typeof telegramData?.reaction?.emoji === "string" ? telegramData.reaction.emoji : void 0;
+ 		if (!resolvedReplyText && !hasMedia && !reactionEmoji) {
+ 			if (reply?.audioAsVoice) {
+ 				logVerbose("telegram reply has audioAsVoice without media/text; skipping");
+@@ -807,6 +819,23 @@ async function deliverReplies(params) {
+ 				text: hookResult.content
+ 			};
+ 		}
++		const openClawSecurityTelegramDecision = await runOpenClawSecurityTelegramMessageBarrier({
++			payload: reply,
++			ctx: readOpenClawSecurityTurnContext(),
++			runId: readOpenClawSecurityTurnContext()?.runId,
++			sessionKeyForInternalHooks: params.sessionKeyForInternalHooks,
++			hookRunner
++		});
++		if (openClawSecurityTelegramDecision.outcome === "replace") {
++			reply = { text: openClawSecurityTelegramDecision.text };
++			mediaList = [];
++			hasMedia = false;
++			presentation = void 0;
++			interactive = void 0;
++			resolvedReplyText = openClawSecurityTelegramDecision.text ?? "";
++			telegramData = void 0;
++			reactionEmoji = void 0;
++		}
+ 		let contentForSentHook = reply.text || (reply.audioAsVoice === true ? resolveVoiceFallbackText(reply) : "") || "";
+ 		try {
+ 			const deliveredCountBeforeReply = progress.deliveredCount;
+@@ -1166,4 +1195,4 @@ async function resolveMedia(params) {
+ 	};
+ }
+ //#endregion
+-export { emitTelegramMessageSentHooks as i, deliverReplies as n, emitInternalMessageSentHook as r, resolveMedia as t };
++export { emitTelegramMessageSentHooks as i, deliverReplies as n, emitInternalMessageSentHook as r, runOpenClawSecurityTelegramMessageBarrier, resolveMedia as t };
 diff --git a/dist/dispatch-BSYjC-fp.js b/dist/dispatch-BSYjC-fp.js
-index bb9cefc..51114b7 100644
+index bb9cefc..fad67b6 100644
 --- a/dist/dispatch-BSYjC-fp.js
 +++ b/dist/dispatch-BSYjC-fp.js
 @@ -66,6 +66,7 @@ import { t as resolveRoutedDeliveryThreadId } from "./routed-delivery-thread-DbB
  import { n as resolveStoredModelOverride } from "./stored-model-override-D4Rq-lSd.js";
  import { t as finalizeInboundContext } from "./inbound-context-cqPd3Tht.js";
  import crypto from "node:crypto";
-+import { createOpenClawSecurityTurnCapsule, runWithOpenClawSecurityTurnCapsule, invalidateOpenClawSecurityTurnCapsule } from "./lifecycle-hook-helpers-Dowa8zK4.js";
++import { createOpenClawSecurityTurnCapsule, readOpenClawSecurityTurnContext, runOpenClawSecurityOutboundBarrier as runOpenClawSecurityOutboundBarrierCore, runWithOpenClawSecurityTurnCapsule, invalidateOpenClawSecurityTurnCapsule } from "./lifecycle-hook-helpers-Dowa8zK4.js";
  //#region src/auto-reply/dispatch-dispatcher.ts
  /** Mark a dispatcher complete, wait for pending work, then run optional cleanup. */
  async function settleReplyDispatcher(params) {
-@@ -78,11 +79,18 @@ async function settleReplyDispatcher(params) {
+@@ -78,11 +79,30 @@ async function settleReplyDispatcher(params) {
  }
  /** Run work with a dispatcher and always drain it before returning or throwing. */
  async function withReplyDispatcher(params) {
@@ -283,9 +466,66 @@ index bb9cefc..51114b7 100644
 +			}
 +		}
 +	});
++}
++async function runOpenClawSecurityDispatchMessageBarrier(params) {
++	const turn = readOpenClawSecurityTurnContext();
++	const localRunId = params?.runState?.runId ?? params?.runId ?? turn?.runId;
++	const localSessionKey = params?.finalizedSessionKey ?? params?.sessionKey ?? turn?.sessionKey;
++	if (turn !== null && params?.runState?.runId !== void 0 && params.runState.runId !== turn.runId || turn !== null && params?.finalizedSessionKey !== void 0 && params.finalizedSessionKey !== turn.sessionKey) return runOpenClawSecurityOutboundBarrierCore({ ...params, ctx: turn, runId: "__correlation_mismatch__", sessionKey: "__correlation_mismatch__" });
++	return runOpenClawSecurityOutboundBarrierCore({
++		...params,
++		ctx: params?.ctx ?? turn,
++		runId: localRunId,
++		sessionKey: localSessionKey
++	});
  }
  //#endregion
  //#region src/channels/plugins/exec-approval-local.ts
+@@ -2338,7 +2358,14 @@ async function dispatchInboundMessageWithBufferedDispatcher(params) {
+ 		if (await shouldCancelForegroundReplyDelivery(foregroundReplyFence)) return null;
+ 		const deliverPayload = configuredBeforeDeliver ? await configuredBeforeDeliver(payload, info) : payload;
+ 		if (!deliverPayload || await shouldCancelForegroundReplyDelivery(foregroundReplyFence)) return null;
+-		return deliverPayload;
++		const openClawSecurityDispatchDecision = await runOpenClawSecurityDispatchMessageBarrier({
++			payload: deliverPayload,
++			ctx: readOpenClawSecurityTurnContext(),
++			runState: replyPayloadRunState,
++			finalizedSessionKey: finalized.SessionKey,
++			hookRunner: getGlobalHookRunner()
++		});
++		return openClawSecurityDispatchDecision.outcome === "replace" ? { text: openClawSecurityDispatchDecision.text } : deliverPayload;
+ 	} : void 0;
+ 	const deliver = async (payload, info) => {
+ 		try {
+@@ -2389,9 +2416,21 @@ async function dispatchInboundMessageWithDispatcher(params) {
+ 	const replyPayloadBeforeDeliver = buildReplyPayloadSendingBeforeDeliver(params.ctx, replyPayloadRunState);
+ 	const globalBeforeDeliver = combineBeforeDeliverHooks(replyPayloadBeforeDeliver, buildMessageSendingBeforeDeliver(params.ctx));
+ 	const composedBeforeDeliver = params.dispatcherOptions.beforeDeliver ? combineBeforeDeliverHooks(params.dispatcherOptions.beforeDeliver, replyPayloadBeforeDeliver) : globalBeforeDeliver;
++	const securedBeforeDeliver = composedBeforeDeliver ? async (payload, info) => {
++		const deliverPayload = await composedBeforeDeliver(payload, info);
++		if (!deliverPayload) return null;
++		const openClawSecurityDispatchDecision = await runOpenClawSecurityDispatchMessageBarrier({
++			payload: deliverPayload,
++			ctx: readOpenClawSecurityTurnContext(),
++			runState: replyPayloadRunState,
++			finalizedSessionKey: params.ctx.SessionKey,
++			hookRunner: getGlobalHookRunner()
++		});
++		return openClawSecurityDispatchDecision.outcome === "replace" ? { text: openClawSecurityDispatchDecision.text } : deliverPayload;
++	} : void 0;
+ 	const dispatcher = createReplyDispatcher({
+ 		...params.dispatcherOptions,
+-		beforeDeliver: composedBeforeDeliver,
++		beforeDeliver: securedBeforeDeliver,
+ 		silentReplyContext: params.dispatcherOptions.silentReplyContext ?? silentReplyContext
+ 	});
+ 	markReplyPayloadSendingBeforeDeliverInstalled(dispatcher, replyPayloadBeforeDeliver);
+@@ -2406,4 +2445,4 @@ async function dispatchInboundMessageWithDispatcher(params) {
+ 	});
+ }
+ //#endregion
+-export { settleReplyDispatcher as a, dispatchReplyFromConfig as i, dispatchInboundMessageWithBufferedDispatcher as n, withReplyDispatcher as o, dispatchInboundMessageWithDispatcher as r, dispatchInboundMessage as t };
++export { settleReplyDispatcher as a, dispatchReplyFromConfig as i, dispatchInboundMessageWithBufferedDispatcher as n, withReplyDispatcher as o, runOpenClawSecurityDispatchMessageBarrier, dispatchInboundMessageWithDispatcher as r, dispatchInboundMessage as t };
 diff --git a/dist/hook-runner-global-D_43rcnU.js b/dist/hook-runner-global-D_43rcnU.js
 index b21ff5b..bf570c4 100644
 --- a/dist/hook-runner-global-D_43rcnU.js
@@ -507,7 +747,7 @@ index b21ff5b..bf570c4 100644
  		runInboundClaimForPlugin,
  		runInboundClaimForPluginOutcome,
 diff --git a/dist/lifecycle-hook-helpers-Dowa8zK4.js b/dist/lifecycle-hook-helpers-Dowa8zK4.js
-index 5a72ef4..e387b5e 100644
+index 5a72ef4..384ea04 100644
 --- a/dist/lifecycle-hook-helpers-Dowa8zK4.js
 +++ b/dist/lifecycle-hook-helpers-Dowa8zK4.js
 @@ -4,6 +4,7 @@ import { t as createSubsystemLogger } from "./subsystem-CYwCorYs.js";
@@ -518,7 +758,7 @@ index 5a72ef4..e387b5e 100644
  //#region src/agents/harness/hook-context.ts
  /** Builds the sparse hook context object passed to agent harness plugin hooks. */
  function buildAgentHookContext(params) {
-@@ -174,4 +175,201 @@ function isBeforeAgentFinalizeRetry(value) {
+@@ -174,4 +175,259 @@ function isBeforeAgentFinalizeRetry(value) {
  	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
  }
  //#endregion
@@ -719,8 +959,66 @@ index 5a72ef4..e387b5e 100644
 +	}
 +}
 +export { runOpenClawSecurityModelOutputBarrier };
++function openClawSecurityOutboundFailure() {
++	const envelope = createOpenClawSecurityFixedReplacement({
++		outcome: "replace",
++		replacement_code: "sandbox_security_evaluation_unavailable",
++		replacement_text: OPENCLAW_SECURITY_FIXED_REPLACEMENT_TEXTS.sandbox_security_evaluation_unavailable
++	});
++	return Object.freeze({
++		outcome: "replace",
++		text: envelope.text,
++		replacement_code: envelope.replacement_code,
++		provenance: envelope.provenance
++	});
++}
++async function runOpenClawSecurityOutboundBarrier(params) {
++	const turn = readOpenClawSecurityTurnContext();
++	const ctx = isOpenClawSecurityPlainRecord(params?.ctx) ? params.ctx : null;
++	const localRunId = typeof params?.runId === "string" ? params.runId : turn?.runId;
++	const localSessionKey = typeof params?.sessionKey === "string" ? params.sessionKey : turn?.sessionKey;
++	if (turn === null || ctx === null || localRunId !== turn.runId || localSessionKey !== turn.sessionKey || ctx.runId !== turn.runId || ctx.sessionKey !== turn.sessionKey) return openClawSecurityOutboundFailure();
++	let outbound;
++	try {
++		outbound = structuredClone(params?.payload);
++	} catch {
++		return openClawSecurityOutboundFailure();
++	}
++	const hookRunner = params?.hookRunner ?? getGlobalHookRunner();
++	let hasBarrier = false;
++	try {
++		hasBarrier = hookRunner?.hasHooks("before_message_delivery") === true;
++	} catch {
++		return openClawSecurityOutboundFailure();
++	}
++	if (!hasBarrier || typeof hookRunner?.runBeforeMessageDelivery !== "function") return openClawSecurityOutboundFailure();
++	const event = Object.freeze({
++		schema_version: "openclaw-security-hook-event.v1",
++		runId: turn.runId,
++		sessionKey: turn.sessionKey,
++		outbound
++	});
++	let decision;
++	try {
++		decision = await hookRunner.runBeforeMessageDelivery(event, turn);
++	} catch {
++		return openClawSecurityOutboundFailure();
++	}
++	if (openClawSecurityHasExactKeys(decision, ["outcome"]) && decision.outcome === "pass") return Object.freeze({ outcome: "pass" });
++	try {
++		const envelope = createOpenClawSecurityFixedReplacement(decision);
++		return Object.freeze({
++			outcome: "replace",
++			text: envelope.text,
++			replacement_code: envelope.replacement_code,
++			provenance: envelope.provenance
++		});
++	} catch {
++		return openClawSecurityOutboundFailure();
++	}
++}
 +//#endregion
-+export { runAgentHarnessLlmInputHook as a, runAgentHarnessBeforeAgentFinalizeHook as i, getAgentHarnessHookRunner as n, runAgentHarnessLlmOutputHook as o, runAgentHarnessAgentEndHook as r, buildAgentHookContext as s, awaitAgentHarnessAgentEndHook as t, createOpenClawSecurityTurnCapsule, runWithOpenClawSecurityTurnCapsule, activateOpenClawSecurityTurnCapsule, readOpenClawSecurityTurnContext, setOpenClawSecurityAssistantProjection, readOpenClawSecurityAssistantProjection, invalidateOpenClawSecurityTurnCapsule, createOpenClawSecurityFixedReplacement, readOpenClawSecurityFixedReplacement };
++export { runAgentHarnessLlmInputHook as a, runAgentHarnessBeforeAgentFinalizeHook as i, getAgentHarnessHookRunner as n, runAgentHarnessLlmOutputHook as o, runAgentHarnessAgentEndHook as r, buildAgentHookContext as s, awaitAgentHarnessAgentEndHook as t, createOpenClawSecurityTurnCapsule, runWithOpenClawSecurityTurnCapsule, activateOpenClawSecurityTurnCapsule, readOpenClawSecurityTurnContext, setOpenClawSecurityAssistantProjection, readOpenClawSecurityAssistantProjection, invalidateOpenClawSecurityTurnCapsule, createOpenClawSecurityFixedReplacement, readOpenClawSecurityFixedReplacement, runOpenClawSecurityOutboundBarrier };
 diff --git a/dist/plugin-sdk/hook-types-H9SC6W-p.d.ts b/dist/plugin-sdk/hook-types-H9SC6W-p.d.ts
 index f4a80fd..5c305b0 100644
 --- a/dist/plugin-sdk/hook-types-H9SC6W-p.d.ts

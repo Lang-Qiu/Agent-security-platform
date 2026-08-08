@@ -737,7 +737,10 @@ test("REQ-SBX-GENERAL-004 P4-T4 the patch touches only the reviewed files", () =
   ].slice().sort();
 
   const allowed = [
+    "dist/agent-runner.runtime-BUWW8f6n.js",
     "dist/command-registration-BBago94k.js",
+    "dist/deliver-CJEsHkyF.js",
+    "dist/delivery-CExBlTq2.js",
     "dist/hook-runner-global-D_43rcnU.js",
     "dist/plugin-sdk/hook-types-H9SC6W-p.d.ts",
     `dist/${LIFECYCLE_FILE}`,
