@@ -103,6 +103,7 @@ test("REQ-SBX-GENERAL-004 isolates OpenClaw package roots", () => {
       "config",
       "openclaw.plugin.json",
       "package.json",
+      "patches",
       "pnpm-lock.yaml",
       "pnpm-workspace.yaml",
       "scripts",
@@ -136,7 +137,8 @@ test("REQ-SBX-GENERAL-004 isolates OpenClaw package roots", () => {
   assert.match(source, /export const OPENCLAW_GENERAL_SECURITY_PACKAGE_IDENTITY/);
   assert.match(source, /Object\.freeze/);
   assert.doesNotMatch(source, /before_(?:agent|model|tool|message)/);
-  assert.doesNotMatch(source, /from\s+["']openclaw(?:\/|["'])/);
+  assert.doesNotMatch(source, /from\s+["']openclaw["']/);
+  assert.match(source, /from\s+["']openclaw\/plugin-sdk\/plugin-entry["']/);
   assert.match(build, /entryPoints:\s*\[entry\]/);
   assert.match(build, /outfile:\s*out/);
   assert.match(build, /external:\s*\[["']openclaw["']/);
