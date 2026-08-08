@@ -1,57 +1,259 @@
-diff --git a/dist/plugin-sdk/hook-types-H9SC6W-p.d.ts b/dist/plugin-sdk/hook-types-H9SC6W-p.d.ts
-index f4a80fd..5c305b0 100644
---- a/dist/plugin-sdk/hook-types-H9SC6W-p.d.ts
-+++ b/dist/plugin-sdk/hook-types-H9SC6W-p.d.ts
-@@ -342,8 +342,8 @@ type PluginHookName = "before_model_resolve" | "agent_turn_prepare" | "before_pr
-  * session-binding adapters before `subagent_spawned` fires. Use
-  * `subagent_spawned` for post-launch observation in new plugins.
-  */
--| "subagent_spawning" | "subagent_delivery_target" | "subagent_spawned" | "subagent_ended" /** @deprecated Use gateway_stop. */ | "deactivate" | "gateway_start" | "gateway_stop" | "heartbeat_prompt_contribution" | "cron_changed" | "before_dispatch" | "reply_dispatch" | "before_install" | "before_agent_run" | "resolve_exec_env";
--declare const PLUGIN_HOOK_NAMES: readonly ["before_model_resolve", "agent_turn_prepare", "before_prompt_build", "before_agent_start", "before_agent_reply", "model_call_started", "model_call_ended", "llm_input", "llm_output", "before_agent_finalize", "agent_end", "before_compaction", "after_compaction", "before_reset", "inbound_claim", "message_received", "message_sending", "reply_payload_sending", "message_sent", "before_tool_call", "after_tool_call", "tool_result_persist", "before_message_write", "session_start", "session_end", "subagent_spawning", "subagent_delivery_target", "subagent_spawned", "subagent_ended", "deactivate", "gateway_start", "gateway_stop", "heartbeat_prompt_contribution", "cron_changed", "before_dispatch", "reply_dispatch", "before_install", "before_agent_run", "resolve_exec_env"];
-+| "subagent_spawning" | "subagent_delivery_target" | "subagent_spawned" | "subagent_ended" /** @deprecated Use gateway_stop. */ | "deactivate" | "gateway_start" | "gateway_stop" | "heartbeat_prompt_contribution" | "cron_changed" | "before_dispatch" | "reply_dispatch" | "before_install" | "before_agent_run" | "before_model_output_delivery" | "before_tool_execution" | "before_message_delivery" | "resolve_exec_env";
-+declare const PLUGIN_HOOK_NAMES: readonly ["before_model_resolve", "agent_turn_prepare", "before_prompt_build", "before_agent_start", "before_agent_reply", "model_call_started", "model_call_ended", "llm_input", "llm_output", "before_agent_finalize", "agent_end", "before_compaction", "after_compaction", "before_reset", "inbound_claim", "message_received", "message_sending", "reply_payload_sending", "message_sent", "before_tool_call", "after_tool_call", "tool_result_persist", "before_message_write", "session_start", "session_end", "subagent_spawning", "subagent_delivery_target", "subagent_spawned", "subagent_ended", "deactivate", "gateway_start", "gateway_stop", "heartbeat_prompt_contribution", "cron_changed", "before_dispatch", "reply_dispatch", "before_install", "before_agent_run", "before_model_output_delivery", "before_tool_execution", "before_message_delivery", "resolve_exec_env"];
- type DeprecatedPluginHookName = "subagent_spawning" | "deactivate";
- type PluginHookDeprecation = {
-   replacement: string;
-@@ -368,7 +368,7 @@ declare const isPluginHookName: (hookName: unknown) => hookName is PluginHookNam
- declare const PROMPT_INJECTION_HOOK_NAMES: readonly ["agent_turn_prepare", "before_prompt_build", "before_agent_start", "heartbeat_prompt_contribution"];
- type PromptInjectionHookName = (typeof PROMPT_INJECTION_HOOK_NAMES)[number];
- declare const isPromptInjectionHookName: (hookName: PluginHookName) => boolean;
--declare const CONVERSATION_HOOK_NAMES: readonly ["before_model_resolve", "before_agent_reply", "llm_input", "llm_output", "before_agent_finalize", "agent_end", "before_agent_run"];
-+declare const CONVERSATION_HOOK_NAMES: readonly ["before_model_resolve", "before_agent_reply", "llm_input", "llm_output", "before_agent_finalize", "agent_end", "before_agent_run", "before_model_output_delivery", "before_tool_execution", "before_message_delivery"];
- type ConversationHookName = (typeof CONVERSATION_HOOK_NAMES)[number];
- declare const isConversationHookName: (hookName: PluginHookName) => boolean;
- type PluginHookAgentContext = {
-@@ -1132,4 +1132,27 @@ type PluginHookRegistration<K extends PluginHookName = PluginHookName> = {
-   source: string;
- };
+diff --git a/dist/agent-runner.runtime-BUWW8f6n.js b/dist/agent-runner.runtime-BUWW8f6n.js
+index 5f89241..134b451 100644
+--- a/dist/agent-runner.runtime-BUWW8f6n.js
++++ b/dist/agent-runner.runtime-BUWW8f6n.js
+@@ -69,6 +69,7 @@ import { n as createReplyToModeFilterForChannel, o as resolveReplyToMode, t as c
+ import "./embedded-agent-helpers-uCYK89ck.js";
+ import { n as filterMessagingToolMediaDuplicates, r as resolveMessagingToolPayloadDedupe, t as filterMessagingToolDuplicates } from "./reply-payloads-dedupe-C3cwsqeJ.js";
+ import { n as routeReply, t as isRoutableChannel } from "./route-reply-BNe8txSq.js";
++import { createOpenClawSecurityTurnCapsule, invalidateOpenClawSecurityTurnCapsule, runWithOpenClawSecurityTurnCapsule } from "./lifecycle-hook-helpers-Dowa8zK4.js";
+ import { o as runWithModelFallback } from "./model-fallback-BZZj7sGv.js";
+ import { c as setCliSessionId, n as clearCliSession, r as getCliSessionBinding, s as setCliSessionBinding } from "./cli-session-BfABgzht.js";
+ import "./sandbox-CsOwXLpl.js";
+@@ -3442,7 +3443,16 @@ function createFollowupRunner(params) {
+ 			typing.markDispatchIdle();
+ 		}
+ 	};
+-	return async (queued) => queued.queuedExecutionContext ? await queued.queuedExecutionContext(() => runQueuedFollowup(queued)) : await runQueuedFollowup(queued);
++	return async (queued) => {
++		const openClawSecurityFollowupCapsule = createOpenClawSecurityTurnCapsule();
++		return await runWithOpenClawSecurityTurnCapsule(openClawSecurityFollowupCapsule, async () => {
++			try {
++				return queued.queuedExecutionContext ? await queued.queuedExecutionContext(() => runQueuedFollowup(queued)) : await runQueuedFollowup(queued);
++			} finally {
++				invalidateOpenClawSecurityTurnCapsule();
++			}
++		});
++	};
+ }
  //#endregion
--export { PluginHookModelCallEndedEvent as $, PluginHookMessageSendingResult as $t, PluginHookBeforeMessageWriteEvent as A, PluginHookToolResultPersistResult as At, PluginHookGatewayCronJob as B, PluginAgentTurnPrepareEvent as Bt, PluginHookBeforeInstallContext as C, PluginHookSubagentSpawningResult as Ct, PluginHookBeforeInstallResult as D, PluginHookToolKind as Dt, PluginHookBeforeInstallRequest as E, PluginHookToolInputKind as Et, PluginHookCronChangedEvent as F, PromptInjectionHookName as Ft, PluginHookGatewayCronUpdateInput as G, PluginNextTurnInjectionEnqueueResult as Gt, PluginHookGatewayCronRemoveResult as H, PluginHeartbeatPromptContributionEvent as Ht, PluginHookDeprecation as I, isConversationHookName as It, PluginHookHandlerMap as J, PluginHookInboundClaimContext as Jt, PluginHookGatewayStartEvent as K, PluginNextTurnInjectionRecord as Kt, PluginHookGatewayContext as L, isDeprecatedPluginHookName as Lt, PluginHookBeforeResetEvent as M, PluginInstallRequestKind as Mt, PluginHookBeforeToolCallEvent as N, PluginInstallSourcePathKind as Nt, PluginHookBeforeInstallSkill as O, PluginHookToolResultPersistContext as Ot, PluginHookContextWindowSource as P, PluginInstallTargetType as Pt, PluginHookModelCallBaseEvent as Q, PluginHookMessageSendingEvent as Qt, PluginHookGatewayCronCreateInput as R, isPluginHookName as Rt, PluginHookBeforeInstallBuiltinScan as S, PluginHookSubagentSpawningEvent as St, PluginHookBeforeInstallPlugin as T, PluginHookToolContext as Tt, PluginHookGatewayCronRunStatus as U, PluginHeartbeatPromptContributionResult as Ut, PluginHookGatewayCronJobState as V, PluginAgentTurnPrepareResult as Vt, PluginHookGatewayCronService as W, PluginNextTurnInjection as Wt, PluginHookLlmInputEvent as X, PluginHookMessageContext as Xt, PluginHookInboundClaimResult as Y, PluginHookInboundClaimEvent as Yt, PluginHookLlmOutputEvent as Z, PluginHookMessageReceivedEvent as Zt, PluginHookBeforeAgentRunResult as _, ReplyDispatchKind as _n, PluginHookSubagentContext as _t, DeprecatedPluginHookName as a, PluginHookBeforeToolCallResult as an, PluginHookReplyDispatchResult as at, PluginHookBeforeDispatchEvent as b, ReplyFollowupAdmissionBarrierTimeoutPolicy as bn, PluginHookSubagentEndedEvent as bt, PluginHookAfterCompactionEvent as c, PluginHookBeforeAgentStartOverrideResult as cn, PluginHookReplyPayloadSendingEvent as ct, PluginHookAgentEndEvent as d, PluginHookBeforeModelResolveEvent as dn, PluginHookResolveExecEnvContext as dt, PluginHookMessageSentEvent as en, PluginHookModelCallStartedEvent as et, PluginHookBeforeAgentFinalizeEvent as f, PluginHookBeforeModelResolveResult as fn, PluginHookResolveExecEnvEvent as ft, PluginHookBeforeAgentRunEvent as g, ReplyDispatchBeforeDeliver as gn, PluginHookSessionStartEvent as gt, PluginHookBeforeAgentReplyResult as h, stripPromptMutationFieldsFromLegacyHookResult as hn, PluginHookSessionEndReason as ht, DEPRECATED_PLUGIN_HOOK_NAMES as i, PluginApprovalResolutions as in, PluginHookReplyDispatchEvent as it, PluginHookBeforeMessageWriteResult as j, PluginInstallFinding as jt, PluginHookBeforeInstallSkillInstallSpec as k, PluginHookToolResultPersistEvent as kt, PluginHookAfterToolCallEvent as l, PluginHookBeforeAgentStartResult as ln, PluginHookReplyPayloadSendingResult as lt, PluginHookBeforeAgentReplyEvent as m, PluginHookBeforePromptBuildResult as mn, PluginHookSessionEndEvent as mt, ConversationHookName as n, InputGateDecision as nn, PluginHookRegistration as nt, PLUGIN_HOOK_NAMES as o, PLUGIN_PROMPT_MUTATION_RESULT_FIELDS as on, PluginHookReplyPayload as ot, PluginHookBeforeAgentFinalizeResult as p, PluginHookBeforePromptBuildEvent as pn, PluginHookSessionContext as pt, PluginHookGatewayStopEvent as q, PluginJsonValue as qt, DEPRECATED_PLUGIN_HOOKS as r, PluginApprovalResolution as rn, PluginHookReplyDispatchContext as rt, PROMPT_INJECTION_HOOK_NAMES as s, PluginHookBeforeAgentStartEvent as sn, PluginHookReplyPayloadSendingContext as st, CONVERSATION_HOOK_NAMES as t, GateHookResult as tn, PluginHookName as tt, PluginHookAgentContext as u, PluginHookBeforeModelResolveAttachment as un, PluginHookReplyUsageState as ut, PluginHookBeforeCompactionEvent as v, ReplyDispatchRuntimeInfo as vn, PluginHookSubagentDeliveryTargetEvent as vt, PluginHookBeforeInstallEvent as w, PluginHookSubagentTargetKind as wt, PluginHookBeforeDispatchResult as x, PluginHookSubagentSpawnedEvent as xt, PluginHookBeforeDispatchContext as y, ReplyDispatcher as yn, PluginHookSubagentDeliveryTargetResult as yt, PluginHookGatewayCronDeliveryStatus as z, isPromptInjectionHookName as zt };
-\ No newline at end of file
-+export { PluginHookModelCallEndedEvent as $, PluginHookMessageSendingResult as $t, PluginHookBeforeMessageWriteEvent as A, PluginHookToolResultPersistResult as At, PluginHookGatewayCronJob as B, PluginAgentTurnPrepareEvent as Bt, PluginHookBeforeInstallContext as C, PluginHookSubagentSpawningResult as Ct, PluginHookBeforeInstallResult as D, PluginHookToolKind as Dt, PluginHookBeforeInstallRequest as E, PluginHookToolInputKind as Et, PluginHookCronChangedEvent as F, PromptInjectionHookName as Ft, PluginHookGatewayCronUpdateInput as G, PluginNextTurnInjectionEnqueueResult as Gt, PluginHookGatewayCronRemoveResult as H, PluginHeartbeatPromptContributionEvent as Ht, PluginHookDeprecation as I, isConversationHookName as It, PluginHookHandlerMap as J, PluginHookInboundClaimContext as Jt, PluginHookGatewayStartEvent as K, PluginNextTurnInjectionRecord as Kt, PluginHookGatewayContext as L, isDeprecatedPluginHookName as Lt, PluginHookBeforeResetEvent as M, PluginInstallRequestKind as Mt, PluginHookBeforeToolCallEvent as N, PluginInstallSourcePathKind as Nt, PluginHookBeforeInstallSkill as O, PluginHookToolResultPersistContext as Ot, PluginHookContextWindowSource as P, PluginInstallTargetType as Pt, PluginHookModelCallBaseEvent as Q, PluginHookMessageSendingEvent as Qt, PluginHookGatewayCronCreateInput as R, isPluginHookName as Rt, PluginHookBeforeInstallBuiltinScan as S, PluginHookSubagentSpawningEvent as St, PluginHookBeforeInstallPlugin as T, PluginHookToolContext as Tt, PluginHookGatewayCronRunStatus as U, PluginHeartbeatPromptContributionResult as Ut, PluginHookGatewayCronJobState as V, PluginAgentTurnPrepareResult as Vt, PluginHookGatewayCronService as W, PluginNextTurnInjection as Wt, PluginHookLlmInputEvent as X, PluginHookMessageContext as Xt, PluginHookInboundClaimResult as Y, PluginHookInboundClaimEvent as Yt, PluginHookLlmOutputEvent as Z, PluginHookMessageReceivedEvent as Zt, PluginHookBeforeAgentRunResult as _, ReplyDispatchKind as _n, PluginHookSubagentContext as _t, DeprecatedPluginHookName as a, PluginHookBeforeToolCallResult as an, PluginHookReplyDispatchResult as at, PluginHookBeforeDispatchEvent as b, ReplyFollowupAdmissionBarrierTimeoutPolicy as bn, PluginHookSubagentEndedEvent as bt, PluginHookAfterCompactionEvent as c, PluginHookBeforeAgentStartOverrideResult as cn, PluginHookReplyPayloadSendingEvent as ct, PluginHookAgentEndEvent as d, PluginHookBeforeModelResolveEvent as dn, PluginHookResolveExecEnvContext as dt, PluginHookMessageSentEvent as en, PluginHookModelCallStartedEvent as et, PluginHookBeforeAgentFinalizeEvent as f, PluginHookBeforeModelResolveResult as fn, PluginHookResolveExecEnvEvent as ft, PluginHookBeforeAgentRunEvent as g, ReplyDispatchBeforeDeliver as gn, PluginHookSessionStartEvent as gt, PluginHookBeforeAgentReplyResult as h, stripPromptMutationFieldsFromLegacyHookResult as hn, PluginHookSessionEndReason as ht, DEPRECATED_PLUGIN_HOOK_NAMES as i, PluginApprovalResolutions as in, PluginHookReplyDispatchEvent as it, PluginHookBeforeMessageWriteResult as j, PluginInstallFinding as jt, PluginHookBeforeInstallSkillInstallSpec as k, PluginHookToolResultPersistEvent as kt, PluginHookAfterToolCallEvent as l, PluginHookBeforeAgentStartResult as ln, PluginHookReplyPayloadSendingResult as lt, PluginHookBeforeAgentReplyEvent as m, PluginHookBeforePromptBuildResult as mn, PluginHookSessionEndEvent as mt, ConversationHookName as n, InputGateDecision as nn, PluginHookRegistration as nt, PLUGIN_HOOK_NAMES as o, PLUGIN_PROMPT_MUTATION_RESULT_FIELDS as on, PluginHookReplyPayload as ot, PluginHookBeforeAgentFinalizeResult as p, PluginHookBeforePromptBuildEvent as pn, PluginHookSessionContext as pt, PluginHookGatewayStopEvent as q, PluginJsonValue as qt, DEPRECATED_PLUGIN_HOOKS as r, PluginApprovalResolution as rn, PluginHookReplyDispatchContext as rt, PROMPT_INJECTION_HOOK_NAMES as s, PluginHookBeforeAgentStartEvent as sn, PluginHookReplyPayloadSendingContext as st, CONVERSATION_HOOK_NAMES as t, GateHookResult as tn, PluginHookName as tt, PluginHookAgentContext as u, PluginHookBeforeModelResolveAttachment as un, PluginHookReplyUsageState as ut, PluginHookBeforeCompactionEvent as v, ReplyDispatchRuntimeInfo as vn, PluginHookSubagentDeliveryTargetEvent as vt, PluginHookBeforeInstallEvent as w, PluginHookSubagentTargetKind as wt, PluginHookBeforeDispatchResult as x, PluginHookSubagentSpawnedEvent as xt, PluginHookBeforeDispatchContext as y, ReplyDispatcher as yn, PluginHookSubagentDeliveryTargetResult as yt, PluginHookGatewayCronDeliveryStatus as z, isPromptInjectionHookName as zt };
-+type OpenClawSecurityBarrierResult = {
-+	outcome: "pass";
-+} | {
-+	outcome: "replace";
-+	replacement_code: "security_review_required" | "sandbox_security_policy_blocked" | "sandbox_security_evaluation_unavailable";
-+	replacement_text: string;
-+};
-+type OpenClawSecurityHealth = {
-+	enforcement: "healthy" | "failed";
-+	audit: "healthy" | "degraded";
-+};
-+type OpenClawSecurityHookCorrelation = {
-+	runId: string;
-+	sessionKey: string;
-+	callId: string | null;
-+};
-+type OpenClawSecurityHookEnvelope = {
-+	schema_version: "openclaw-security-hook-result.v1";
-+	correlation: OpenClawSecurityHookCorrelation;
-+	health: OpenClawSecurityHealth;
-+	barrier: OpenClawSecurityBarrierResult;
-+};
-+export type { OpenClawSecurityBarrierResult, OpenClawSecurityHealth, OpenClawSecurityHookCorrelation, OpenClawSecurityHookEnvelope };
+ //#region src/auto-reply/reply/pending-tool-task-drain.ts
+diff --git a/dist/agent-tools.before-tool-call-59sE70R-.js b/dist/agent-tools.before-tool-call-59sE70R-.js
+index bb14f66..58568a3 100644
+--- a/dist/agent-tools.before-tool-call-59sE70R-.js
++++ b/dist/agent-tools.before-tool-call-59sE70R-.js
+@@ -12,6 +12,7 @@ import { _ as PluginApprovalResolutions } from "./command-registration-BBago94k.
+ import { h as getPluginSessionExtensionStateSync } from "./registry-BiuJAn1Z.js";
+ import { s as getActivePluginRegistry } from "./runtime-DGlFdyGW.js";
+ import { f as getGlobalHookRunnerRegistry, t as getGlobalHookRunner } from "./hook-runner-global-D_43rcnU.js";
++import { createOpenClawSecurityFixedReplacement, readOpenClawSecurityAssistantProjection, readOpenClawSecurityTurnContext } from "./lifecycle-hook-helpers-Dowa8zK4.js";
+ import { i as resolveSandboxInputPath } from "./sandbox-paths-lIFb9EBl.js";
+ import { i as listChannelPlugins, t as getChannelPlugin } from "./registry-BxD52xuY2.js";
+ import "./plugins-B7CoaAGS.js";
+@@ -1494,6 +1495,106 @@ async function runBeforeToolCallHook(args) {
+ 		};
+ 	}
+ }
++const OPENCLAW_SECURITY_TOOL_BARRIER_MARKER = "openclaw-security-tool-barrier.v1";
++const OPENCLAW_SECURITY_TOOL_BARRIER_SYMBOL = Symbol(OPENCLAW_SECURITY_TOOL_BARRIER_MARKER);
++const OPENCLAW_SECURITY_TOOL_DENY_TEXT = "Blocked by sandbox security policy.";
++function createOpenClawSecurityToolFloor() {
++	const replacement = createOpenClawSecurityFixedReplacement({
++		outcome: "replace",
++		replacement_code: "sandbox_security_policy_blocked",
++		replacement_text: OPENCLAW_SECURITY_TOOL_DENY_TEXT
++	});
++	return Object.freeze({
++		outcome: "replace",
++		text: replacement.text,
++		replacement_code: replacement.replacement_code,
++		provenance: replacement.provenance,
++		marker: OPENCLAW_SECURITY_TOOL_BARRIER_MARKER
++	});
++}
++function openClawSecurityDeepEqual(left, right, seen = new Map()) {
++	if (Object.is(left, right)) return true;
++	if (left === null || right === null || typeof left !== "object" || typeof right !== "object") return false;
++	const prior = seen.get(left);
++	if (prior === right) return true;
++	seen.set(left, right);
++	if (Array.isArray(left) || Array.isArray(right)) {
++		if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
++		return left.every((value, index) => openClawSecurityDeepEqual(value, right[index], seen));
++	}
++	if (!isPlainObject(left) || !isPlainObject(right)) return false;
++	const leftKeys = Reflect.ownKeys(left);
++	const rightKeys = Reflect.ownKeys(right);
++	if (leftKeys.length !== rightKeys.length || leftKeys.some((key) => !Object.hasOwn(right, key))) return false;
++	return leftKeys.every((key) => typeof key === "string" && openClawSecurityDeepEqual(left[key], right[key], seen));
++}
++function openClawSecurityReadMatchingAssistant(projection, toolCallId, toolName, toolArguments) {
++	if (!isPlainObject(projection) || Reflect.ownKeys(projection).length !== 3 || projection.schema_version !== "openclaw-security-assistant-projection.v1" || !Array.isArray(projection.text_parts) || projection.text_parts.some((text) => typeof text !== "string") || !Array.isArray(projection.tool_calls)) return null;
++	let matched;
++	const callIds = new Set();
++	for (const call of projection.tool_calls) {
++		if (!isPlainObject(call) || Reflect.ownKeys(call).length !== 3 || typeof call.call_id !== "string" || typeof call.tool_name !== "string" || !Object.hasOwn(call, "arguments") || callIds.has(call.call_id)) return null;
++		callIds.add(call.call_id);
++		if (call.call_id !== toolCallId) continue;
++		if (call.tool_name !== toolName || !openClawSecurityDeepEqual(call.arguments, toolArguments)) return null;
++		matched = call;
++	}
++	return matched ? projection : null;
++}
++async function runOpenClawSecurityToolBarrier(params) {
++	const turn = readOpenClawSecurityTurnContext();
++	const ctx = params?.ctx;
++	const toolName = typeof params?.toolName === "string" ? params.toolName.trim() : "";
++	const toolCallId = typeof params?.toolCallId === "string" ? params.toolCallId.trim() : "";
++	const toolParams = params?.params;
++	if (!turn || !isPlainObject(ctx) || ctx.runId !== turn.runId || ctx.sessionKey !== turn.sessionKey || !toolName || !toolCallId || !isPlainObject(toolParams)) return createOpenClawSecurityToolFloor();
++	if (Object.hasOwn(toolParams, OPENCLAW_SECURITY_TOOL_BARRIER_SYMBOL)) return createOpenClawSecurityToolFloor();
++	try {
++		Object.defineProperty(toolParams, OPENCLAW_SECURITY_TOOL_BARRIER_SYMBOL, {
++			value: true,
++			enumerable: false,
++			configurable: false
++		});
++	} catch {
++		return createOpenClawSecurityToolFloor();
++	}
++	let toolArguments;
++	try {
++		toolArguments = structuredClone(toolParams);
++	} catch {
++		return createOpenClawSecurityToolFloor();
++	}
++	const assistant = openClawSecurityReadMatchingAssistant(readOpenClawSecurityAssistantProjection(), toolCallId, toolName, toolArguments);
++	if (assistant === null) return createOpenClawSecurityToolFloor();
++	const hookRunner = params?.hookRunner ?? getGlobalHookRunner();
++	let hasBarrier = false;
++	try {
++		hasBarrier = hookRunner?.hasHooks("before_tool_execution") === true;
++	} catch {
++		return createOpenClawSecurityToolFloor();
++	}
++	if (!hasBarrier || typeof hookRunner?.runBeforeToolExecution !== "function") return createOpenClawSecurityToolFloor();
++	const event = Object.freeze({
++		schema_version: "openclaw-security-hook-event.v1",
++		runId: turn.runId,
++		sessionKey: turn.sessionKey,
++		callId: toolCallId,
++		assistant,
++		tool: Object.freeze({
++			call_id: toolCallId,
++			tool_name: toolName,
++			arguments: toolArguments
++		})
++	});
++	let decision;
++	try {
++		decision = await hookRunner.runBeforeToolExecution(event, turn);
++	} catch {
++		return createOpenClawSecurityToolFloor();
++	}
++	if (isPlainObject(decision) && Reflect.ownKeys(decision).length === 1 && decision.outcome === "pass") return Object.freeze({ outcome: "pass" });
++	return createOpenClawSecurityToolFloor();
++}
+ /** Wrap a tool execute function with before_tool_call hooks and diagnostics. */
+ function wrapToolWithBeforeToolCallHook(tool, ctx, options = {}) {
+ 	const execute = tool.execute;
+@@ -1583,9 +1684,32 @@ function wrapToolWithBeforeToolCallHook(tool, ctx, options = {}) {
+ 				hookParams,
+ 				adjustedParams: outcome.params
+ 			});
+-			executeParams = tool.finalizeBeforeToolCallParams?.(executeParams, preparedParams) ?? executeParams;
+-			recordAdjustedParamsForToolCall(toolCallId, executeParams, ctx?.runId);
+ 			const normalizedToolName = normalizeToolName(toolName || "tool");
++			executeParams = tool.finalizeBeforeToolCallParams?.(executeParams, preparedParams) ?? executeParams;
++				const openClawSecurityToolDecision = await runOpenClawSecurityToolBarrier({
++					toolName: normalizedToolName,
++					params: executeParams,
++					toolCallId,
++					ctx
++				});
++				if (openClawSecurityToolDecision.outcome === "replace") {
++					const blockedResult = buildBlockedToolResult({
++						reason: openClawSecurityToolDecision.text,
++						deniedReason: "sandbox-security",
++						toolCallId,
++						runId: ctx?.runId
++					});
++					await recordLoopOutcome({
++						ctx,
++						toolName: normalizedToolName,
++						toolParams: executeParams,
++						toolCallId,
++						result: blockedResult,
++						toolCallOrdinal
++					});
++					return blockedResult;
++				}
++				recordAdjustedParamsForToolCall(toolCallId, executeParams, ctx?.runId);
+ 			const trace = ctx?.trace ? freezeDiagnosticTraceContext(createChildDiagnosticTraceContext(ctx.trace)) : void 0;
+ 			const eventBase = {
+ 				...ctx?.runId && { runId: ctx.runId },
+@@ -1759,4 +1883,4 @@ function toLintErrorObject(value, fallbackMessage) {
+ 	return error;
+ }
+ //#endregion
+-export { resolveChannelReactionGuidance as A, normalizeCodeModeExecBeforeHookParams as C, listChannelSupportedActions as D, listChannelAgentTools as E, consumeStructuredReplaySafeToolCall as F, peekAdjustedParamsForToolCall as I, getChannelAgentToolMeta as M, consumeAdjustedParamsForToolCall as N, resolveChannelMessageToolHints as O, consumePreExecutionBlockedToolCall as P, markCodeModeControlTool as S, listAllChannelSupportedActions as T, setToolTerminalPresentation as _, getBeforeToolCallPolicyDiagnosticState as a, getCodeModeExecBeforeHookMetadata as b, isToolWrappedWithBeforeToolCallHook as c, requestDeferredPluginToolApproval as d, rewrapToolWithBeforeToolCallHook as f, copyToolTerminalPresentation as g, wrapToolWithBeforeToolCallHook as h, finalizeToolTerminalPresentation as i, copyChannelAgentToolMeta as j, resolveChannelPromptCapabilities as k, recordAdjustedParamsForToolCall as l, setBeforeToolCallDiagnosticsEnabled as m, cancelDeferredPluginToolApproval as n, hasBeforeToolCallPolicy as o, runBeforeToolCallHook as p, copyBeforeToolCallHookMarker as r, isBeforeToolCallBlockedError as s, buildBlockedToolResult as t, recordStructuredReplayTrustForToolCall as u, CODE_MODE_EXEC_TOOL_NAME as v, reconcileCodeModeExecBeforeHookParams as w, isCodeModeControlTool as x, CODE_MODE_WAIT_TOOL_NAME as y };
++export { resolveChannelReactionGuidance as A, normalizeCodeModeExecBeforeHookParams as C, listChannelSupportedActions as D, listChannelAgentTools as E, consumeStructuredReplaySafeToolCall as F, peekAdjustedParamsForToolCall as I, getChannelAgentToolMeta as M, consumeAdjustedParamsForToolCall as N, resolveChannelMessageToolHints as O, consumePreExecutionBlockedToolCall as P, markCodeModeControlTool as S, listAllChannelSupportedActions as T, setToolTerminalPresentation as _, getBeforeToolCallPolicyDiagnosticState as a, getCodeModeExecBeforeHookMetadata as b, isToolWrappedWithBeforeToolCallHook as c, requestDeferredPluginToolApproval as d, rewrapToolWithBeforeToolCallHook as f, copyToolTerminalPresentation as g, wrapToolWithBeforeToolCallHook as h, finalizeToolTerminalPresentation as i, copyChannelAgentToolMeta as j, resolveChannelPromptCapabilities as k, recordAdjustedParamsForToolCall as l, setBeforeToolCallDiagnosticsEnabled as m, cancelDeferredPluginToolApproval as n, hasBeforeToolCallPolicy as o, runBeforeToolCallHook as p, copyBeforeToolCallHookMarker as r, isBeforeToolCallBlockedError as s, buildBlockedToolResult as t, recordStructuredReplayTrustForToolCall as u, CODE_MODE_EXEC_TOOL_NAME as v, reconcileCodeModeExecBeforeHookParams as w, isCodeModeControlTool as x, CODE_MODE_WAIT_TOOL_NAME as y, runOpenClawSecurityToolBarrier };
+diff --git a/dist/cli-runner-B0eKIePw.js b/dist/cli-runner-B0eKIePw.js
+index 28a31d9..38d0452 100644
+--- a/dist/cli-runner-B0eKIePw.js
++++ b/dist/cli-runner-B0eKIePw.js
+@@ -14,8 +14,9 @@ import { i as buildGenericCliContextEngineHostSupport } from "./host-compat-BibW
+ import { a as finalizeHarnessContextEngineTurn, d as runAgentEndSideEffects, l as waitForDeferredTurnMaintenanceForSession, n as bootstrapHarnessContextEngine, s as runHarnessContextEngineMaintenance, u as awaitAgentEndSideEffects } from "./context-engine-lifecycle-BHLvvk9q.js";
+ import { n as buildAgentHookContextIdentityFields, t as buildAgentHookContextChannelFields } from "./hook-agent-context-ugCMMoT5.js";
+ import "./embedded-agent-helpers-uCYK89ck.js";
+-import { a as runAgentHarnessLlmInputHook, o as runAgentHarnessLlmOutputHook, s as buildAgentHookContext } from "./lifecycle-hook-helpers-Dowa8zK4.js";
++import { a as runAgentHarnessLlmInputHook, o as runAgentHarnessLlmOutputHook, s as buildAgentHookContext, activateOpenClawSecurityTurnCapsule, createOpenClawSecurityFixedReplacement } from "./lifecycle-hook-helpers-Dowa8zK4.js";
+ import { t as buildEmbeddedRunPayloads } from "./payloads-CpuaeKbz.js";
++import { runOpenClawSecurityModelOutputBarrier } from "./lifecycle-hook-helpers-Dowa8zK4.js";
+ import { n as getCliMessagingDeliveryEvidence, t as attachCliMessagingDeliveryEvidence } from "./delivery-evidence-Cmz7UHq4.js";
+ import { i as formatCliBackendOutputDigest, r as cliBackendLog } from "./log-CYYTJQ53.js";
+ import { d as loadCliSessionHistoryMessages, m as buildAgentHookConversationMessages, n as claudeCliSessionTranscriptHasContent, u as loadCliSessionContextEngineMessages } from "./attempt-execution.helpers-Cn8IzzwX.js";
+@@ -579,7 +580,20 @@ async function runPreparedCliAgent(context) {
+ 			model: context.modelId,
+ 			usage: output.usage
+ 		}) : void 0;
+-		if (assistantText.length > 0 && hasLlmOutputHooks) runAgentHarnessLlmOutputHook({
++		const openClawSecurityModelDecision = await runOpenClawSecurityModelOutputBarrier({
++			event: {
++				runId: params.runId,
++				sessionId: params.sessionId,
++				provider: params.provider,
++				model: context.modelId,
++				assistantTexts: assistantTexts,
++				lastAssistant: lastAssistant
++			},
++			ctx: hookContext,
++			hookRunner
++		});
++		const openClawSecurityModelReplacement = openClawSecurityModelDecision?.outcome === "replace" ? openClawSecurityModelDecision : void 0;
++		if (!openClawSecurityModelReplacement && assistantText.length > 0 && hasLlmOutputHooks) runAgentHarnessLlmOutputHook({
+ 			event: {
+ 				runId: params.runId,
+ 				sessionId: params.sessionId,
+@@ -747,6 +761,11 @@ async function runPreparedCliAgent(context) {
+ 		};
+ 		if (hasBeforeAgentRunHooks && hookRunner) {
+ 			let beforeRunResult;
++			activateOpenClawSecurityTurnCapsule({
++				prompt: params.prompt,
++				runId: params.runId,
++				sessionKey: params.sessionKey
++			});
+ 			try {
+ 				beforeRunResult = await hookRunner.runBeforeAgentRun({
+ 					prompt: params.prompt,
+@@ -776,12 +795,12 @@ async function runPreparedCliAgent(context) {
+ 				});
+ 				return buildBlockedBeforeAgentRunResult(blockMessage);
+ 			}
+-			const beforeRunDecision = beforeRunResult?.decision;
+-			if (beforeRunDecision?.outcome === "block") {
+-				const blockMessage = resolveBlockMessage(beforeRunDecision, { blockedBy: beforeRunResult?.pluginId ?? "unknown" });
++			if (beforeRunResult?.outcome === "replace") {
++				const openClawSecurityReplacement = createOpenClawSecurityFixedReplacement(beforeRunResult);
++				const blockMessage = openClawSecurityReplacement.text;
+ 				await persistBlockedBeforeAgentRun({
+ 					message: blockMessage,
+-					pluginId: beforeRunResult?.pluginId ?? "unknown"
++					pluginId: beforeRunResult.replacement_code
+ 				});
+ 				await runCliAgentEndHook(params, {
+ 					event: buildBlockedAgentEndEvent(blockMessage),
 diff --git a/dist/command-registration-BBago94k.js b/dist/command-registration-BBago94k.js
 index cd4cfe2..4e05f9a 100644
 --- a/dist/command-registration-BBago94k.js
@@ -78,6 +280,332 @@ index cd4cfe2..4e05f9a 100644
  ];
  const conversationHookNameSet = new Set(CONVERSATION_HOOK_NAMES);
  const isConversationHookName = (hookName) => conversationHookNameSet.has(hookName);
+diff --git a/dist/deliver-CJEsHkyF.js b/dist/deliver-CJEsHkyF.js
+index 3c6b12e..3aedf3b 100644
+--- a/dist/deliver-CJEsHkyF.js
++++ b/dist/deliver-CJEsHkyF.js
+@@ -2,6 +2,7 @@ import { i as formatErrorMessage } from "./errors-CaUClLPg.js";
+ import { a as emitInternalDiagnosticEvent } from "./diagnostic-events-CLCyIzm6.js";
+ import { t as createSubsystemLogger } from "./subsystem-CYwCorYs.js";
+ import { t as getGlobalHookRunner, u as fireAndForgetHook } from "./hook-runner-global-D_43rcnU.js";
++import { hasOpenClawSecurityOutboundBarrierComplete, markOpenClawSecurityOutboundBarrierComplete, readOpenClawSecurityTurnContext, runOpenClawSecurityOutboundBarrier as runOpenClawSecurityOutboundBarrierCore } from "./lifecycle-hook-helpers-Dowa8zK4.js";
+ import { i as copyReplyPayloadMetadata } from "./reply-payload-HLWc9ssO.js";
+ import { m as triggerInternalHook, n as createInternalHookEvent } from "./internal-hooks-CiYwipLA.js";
+ import { t as resolveMirroredTranscriptText } from "./transcript-mirror-BUJrk10q.js";
+@@ -51,6 +52,18 @@ async function runReplyPayloadSendingHook(params) {
+ 	const payload = result?.payload ?? params.payload;
+ 	return copyReplyPayloadMetadata(params.payload, payload);
+ }
++async function runOpenClawSecurityOutboundBarrier(params) {
++	const turn = readOpenClawSecurityTurnContext();
++	const hookRunId = params?.replyPayloadSendingHook?.runId;
++	const hookSessionKey = params?.replyPayloadSendingHook?.sessionKey;
++	if (turn !== null && (hookRunId !== void 0 && hookRunId !== turn.runId || hookSessionKey !== void 0 && hookSessionKey !== turn.sessionKey)) return runOpenClawSecurityOutboundBarrierCore({ ...params, ctx: turn, runId: "__correlation_mismatch__", sessionKey: "__correlation_mismatch__" });
++	return runOpenClawSecurityOutboundBarrierCore({
++		...params,
++		ctx: params?.ctx ?? turn,
++		runId: hookRunId ?? params?.runId ?? turn?.runId,
++		sessionKey: hookSessionKey ?? params?.sessionKey ?? turn?.sessionKey
++	});
++}
+ //#endregion
+ //#region src/channels/message/rendered-batch.ts
+ function countMedia(payload) {
+@@ -876,45 +889,8 @@ async function deliverOutboundPayloads(params) {
+ }
+ async function deliverOutboundPayloadsInternal(params) {
+ 	const { channel, to, payloads } = params;
+-	const queuePolicy = params.queuePolicy ?? "best_effort";
+-	const queuePayloads = payloads.map(stripInternalRuntimeScaffoldingFromPayload);
+-	const queuePayloadsChanged = queuePayloads.some((payload, index) => payload !== payloads[index]);
+-	const renderedBatchPlan = params.renderedBatchPlan ?? createRenderedMessageBatchPlan(params.payloads);
+-	const queueRenderedBatchPlan = queuePayloadsChanged ? createRenderedMessageBatchPlan(queuePayloads) : renderedBatchPlan;
+-	const queueId = params.skipQueue ? null : await enqueueDelivery({
+-		channel,
+-		to,
+-		accountId: params.accountId,
+-		payloads: queuePayloads,
+-		renderedBatchPlan: queueRenderedBatchPlan,
+-		threadId: params.threadId,
+-		replyToId: params.replyToId,
+-		replyToMode: params.replyToMode,
+-		formatting: params.formatting,
+-		identity: params.identity,
+-		bestEffort: params.bestEffort,
+-		gifPlayback: params.gifPlayback,
+-		forceDocument: params.forceDocument,
+-		replyPayloadSendingHook: params.replyPayloadSendingHook,
+-		silent: params.silent,
+-		mirror: params.mirror,
+-		session: params.session,
+-		gatewayClientScopes: params.gatewayClientScopes
+-	}).catch((err) => {
+-		if (queuePolicy === "required") throw err;
+-		return null;
+-	});
+-	if (queueId) params.onDeliveryIntent?.({
+-		id: queueId,
+-		channel,
+-		to,
+-		...params.accountId ? { accountId: params.accountId } : {},
+-		queuePolicy
+-	});
+-	if (!queueId) return await deliverOutboundPayloadsWithQueueCleanup(params, null);
+-	const claimResult = await withActiveDeliveryClaim(queueId, () => deliverOutboundPayloadsWithQueueCleanup(params, queueId));
+-	if (claimResult.status === "claimed-by-other-owner") return [];
+-	return claimResult.value;
++	const queueId = null;
++	return await deliverOutboundPayloadsWithQueueCleanup(params, queueId);
+ }
+ async function deliverOutboundPayloadsWithQueueCleanup(params, queueId) {
+ 	let hadPartialFailure = false;
+@@ -1142,7 +1118,12 @@ async function deliverOutboundPayloadsCore(params) {
+ 		};
+ 		try {
+ 			throwIfAborted(abortSignal);
+-			const replyHookResult = await applyReplyPayloadSendingHook({
++			const dispatchBarrierComplete = hasOpenClawSecurityOutboundBarrierComplete(payload);
++			const replyHookResult = dispatchBarrierComplete ? {
++				cancelled: false,
++				payload,
++				changed: false
++			} : await applyReplyPayloadSendingHook({
+ 				hook: params.replyPayloadSendingHook,
+ 				payload
+ 			});
+@@ -1154,8 +1135,12 @@ async function deliverOutboundPayloadsCore(params) {
+ 				continue;
+ 			}
+ 			let deliveryPayload = replyHookResult.payload;
++			if (dispatchBarrierComplete && deliveryPayload) markOpenClawSecurityOutboundBarrierComplete(deliveryPayload);
+ 			payloadSummary = buildPayloadSummary(deliveryPayload);
+-			const hookResult = await applyMessageSendingHook({
++			const hookResult = dispatchBarrierComplete ? {
++				cancelled: false,
++				payload: deliveryPayload
++			} : await applyMessageSendingHook({
+ 				hookRunner,
+ 				enabled: hasMessageSendingHooks,
+ 				payload: deliveryPayload,
+@@ -1180,10 +1165,25 @@ async function deliverOutboundPayloadsCore(params) {
+ 				continue;
+ 			}
+ 			deliveryPayload = hookResult.payload;
++			if (dispatchBarrierComplete && deliveryPayload) markOpenClawSecurityOutboundBarrierComplete(deliveryPayload);
++			if (!dispatchBarrierComplete) {
++				const openClawSecurityOutboundDecision = await runOpenClawSecurityOutboundBarrier({
++					payload: deliveryPayload,
++					ctx: readOpenClawSecurityTurnContext(),
++					runId: params.replyPayloadSendingHook?.runId ?? params.runId,
++					sessionKey: params.replyPayloadSendingHook?.sessionKey ?? params.sessionKey,
++					replyPayloadSendingHook: params.replyPayloadSendingHook,
++					hookRunner
++				});
++				if (openClawSecurityOutboundDecision.outcome === "replace") deliveryPayload = { text: openClawSecurityOutboundDecision.text };
++			}
+ 			const renderedPayload = stripInternalRuntimeScaffoldingFromPayload(await renderPresentationForDelivery(await getDeliveryHandler(buildPayloadSummary(deliveryPayload).mediaUrls), deliveryPayload));
++			if (dispatchBarrierComplete && renderedPayload) markOpenClawSecurityOutboundBarrierComplete(renderedPayload);
+ 			const renderedHandler = await getDeliveryHandler(buildPayloadSummary(renderedPayload).mediaUrls);
+ 			const normalizedEffectivePayload = renderedHandler.normalizePayload ? renderedHandler.normalizePayload(renderedPayload) : renderedPayload;
++			if (dispatchBarrierComplete && normalizedEffectivePayload) markOpenClawSecurityOutboundBarrierComplete(normalizedEffectivePayload);
+ 			const effectivePayload = normalizedEffectivePayload ? normalizeEmptyPayloadForDelivery(stripInternalRuntimeScaffoldingFromPayload(normalizedEffectivePayload)) : null;
++			if (dispatchBarrierComplete && effectivePayload) markOpenClawSecurityOutboundBarrierComplete(effectivePayload);
+ 			if (!effectivePayload) {
+ 				recordPayloadOutcome(suppressedPayloadOutcome({
+ 					index: payloadIndex,
+@@ -1437,4 +1437,4 @@ async function deliverOutboundPayloadsCore(params) {
+ 	return results;
+ }
+ //#endregion
+-export { createRenderedMessageBatch as a, throwIfAborted as i, deliverOutboundPayloadsInternal as n, runReplyPayloadSendingHook as o, resolveOutboundDurableFinalDeliverySupport as r, isOutboundDeliveryError as s, deliverOutboundPayloads as t };
++export { createRenderedMessageBatch as a, throwIfAborted as i, deliverOutboundPayloadsInternal as n, runReplyPayloadSendingHook as o, resolveOutboundDurableFinalDeliverySupport as r, isOutboundDeliveryError as s, runOpenClawSecurityOutboundBarrier, deliverOutboundPayloads as t };
+diff --git a/dist/delivery-CExBlTq2.js b/dist/delivery-CExBlTq2.js
+index 59e347d..607232e 100644
+--- a/dist/delivery-CExBlTq2.js
++++ b/dist/delivery-CExBlTq2.js
+@@ -2,6 +2,7 @@ import { i as formatErrorMessage } from "./errors-CaUClLPg.js";
+ import { a as root } from "./secure-temp-dir-XAWcZnE2.js";
+ import { r as logVerbose, s as warn, t as danger } from "./globals-C-cvQH14.js";
+ import { t as getGlobalHookRunner, u as fireAndForgetHook } from "./hook-runner-global-D_43rcnU.js";
++import { consumeOpenClawSecurityOutboundBarrierComplete, hasOpenClawSecurityOutboundBarrierComplete, readOpenClawSecurityTurnContext, runOpenClawSecurityOutboundBarrier as runOpenClawSecurityOutboundBarrierCore } from "./lifecycle-hook-helpers-Dowa8zK4.js";
+ import { m as triggerInternalHook, n as createInternalHookEvent } from "./internal-hooks-CiYwipLA.js";
+ import { c as kindFromMime, s as isGifMedia } from "./mime-C8mVE2Bw.js";
+ import { n as probeVideoDimensions } from "./media-services-CG1_-bAI.js";
+@@ -706,6 +707,21 @@ function emitTelegramMessageSentHooks(params) {
+ 		enabled: hookRunner?.hasHooks("message_sent") ?? false
+ 	});
+ }
++async function runOpenClawSecurityTelegramMessageBarrier(params) {
++	if (hasOpenClawSecurityOutboundBarrierComplete(params?.payload)) {
++		consumeOpenClawSecurityOutboundBarrierComplete(params.payload);
++		return { outcome: "pass" };
++	}
++	const turn = readOpenClawSecurityTurnContext();
++	const internalSessionKey = params?.sessionKeyForInternalHooks;
++	if (turn !== null && internalSessionKey !== void 0 && internalSessionKey !== turn.sessionKey) return runOpenClawSecurityOutboundBarrierCore({ ...params, ctx: turn, runId: "__correlation_mismatch__", sessionKey: "__correlation_mismatch__" });
++	return runOpenClawSecurityOutboundBarrierCore({
++		...params,
++		ctx: params?.ctx ?? turn,
++		runId: params?.runId ?? turn?.runId,
++		sessionKey: internalSessionKey ?? params?.sessionKey ?? turn?.sessionKey
++	});
++}
+ async function deliverReplies(params) {
+ 	const progress = {
+ 		hasReplied: false,
+@@ -741,11 +757,11 @@ async function deliverReplies(params) {
+ 	}));
+ 	for (const originalReply of normalizedReplies) {
+ 		let reply = originalReply;
+-		const mediaList = reply?.mediaUrls?.length ? reply.mediaUrls : reply?.mediaUrl ? [reply.mediaUrl] : [];
+-		const hasMedia = mediaList.length > 0;
+-		const presentation = normalizeMessagePresentation(reply?.presentation);
+-		const interactive = reply?.interactive;
+-		const resolvedReplyText = resolveTelegramInteractiveTextFallback({
++		let mediaList = reply?.mediaUrls?.length ? reply.mediaUrls : reply?.mediaUrl ? [reply.mediaUrl] : [];
++		let hasMedia = mediaList.length > 0;
++		let presentation = normalizeMessagePresentation(reply?.presentation);
++		let interactive = reply?.interactive;
++		let resolvedReplyText = resolveTelegramInteractiveTextFallback({
+ 			text: reply?.text,
+ 			interactive,
+ 			presentation
+@@ -754,8 +770,8 @@ async function deliverReplies(params) {
+ 			...reply,
+ 			text: resolvedReplyText
+ 		};
+-		const telegramData = reply.channelData?.telegram;
+-		const reactionEmoji = typeof telegramData?.reaction?.emoji === "string" ? telegramData.reaction.emoji : void 0;
++		let telegramData = reply.channelData?.telegram;
++		let reactionEmoji = typeof telegramData?.reaction?.emoji === "string" ? telegramData.reaction.emoji : void 0;
+ 		if (!resolvedReplyText && !hasMedia && !reactionEmoji) {
+ 			if (reply?.audioAsVoice) {
+ 				logVerbose("telegram reply has audioAsVoice without media/text; skipping");
+@@ -807,6 +823,23 @@ async function deliverReplies(params) {
+ 				text: hookResult.content
+ 			};
+ 		}
++		const openClawSecurityTelegramDecision = await runOpenClawSecurityTelegramMessageBarrier({
++			payload: reply,
++			ctx: readOpenClawSecurityTurnContext(),
++			runId: readOpenClawSecurityTurnContext()?.runId,
++			sessionKeyForInternalHooks: params.sessionKeyForInternalHooks,
++			hookRunner
++		});
++		if (openClawSecurityTelegramDecision.outcome === "replace") {
++			reply = { text: openClawSecurityTelegramDecision.text };
++			mediaList = [];
++			hasMedia = false;
++			presentation = void 0;
++			interactive = void 0;
++			resolvedReplyText = openClawSecurityTelegramDecision.text ?? "";
++			telegramData = void 0;
++			reactionEmoji = void 0;
++		}
+ 		let contentForSentHook = reply.text || (reply.audioAsVoice === true ? resolveVoiceFallbackText(reply) : "") || "";
+ 		try {
+ 			const deliveredCountBeforeReply = progress.deliveredCount;
+@@ -1166,4 +1199,4 @@ async function resolveMedia(params) {
+ 	};
+ }
+ //#endregion
+-export { emitTelegramMessageSentHooks as i, deliverReplies as n, emitInternalMessageSentHook as r, resolveMedia as t };
++export { emitTelegramMessageSentHooks as i, deliverReplies as n, emitInternalMessageSentHook as r, runOpenClawSecurityTelegramMessageBarrier, resolveMedia as t };
+diff --git a/dist/dispatch-BSYjC-fp.js b/dist/dispatch-BSYjC-fp.js
+index bb9cefc..63db836 100644
+--- a/dist/dispatch-BSYjC-fp.js
++++ b/dist/dispatch-BSYjC-fp.js
+@@ -66,6 +66,7 @@ import { t as resolveRoutedDeliveryThreadId } from "./routed-delivery-thread-DbB
+ import { n as resolveStoredModelOverride } from "./stored-model-override-D4Rq-lSd.js";
+ import { t as finalizeInboundContext } from "./inbound-context-cqPd3Tht.js";
+ import crypto from "node:crypto";
++import { createOpenClawSecurityTurnCapsule, markOpenClawSecurityOutboundBarrierComplete, readOpenClawSecurityTurnContext, runOpenClawSecurityOutboundBarrier as runOpenClawSecurityOutboundBarrierCore, runWithOpenClawSecurityTurnCapsule, invalidateOpenClawSecurityTurnCapsule } from "./lifecycle-hook-helpers-Dowa8zK4.js";
+ //#region src/auto-reply/dispatch-dispatcher.ts
+ /** Mark a dispatcher complete, wait for pending work, then run optional cleanup. */
+ async function settleReplyDispatcher(params) {
+@@ -78,11 +79,30 @@ async function settleReplyDispatcher(params) {
+ }
+ /** Run work with a dispatcher and always drain it before returning or throwing. */
+ async function withReplyDispatcher(params) {
+-	try {
+-		return await params.run();
+-	} finally {
+-		await settleReplyDispatcher(params);
+-	}
++	const openClawSecurityTurnCapsule = createOpenClawSecurityTurnCapsule();
++	return runWithOpenClawSecurityTurnCapsule(openClawSecurityTurnCapsule, async () => {
++		try {
++			return await params.run();
++		} finally {
++			try {
++				await settleReplyDispatcher(params);
++			} finally {
++				invalidateOpenClawSecurityTurnCapsule();
++			}
++		}
++	});
++}
++async function runOpenClawSecurityDispatchMessageBarrier(params) {
++	const turn = readOpenClawSecurityTurnContext();
++	const localRunId = params?.runState?.runId ?? params?.runId ?? turn?.runId;
++	const localSessionKey = params?.finalizedSessionKey ?? params?.sessionKey ?? turn?.sessionKey;
++	if (turn !== null && params?.runState?.runId !== void 0 && params.runState.runId !== turn.runId || turn !== null && params?.finalizedSessionKey !== void 0 && params.finalizedSessionKey !== turn.sessionKey) return runOpenClawSecurityOutboundBarrierCore({ ...params, ctx: turn, runId: "__correlation_mismatch__", sessionKey: "__correlation_mismatch__" });
++	return runOpenClawSecurityOutboundBarrierCore({
++		...params,
++		ctx: params?.ctx ?? turn,
++		runId: localRunId,
++		sessionKey: localSessionKey
++	});
+ }
+ //#endregion
+ //#region src/channels/plugins/exec-approval-local.ts
+@@ -2338,7 +2358,15 @@ async function dispatchInboundMessageWithBufferedDispatcher(params) {
+ 		if (await shouldCancelForegroundReplyDelivery(foregroundReplyFence)) return null;
+ 		const deliverPayload = configuredBeforeDeliver ? await configuredBeforeDeliver(payload, info) : payload;
+ 		if (!deliverPayload || await shouldCancelForegroundReplyDelivery(foregroundReplyFence)) return null;
+-		return deliverPayload;
++		const openClawSecurityDispatchDecision = await runOpenClawSecurityDispatchMessageBarrier({
++			payload: deliverPayload,
++			ctx: readOpenClawSecurityTurnContext(),
++			runState: replyPayloadRunState,
++			finalizedSessionKey: finalized.SessionKey,
++			hookRunner: getGlobalHookRunner()
++		});
++		const openClawSecurityDispatchPayload = openClawSecurityDispatchDecision.outcome === "replace" ? { text: openClawSecurityDispatchDecision.text } : deliverPayload;
++		return markOpenClawSecurityOutboundBarrierComplete(openClawSecurityDispatchPayload);
+ 	} : void 0;
+ 	const deliver = async (payload, info) => {
+ 		try {
+@@ -2389,9 +2417,22 @@ async function dispatchInboundMessageWithDispatcher(params) {
+ 	const replyPayloadBeforeDeliver = buildReplyPayloadSendingBeforeDeliver(params.ctx, replyPayloadRunState);
+ 	const globalBeforeDeliver = combineBeforeDeliverHooks(replyPayloadBeforeDeliver, buildMessageSendingBeforeDeliver(params.ctx));
+ 	const composedBeforeDeliver = params.dispatcherOptions.beforeDeliver ? combineBeforeDeliverHooks(params.dispatcherOptions.beforeDeliver, replyPayloadBeforeDeliver) : globalBeforeDeliver;
++	const securedBeforeDeliver = composedBeforeDeliver ? async (payload, info) => {
++		const deliverPayload = await composedBeforeDeliver(payload, info);
++		if (!deliverPayload) return null;
++		const openClawSecurityDispatchDecision = await runOpenClawSecurityDispatchMessageBarrier({
++			payload: deliverPayload,
++			ctx: readOpenClawSecurityTurnContext(),
++			runState: replyPayloadRunState,
++			finalizedSessionKey: params.ctx.SessionKey,
++			hookRunner: getGlobalHookRunner()
++		});
++		const openClawSecurityDispatchPayload = openClawSecurityDispatchDecision.outcome === "replace" ? { text: openClawSecurityDispatchDecision.text } : deliverPayload;
++		return markOpenClawSecurityOutboundBarrierComplete(openClawSecurityDispatchPayload);
++	} : void 0;
+ 	const dispatcher = createReplyDispatcher({
+ 		...params.dispatcherOptions,
+-		beforeDeliver: composedBeforeDeliver,
++		beforeDeliver: securedBeforeDeliver,
+ 		silentReplyContext: params.dispatcherOptions.silentReplyContext ?? silentReplyContext
+ 	});
+ 	markReplyPayloadSendingBeforeDeliverInstalled(dispatcher, replyPayloadBeforeDeliver);
+@@ -2406,4 +2447,4 @@ async function dispatchInboundMessageWithDispatcher(params) {
+ 	});
+ }
+ //#endregion
+-export { settleReplyDispatcher as a, dispatchReplyFromConfig as i, dispatchInboundMessageWithBufferedDispatcher as n, withReplyDispatcher as o, dispatchInboundMessageWithDispatcher as r, dispatchInboundMessage as t };
++export { settleReplyDispatcher as a, dispatchReplyFromConfig as i, dispatchInboundMessageWithBufferedDispatcher as n, withReplyDispatcher as o, runOpenClawSecurityDispatchMessageBarrier, dispatchInboundMessageWithDispatcher as r, dispatchInboundMessage as t };
 diff --git a/dist/hook-runner-global-D_43rcnU.js b/dist/hook-runner-global-D_43rcnU.js
 index b21ff5b..bf570c4 100644
 --- a/dist/hook-runner-global-D_43rcnU.js
@@ -299,7 +827,7 @@ index b21ff5b..bf570c4 100644
  		runInboundClaimForPlugin,
  		runInboundClaimForPluginOutcome,
 diff --git a/dist/lifecycle-hook-helpers-Dowa8zK4.js b/dist/lifecycle-hook-helpers-Dowa8zK4.js
-index 5a72ef4..0df0bdb 100644
+index 5a72ef4..63a95a0 100644
 --- a/dist/lifecycle-hook-helpers-Dowa8zK4.js
 +++ b/dist/lifecycle-hook-helpers-Dowa8zK4.js
 @@ -4,6 +4,7 @@ import { t as createSubsystemLogger } from "./subsystem-CYwCorYs.js";
@@ -310,7 +838,7 @@ index 5a72ef4..0df0bdb 100644
  //#region src/agents/harness/hook-context.ts
  /** Builds the sparse hook context object passed to agent harness plugin hooks. */
  function buildAgentHookContext(params) {
-@@ -174,4 +175,277 @@ function isBeforeAgentFinalizeRetry(value) {
+@@ -174,4 +175,293 @@ function isBeforeAgentFinalizeRetry(value) {
  	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
  }
  //#endregion
@@ -327,6 +855,7 @@ index 5a72ef4..0df0bdb 100644
 +*/
 +const OPENCLAW_SECURITY_TURN_CONTEXT_STORE = new AsyncLocalStorage();
 +const OPENCLAW_SECURITY_OUTBOUND_COMPLETION_BY_PAYLOAD = new WeakMap();
++const OPENCLAW_SECURITY_OUTBOUND_COMPLETION_SYMBOL = Symbol("openclaw-security-outbound-completion.v1");
 +const OPENCLAW_SECURITY_TURN_CONTEXT_SCHEMA = "openclaw-security-turn-context.v1";
 +const OPENCLAW_SECURITY_FIXED_REPLACEMENT_MARKER = "openclaw-security-fixed-replacement.v1";
 +const OPENCLAW_SECURITY_FIXED_REPLACEMENT_TEXTS = {
@@ -349,7 +878,8 @@ index 5a72ef4..0df0bdb 100644
 +		invalidated: false,
 +		context: null,
 +		assistant: null,
-+		replacement: null
++		replacement: null,
++		outboundPayloads: new Set()
 +	};
 +}
 +function runWithOpenClawSecurityTurnCapsule(capsule, fn) {
@@ -379,19 +909,31 @@ index 5a72ef4..0df0bdb 100644
 +function markOpenClawSecurityOutboundBarrierComplete(payload) {
 +	const turn = readOpenClawSecurityTurnContext();
 +	if (!isOpenClawSecurityPlainRecord(payload) || turn === null) throw new Error("openclaw security outbound completion was rejected");
-+	OPENCLAW_SECURITY_OUTBOUND_COMPLETION_BY_PAYLOAD.set(payload, Object.freeze({
-+		runId: turn.runId,
-+		sessionKey: turn.sessionKey
-+	}));
++	const marker = Object.freeze({ runId: turn.runId, sessionKey: turn.sessionKey });
++	OPENCLAW_SECURITY_OUTBOUND_COMPLETION_BY_PAYLOAD.set(payload, marker);
++	OPENCLAW_SECURITY_TURN_CONTEXT_STORE.getStore().outboundPayloads.add(payload);
++	if (!Object.hasOwn(payload, OPENCLAW_SECURITY_OUTBOUND_COMPLETION_SYMBOL)) try {
++		Object.defineProperty(payload, OPENCLAW_SECURITY_OUTBOUND_COMPLETION_SYMBOL, {
++			value: marker,
++			enumerable: true,
++			configurable: true
++		});
++	} catch {}
 +	return payload;
 +}
-+function isOpenClawSecurityOutboundBarrierComplete(payload) {
++function hasOpenClawSecurityOutboundBarrierComplete(payload) {
 +	const turn = readOpenClawSecurityTurnContext();
 +	if (!isOpenClawSecurityPlainRecord(payload) || turn === null) return false;
-+	const marker = OPENCLAW_SECURITY_OUTBOUND_COMPLETION_BY_PAYLOAD.get(payload);
-+	if (!marker || marker.runId !== turn.runId || marker.sessionKey !== turn.sessionKey) return false;
++	const marker = OPENCLAW_SECURITY_OUTBOUND_COMPLETION_BY_PAYLOAD.get(payload) ?? payload[OPENCLAW_SECURITY_OUTBOUND_COMPLETION_SYMBOL];
++	return Boolean(marker && marker.runId === turn.runId && marker.sessionKey === turn.sessionKey);
++}
++function isOpenClawSecurityOutboundBarrierComplete(payload) {
++	if (!hasOpenClawSecurityOutboundBarrierComplete(payload)) return false;
 +	OPENCLAW_SECURITY_OUTBOUND_COMPLETION_BY_PAYLOAD.delete(payload);
 +	return true;
++}
++function consumeOpenClawSecurityOutboundBarrierComplete(payload) {
++	return isOpenClawSecurityOutboundBarrierComplete(payload);
 +}
 +function setOpenClawSecurityAssistantProjection(projection) {
 +	const capsule = OPENCLAW_SECURITY_TURN_CONTEXT_STORE.getStore();
@@ -407,6 +949,8 @@ index 5a72ef4..0df0bdb 100644
 +function invalidateOpenClawSecurityTurnCapsule() {
 +	const capsule = OPENCLAW_SECURITY_TURN_CONTEXT_STORE.getStore();
 +	if (!capsule) return;
++	for (const payload of capsule.outboundPayloads) OPENCLAW_SECURITY_OUTBOUND_COMPLETION_BY_PAYLOAD.delete(payload);
++	capsule.outboundPayloads.clear();
 +	capsule.active = false;
 +	capsule.invalidated = true;
 +	capsule.context = null;
@@ -588,7 +1132,95 @@ index 5a72ef4..0df0bdb 100644
 +	}
 +}
 +//#endregion
-+export { runAgentHarnessLlmInputHook as a, runAgentHarnessBeforeAgentFinalizeHook as i, getAgentHarnessHookRunner as n, runAgentHarnessLlmOutputHook as o, runAgentHarnessAgentEndHook as r, buildAgentHookContext as s, awaitAgentHarnessAgentEndHook as t, createOpenClawSecurityTurnCapsule, runWithOpenClawSecurityTurnCapsule, activateOpenClawSecurityTurnCapsule, readOpenClawSecurityTurnContext, markOpenClawSecurityOutboundBarrierComplete, isOpenClawSecurityOutboundBarrierComplete, setOpenClawSecurityAssistantProjection, readOpenClawSecurityAssistantProjection, invalidateOpenClawSecurityTurnCapsule, createOpenClawSecurityFixedReplacement, readOpenClawSecurityFixedReplacement, runOpenClawSecurityOutboundBarrier };
++export { runAgentHarnessLlmInputHook as a, runAgentHarnessBeforeAgentFinalizeHook as i, getAgentHarnessHookRunner as n, runAgentHarnessLlmOutputHook as o, runAgentHarnessAgentEndHook as r, buildAgentHookContext as s, awaitAgentHarnessAgentEndHook as t, createOpenClawSecurityTurnCapsule, runWithOpenClawSecurityTurnCapsule, activateOpenClawSecurityTurnCapsule, readOpenClawSecurityTurnContext, markOpenClawSecurityOutboundBarrierComplete, hasOpenClawSecurityOutboundBarrierComplete, isOpenClawSecurityOutboundBarrierComplete, consumeOpenClawSecurityOutboundBarrierComplete, setOpenClawSecurityAssistantProjection, readOpenClawSecurityAssistantProjection, invalidateOpenClawSecurityTurnCapsule, createOpenClawSecurityFixedReplacement, readOpenClawSecurityFixedReplacement, runOpenClawSecurityOutboundBarrier };
+diff --git a/dist/plugin-sdk/hook-types-H9SC6W-p.d.ts b/dist/plugin-sdk/hook-types-H9SC6W-p.d.ts
+index f4a80fd..5c305b0 100644
+--- a/dist/plugin-sdk/hook-types-H9SC6W-p.d.ts
++++ b/dist/plugin-sdk/hook-types-H9SC6W-p.d.ts
+@@ -342,8 +342,8 @@ type PluginHookName = "before_model_resolve" | "agent_turn_prepare" | "before_pr
+  * session-binding adapters before `subagent_spawned` fires. Use
+  * `subagent_spawned` for post-launch observation in new plugins.
+  */
+-| "subagent_spawning" | "subagent_delivery_target" | "subagent_spawned" | "subagent_ended" /** @deprecated Use gateway_stop. */ | "deactivate" | "gateway_start" | "gateway_stop" | "heartbeat_prompt_contribution" | "cron_changed" | "before_dispatch" | "reply_dispatch" | "before_install" | "before_agent_run" | "resolve_exec_env";
+-declare const PLUGIN_HOOK_NAMES: readonly ["before_model_resolve", "agent_turn_prepare", "before_prompt_build", "before_agent_start", "before_agent_reply", "model_call_started", "model_call_ended", "llm_input", "llm_output", "before_agent_finalize", "agent_end", "before_compaction", "after_compaction", "before_reset", "inbound_claim", "message_received", "message_sending", "reply_payload_sending", "message_sent", "before_tool_call", "after_tool_call", "tool_result_persist", "before_message_write", "session_start", "session_end", "subagent_spawning", "subagent_delivery_target", "subagent_spawned", "subagent_ended", "deactivate", "gateway_start", "gateway_stop", "heartbeat_prompt_contribution", "cron_changed", "before_dispatch", "reply_dispatch", "before_install", "before_agent_run", "resolve_exec_env"];
++| "subagent_spawning" | "subagent_delivery_target" | "subagent_spawned" | "subagent_ended" /** @deprecated Use gateway_stop. */ | "deactivate" | "gateway_start" | "gateway_stop" | "heartbeat_prompt_contribution" | "cron_changed" | "before_dispatch" | "reply_dispatch" | "before_install" | "before_agent_run" | "before_model_output_delivery" | "before_tool_execution" | "before_message_delivery" | "resolve_exec_env";
++declare const PLUGIN_HOOK_NAMES: readonly ["before_model_resolve", "agent_turn_prepare", "before_prompt_build", "before_agent_start", "before_agent_reply", "model_call_started", "model_call_ended", "llm_input", "llm_output", "before_agent_finalize", "agent_end", "before_compaction", "after_compaction", "before_reset", "inbound_claim", "message_received", "message_sending", "reply_payload_sending", "message_sent", "before_tool_call", "after_tool_call", "tool_result_persist", "before_message_write", "session_start", "session_end", "subagent_spawning", "subagent_delivery_target", "subagent_spawned", "subagent_ended", "deactivate", "gateway_start", "gateway_stop", "heartbeat_prompt_contribution", "cron_changed", "before_dispatch", "reply_dispatch", "before_install", "before_agent_run", "before_model_output_delivery", "before_tool_execution", "before_message_delivery", "resolve_exec_env"];
+ type DeprecatedPluginHookName = "subagent_spawning" | "deactivate";
+ type PluginHookDeprecation = {
+   replacement: string;
+@@ -368,7 +368,7 @@ declare const isPluginHookName: (hookName: unknown) => hookName is PluginHookNam
+ declare const PROMPT_INJECTION_HOOK_NAMES: readonly ["agent_turn_prepare", "before_prompt_build", "before_agent_start", "heartbeat_prompt_contribution"];
+ type PromptInjectionHookName = (typeof PROMPT_INJECTION_HOOK_NAMES)[number];
+ declare const isPromptInjectionHookName: (hookName: PluginHookName) => boolean;
+-declare const CONVERSATION_HOOK_NAMES: readonly ["before_model_resolve", "before_agent_reply", "llm_input", "llm_output", "before_agent_finalize", "agent_end", "before_agent_run"];
++declare const CONVERSATION_HOOK_NAMES: readonly ["before_model_resolve", "before_agent_reply", "llm_input", "llm_output", "before_agent_finalize", "agent_end", "before_agent_run", "before_model_output_delivery", "before_tool_execution", "before_message_delivery"];
+ type ConversationHookName = (typeof CONVERSATION_HOOK_NAMES)[number];
+ declare const isConversationHookName: (hookName: PluginHookName) => boolean;
+ type PluginHookAgentContext = {
+@@ -1132,4 +1132,27 @@ type PluginHookRegistration<K extends PluginHookName = PluginHookName> = {
+   source: string;
+ };
+ //#endregion
+-export { PluginHookModelCallEndedEvent as $, PluginHookMessageSendingResult as $t, PluginHookBeforeMessageWriteEvent as A, PluginHookToolResultPersistResult as At, PluginHookGatewayCronJob as B, PluginAgentTurnPrepareEvent as Bt, PluginHookBeforeInstallContext as C, PluginHookSubagentSpawningResult as Ct, PluginHookBeforeInstallResult as D, PluginHookToolKind as Dt, PluginHookBeforeInstallRequest as E, PluginHookToolInputKind as Et, PluginHookCronChangedEvent as F, PromptInjectionHookName as Ft, PluginHookGatewayCronUpdateInput as G, PluginNextTurnInjectionEnqueueResult as Gt, PluginHookGatewayCronRemoveResult as H, PluginHeartbeatPromptContributionEvent as Ht, PluginHookDeprecation as I, isConversationHookName as It, PluginHookHandlerMap as J, PluginHookInboundClaimContext as Jt, PluginHookGatewayStartEvent as K, PluginNextTurnInjectionRecord as Kt, PluginHookGatewayContext as L, isDeprecatedPluginHookName as Lt, PluginHookBeforeResetEvent as M, PluginInstallRequestKind as Mt, PluginHookBeforeToolCallEvent as N, PluginInstallSourcePathKind as Nt, PluginHookBeforeInstallSkill as O, PluginHookToolResultPersistContext as Ot, PluginHookContextWindowSource as P, PluginInstallTargetType as Pt, PluginHookModelCallBaseEvent as Q, PluginHookMessageSendingEvent as Qt, PluginHookGatewayCronCreateInput as R, isPluginHookName as Rt, PluginHookBeforeInstallBuiltinScan as S, PluginHookSubagentSpawningEvent as St, PluginHookBeforeInstallPlugin as T, PluginHookToolContext as Tt, PluginHookGatewayCronRunStatus as U, PluginHeartbeatPromptContributionResult as Ut, PluginHookGatewayCronJobState as V, PluginAgentTurnPrepareResult as Vt, PluginHookGatewayCronService as W, PluginNextTurnInjection as Wt, PluginHookLlmInputEvent as X, PluginHookMessageContext as Xt, PluginHookInboundClaimResult as Y, PluginHookInboundClaimEvent as Yt, PluginHookLlmOutputEvent as Z, PluginHookMessageReceivedEvent as Zt, PluginHookBeforeAgentRunResult as _, ReplyDispatchKind as _n, PluginHookSubagentContext as _t, DeprecatedPluginHookName as a, PluginHookBeforeToolCallResult as an, PluginHookReplyDispatchResult as at, PluginHookBeforeDispatchEvent as b, ReplyFollowupAdmissionBarrierTimeoutPolicy as bn, PluginHookSubagentEndedEvent as bt, PluginHookAfterCompactionEvent as c, PluginHookBeforeAgentStartOverrideResult as cn, PluginHookReplyPayloadSendingEvent as ct, PluginHookAgentEndEvent as d, PluginHookBeforeModelResolveEvent as dn, PluginHookResolveExecEnvContext as dt, PluginHookMessageSentEvent as en, PluginHookModelCallStartedEvent as et, PluginHookBeforeAgentFinalizeEvent as f, PluginHookBeforeModelResolveResult as fn, PluginHookResolveExecEnvEvent as ft, PluginHookBeforeAgentRunEvent as g, ReplyDispatchBeforeDeliver as gn, PluginHookSessionStartEvent as gt, PluginHookBeforeAgentReplyResult as h, stripPromptMutationFieldsFromLegacyHookResult as hn, PluginHookSessionEndReason as ht, DEPRECATED_PLUGIN_HOOK_NAMES as i, PluginApprovalResolutions as in, PluginHookReplyDispatchEvent as it, PluginHookBeforeMessageWriteResult as j, PluginInstallFinding as jt, PluginHookBeforeInstallSkillInstallSpec as k, PluginHookToolResultPersistEvent as kt, PluginHookAfterToolCallEvent as l, PluginHookBeforeAgentStartResult as ln, PluginHookReplyPayloadSendingResult as lt, PluginHookBeforeAgentReplyEvent as m, PluginHookBeforePromptBuildResult as mn, PluginHookSessionEndEvent as mt, ConversationHookName as n, InputGateDecision as nn, PluginHookRegistration as nt, PLUGIN_HOOK_NAMES as o, PLUGIN_PROMPT_MUTATION_RESULT_FIELDS as on, PluginHookReplyPayload as ot, PluginHookBeforeAgentFinalizeResult as p, PluginHookBeforePromptBuildEvent as pn, PluginHookSessionContext as pt, PluginHookGatewayStopEvent as q, PluginJsonValue as qt, DEPRECATED_PLUGIN_HOOKS as r, PluginApprovalResolution as rn, PluginHookReplyDispatchContext as rt, PROMPT_INJECTION_HOOK_NAMES as s, PluginHookBeforeAgentStartEvent as sn, PluginHookReplyPayloadSendingContext as st, CONVERSATION_HOOK_NAMES as t, GateHookResult as tn, PluginHookName as tt, PluginHookAgentContext as u, PluginHookBeforeModelResolveAttachment as un, PluginHookReplyUsageState as ut, PluginHookBeforeCompactionEvent as v, ReplyDispatchRuntimeInfo as vn, PluginHookSubagentDeliveryTargetEvent as vt, PluginHookBeforeInstallEvent as w, PluginHookSubagentTargetKind as wt, PluginHookBeforeDispatchResult as x, PluginHookSubagentSpawnedEvent as xt, PluginHookBeforeDispatchContext as y, ReplyDispatcher as yn, PluginHookSubagentDeliveryTargetResult as yt, PluginHookGatewayCronDeliveryStatus as z, isPromptInjectionHookName as zt };
+\ No newline at end of file
++export { PluginHookModelCallEndedEvent as $, PluginHookMessageSendingResult as $t, PluginHookBeforeMessageWriteEvent as A, PluginHookToolResultPersistResult as At, PluginHookGatewayCronJob as B, PluginAgentTurnPrepareEvent as Bt, PluginHookBeforeInstallContext as C, PluginHookSubagentSpawningResult as Ct, PluginHookBeforeInstallResult as D, PluginHookToolKind as Dt, PluginHookBeforeInstallRequest as E, PluginHookToolInputKind as Et, PluginHookCronChangedEvent as F, PromptInjectionHookName as Ft, PluginHookGatewayCronUpdateInput as G, PluginNextTurnInjectionEnqueueResult as Gt, PluginHookGatewayCronRemoveResult as H, PluginHeartbeatPromptContributionEvent as Ht, PluginHookDeprecation as I, isConversationHookName as It, PluginHookHandlerMap as J, PluginHookInboundClaimContext as Jt, PluginHookGatewayStartEvent as K, PluginNextTurnInjectionRecord as Kt, PluginHookGatewayContext as L, isDeprecatedPluginHookName as Lt, PluginHookBeforeResetEvent as M, PluginInstallRequestKind as Mt, PluginHookBeforeToolCallEvent as N, PluginInstallSourcePathKind as Nt, PluginHookBeforeInstallSkill as O, PluginHookToolResultPersistContext as Ot, PluginHookContextWindowSource as P, PluginInstallTargetType as Pt, PluginHookModelCallBaseEvent as Q, PluginHookMessageSendingEvent as Qt, PluginHookGatewayCronCreateInput as R, isPluginHookName as Rt, PluginHookBeforeInstallBuiltinScan as S, PluginHookSubagentSpawningEvent as St, PluginHookBeforeInstallPlugin as T, PluginHookToolContext as Tt, PluginHookGatewayCronRunStatus as U, PluginHeartbeatPromptContributionResult as Ut, PluginHookGatewayCronJobState as V, PluginAgentTurnPrepareResult as Vt, PluginHookGatewayCronService as W, PluginNextTurnInjection as Wt, PluginHookLlmInputEvent as X, PluginHookMessageContext as Xt, PluginHookInboundClaimResult as Y, PluginHookInboundClaimEvent as Yt, PluginHookLlmOutputEvent as Z, PluginHookMessageReceivedEvent as Zt, PluginHookBeforeAgentRunResult as _, ReplyDispatchKind as _n, PluginHookSubagentContext as _t, DeprecatedPluginHookName as a, PluginHookBeforeToolCallResult as an, PluginHookReplyDispatchResult as at, PluginHookBeforeDispatchEvent as b, ReplyFollowupAdmissionBarrierTimeoutPolicy as bn, PluginHookSubagentEndedEvent as bt, PluginHookAfterCompactionEvent as c, PluginHookBeforeAgentStartOverrideResult as cn, PluginHookReplyPayloadSendingEvent as ct, PluginHookAgentEndEvent as d, PluginHookBeforeModelResolveEvent as dn, PluginHookResolveExecEnvContext as dt, PluginHookMessageSentEvent as en, PluginHookModelCallStartedEvent as et, PluginHookBeforeAgentFinalizeEvent as f, PluginHookBeforeModelResolveResult as fn, PluginHookResolveExecEnvEvent as ft, PluginHookBeforeAgentRunEvent as g, ReplyDispatchBeforeDeliver as gn, PluginHookSessionStartEvent as gt, PluginHookBeforeAgentReplyResult as h, stripPromptMutationFieldsFromLegacyHookResult as hn, PluginHookSessionEndReason as ht, DEPRECATED_PLUGIN_HOOK_NAMES as i, PluginApprovalResolutions as in, PluginHookReplyDispatchEvent as it, PluginHookBeforeMessageWriteResult as j, PluginInstallFinding as jt, PluginHookBeforeInstallSkillInstallSpec as k, PluginHookToolResultPersistEvent as kt, PluginHookAfterToolCallEvent as l, PluginHookBeforeAgentStartResult as ln, PluginHookReplyPayloadSendingResult as lt, PluginHookBeforeAgentReplyEvent as m, PluginHookBeforePromptBuildResult as mn, PluginHookSessionEndEvent as mt, ConversationHookName as n, InputGateDecision as nn, PluginHookRegistration as nt, PLUGIN_HOOK_NAMES as o, PLUGIN_PROMPT_MUTATION_RESULT_FIELDS as on, PluginHookReplyPayload as ot, PluginHookBeforeAgentFinalizeResult as p, PluginHookBeforePromptBuildEvent as pn, PluginHookSessionContext as pt, PluginHookGatewayStopEvent as q, PluginJsonValue as qt, DEPRECATED_PLUGIN_HOOKS as r, PluginApprovalResolution as rn, PluginHookReplyDispatchContext as rt, PROMPT_INJECTION_HOOK_NAMES as s, PluginHookBeforeAgentStartEvent as sn, PluginHookReplyPayloadSendingContext as st, CONVERSATION_HOOK_NAMES as t, GateHookResult as tn, PluginHookName as tt, PluginHookAgentContext as u, PluginHookBeforeModelResolveAttachment as un, PluginHookReplyUsageState as ut, PluginHookBeforeCompactionEvent as v, ReplyDispatchRuntimeInfo as vn, PluginHookSubagentDeliveryTargetEvent as vt, PluginHookBeforeInstallEvent as w, PluginHookSubagentTargetKind as wt, PluginHookBeforeDispatchResult as x, PluginHookSubagentSpawnedEvent as xt, PluginHookBeforeDispatchContext as y, ReplyDispatcher as yn, PluginHookSubagentDeliveryTargetResult as yt, PluginHookGatewayCronDeliveryStatus as z, isPromptInjectionHookName as zt };
++type OpenClawSecurityBarrierResult = {
++	outcome: "pass";
++} | {
++	outcome: "replace";
++	replacement_code: "security_review_required" | "sandbox_security_policy_blocked" | "sandbox_security_evaluation_unavailable";
++	replacement_text: string;
++};
++type OpenClawSecurityHealth = {
++	enforcement: "healthy" | "failed";
++	audit: "healthy" | "degraded";
++};
++type OpenClawSecurityHookCorrelation = {
++	runId: string;
++	sessionKey: string;
++	callId: string | null;
++};
++type OpenClawSecurityHookEnvelope = {
++	schema_version: "openclaw-security-hook-result.v1";
++	correlation: OpenClawSecurityHookCorrelation;
++	health: OpenClawSecurityHealth;
++	barrier: OpenClawSecurityBarrierResult;
++};
++export type { OpenClawSecurityBarrierResult, OpenClawSecurityHealth, OpenClawSecurityHookCorrelation, OpenClawSecurityHookEnvelope };
+diff --git a/dist/run-attempt-6K7vbtby.js b/dist/run-attempt-6K7vbtby.js
+index df52550..adcaf59 100644
+--- a/dist/run-attempt-6K7vbtby.js
++++ b/dist/run-attempt-6K7vbtby.js
+@@ -36,6 +36,7 @@ import "./security-runtime-9B3GNdfx.js";
+ import "./string-coerce-runtime-BiGbTN2j.js";
+ import { n as buildBootstrapContextForFiles, o as resolveBootstrapFilesForRun } from "./bootstrap-files-DqiviIn-.js";
+ import { a as runAgentHarnessLlmInputHook, n as getAgentHarnessHookRunner, o as runAgentHarnessLlmOutputHook } from "./lifecycle-hook-helpers-Dowa8zK4.js";
++import { runOpenClawSecurityModelOutputBarrier } from "./lifecycle-hook-helpers-Dowa8zK4.js";
+ import { n as runAgentCleanupStep } from "./attempt.tool-run-context-7Ln8T2_0.js";
+ import "./core-CuT-btUr.js";
+ import "./exec-approvals-runtime-Dsew763o.js";
+@@ -9592,7 +9593,20 @@ async function runCodexAppServerAttempt(params, options = {}) {
+ 				isHeartbeat: params.bootstrapContextRunKind === "heartbeat"
+ 			});
+ 		}
+-		runAgentHarnessLlmOutputHook({
++		const openClawSecurityModelDecision = await runOpenClawSecurityModelOutputBarrier({
++			event: {
++				runId: params.runId,
++				sessionId: params.sessionId,
++				provider: params.provider,
++				model: params.modelId,
++				assistantTexts: result.assistantTexts,
++				lastAssistant: result.lastAssistant
++			},
++			ctx: hookContext,
++			hookRunner
++		});
++		const openClawSecurityModelReplacement = openClawSecurityModelDecision?.outcome === "replace" ? openClawSecurityModelDecision : void 0;
++		if (!openClawSecurityModelReplacement) runAgentHarnessLlmOutputHook({
+ 			event: {
+ 				runId: params.runId,
+ 				sessionId: params.sessionId,
 diff --git a/dist/selection-DopzNY3I.js b/dist/selection-DopzNY3I.js
 index e2cbc34..9dbadc5 100644
 --- a/dist/selection-DopzNY3I.js
@@ -665,266 +1297,6 @@ index e2cbc34..9dbadc5 100644
  				runId: params.runId,
  				sessionId: params.sessionId,
  				provider: params.provider,
-diff --git a/dist/cli-runner-B0eKIePw.js b/dist/cli-runner-B0eKIePw.js
-index 28a31d9..38d0452 100644
---- a/dist/cli-runner-B0eKIePw.js
-+++ b/dist/cli-runner-B0eKIePw.js
-@@ -14,8 +14,9 @@ import { i as buildGenericCliContextEngineHostSupport } from "./host-compat-BibW
- import { a as finalizeHarnessContextEngineTurn, d as runAgentEndSideEffects, l as waitForDeferredTurnMaintenanceForSession, n as bootstrapHarnessContextEngine, s as runHarnessContextEngineMaintenance, u as awaitAgentEndSideEffects } from "./context-engine-lifecycle-BHLvvk9q.js";
- import { n as buildAgentHookContextIdentityFields, t as buildAgentHookContextChannelFields } from "./hook-agent-context-ugCMMoT5.js";
- import "./embedded-agent-helpers-uCYK89ck.js";
--import { a as runAgentHarnessLlmInputHook, o as runAgentHarnessLlmOutputHook, s as buildAgentHookContext } from "./lifecycle-hook-helpers-Dowa8zK4.js";
-+import { a as runAgentHarnessLlmInputHook, o as runAgentHarnessLlmOutputHook, s as buildAgentHookContext, activateOpenClawSecurityTurnCapsule, createOpenClawSecurityFixedReplacement } from "./lifecycle-hook-helpers-Dowa8zK4.js";
- import { t as buildEmbeddedRunPayloads } from "./payloads-CpuaeKbz.js";
-+import { runOpenClawSecurityModelOutputBarrier } from "./lifecycle-hook-helpers-Dowa8zK4.js";
- import { n as getCliMessagingDeliveryEvidence, t as attachCliMessagingDeliveryEvidence } from "./delivery-evidence-Cmz7UHq4.js";
- import { i as formatCliBackendOutputDigest, r as cliBackendLog } from "./log-CYYTJQ53.js";
- import { d as loadCliSessionHistoryMessages, m as buildAgentHookConversationMessages, n as claudeCliSessionTranscriptHasContent, u as loadCliSessionContextEngineMessages } from "./attempt-execution.helpers-Cn8IzzwX.js";
-@@ -579,7 +580,20 @@ async function runPreparedCliAgent(context) {
- 			model: context.modelId,
- 			usage: output.usage
- 		}) : void 0;
--		if (assistantText.length > 0 && hasLlmOutputHooks) runAgentHarnessLlmOutputHook({
-+		const openClawSecurityModelDecision = await runOpenClawSecurityModelOutputBarrier({
-+			event: {
-+				runId: params.runId,
-+				sessionId: params.sessionId,
-+				provider: params.provider,
-+				model: context.modelId,
-+				assistantTexts: assistantTexts,
-+				lastAssistant: lastAssistant
-+			},
-+			ctx: hookContext,
-+			hookRunner
-+		});
-+		const openClawSecurityModelReplacement = openClawSecurityModelDecision?.outcome === "replace" ? openClawSecurityModelDecision : void 0;
-+		if (!openClawSecurityModelReplacement && assistantText.length > 0 && hasLlmOutputHooks) runAgentHarnessLlmOutputHook({
- 			event: {
- 				runId: params.runId,
- 				sessionId: params.sessionId,
-@@ -747,6 +761,11 @@ async function runPreparedCliAgent(context) {
- 		};
- 		if (hasBeforeAgentRunHooks && hookRunner) {
- 			let beforeRunResult;
-+			activateOpenClawSecurityTurnCapsule({
-+				prompt: params.prompt,
-+				runId: params.runId,
-+				sessionKey: params.sessionKey
-+			});
- 			try {
- 				beforeRunResult = await hookRunner.runBeforeAgentRun({
- 					prompt: params.prompt,
-@@ -776,12 +795,12 @@ async function runPreparedCliAgent(context) {
- 				});
- 				return buildBlockedBeforeAgentRunResult(blockMessage);
- 			}
--			const beforeRunDecision = beforeRunResult?.decision;
--			if (beforeRunDecision?.outcome === "block") {
--				const blockMessage = resolveBlockMessage(beforeRunDecision, { blockedBy: beforeRunResult?.pluginId ?? "unknown" });
-+			if (beforeRunResult?.outcome === "replace") {
-+				const openClawSecurityReplacement = createOpenClawSecurityFixedReplacement(beforeRunResult);
-+				const blockMessage = openClawSecurityReplacement.text;
- 				await persistBlockedBeforeAgentRun({
- 					message: blockMessage,
--					pluginId: beforeRunResult?.pluginId ?? "unknown"
-+					pluginId: beforeRunResult.replacement_code
- 				});
- 				await runCliAgentEndHook(params, {
- 					event: buildBlockedAgentEndEvent(blockMessage),
-diff --git a/dist/run-attempt-6K7vbtby.js b/dist/run-attempt-6K7vbtby.js
-index df52550..adcaf59 100644
---- a/dist/run-attempt-6K7vbtby.js
-+++ b/dist/run-attempt-6K7vbtby.js
-@@ -36,6 +36,7 @@ import "./security-runtime-9B3GNdfx.js";
- import "./string-coerce-runtime-BiGbTN2j.js";
- import { n as buildBootstrapContextForFiles, o as resolveBootstrapFilesForRun } from "./bootstrap-files-DqiviIn-.js";
- import { a as runAgentHarnessLlmInputHook, n as getAgentHarnessHookRunner, o as runAgentHarnessLlmOutputHook } from "./lifecycle-hook-helpers-Dowa8zK4.js";
-+import { runOpenClawSecurityModelOutputBarrier } from "./lifecycle-hook-helpers-Dowa8zK4.js";
- import { n as runAgentCleanupStep } from "./attempt.tool-run-context-7Ln8T2_0.js";
- import "./core-CuT-btUr.js";
- import "./exec-approvals-runtime-Dsew763o.js";
-@@ -9592,7 +9593,20 @@ async function runCodexAppServerAttempt(params, options = {}) {
- 				isHeartbeat: params.bootstrapContextRunKind === "heartbeat"
- 			});
- 		}
--		runAgentHarnessLlmOutputHook({
-+		const openClawSecurityModelDecision = await runOpenClawSecurityModelOutputBarrier({
-+			event: {
-+				runId: params.runId,
-+				sessionId: params.sessionId,
-+				provider: params.provider,
-+				model: params.modelId,
-+				assistantTexts: result.assistantTexts,
-+				lastAssistant: result.lastAssistant
-+			},
-+			ctx: hookContext,
-+			hookRunner
-+		});
-+		const openClawSecurityModelReplacement = openClawSecurityModelDecision?.outcome === "replace" ? openClawSecurityModelDecision : void 0;
-+		if (!openClawSecurityModelReplacement) runAgentHarnessLlmOutputHook({
- 			event: {
- 				runId: params.runId,
- 				sessionId: params.sessionId,
-diff --git a/dist/agent-tools.before-tool-call-59sE70R-.js b/dist/agent-tools.before-tool-call-59sE70R-.js
-index bb14f66..58568a3 100644
---- a/dist/agent-tools.before-tool-call-59sE70R-.js
-+++ b/dist/agent-tools.before-tool-call-59sE70R-.js
-@@ -12,6 +12,7 @@ import { _ as PluginApprovalResolutions } from "./command-registration-BBago94k.
- import { h as getPluginSessionExtensionStateSync } from "./registry-BiuJAn1Z.js";
- import { s as getActivePluginRegistry } from "./runtime-DGlFdyGW.js";
- import { f as getGlobalHookRunnerRegistry, t as getGlobalHookRunner } from "./hook-runner-global-D_43rcnU.js";
-+import { createOpenClawSecurityFixedReplacement, readOpenClawSecurityAssistantProjection, readOpenClawSecurityTurnContext } from "./lifecycle-hook-helpers-Dowa8zK4.js";
- import { i as resolveSandboxInputPath } from "./sandbox-paths-lIFb9EBl.js";
- import { i as listChannelPlugins, t as getChannelPlugin } from "./registry-BxD52xuY2.js";
- import "./plugins-B7CoaAGS.js";
-@@ -1494,6 +1495,106 @@ async function runBeforeToolCallHook(args) {
- 		};
- 	}
- }
-+const OPENCLAW_SECURITY_TOOL_BARRIER_MARKER = "openclaw-security-tool-barrier.v1";
-+const OPENCLAW_SECURITY_TOOL_BARRIER_SYMBOL = Symbol(OPENCLAW_SECURITY_TOOL_BARRIER_MARKER);
-+const OPENCLAW_SECURITY_TOOL_DENY_TEXT = "Blocked by sandbox security policy.";
-+function createOpenClawSecurityToolFloor() {
-+	const replacement = createOpenClawSecurityFixedReplacement({
-+		outcome: "replace",
-+		replacement_code: "sandbox_security_policy_blocked",
-+		replacement_text: OPENCLAW_SECURITY_TOOL_DENY_TEXT
-+	});
-+	return Object.freeze({
-+		outcome: "replace",
-+		text: replacement.text,
-+		replacement_code: replacement.replacement_code,
-+		provenance: replacement.provenance,
-+		marker: OPENCLAW_SECURITY_TOOL_BARRIER_MARKER
-+	});
-+}
-+function openClawSecurityDeepEqual(left, right, seen = new Map()) {
-+	if (Object.is(left, right)) return true;
-+	if (left === null || right === null || typeof left !== "object" || typeof right !== "object") return false;
-+	const prior = seen.get(left);
-+	if (prior === right) return true;
-+	seen.set(left, right);
-+	if (Array.isArray(left) || Array.isArray(right)) {
-+		if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
-+		return left.every((value, index) => openClawSecurityDeepEqual(value, right[index], seen));
-+	}
-+	if (!isPlainObject(left) || !isPlainObject(right)) return false;
-+	const leftKeys = Reflect.ownKeys(left);
-+	const rightKeys = Reflect.ownKeys(right);
-+	if (leftKeys.length !== rightKeys.length || leftKeys.some((key) => !Object.hasOwn(right, key))) return false;
-+	return leftKeys.every((key) => typeof key === "string" && openClawSecurityDeepEqual(left[key], right[key], seen));
-+}
-+function openClawSecurityReadMatchingAssistant(projection, toolCallId, toolName, toolArguments) {
-+	if (!isPlainObject(projection) || Reflect.ownKeys(projection).length !== 3 || projection.schema_version !== "openclaw-security-assistant-projection.v1" || !Array.isArray(projection.text_parts) || projection.text_parts.some((text) => typeof text !== "string") || !Array.isArray(projection.tool_calls)) return null;
-+	let matched;
-+	const callIds = new Set();
-+	for (const call of projection.tool_calls) {
-+		if (!isPlainObject(call) || Reflect.ownKeys(call).length !== 3 || typeof call.call_id !== "string" || typeof call.tool_name !== "string" || !Object.hasOwn(call, "arguments") || callIds.has(call.call_id)) return null;
-+		callIds.add(call.call_id);
-+		if (call.call_id !== toolCallId) continue;
-+		if (call.tool_name !== toolName || !openClawSecurityDeepEqual(call.arguments, toolArguments)) return null;
-+		matched = call;
-+	}
-+	return matched ? projection : null;
-+}
-+async function runOpenClawSecurityToolBarrier(params) {
-+	const turn = readOpenClawSecurityTurnContext();
-+	const ctx = params?.ctx;
-+	const toolName = typeof params?.toolName === "string" ? params.toolName.trim() : "";
-+	const toolCallId = typeof params?.toolCallId === "string" ? params.toolCallId.trim() : "";
-+	const toolParams = params?.params;
-+	if (!turn || !isPlainObject(ctx) || ctx.runId !== turn.runId || ctx.sessionKey !== turn.sessionKey || !toolName || !toolCallId || !isPlainObject(toolParams)) return createOpenClawSecurityToolFloor();
-+	if (Object.hasOwn(toolParams, OPENCLAW_SECURITY_TOOL_BARRIER_SYMBOL)) return createOpenClawSecurityToolFloor();
-+	try {
-+		Object.defineProperty(toolParams, OPENCLAW_SECURITY_TOOL_BARRIER_SYMBOL, {
-+			value: true,
-+			enumerable: false,
-+			configurable: false
-+		});
-+	} catch {
-+		return createOpenClawSecurityToolFloor();
-+	}
-+	let toolArguments;
-+	try {
-+		toolArguments = structuredClone(toolParams);
-+	} catch {
-+		return createOpenClawSecurityToolFloor();
-+	}
-+	const assistant = openClawSecurityReadMatchingAssistant(readOpenClawSecurityAssistantProjection(), toolCallId, toolName, toolArguments);
-+	if (assistant === null) return createOpenClawSecurityToolFloor();
-+	const hookRunner = params?.hookRunner ?? getGlobalHookRunner();
-+	let hasBarrier = false;
-+	try {
-+		hasBarrier = hookRunner?.hasHooks("before_tool_execution") === true;
-+	} catch {
-+		return createOpenClawSecurityToolFloor();
-+	}
-+	if (!hasBarrier || typeof hookRunner?.runBeforeToolExecution !== "function") return createOpenClawSecurityToolFloor();
-+	const event = Object.freeze({
-+		schema_version: "openclaw-security-hook-event.v1",
-+		runId: turn.runId,
-+		sessionKey: turn.sessionKey,
-+		callId: toolCallId,
-+		assistant,
-+		tool: Object.freeze({
-+			call_id: toolCallId,
-+			tool_name: toolName,
-+			arguments: toolArguments
-+		})
-+	});
-+	let decision;
-+	try {
-+		decision = await hookRunner.runBeforeToolExecution(event, turn);
-+	} catch {
-+		return createOpenClawSecurityToolFloor();
-+	}
-+	if (isPlainObject(decision) && Reflect.ownKeys(decision).length === 1 && decision.outcome === "pass") return Object.freeze({ outcome: "pass" });
-+	return createOpenClawSecurityToolFloor();
-+}
- /** Wrap a tool execute function with before_tool_call hooks and diagnostics. */
- function wrapToolWithBeforeToolCallHook(tool, ctx, options = {}) {
- 	const execute = tool.execute;
-@@ -1583,9 +1684,32 @@ function wrapToolWithBeforeToolCallHook(tool, ctx, options = {}) {
- 				hookParams,
- 				adjustedParams: outcome.params
- 			});
--			executeParams = tool.finalizeBeforeToolCallParams?.(executeParams, preparedParams) ?? executeParams;
--			recordAdjustedParamsForToolCall(toolCallId, executeParams, ctx?.runId);
- 			const normalizedToolName = normalizeToolName(toolName || "tool");
-+			executeParams = tool.finalizeBeforeToolCallParams?.(executeParams, preparedParams) ?? executeParams;
-+				const openClawSecurityToolDecision = await runOpenClawSecurityToolBarrier({
-+					toolName: normalizedToolName,
-+					params: executeParams,
-+					toolCallId,
-+					ctx
-+				});
-+				if (openClawSecurityToolDecision.outcome === "replace") {
-+					const blockedResult = buildBlockedToolResult({
-+						reason: openClawSecurityToolDecision.text,
-+						deniedReason: "sandbox-security",
-+						toolCallId,
-+						runId: ctx?.runId
-+					});
-+					await recordLoopOutcome({
-+						ctx,
-+						toolName: normalizedToolName,
-+						toolParams: executeParams,
-+						toolCallId,
-+						result: blockedResult,
-+						toolCallOrdinal
-+					});
-+					return blockedResult;
-+				}
-+				recordAdjustedParamsForToolCall(toolCallId, executeParams, ctx?.runId);
- 			const trace = ctx?.trace ? freezeDiagnosticTraceContext(createChildDiagnosticTraceContext(ctx.trace)) : void 0;
- 			const eventBase = {
- 				...ctx?.runId && { runId: ctx.runId },
-@@ -1759,4 +1883,4 @@ function toLintErrorObject(value, fallbackMessage) {
- 	return error;
- }
- //#endregion
--export { resolveChannelReactionGuidance as A, normalizeCodeModeExecBeforeHookParams as C, listChannelSupportedActions as D, listChannelAgentTools as E, consumeStructuredReplaySafeToolCall as F, peekAdjustedParamsForToolCall as I, getChannelAgentToolMeta as M, consumeAdjustedParamsForToolCall as N, resolveChannelMessageToolHints as O, consumePreExecutionBlockedToolCall as P, markCodeModeControlTool as S, listAllChannelSupportedActions as T, setToolTerminalPresentation as _, getBeforeToolCallPolicyDiagnosticState as a, getCodeModeExecBeforeHookMetadata as b, isToolWrappedWithBeforeToolCallHook as c, requestDeferredPluginToolApproval as d, rewrapToolWithBeforeToolCallHook as f, copyToolTerminalPresentation as g, wrapToolWithBeforeToolCallHook as h, finalizeToolTerminalPresentation as i, copyChannelAgentToolMeta as j, resolveChannelPromptCapabilities as k, recordAdjustedParamsForToolCall as l, setBeforeToolCallDiagnosticsEnabled as m, cancelDeferredPluginToolApproval as n, hasBeforeToolCallPolicy as o, runBeforeToolCallHook as p, copyBeforeToolCallHookMarker as r, isBeforeToolCallBlockedError as s, buildBlockedToolResult as t, recordStructuredReplayTrustForToolCall as u, CODE_MODE_EXEC_TOOL_NAME as v, reconcileCodeModeExecBeforeHookParams as w, isCodeModeControlTool as x, CODE_MODE_WAIT_TOOL_NAME as y };
-+export { resolveChannelReactionGuidance as A, normalizeCodeModeExecBeforeHookParams as C, listChannelSupportedActions as D, listChannelAgentTools as E, consumeStructuredReplaySafeToolCall as F, peekAdjustedParamsForToolCall as I, getChannelAgentToolMeta as M, consumeAdjustedParamsForToolCall as N, resolveChannelMessageToolHints as O, consumePreExecutionBlockedToolCall as P, markCodeModeControlTool as S, listAllChannelSupportedActions as T, setToolTerminalPresentation as _, getBeforeToolCallPolicyDiagnosticState as a, getCodeModeExecBeforeHookMetadata as b, isToolWrappedWithBeforeToolCallHook as c, requestDeferredPluginToolApproval as d, rewrapToolWithBeforeToolCallHook as f, copyToolTerminalPresentation as g, wrapToolWithBeforeToolCallHook as h, finalizeToolTerminalPresentation as i, copyChannelAgentToolMeta as j, resolveChannelPromptCapabilities as k, recordAdjustedParamsForToolCall as l, setBeforeToolCallDiagnosticsEnabled as m, cancelDeferredPluginToolApproval as n, hasBeforeToolCallPolicy as o, runBeforeToolCallHook as p, copyBeforeToolCallHookMarker as r, isBeforeToolCallBlockedError as s, buildBlockedToolResult as t, recordStructuredReplayTrustForToolCall as u, CODE_MODE_EXEC_TOOL_NAME as v, reconcileCodeModeExecBeforeHookParams as w, isCodeModeControlTool as x, CODE_MODE_WAIT_TOOL_NAME as y, runOpenClawSecurityToolBarrier };
 diff --git a/dist/tool-split-BKKaUdyz.js b/dist/tool-split-BKKaUdyz.js
 index cd96ff0..7d99e6c 100644
 --- a/dist/tool-split-BKKaUdyz.js
@@ -969,357 +1341,3 @@ index cd96ff0..7d99e6c 100644
  					}
  					return normalizeToolExecutionResult({
  						toolName: normalizedName,
-diff --git a/dist/dispatch-BSYjC-fp.js b/dist/dispatch-BSYjC-fp.js
-index bb9cefc..63db836 100644
---- a/dist/dispatch-BSYjC-fp.js
-+++ b/dist/dispatch-BSYjC-fp.js
-@@ -66,6 +66,7 @@ import { t as resolveRoutedDeliveryThreadId } from "./routed-delivery-thread-DbB
- import { n as resolveStoredModelOverride } from "./stored-model-override-D4Rq-lSd.js";
- import { t as finalizeInboundContext } from "./inbound-context-cqPd3Tht.js";
- import crypto from "node:crypto";
-+import { createOpenClawSecurityTurnCapsule, markOpenClawSecurityOutboundBarrierComplete, readOpenClawSecurityTurnContext, runOpenClawSecurityOutboundBarrier as runOpenClawSecurityOutboundBarrierCore, runWithOpenClawSecurityTurnCapsule, invalidateOpenClawSecurityTurnCapsule } from "./lifecycle-hook-helpers-Dowa8zK4.js";
- //#region src/auto-reply/dispatch-dispatcher.ts
- /** Mark a dispatcher complete, wait for pending work, then run optional cleanup. */
- async function settleReplyDispatcher(params) {
-@@ -78,11 +79,30 @@ async function settleReplyDispatcher(params) {
- }
- /** Run work with a dispatcher and always drain it before returning or throwing. */
- async function withReplyDispatcher(params) {
--	try {
--		return await params.run();
--	} finally {
--		await settleReplyDispatcher(params);
--	}
-+	const openClawSecurityTurnCapsule = createOpenClawSecurityTurnCapsule();
-+	return runWithOpenClawSecurityTurnCapsule(openClawSecurityTurnCapsule, async () => {
-+		try {
-+			return await params.run();
-+		} finally {
-+			try {
-+				await settleReplyDispatcher(params);
-+			} finally {
-+				invalidateOpenClawSecurityTurnCapsule();
-+			}
-+		}
-+	});
-+}
-+async function runOpenClawSecurityDispatchMessageBarrier(params) {
-+	const turn = readOpenClawSecurityTurnContext();
-+	const localRunId = params?.runState?.runId ?? params?.runId ?? turn?.runId;
-+	const localSessionKey = params?.finalizedSessionKey ?? params?.sessionKey ?? turn?.sessionKey;
-+	if (turn !== null && params?.runState?.runId !== void 0 && params.runState.runId !== turn.runId || turn !== null && params?.finalizedSessionKey !== void 0 && params.finalizedSessionKey !== turn.sessionKey) return runOpenClawSecurityOutboundBarrierCore({ ...params, ctx: turn, runId: "__correlation_mismatch__", sessionKey: "__correlation_mismatch__" });
-+	return runOpenClawSecurityOutboundBarrierCore({
-+		...params,
-+		ctx: params?.ctx ?? turn,
-+		runId: localRunId,
-+		sessionKey: localSessionKey
-+	});
- }
- //#endregion
- //#region src/channels/plugins/exec-approval-local.ts
-@@ -2338,7 +2358,15 @@ async function dispatchInboundMessageWithBufferedDispatcher(params) {
- 		if (await shouldCancelForegroundReplyDelivery(foregroundReplyFence)) return null;
- 		const deliverPayload = configuredBeforeDeliver ? await configuredBeforeDeliver(payload, info) : payload;
- 		if (!deliverPayload || await shouldCancelForegroundReplyDelivery(foregroundReplyFence)) return null;
--		return deliverPayload;
-+		const openClawSecurityDispatchDecision = await runOpenClawSecurityDispatchMessageBarrier({
-+			payload: deliverPayload,
-+			ctx: readOpenClawSecurityTurnContext(),
-+			runState: replyPayloadRunState,
-+			finalizedSessionKey: finalized.SessionKey,
-+			hookRunner: getGlobalHookRunner()
-+		});
-+		const openClawSecurityDispatchPayload = openClawSecurityDispatchDecision.outcome === "replace" ? { text: openClawSecurityDispatchDecision.text } : deliverPayload;
-+		return markOpenClawSecurityOutboundBarrierComplete(openClawSecurityDispatchPayload);
- 	} : void 0;
- 	const deliver = async (payload, info) => {
- 		try {
-@@ -2389,9 +2417,22 @@ async function dispatchInboundMessageWithDispatcher(params) {
- 	const replyPayloadBeforeDeliver = buildReplyPayloadSendingBeforeDeliver(params.ctx, replyPayloadRunState);
- 	const globalBeforeDeliver = combineBeforeDeliverHooks(replyPayloadBeforeDeliver, buildMessageSendingBeforeDeliver(params.ctx));
- 	const composedBeforeDeliver = params.dispatcherOptions.beforeDeliver ? combineBeforeDeliverHooks(params.dispatcherOptions.beforeDeliver, replyPayloadBeforeDeliver) : globalBeforeDeliver;
-+	const securedBeforeDeliver = composedBeforeDeliver ? async (payload, info) => {
-+		const deliverPayload = await composedBeforeDeliver(payload, info);
-+		if (!deliverPayload) return null;
-+		const openClawSecurityDispatchDecision = await runOpenClawSecurityDispatchMessageBarrier({
-+			payload: deliverPayload,
-+			ctx: readOpenClawSecurityTurnContext(),
-+			runState: replyPayloadRunState,
-+			finalizedSessionKey: params.ctx.SessionKey,
-+			hookRunner: getGlobalHookRunner()
-+		});
-+		const openClawSecurityDispatchPayload = openClawSecurityDispatchDecision.outcome === "replace" ? { text: openClawSecurityDispatchDecision.text } : deliverPayload;
-+		return markOpenClawSecurityOutboundBarrierComplete(openClawSecurityDispatchPayload);
-+	} : void 0;
- 	const dispatcher = createReplyDispatcher({
- 		...params.dispatcherOptions,
--		beforeDeliver: composedBeforeDeliver,
-+		beforeDeliver: securedBeforeDeliver,
- 		silentReplyContext: params.dispatcherOptions.silentReplyContext ?? silentReplyContext
- 	});
- 	markReplyPayloadSendingBeforeDeliverInstalled(dispatcher, replyPayloadBeforeDeliver);
-@@ -2406,4 +2447,4 @@ async function dispatchInboundMessageWithDispatcher(params) {
- 	});
- }
- //#endregion
--export { settleReplyDispatcher as a, dispatchReplyFromConfig as i, dispatchInboundMessageWithBufferedDispatcher as n, withReplyDispatcher as o, dispatchInboundMessageWithDispatcher as r, dispatchInboundMessage as t };
-+export { settleReplyDispatcher as a, dispatchReplyFromConfig as i, dispatchInboundMessageWithBufferedDispatcher as n, withReplyDispatcher as o, runOpenClawSecurityDispatchMessageBarrier, dispatchInboundMessageWithDispatcher as r, dispatchInboundMessage as t };
-diff --git a/dist/agent-runner.runtime-BUWW8f6n.js b/dist/agent-runner.runtime-BUWW8f6n.js
-index 5f89241..1ad689d 100644
---- a/dist/agent-runner.runtime-BUWW8f6n.js
-+++ b/dist/agent-runner.runtime-BUWW8f6n.js
-@@ -69,6 +69,7 @@ import { n as createReplyToModeFilterForChannel, o as resolveReplyToMode, t as c
- import "./embedded-agent-helpers-uCYK89ck.js";
- import { n as filterMessagingToolMediaDuplicates, r as resolveMessagingToolPayloadDedupe, t as filterMessagingToolDuplicates } from "./reply-payloads-dedupe-C3cwsqeJ.js";
- import { n as routeReply, t as isRoutableChannel } from "./route-reply-BNe8txSq.js";
-+import { activateOpenClawSecurityTurnCapsule, createOpenClawSecurityTurnCapsule, invalidateOpenClawSecurityTurnCapsule, runWithOpenClawSecurityTurnCapsule } from "./lifecycle-hook-helpers-Dowa8zK4.js";
- import { o as runWithModelFallback } from "./model-fallback-BZZj7sGv.js";
- import { c as setCliSessionId, n as clearCliSession, r as getCliSessionBinding, s as setCliSessionBinding } from "./cli-session-BfABgzht.js";
- import "./sandbox-CsOwXLpl.js";
-@@ -2771,6 +2772,11 @@ function createFollowupRunner(params) {
- 				}
- 			}
- 			const runId = crypto.randomUUID();
-+			activateOpenClawSecurityTurnCapsule({
-+				prompt: queued.prompt,
-+				runId,
-+				sessionKey: run.sessionKey ?? sessionKey
-+			});
- 			const shouldSurfaceToControlUi = isInternalMessageChannel(resolveOriginMessageProvider({
- 				originatingChannel: queued.originatingChannel,
- 				provider: run.messageProvider
-@@ -3442,7 +3448,16 @@ function createFollowupRunner(params) {
- 			typing.markDispatchIdle();
- 		}
- 	};
--	return async (queued) => queued.queuedExecutionContext ? await queued.queuedExecutionContext(() => runQueuedFollowup(queued)) : await runQueuedFollowup(queued);
-+	return async (queued) => {
-+		const openClawSecurityFollowupCapsule = createOpenClawSecurityTurnCapsule();
-+		return await runWithOpenClawSecurityTurnCapsule(openClawSecurityFollowupCapsule, async () => {
-+			try {
-+				return queued.queuedExecutionContext ? await queued.queuedExecutionContext(() => runQueuedFollowup(queued)) : await runQueuedFollowup(queued);
-+			} finally {
-+				invalidateOpenClawSecurityTurnCapsule();
-+			}
-+		});
-+	};
- }
- //#endregion
- //#region src/auto-reply/reply/pending-tool-task-drain.ts
-diff --git a/dist/deliver-CJEsHkyF.js b/dist/deliver-CJEsHkyF.js
-index 3c6b12e..2515b5a 100644
---- a/dist/deliver-CJEsHkyF.js
-+++ b/dist/deliver-CJEsHkyF.js
-@@ -2,6 +2,7 @@ import { i as formatErrorMessage } from "./errors-CaUClLPg.js";
- import { a as emitInternalDiagnosticEvent } from "./diagnostic-events-CLCyIzm6.js";
- import { t as createSubsystemLogger } from "./subsystem-CYwCorYs.js";
- import { t as getGlobalHookRunner, u as fireAndForgetHook } from "./hook-runner-global-D_43rcnU.js";
-+import { isOpenClawSecurityOutboundBarrierComplete, readOpenClawSecurityTurnContext, runOpenClawSecurityOutboundBarrier as runOpenClawSecurityOutboundBarrierCore } from "./lifecycle-hook-helpers-Dowa8zK4.js";
- import { i as copyReplyPayloadMetadata } from "./reply-payload-HLWc9ssO.js";
- import { m as triggerInternalHook, n as createInternalHookEvent } from "./internal-hooks-CiYwipLA.js";
- import { t as resolveMirroredTranscriptText } from "./transcript-mirror-BUJrk10q.js";
-@@ -51,6 +52,18 @@ async function runReplyPayloadSendingHook(params) {
- 	const payload = result?.payload ?? params.payload;
- 	return copyReplyPayloadMetadata(params.payload, payload);
- }
-+async function runOpenClawSecurityOutboundBarrier(params) {
-+	const turn = readOpenClawSecurityTurnContext();
-+	const hookRunId = params?.replyPayloadSendingHook?.runId;
-+	const hookSessionKey = params?.replyPayloadSendingHook?.sessionKey;
-+	if (turn !== null && (hookRunId !== void 0 && hookRunId !== turn.runId || hookSessionKey !== void 0 && hookSessionKey !== turn.sessionKey)) return runOpenClawSecurityOutboundBarrierCore({ ...params, ctx: turn, runId: "__correlation_mismatch__", sessionKey: "__correlation_mismatch__" });
-+	return runOpenClawSecurityOutboundBarrierCore({
-+		...params,
-+		ctx: params?.ctx ?? turn,
-+		runId: hookRunId ?? params?.runId ?? turn?.runId,
-+		sessionKey: hookSessionKey ?? params?.sessionKey ?? turn?.sessionKey
-+	});
-+}
- //#endregion
- //#region src/channels/message/rendered-batch.ts
- function countMedia(payload) {
-@@ -876,45 +889,8 @@ async function deliverOutboundPayloads(params) {
- }
- async function deliverOutboundPayloadsInternal(params) {
- 	const { channel, to, payloads } = params;
--	const queuePolicy = params.queuePolicy ?? "best_effort";
--	const queuePayloads = payloads.map(stripInternalRuntimeScaffoldingFromPayload);
--	const queuePayloadsChanged = queuePayloads.some((payload, index) => payload !== payloads[index]);
--	const renderedBatchPlan = params.renderedBatchPlan ?? createRenderedMessageBatchPlan(params.payloads);
--	const queueRenderedBatchPlan = queuePayloadsChanged ? createRenderedMessageBatchPlan(queuePayloads) : renderedBatchPlan;
--	const queueId = params.skipQueue ? null : await enqueueDelivery({
--		channel,
--		to,
--		accountId: params.accountId,
--		payloads: queuePayloads,
--		renderedBatchPlan: queueRenderedBatchPlan,
--		threadId: params.threadId,
--		replyToId: params.replyToId,
--		replyToMode: params.replyToMode,
--		formatting: params.formatting,
--		identity: params.identity,
--		bestEffort: params.bestEffort,
--		gifPlayback: params.gifPlayback,
--		forceDocument: params.forceDocument,
--		replyPayloadSendingHook: params.replyPayloadSendingHook,
--		silent: params.silent,
--		mirror: params.mirror,
--		session: params.session,
--		gatewayClientScopes: params.gatewayClientScopes
--	}).catch((err) => {
--		if (queuePolicy === "required") throw err;
--		return null;
--	});
--	if (queueId) params.onDeliveryIntent?.({
--		id: queueId,
--		channel,
--		to,
--		...params.accountId ? { accountId: params.accountId } : {},
--		queuePolicy
--	});
--	if (!queueId) return await deliverOutboundPayloadsWithQueueCleanup(params, null);
--	const claimResult = await withActiveDeliveryClaim(queueId, () => deliverOutboundPayloadsWithQueueCleanup(params, queueId));
--	if (claimResult.status === "claimed-by-other-owner") return [];
--	return claimResult.value;
-+	const queueId = null;
-+	return await deliverOutboundPayloadsWithQueueCleanup(params, queueId);
- }
- async function deliverOutboundPayloadsWithQueueCleanup(params, queueId) {
- 	let hadPartialFailure = false;
-@@ -1142,7 +1118,12 @@ async function deliverOutboundPayloadsCore(params) {
- 		};
- 		try {
- 			throwIfAborted(abortSignal);
--			const replyHookResult = await applyReplyPayloadSendingHook({
-+			const dispatchBarrierComplete = isOpenClawSecurityOutboundBarrierComplete(payload);
-+			const replyHookResult = dispatchBarrierComplete ? {
-+				cancelled: false,
-+				payload,
-+				changed: false
-+			} : await applyReplyPayloadSendingHook({
- 				hook: params.replyPayloadSendingHook,
- 				payload
- 			});
-@@ -1155,7 +1136,10 @@ async function deliverOutboundPayloadsCore(params) {
- 			}
- 			let deliveryPayload = replyHookResult.payload;
- 			payloadSummary = buildPayloadSummary(deliveryPayload);
--			const hookResult = await applyMessageSendingHook({
-+			const hookResult = dispatchBarrierComplete ? {
-+				cancelled: false,
-+				payload: deliveryPayload
-+			} : await applyMessageSendingHook({
- 				hookRunner,
- 				enabled: hasMessageSendingHooks,
- 				payload: deliveryPayload,
-@@ -1180,6 +1164,17 @@ async function deliverOutboundPayloadsCore(params) {
- 				continue;
- 			}
- 			deliveryPayload = hookResult.payload;
-+			if (!dispatchBarrierComplete) {
-+				const openClawSecurityOutboundDecision = await runOpenClawSecurityOutboundBarrier({
-+					payload: deliveryPayload,
-+					ctx: readOpenClawSecurityTurnContext(),
-+					runId: params.replyPayloadSendingHook?.runId ?? params.runId,
-+					sessionKey: params.replyPayloadSendingHook?.sessionKey ?? params.sessionKey,
-+					replyPayloadSendingHook: params.replyPayloadSendingHook,
-+					hookRunner
-+				});
-+				if (openClawSecurityOutboundDecision.outcome === "replace") deliveryPayload = { text: openClawSecurityOutboundDecision.text };
-+			}
- 			const renderedPayload = stripInternalRuntimeScaffoldingFromPayload(await renderPresentationForDelivery(await getDeliveryHandler(buildPayloadSummary(deliveryPayload).mediaUrls), deliveryPayload));
- 			const renderedHandler = await getDeliveryHandler(buildPayloadSummary(renderedPayload).mediaUrls);
- 			const normalizedEffectivePayload = renderedHandler.normalizePayload ? renderedHandler.normalizePayload(renderedPayload) : renderedPayload;
-@@ -1437,4 +1432,4 @@ async function deliverOutboundPayloadsCore(params) {
- 	return results;
- }
- //#endregion
--export { createRenderedMessageBatch as a, throwIfAborted as i, deliverOutboundPayloadsInternal as n, runReplyPayloadSendingHook as o, resolveOutboundDurableFinalDeliverySupport as r, isOutboundDeliveryError as s, deliverOutboundPayloads as t };
-+export { createRenderedMessageBatch as a, throwIfAborted as i, deliverOutboundPayloadsInternal as n, runReplyPayloadSendingHook as o, resolveOutboundDurableFinalDeliverySupport as r, isOutboundDeliveryError as s, runOpenClawSecurityOutboundBarrier, deliverOutboundPayloads as t };
-diff --git a/dist/delivery-CExBlTq2.js b/dist/delivery-CExBlTq2.js
-index 59e347d..00a5e1b 100644
---- a/dist/delivery-CExBlTq2.js
-+++ b/dist/delivery-CExBlTq2.js
-@@ -2,6 +2,7 @@ import { i as formatErrorMessage } from "./errors-CaUClLPg.js";
- import { a as root } from "./secure-temp-dir-XAWcZnE2.js";
- import { r as logVerbose, s as warn, t as danger } from "./globals-C-cvQH14.js";
- import { t as getGlobalHookRunner, u as fireAndForgetHook } from "./hook-runner-global-D_43rcnU.js";
-+import { readOpenClawSecurityTurnContext, runOpenClawSecurityOutboundBarrier as runOpenClawSecurityOutboundBarrierCore } from "./lifecycle-hook-helpers-Dowa8zK4.js";
- import { m as triggerInternalHook, n as createInternalHookEvent } from "./internal-hooks-CiYwipLA.js";
- import { c as kindFromMime, s as isGifMedia } from "./mime-C8mVE2Bw.js";
- import { n as probeVideoDimensions } from "./media-services-CG1_-bAI.js";
-@@ -706,6 +707,17 @@ function emitTelegramMessageSentHooks(params) {
- 		enabled: hookRunner?.hasHooks("message_sent") ?? false
- 	});
- }
-+async function runOpenClawSecurityTelegramMessageBarrier(params) {
-+	const turn = readOpenClawSecurityTurnContext();
-+	const internalSessionKey = params?.sessionKeyForInternalHooks;
-+	if (turn !== null && internalSessionKey !== void 0 && internalSessionKey !== turn.sessionKey) return runOpenClawSecurityOutboundBarrierCore({ ...params, ctx: turn, runId: "__correlation_mismatch__", sessionKey: "__correlation_mismatch__" });
-+	return runOpenClawSecurityOutboundBarrierCore({
-+		...params,
-+		ctx: params?.ctx ?? turn,
-+		runId: params?.runId ?? turn?.runId,
-+		sessionKey: internalSessionKey ?? params?.sessionKey ?? turn?.sessionKey
-+	});
-+}
- async function deliverReplies(params) {
- 	const progress = {
- 		hasReplied: false,
-@@ -741,11 +753,11 @@ async function deliverReplies(params) {
- 	}));
- 	for (const originalReply of normalizedReplies) {
- 		let reply = originalReply;
--		const mediaList = reply?.mediaUrls?.length ? reply.mediaUrls : reply?.mediaUrl ? [reply.mediaUrl] : [];
--		const hasMedia = mediaList.length > 0;
--		const presentation = normalizeMessagePresentation(reply?.presentation);
--		const interactive = reply?.interactive;
--		const resolvedReplyText = resolveTelegramInteractiveTextFallback({
-+		let mediaList = reply?.mediaUrls?.length ? reply.mediaUrls : reply?.mediaUrl ? [reply.mediaUrl] : [];
-+		let hasMedia = mediaList.length > 0;
-+		let presentation = normalizeMessagePresentation(reply?.presentation);
-+		let interactive = reply?.interactive;
-+		let resolvedReplyText = resolveTelegramInteractiveTextFallback({
- 			text: reply?.text,
- 			interactive,
- 			presentation
-@@ -754,8 +766,8 @@ async function deliverReplies(params) {
- 			...reply,
- 			text: resolvedReplyText
- 		};
--		const telegramData = reply.channelData?.telegram;
--		const reactionEmoji = typeof telegramData?.reaction?.emoji === "string" ? telegramData.reaction.emoji : void 0;
-+		let telegramData = reply.channelData?.telegram;
-+		let reactionEmoji = typeof telegramData?.reaction?.emoji === "string" ? telegramData.reaction.emoji : void 0;
- 		if (!resolvedReplyText && !hasMedia && !reactionEmoji) {
- 			if (reply?.audioAsVoice) {
- 				logVerbose("telegram reply has audioAsVoice without media/text; skipping");
-@@ -807,6 +819,23 @@ async function deliverReplies(params) {
- 				text: hookResult.content
- 			};
- 		}
-+		const openClawSecurityTelegramDecision = await runOpenClawSecurityTelegramMessageBarrier({
-+			payload: reply,
-+			ctx: readOpenClawSecurityTurnContext(),
-+			runId: readOpenClawSecurityTurnContext()?.runId,
-+			sessionKeyForInternalHooks: params.sessionKeyForInternalHooks,
-+			hookRunner
-+		});
-+		if (openClawSecurityTelegramDecision.outcome === "replace") {
-+			reply = { text: openClawSecurityTelegramDecision.text };
-+			mediaList = [];
-+			hasMedia = false;
-+			presentation = void 0;
-+			interactive = void 0;
-+			resolvedReplyText = openClawSecurityTelegramDecision.text ?? "";
-+			telegramData = void 0;
-+			reactionEmoji = void 0;
-+		}
- 		let contentForSentHook = reply.text || (reply.audioAsVoice === true ? resolveVoiceFallbackText(reply) : "") || "";
- 		try {
- 			const deliveredCountBeforeReply = progress.deliveredCount;
-@@ -1166,4 +1195,4 @@ async function resolveMedia(params) {
- 	};
- }
- //#endregion
--export { emitTelegramMessageSentHooks as i, deliverReplies as n, emitInternalMessageSentHook as r, resolveMedia as t };
-+export { emitTelegramMessageSentHooks as i, deliverReplies as n, emitInternalMessageSentHook as r, runOpenClawSecurityTelegramMessageBarrier, resolveMedia as t };

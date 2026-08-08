@@ -364,7 +364,7 @@ test("REQ-SBX-GENERAL-004 P4-T6 composed dispatch delivery carries one host-only
   );
   assert.match(
     deliverSource,
-    /isOpenClawSecurityOutboundBarrierComplete/,
+    /hasOpenClawSecurityOutboundBarrierComplete/,
     "generic delivery must consume the dispatch completion"
   );
 
@@ -384,6 +384,10 @@ test("REQ-SBX-GENERAL-004 P4-T6 composed dispatch delivery carries one host-only
     lifecycle,
     "markOpenClawSecurityOutboundBarrierComplete"
   );
+  const hasComplete = assertFunction(
+    lifecycle,
+    "hasOpenClawSecurityOutboundBarrierComplete"
+  );
   const isComplete = assertFunction(
     lifecycle,
     "isOpenClawSecurityOutboundBarrierComplete"
@@ -396,6 +400,32 @@ test("REQ-SBX-GENERAL-004 P4-T6 composed dispatch delivery carries one host-only
     assert.equal(isComplete(candidate), true);
   });
   assert.equal(isComplete(candidate), false);
+
+  const clone = { ...payload() };
+  const cloneCapsule = create();
+  await runWith(cloneCapsule, async () => {
+    activate({ prompt: "current exact prompt", runId: "run-1", sessionKey: "session-1" });
+    mark(clone);
+    const normalizedClone = { ...clone };
+    assert.equal(
+      hasComplete(normalizedClone),
+      true,
+      "host-only completion must survive the host payload normalization clone"
+    );
+  });
+
+  const invalidatedCapsule = create();
+  await runWith(invalidatedCapsule, async () => {
+    activate({ prompt: "current exact prompt", runId: "run-1", sessionKey: "session-1" });
+    mark(invalidatedCapsule === null ? candidate : candidate);
+    assert.equal(hasComplete(candidate), true);
+    assertFunction(lifecycle, "invalidateOpenClawSecurityTurnCapsule")();
+    assert.equal(
+      hasComplete(candidate),
+      false,
+      "invalidating the turn must make its completion marker unreadable"
+    );
+  });
 });
 
 test("REQ-SBX-GENERAL-004 P4-T6 queued follow-up owns one capsule across model run and routed delivery", () => {
@@ -406,7 +436,6 @@ test("REQ-SBX-GENERAL-004 P4-T6 queued follow-up owns one capsule across model r
   for (const marker of [
     "createOpenClawSecurityTurnCapsule",
     "runWithOpenClawSecurityTurnCapsule",
-    "activateOpenClawSecurityTurnCapsule",
     "invalidateOpenClawSecurityTurnCapsule",
     "sendFollowupPayloads",
     "routeReply",
@@ -416,18 +445,27 @@ test("REQ-SBX-GENERAL-004 P4-T6 queued follow-up owns one capsule across model r
   }
   const runIdAt = source.indexOf("const runId = crypto.randomUUID()");
   const activationAt = source.indexOf("activateOpenClawSecurityTurnCapsule", runIdAt);
-  const sendFollowupAt = source.indexOf("sendFollowupPayloads", activationAt);
+  const sendFollowupAt = source.indexOf("await sendFollowupPayloads", runIdAt);
   const routeReplyAt = source.indexOf("routeReply");
   const invalidateAt = source.lastIndexOf("invalidateOpenClawSecurityTurnCapsule");
   assert.notEqual(runIdAt, -1);
-  assert.equal(activationAt > runIdAt, true);
-  assert.equal(sendFollowupAt > activationAt, true);
+  assert.equal(activationAt, -1);
+  assert.equal(sendFollowupAt > runIdAt, true);
   assert.equal(routeReplyAt !== -1, true);
-  assert.equal(routeReplyAt < activationAt, true);
+  assert.equal(routeReplyAt < sendFollowupAt, true);
   assert.equal(invalidateAt > sendFollowupAt, true);
   assert.equal(
     source.includes("queued.queuedExecutionContext(() => runQueuedFollowup(queued))"),
     true
+  );
+  const followupBody = source.slice(
+    source.indexOf("const runQueuedFollowup = async (queued) =>"),
+    source.indexOf("return async (queued) =>", source.indexOf("const runQueuedFollowup = async (queued) =>"))
+  );
+  assert.equal(
+    (followupBody.match(/activateOpenClawSecurityTurnCapsule/g) ?? []).length,
+    0,
+    "queued follow-up activation must be owned by the accepted run site"
   );
 });
 
