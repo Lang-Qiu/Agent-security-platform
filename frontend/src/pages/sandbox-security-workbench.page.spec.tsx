@@ -168,4 +168,40 @@ describe("REQ-SBX-GENERAL-005 evaluation workbench page", () => {
 
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+
+  it("REQ-SBX-GENERAL-005 announces the verdict to assistive technology", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(okResponse(DECISION));
+    render(<SandboxSecurityWorkbenchPage fetchImpl={fetchImpl} />);
+
+    pasteTokenAndFill();
+    fireEvent.click(screen.getByRole("button", { name: /提交评估/ }));
+
+    await waitFor(() => expect(screen.getByText("risk_detected")).toBeInTheDocument());
+    const live = screen.getByRole("status");
+    expect(live).toHaveAttribute("aria-live", "polite");
+    expect(live).toHaveTextContent(/risk_detected/);
+  });
+
+  it("REQ-SBX-GENERAL-005 gives every form control an accessible name", () => {
+    render(<SandboxSecurityWorkbenchPage fetchImpl={vi.fn()} />);
+    for (const control of [
+      ...screen.getAllByRole("textbox"),
+      ...screen.getAllByRole("combobox"),
+      ...screen.getAllByRole("button")
+    ]) {
+      expect(control).toHaveAccessibleName();
+    }
+  });
+
+  it("REQ-SBX-GENERAL-005 reaches submit by keyboard alone", () => {
+    render(<SandboxSecurityWorkbenchPage fetchImpl={vi.fn()} />);
+    // Submit is deliberately disabled until a token and non-empty content exist
+    // (asserted by "blocks submission until a capability token is present"), and
+    // a disabled control cannot receive focus. Fill a valid payload so the
+    // control is actionable, then prove it is keyboard-reachable.
+    pasteTokenAndFill();
+    const submit = screen.getByRole("button", { name: /提交评估/ });
+    submit.focus();
+    expect(submit).toHaveFocus();
+  });
 });

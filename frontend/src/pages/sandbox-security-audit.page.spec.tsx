@@ -111,4 +111,17 @@ describe("REQ-SBX-GENERAL-005 audit page", () => {
 
     expect(document.body.textContent).not.toContain("tok-abc");
   });
+
+  it("REQ-SBX-GENERAL-005 keeps the audit table headers associated", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(page([EVENT], null));
+    render(<SandboxSecurityAuditPage fetchImpl={fetchImpl} />);
+
+    fireEvent.change(screen.getByLabelText(/能力令牌/), { target: { value: "tok-abc" } });
+    fireEvent.click(screen.getByRole("button", { name: /加载审计/ }));
+    await waitFor(() => expect(screen.getByText("audit_read")).toBeInTheDocument());
+
+    for (const header of screen.getAllByRole("columnheader")) {
+      expect(header.textContent?.trim()).toBeTruthy();
+    }
+  });
 });

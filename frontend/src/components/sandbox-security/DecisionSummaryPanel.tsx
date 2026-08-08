@@ -20,7 +20,7 @@ export function DecisionSummaryPanel({ decision }: DecisionSummaryPanelProps) {
   return (
     <section className="console-panel" aria-label="评估决策摘要">
       <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-        <div role="status">
+        <div role="status" aria-live="polite">
           <Space size="small" wrap>
             <SandboxSecurityValueTag domain="verdict" value={decision.verdict} />
             <SandboxSecurityValueTag domain="action" value={decision.action} />
