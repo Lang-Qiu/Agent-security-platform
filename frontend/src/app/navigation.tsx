@@ -56,6 +56,25 @@ export const consoleNavigation: ConsoleNavigationItem[] = [
     ]
   },
   {
+    key: "sandbox-security",
+    label: "沙箱安全",
+    icon: <SafetyCertificateOutlined />,
+    children: [
+      {
+        key: "/sandbox-security/workbench",
+        label: "评估工作台",
+        path: "/sandbox-security/workbench",
+        icon: <RadarChartOutlined />
+      },
+      {
+        key: "/sandbox-security/audit",
+        label: "审计事件",
+        path: "/sandbox-security/audit",
+        icon: <ScanOutlined />
+      }
+    ]
+  },
+  {
     key: "/review-demo",
     label: "评审模式",
     path: "/review-demo",

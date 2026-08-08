@@ -58,7 +58,7 @@ export function ConsoleLayout() {
           <Menu
             mode="inline"
             selectedKeys={[selectedKey]}
-            defaultOpenKeys={["results"]}
+            defaultOpenKeys={["results", "sandbox-security"]}
             items={toMenuItems(consoleNavigation)}
             className="console-menu"
           />

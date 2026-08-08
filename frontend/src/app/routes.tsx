@@ -5,6 +5,8 @@ import { AssetResultPage } from "../pages/AssetResultPage";
 import { OverviewPage } from "../pages/OverviewPage";
 import { ReviewDemoPage } from "../pages/ReviewDemoPage";
 import { SandboxAlertsPage } from "../pages/SandboxAlertsPage";
+import { SandboxSecurityAuditPage } from "../pages/SandboxSecurityAuditPage";
+import { SandboxSecurityWorkbenchPage } from "../pages/SandboxSecurityWorkbenchPage";
 import { StaticAnalysisPage } from "../pages/StaticAnalysisPage";
 import { TaskDetailPage } from "../pages/TaskDetailPage";
 import { TaskListPage } from "../pages/TaskListPage";
@@ -41,6 +43,14 @@ export const appRoutes: RouteObject[] = [
       {
         path: "results/sandbox",
         element: <SandboxAlertsPage />
+      },
+      {
+        path: "sandbox-security/workbench",
+        element: <SandboxSecurityWorkbenchPage />
+      },
+      {
+        path: "sandbox-security/audit",
+        element: <SandboxSecurityAuditPage />
       },
       {
         path: "review-demo",
