@@ -1,7 +1,25 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative, sep } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import YAML from "yaml";
+
+import {
+  assertTrack1Snapshot,
+  scanManagedArtifacts,
+  snapshotTrack1OwnedSurfaces
+} from "./helpers/sandbox-security-openclaw-privacy.ts";
 
 const read = (path: string) =>
   readFileSync(new URL(`../../${path}`, import.meta.url), "utf8");
@@ -17,6 +35,74 @@ const readOptional = (path: string) => {
 
 const readJson = (path: string) =>
   JSON.parse(read(path)) as Record<string, unknown>;
+
+const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
+const TRACK1_PHASE_ENTRY_SNAPSHOT = Object.freeze({
+  baseline_commit: "71c1ef5c6523243de422c13bfb2f845f719995d8",
+  file_count: 38,
+  aggregate_sha256: "21dad1290ffbd42b4c5a95c0d96893c7e15d4ec66128d5f5e55ba5fb7d19bad9"
+});
+
+test("REQ-SBX-GENERAL-004 P5-T3 scanner rejects every transformed sentinel mutation", () => {
+  const sentinel = `G4-P5T3-\uFF33entinel-"raw"\\-8d4c`;
+  const mutations = [
+    ["literal", sentinel],
+    ["case-folded", sentinel.normalize("NFKC").toLocaleLowerCase()],
+    ["nfkc", sentinel.normalize("NFKC")],
+    ["json-escaped", JSON.stringify(sentinel).slice(1, -1)],
+    ["percent-encoded", encodeURIComponent(sentinel)],
+    ["base64", Buffer.from(sentinel, "utf8").toString("base64")],
+    ["hex", Buffer.from(sentinel, "utf8").toString("hex")],
+    [
+      "sha256",
+      createHash("sha256").update(sentinel, "utf8").digest("hex")
+    ]
+  ] as const;
+  const findings = scanManagedArtifacts(
+    mutations.map(([encoding, value]) => ({
+      id: `mutation-${encoding}`,
+      bytes: Buffer.from(value, "utf8")
+    })),
+    sentinel
+  );
+  assert.deepEqual(
+    findings.map((finding) => [finding.artifact_id, finding.encoding]),
+    mutations.map(([encoding]) => [`mutation-${encoding}`, encoding])
+  );
+});
+
+test("REQ-SBX-GENERAL-004 P5-T3 Track 1 snapshot detects a copied byte mutation", () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), "g4-p5t3-track1-"));
+  try {
+    for (const surface of [
+      "integrations/openclaw",
+      "deploy/track1",
+      "docs/track1/evidence"
+    ]) {
+      cpSync(join(REPO_ROOT, surface), join(tempRoot, surface), {
+        recursive: true,
+        dereference: false,
+        filter: (source) => {
+          const segments = relative(REPO_ROOT, source).split(sep);
+          return !segments.some((segment) =>
+            ["dist", "node_modules"].includes(segment)
+          );
+        }
+      });
+    }
+    const baseline = snapshotTrack1OwnedSurfaces(REPO_ROOT);
+    const target = join(tempRoot, "integrations/openclaw/package.json");
+    writeFileSync(target, Buffer.concat([readFileSync(target), Buffer.from("\n", "ascii")]));
+    const mutated = snapshotTrack1OwnedSurfaces(tempRoot);
+    assert.notDeepEqual(mutated, baseline);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("REQ-SBX-GENERAL-004 P5-T3 Track 1 owned surfaces match the clean Phase entry snapshot", () => {
+  assertTrack1Snapshot(REPO_ROOT, TRACK1_PHASE_ENTRY_SNAPSHOT);
+});
 
 test("REQ-SBX-GENERAL-004 keeps one reviewed spec and five ordered plans", () => {
   const spec = read(
@@ -219,11 +305,22 @@ test("REQ-SBX-GENERAL-004 P5-T2 Compose keeps one isolated non-durable runtime",
   });
   assert.equal("ports" in service, false);
   assert.equal("volumes" in service, false);
-  assert.deepEqual(service.tmpfs?.slice().sort(), [
-    "/run/openclaw-security",
-    "/tmp/openclaw",
-    "/workspace"
-  ]);
+  // Each tmpfs entry mounts as `<path>:mode=1777`. The mode is required, not
+  // cosmetic: a read-only-root container running as the unprivileged `node`
+  // user cannot create its scratch subdirectories under a tmpfs that comes up
+  // root:root 0755, so the runtime fails to start without a world-writable
+  // (sticky) mode. Normalize the mode suffix for the path assertion, then
+  // separately require every ephemeral mount to carry mode=1777.
+  const tmpfsEntries = service.tmpfs?.slice() ?? [];
+  assert.deepEqual(
+    tmpfsEntries.map((entry) => entry.split(":")[0]).sort(),
+    ["/run/openclaw-security", "/tmp/openclaw", "/workspace"]
+  );
+  assert.equal(
+    tmpfsEntries.every((entry) => /:mode=1777$/.test(entry)),
+    true,
+    "each tmpfs mount must be world-writable (mode=1777) for the non-root runtime"
+  );
   assert.equal(service.read_only, true);
   assert.equal(service.user, "node");
   assert.equal(service.init, true);
@@ -288,4 +385,77 @@ test("REQ-SBX-GENERAL-004 P5-T2 runbook documents dedicated capability and ephem
   assert.match(runbook, /egress[\s\S]+out of scope|out of scope[\s\S]+egress/i);
   assert.equal(/sbxcap_v1\.[A-Za-z0-9_-]{43}/.test(runbook), false);
   assert.equal(/bootstrap.*token|admin.*token.*config/i.test(runbook), false);
+});
+
+test("REQ-SBX-GENERAL-004 P5-T3 keeps package, listener, and permanent gate ownership isolated", () => {
+  const dockerfile = readOptional("deploy/sandbox-security/Dockerfile.openclaw");
+  const compose = readOptional("deploy/sandbox-security/compose.openclaw-security.yml");
+  const publicRouter = read("backend/src/common/http/router.ts");
+  const rootPackage = readJson("package.json") as {
+    scripts?: Record<string, string>;
+  };
+  const scripts = rootPackage.scripts ?? {};
+
+  assert.doesNotMatch(dockerfile, /deploy\/track1|docs\/track1|agent-security-track1/);
+  assert.doesNotMatch(compose, /deploy\/track1|docs\/track1|agent-security-track1/);
+  assert.doesNotMatch(publicRouter, /enforcement-events/);
+  assert.doesNotMatch(compose, /retry|queue/i);
+  assert.doesNotMatch(dockerfile, /persistent|volume|retry|queue/i);
+  assert.match(scripts["test:repo"] ?? "", /sandbox-security-openclaw-enforcement\.spec\.ts/);
+  assert.match(
+    scripts["test:integration:openclaw:security"] ?? "",
+    /openclaw-sandbox-security\.runtime\.spec\.ts/
+  );
+  assert.match(
+    scripts["test:integration:openclaw:security"] ?? "",
+    /backend-sandbox-security-enforcement-audit\.api\.spec\.ts/
+  );
+  assert.match(
+    scripts["test:backend"] ?? "",
+    /backend-sandbox-security-enforcement-audit\.api\.spec\.ts/
+  );
+  assert.match(
+    scripts["test:shared"] ?? "",
+    /sandbox-security-enforcement-audit-contract\.spec\.ts/
+  );
+});
+
+test("REQ-SBX-GENERAL-004 P5-T3 runtime startup resolves the nested CLI and uses injected healthcheck config", () => {
+  const dockerfile = readOptional("deploy/sandbox-security/Dockerfile.openclaw");
+  const compose = readOptional("deploy/sandbox-security/compose.openclaw-security.yml");
+  const runtimeCommand = dockerfile.slice(dockerfile.lastIndexOf("CMD ["));
+  const healthcheck = compose.slice(compose.indexOf("healthcheck:"));
+
+  assert.match(
+    dockerfile,
+    /ENV PATH=\/opt\/openclaw-general-security\/node_modules\/\.bin:\$PATH/
+  );
+  assert.match(runtimeCommand, /runOpenClawSecurityRuntimeProbe/);
+  assert.match(runtimeCommand, /configPath: process\.env\.OPENCLAW_CONFIG_PATH/);
+  assert.match(
+    runtimeCommand,
+    /SANDBOX_SECURITY_AUDIT_CAPABILITY_TOKEN: process\.env\.SANDBOX_SECURITY_AUDIT_CAPABILITY_TOKEN/
+  );
+  assert.match(healthcheck, /configPath: process\.env\.OPENCLAW_CONFIG_PATH/);
+  assert.match(
+    healthcheck,
+    /SANDBOX_SECURITY_POLICY_PROFILE_ID: process\.env\.SANDBOX_SECURITY_POLICY_PROFILE_ID/
+  );
+  assert.match(
+    healthcheck,
+    /SANDBOX_SECURITY_AUDIT_CAPABILITY_TOKEN: process\.env\.SANDBOX_SECURITY_AUDIT_CAPABILITY_TOKEN/
+  );
+});
+
+test("REQ-SBX-GENERAL-004 P5-T3 runbook reads the capability without placing it in shell history", () => {
+  const runbook = readOptional("deploy/sandbox-security/README.md");
+
+  assert.match(
+    runbook,
+    /read\s+-r\s+-s[\s\S]+SANDBOX_SECURITY_AUDIT_CAPABILITY_TOKEN/
+  );
+  assert.doesNotMatch(
+    runbook,
+    /export\s+SANDBOX_SECURITY_AUDIT_CAPABILITY_TOKEN\s*=/
+  );
 });

@@ -103,6 +103,11 @@ export interface OpenClawSecurityRuntimeProbeResult
 
 export interface OpenClawSecurityRuntimeProbeOptions {
   readonly packageRoot: string;
+  /**
+   * When supplied, inspect the caller's immutable runtime configuration
+   * instead of generating the hermetic build-time fixture.
+   */
+  readonly configPath?: string;
   readonly execFileSync?: ExecFileSyncLike;
   readonly dynamicProbe?: (input: Readonly<{ openclawRoot?: string }>) =>
     | OpenClawSecurityRuntimeProbeDynamicResult
@@ -228,6 +233,22 @@ function readProductionManifest(packageRoot: string): RecordValue {
       "openclaw-2026.6.34-general-security.manifest.json"
     )
   );
+}
+
+function resolveConfiguredRuntimeConfigPath(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0 || !path.isAbsolute(value)) {
+    fail("configured runtime config path is invalid");
+  }
+  let stat: ReturnType<typeof lstatSync>;
+  try {
+    stat = lstatSync(value);
+  } catch {
+    fail("configured runtime config path does not exist");
+  }
+  if (stat.isSymbolicLink() || !stat.isFile()) {
+    fail("configured runtime config path is not a regular file");
+  }
+  return realpathSync(value);
 }
 
 function validateProductionManifest(
@@ -377,9 +398,17 @@ function closedProbeEnvironment(
   configPath: string,
   overrides: Readonly<Record<string, string | undefined>> = {}
 ): Record<string, string> {
+  // The nested CLI creates a fallback temp dir under TMPDIR (defaulting to
+  // /tmp). In the hardened runtime container the root filesystem is read-only
+  // and only the tmpfs mounts are writable, so an unset TMPDIR makes the CLI
+  // fail creating /tmp/openclaw-<uid>. stateDir is always writable (a tmpfs
+  // mount in the container, a mkdtemp dir under test), so anchor TMPDIR there.
+  const tmpDir = path.join(stateDir, "tmp");
+  mkdirSync(tmpDir, { recursive: true });
   const result: Record<string, string> = {
     PATH: "",
     HOME: path.join(stateDir, "home"),
+    TMPDIR: tmpDir,
     OPENCLAW_STATE_DIR: stateDir,
     OPENCLAW_CONFIG_PATH: configPath,
     OPENCLAW_TEST_FAST: "1",
@@ -499,13 +528,22 @@ async function preparePatchedPackage(packageRoot: string): Promise<{
 function inspectRuntime(
   packageRoot: string,
   execFileSync: ExecFileSyncLike,
-  envOverrides: Readonly<Record<string, string | undefined>> = {}
+  envOverrides: Readonly<Record<string, string | undefined>> = {},
+  configuredConfigPath?: string
 ): RecordValue {
-  const stateDir = mkdtempSync(path.join(tmpdir(), "g4-runtime-state-"));
+  const ownsStateDir = envOverrides.OPENCLAW_STATE_DIR === undefined;
+  const stateDir =
+    envOverrides.OPENCLAW_STATE_DIR ??
+    mkdtempSync(path.join(tmpdir(), "g4-runtime-state-"));
   try {
-    const configPath = writeProbeConfig(packageRoot, stateDir);
+    const configPath = configuredConfigPath ?? writeProbeConfig(packageRoot, stateDir);
     const cliPath = resolveNestedOpenClawCli(packageRoot);
-    const env = closedProbeEnvironment(packageRoot, stateDir, configPath, envOverrides);
+    const env = closedProbeEnvironment(packageRoot, stateDir, configPath, {
+      ...envOverrides,
+      ...(configuredConfigPath === undefined
+        ? {}
+        : { OPENCLAW_CONFIG_PATH: configuredConfigPath })
+    });
     const raw = execFileSync(
       process.execPath,
       [cliPath, "plugins", "inspect", OPENCLAW_SECURITY_RUNTIME_PLUGIN_ID, "--runtime", "--json"],
@@ -523,10 +561,10 @@ function inspectRuntime(
       return parsed;
     } catch (error) {
       if (error instanceof Error && error.name === "openclaw_security_runtime_probe_failed") throw error;
-      fail("nested CLI JSON is invalid");
+      return fail("nested CLI JSON is invalid");
     }
   } finally {
-    rmSync(stateDir, { recursive: true, force: true });
+    if (ownsStateDir) rmSync(stateDir, { recursive: true, force: true });
   }
 }
 
@@ -792,17 +830,22 @@ export async function runOpenClawSecurityRuntimeProbe(
     fail("runtime probe input is invalid");
   }
   const identity = verifyProductionRuntimeIdentity({ packageRoot: input.packageRoot });
+  const configuredConfigPath = Object.prototype.hasOwnProperty.call(input, "configPath")
+    ? resolveConfiguredRuntimeConfigPath(input.configPath)
+    : undefined;
   let prepared: Awaited<ReturnType<typeof preparePatchedPackage>> | null = null;
   const injectedExecutor = input.execFileSync;
   try {
-    const packageRoot = injectedExecutor === undefined
+    const packageRoot = injectedExecutor === undefined && configuredConfigPath === undefined
       ? (prepared = await preparePatchedPackage(identity.packageRoot)).root
       : identity.packageRoot;
-    const openclawRoot = prepared?.openclawRoot;
+    const openclawRoot =
+      prepared?.openclawRoot ?? path.join(packageRoot, "node_modules", "openclaw");
     const rawInspect = inspectRuntime(
       packageRoot,
       injectedExecutor ?? (nodeExecFileSync as unknown as ExecFileSyncLike),
-      input.env
+      input.env,
+      configuredConfigPath
     );
     const nestedManifest = readJson(path.join(packageRoot, "node_modules/openclaw/package.json"));
     const inspected = normalizedInspect(rawInspect, String(nestedManifest.version));
