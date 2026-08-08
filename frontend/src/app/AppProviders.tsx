@@ -1,18 +1,16 @@
-import { App as AntdApp, ConfigProvider } from "antd";
+import { App as AntdApp, ConfigProvider, theme } from "antd";
 
 import type { ReactNode } from "react";
+
+import { consoleThemeTokens } from "../styles/console-theme";
 
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
     <ConfigProvider
       theme={{
+        algorithm: [theme.darkAlgorithm, theme.compactAlgorithm],
         token: {
-          colorPrimary: "#146c72",
-          colorInfo: "#146c72",
-          colorBgBase: "#f3f7f6",
-          colorTextBase: "#102a2d",
-          colorBorder: "#d7e3e2",
-          borderRadius: 16,
+          ...consoleThemeTokens,
           fontFamily: "'Aptos', 'Segoe UI Variable Text', 'Segoe UI', sans-serif"
         }
       }}
