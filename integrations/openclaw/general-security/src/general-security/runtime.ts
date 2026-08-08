@@ -293,8 +293,14 @@ export async function createOpenClawSecurityRuntime(input: Readonly<{
   const engineFactory =
     input.engineFactory ??
     (createSandboxSecurityProductionEngine as OpenClawSecurityEngineFactory);
+  const engineRuntime: SandboxSecurityRuntimePorts = Object.freeze({
+    now: runtimePorts.now,
+    nextDecisionId: runtimePorts.nextDecisionId,
+    monotonicNowMs: runtimePorts.monotonicNowMs,
+    scheduleTimeout: runtimePorts.scheduleTimeout
+  });
   const engine = await engineFactory({
-    runtime: runtimePorts,
+    runtime: engineRuntime,
     mode: config.productionMode
   });
 

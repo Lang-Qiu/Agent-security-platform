@@ -91,3 +91,149 @@ export type {
 
 export * from "./general-security/config.ts";
 export * from "./general-security/runtime.ts";
+
+export {
+  OPENCLAW_SECURITY_RUNTIME_PLUGIN_ID,
+  OPENCLAW_SECURITY_RUNTIME_PROBE_COMMAND,
+  OPENCLAW_SECURITY_RUNTIME_PROBE_RESULT_KEYS,
+  OPENCLAW_SECURITY_RUNTIME_PROBE_SCHEMA,
+  OPENCLAW_SECURITY_RUNTIME_VERSION,
+  resolveNestedOpenClawCli,
+  runOpenClawSecurityRuntimeProbe,
+  verifyProductionRuntimeIdentity
+} from "./general-security/runtime-probe.ts";
+export type {
+  OpenClawSecurityRuntimeProbeDynamicResult,
+  OpenClawSecurityRuntimeProbeOptions,
+  OpenClawSecurityRuntimeProbeResult
+} from "./general-security/runtime-probe.ts";
+
+import {
+  buildJsonPluginConfigSchema,
+  definePluginEntry
+} from "openclaw/plugin-sdk/plugin-entry";
+import { createOpenClawSecurityRuntimePorts } from "./general-security/runtime.ts";
+import {
+  createOpenClawSecurityPlugin as createOpenClawSecurityPluginImplementation,
+  OPENCLAW_SECURITY_HOOK_NAMES as OPENCLAW_SECURITY_HOOK_NAMES_IMPLEMENTATION,
+  OPENCLAW_SECURITY_HOOK_RESULT_SCHEMA as OPENCLAW_SECURITY_HOOK_RESULT_SCHEMA_IMPLEMENTATION
+} from "./general-security/plugin.ts";
+
+const GENERAL_SECURITY_CONFIG_SCHEMA = buildJsonPluginConfigSchema({
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "policyProfileId",
+    "productionMode",
+    "auditEndpoint",
+    "auditCapabilityToken"
+  ],
+  properties: {
+    policyProfileId: { type: "string" },
+    productionMode: { type: "string" },
+    auditEndpoint: { type: "string" },
+    auditCapabilityToken: { type: "string", writeOnly: true }
+  }
+});
+
+// OpenClaw registration is synchronous. The security Engine is initialized
+// once behind the four synchronous hook registrations and every invocation
+// awaits the same initialization promise before delegating to the typed
+// plugin handlers.
+const GENERAL_SECURITY_RUNTIME_ENTRY = definePluginEntry({
+  id: "agent-security-sandbox-general",
+  name: "Agent Security Sandbox General",
+  description: "Final OpenClaw sandbox security barriers.",
+  configSchema: GENERAL_SECURITY_CONFIG_SCHEMA,
+  register(api: unknown) {
+    if (
+      api === null ||
+      typeof api !== "object" ||
+      typeof (api as { on?: unknown }).on !== "function"
+    ) {
+      throw new Error("openclaw security typed hook API unavailable");
+    }
+    const hostApi = api as {
+      readonly pluginConfig?: unknown;
+      readonly on: (
+        name: (typeof import("./general-security/plugin.ts").OPENCLAW_SECURITY_HOOK_NAMES)[number],
+        handler: (event: unknown, context: unknown) => Promise<unknown>,
+        options: Readonly<{ priority: 1000; timeoutMs: 10000 }>
+      ) => void;
+    };
+    const handlers = new Map<
+      string,
+      (event: unknown, context: unknown) => Promise<unknown>
+    >();
+    const runtimePorts = createOpenClawSecurityRuntimePorts();
+    const auditTransport = {
+      post: async (input: {
+        url: string;
+        bearer_token: string;
+        body: Uint8Array;
+        signal: AbortSignal;
+      }) => {
+        const response = await fetch(input.url, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${input.bearer_token}`,
+            "content-type": "application/json"
+          },
+          body: input.body as BodyInit,
+          signal: input.signal
+        });
+        return {
+          status: response.status,
+          body: new Uint8Array(await response.arrayBuffer())
+        };
+      }
+    };
+    const pluginReady = createOpenClawSecurityPluginImplementation({
+      config: hostApi.pluginConfig ?? {},
+      runtime_ports: runtimePorts,
+      audit_transport: auditTransport
+    }).then((plugin) => {
+      plugin.register({
+        on: (
+          name: string,
+          handler: (event: unknown, context: unknown) => Promise<unknown>
+        ) => {
+          handlers.set(name, handler);
+        }
+      });
+      return plugin;
+    });
+    for (const name of OPENCLAW_SECURITY_HOOK_NAMES_IMPLEMENTATION) {
+      hostApi.on(
+        name,
+        async (event, context) => {
+          try {
+            await pluginReady;
+            const handler = handlers.get(name);
+            if (handler === undefined) throw new Error("security hook handler unavailable");
+            return await handler(event, context);
+          } catch {
+            return {
+              schema_version: OPENCLAW_SECURITY_HOOK_RESULT_SCHEMA_IMPLEMENTATION,
+              correlation: {
+                runId: "runtime-probe-failure",
+                sessionKey: "runtime-probe-failure",
+                callId: null
+              },
+              health: { enforcement: "failed", audit: "degraded" },
+              barrier: {
+                outcome: "replace",
+                replacement_code: "sandbox_security_evaluation_unavailable",
+                replacement_text:
+                  "Security evaluation unavailable. This action was not completed."
+              }
+            };
+          }
+        },
+        Object.freeze({ priority: 1000, timeoutMs: 10000 })
+      );
+    }
+  }
+});
+
+export default GENERAL_SECURITY_RUNTIME_ENTRY;

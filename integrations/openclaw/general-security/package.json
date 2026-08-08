@@ -7,6 +7,8 @@
     "build": "node scripts/build.mjs",
     "test": "node --experimental-strip-types --experimental-test-isolation=none --test tests/general-security-*.spec.ts",
     "test:patch": "node --experimental-strip-types --test tests/general-security-patch-application.spec.ts tests/general-security-patch-integrity.spec.ts",
+    "test:runtime": "node --experimental-strip-types --experimental-test-isolation=none --test tests/general-security-runtime-probe.spec.ts",
+    "probe:runtime": "node --experimental-strip-types --input-type=module -e \"import('./src/general-security/runtime-probe.ts').then(({runOpenClawSecurityRuntimeProbe}) => runOpenClawSecurityRuntimeProbe({packageRoot: process.cwd()}).then(result => console.log(JSON.stringify(result))))\"",
     "apply:patch": "node scripts/apply-general-security-patch.mjs"
   },
   "dependencies": {
