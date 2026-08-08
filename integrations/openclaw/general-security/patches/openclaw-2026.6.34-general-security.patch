@@ -6,11 +6,11 @@ index bb14f66..34cd79b 100644
  import { h as getPluginSessionExtensionStateSync } from "./registry-BiuJAn1Z.js";
  import { s as getActivePluginRegistry } from "./runtime-DGlFdyGW.js";
  import { f as getGlobalHookRunnerRegistry, t as getGlobalHookRunner } from "./hook-runner-global-D_43rcnU.js";
-+import { createOpenClawSecurityFixedReplacement, readOpenClawSecurityTurnContext } from "./lifecycle-hook-helpers-Dowa8zK4.js";
++import { createOpenClawSecurityFixedReplacement, readOpenClawSecurityAssistantProjection, readOpenClawSecurityTurnContext } from "./lifecycle-hook-helpers-Dowa8zK4.js";
  import { i as resolveSandboxInputPath } from "./sandbox-paths-lIFb9EBl.js";
  import { i as listChannelPlugins, t as getChannelPlugin } from "./registry-BxD52xuY2.js";
  import "./plugins-B7CoaAGS.js";
-@@ -1494,6 +1495,95 @@ async function runBeforeToolCallHook(args) {
+@@ -1494,6 +1495,106 @@ async function runBeforeToolCallHook(args) {
  		};
  	}
  }
@@ -30,6 +30,35 @@ index bb14f66..34cd79b 100644
 +		provenance: replacement.provenance,
 +		marker: OPENCLAW_SECURITY_TOOL_BARRIER_MARKER
 +	});
++}
++function openClawSecurityDeepEqual(left, right, seen = new Map()) {
++	if (Object.is(left, right)) return true;
++	if (left === null || right === null || typeof left !== "object" || typeof right !== "object") return false;
++	const prior = seen.get(left);
++	if (prior === right) return true;
++	seen.set(left, right);
++	if (Array.isArray(left) || Array.isArray(right)) {
++		if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
++		return left.every((value, index) => openClawSecurityDeepEqual(value, right[index], seen));
++	}
++	if (!isPlainObject(left) || !isPlainObject(right)) return false;
++	const leftKeys = Reflect.ownKeys(left);
++	const rightKeys = Reflect.ownKeys(right);
++	if (leftKeys.length !== rightKeys.length || leftKeys.some((key) => !Object.hasOwn(right, key))) return false;
++	return leftKeys.every((key) => typeof key === "string" && openClawSecurityDeepEqual(left[key], right[key], seen));
++}
++function openClawSecurityReadMatchingAssistant(projection, toolCallId, toolName, toolArguments) {
++	if (!isPlainObject(projection) || Reflect.ownKeys(projection).length !== 3 || projection.schema_version !== "openclaw-security-assistant-projection.v1" || !Array.isArray(projection.text_parts) || projection.text_parts.some((text) => typeof text !== "string") || !Array.isArray(projection.tool_calls)) return null;
++	let matched;
++	const callIds = new Set();
++	for (const call of projection.tool_calls) {
++		if (!isPlainObject(call) || Reflect.ownKeys(call).length !== 3 || typeof call.call_id !== "string" || typeof call.tool_name !== "string" || !Object.hasOwn(call, "arguments") || callIds.has(call.call_id)) return null;
++		callIds.add(call.call_id);
++		if (call.call_id !== toolCallId) continue;
++		if (call.tool_name !== toolName || !openClawSecurityDeepEqual(call.arguments, toolArguments)) return null;
++		matched = call;
++	}
++	return matched ? projection : null;
 +}
 +async function runOpenClawSecurityToolBarrier(params) {
 +	const turn = readOpenClawSecurityTurnContext();
@@ -54,6 +83,8 @@ index bb14f66..34cd79b 100644
 +	} catch {
 +		return createOpenClawSecurityToolFloor();
 +	}
++	const assistant = openClawSecurityReadMatchingAssistant(readOpenClawSecurityAssistantProjection(), toolCallId, toolName, toolArguments);
++	if (assistant === null) return createOpenClawSecurityToolFloor();
 +	const hookRunner = params?.hookRunner ?? getGlobalHookRunner();
 +	let hasBarrier = false;
 +	try {
@@ -62,15 +93,6 @@ index bb14f66..34cd79b 100644
 +		return createOpenClawSecurityToolFloor();
 +	}
 +	if (!hasBarrier || typeof hookRunner?.runBeforeToolExecution !== "function") return createOpenClawSecurityToolFloor();
-+	const assistant = Object.freeze({
-+		schema_version: "openclaw-security-assistant-projection.v1",
-+		text_parts: Object.freeze([]),
-+		tool_calls: Object.freeze([Object.freeze({
-+			call_id: toolCallId,
-+			tool_name: toolName,
-+			arguments: toolArguments
-+		})])
-+	});
 +	const event = Object.freeze({
 +		schema_version: "openclaw-security-hook-event.v1",
 +		runId: turn.runId,
@@ -90,23 +112,12 @@ index bb14f66..34cd79b 100644
 +		return createOpenClawSecurityToolFloor();
 +	}
 +	if (isPlainObject(decision) && Reflect.ownKeys(decision).length === 1 && decision.outcome === "pass") return Object.freeze({ outcome: "pass" });
-+	try {
-+		const replacement = createOpenClawSecurityFixedReplacement(decision);
-+		return Object.freeze({
-+			outcome: "replace",
-+			text: replacement.text,
-+			replacement_code: replacement.replacement_code,
-+			provenance: replacement.provenance,
-+			marker: OPENCLAW_SECURITY_TOOL_BARRIER_MARKER
-+		});
-+	} catch {
-+		return createOpenClawSecurityToolFloor();
-+	}
++	return createOpenClawSecurityToolFloor();
 +}
  /** Wrap a tool execute function with before_tool_call hooks and diagnostics. */
  function wrapToolWithBeforeToolCallHook(tool, ctx, options = {}) {
  	const execute = tool.execute;
-@@ -1583,9 +1673,32 @@ function wrapToolWithBeforeToolCallHook(tool, ctx, options = {}) {
+@@ -1583,9 +1684,32 @@ function wrapToolWithBeforeToolCallHook(tool, ctx, options = {}) {
  				hookParams,
  				adjustedParams: outcome.params
  			});
@@ -141,7 +152,7 @@ index bb14f66..34cd79b 100644
  			const trace = ctx?.trace ? freezeDiagnosticTraceContext(createChildDiagnosticTraceContext(ctx.trace)) : void 0;
  			const eventBase = {
  				...ctx?.runId && { runId: ctx.runId },
-@@ -1759,4 +1872,4 @@ function toLintErrorObject(value, fallbackMessage) {
+@@ -1759,4 +1883,4 @@ function toLintErrorObject(value, fallbackMessage) {
  	return error;
  }
  //#endregion
@@ -507,7 +518,7 @@ index 5a72ef4..e387b5e 100644
  //#region src/agents/harness/hook-context.ts
  /** Builds the sparse hook context object passed to agent harness plugin hooks. */
  function buildAgentHookContext(params) {
-@@ -174,4 +175,185 @@ function isBeforeAgentFinalizeRetry(value) {
+@@ -174,4 +175,201 @@ function isBeforeAgentFinalizeRetry(value) {
  	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
  }
  //#endregion
@@ -544,6 +555,7 @@ index 5a72ef4..e387b5e 100644
 +		active: false,
 +		invalidated: false,
 +		context: null,
++		assistant: null,
 +		replacement: null
 +	};
 +}
@@ -571,12 +583,24 @@ index 5a72ef4..e387b5e 100644
 +	if (!capsule || !capsule.active || capsule.invalidated || capsule.context === null) return null;
 +	return capsule.context;
 +}
++function setOpenClawSecurityAssistantProjection(projection) {
++	const capsule = OPENCLAW_SECURITY_TURN_CONTEXT_STORE.getStore();
++	if (!capsule || !capsule.active || capsule.invalidated || !openClawSecurityHasExactKeys(projection, ["schema_version", "text_parts", "tool_calls"]) || projection.schema_version !== "openclaw-security-assistant-projection.v1" || !Array.isArray(projection.text_parts) || !Array.isArray(projection.tool_calls)) throw new Error("openclaw security assistant projection was rejected");
++	capsule.assistant = projection;
++	return projection;
++}
++function readOpenClawSecurityAssistantProjection() {
++	const capsule = OPENCLAW_SECURITY_TURN_CONTEXT_STORE.getStore();
++	if (!capsule || !capsule.active || capsule.invalidated || capsule.assistant === null) return null;
++	return capsule.assistant;
++}
 +function invalidateOpenClawSecurityTurnCapsule() {
 +	const capsule = OPENCLAW_SECURITY_TURN_CONTEXT_STORE.getStore();
 +	if (!capsule) return;
 +	capsule.active = false;
 +	capsule.invalidated = true;
 +	capsule.context = null;
++	capsule.assistant = null;
 +}
 +function createOpenClawSecurityFixedReplacement(barrier) {
 +	if (!openClawSecurityHasExactKeys(barrier, ["outcome", "replacement_code", "replacement_text"]) || barrier.outcome !== "replace") throw new Error("openclaw security fixed replacement was rejected");
@@ -684,7 +708,10 @@ index 5a72ef4..e387b5e 100644
 +	} catch {
 +		return floorDecision();
 +	}
-+	if (openClawSecurityHasExactKeys(decision, ["outcome"]) && decision.outcome === "pass") return Object.freeze({ outcome: "pass" });
++	if (openClawSecurityHasExactKeys(decision, ["outcome"]) && decision.outcome === "pass") {
++		setOpenClawSecurityAssistantProjection(assistant);
++		return Object.freeze({ outcome: "pass" });
++	}
 +	try {
 +		return buildDecision(decision);
 +	} catch {
@@ -693,7 +720,7 @@ index 5a72ef4..e387b5e 100644
 +}
 +export { runOpenClawSecurityModelOutputBarrier };
 +//#endregion
-+export { runAgentHarnessLlmInputHook as a, runAgentHarnessBeforeAgentFinalizeHook as i, getAgentHarnessHookRunner as n, runAgentHarnessLlmOutputHook as o, runAgentHarnessAgentEndHook as r, buildAgentHookContext as s, awaitAgentHarnessAgentEndHook as t, createOpenClawSecurityTurnCapsule, runWithOpenClawSecurityTurnCapsule, activateOpenClawSecurityTurnCapsule, readOpenClawSecurityTurnContext, invalidateOpenClawSecurityTurnCapsule, createOpenClawSecurityFixedReplacement, readOpenClawSecurityFixedReplacement };
++export { runAgentHarnessLlmInputHook as a, runAgentHarnessBeforeAgentFinalizeHook as i, getAgentHarnessHookRunner as n, runAgentHarnessLlmOutputHook as o, runAgentHarnessAgentEndHook as r, buildAgentHookContext as s, awaitAgentHarnessAgentEndHook as t, createOpenClawSecurityTurnCapsule, runWithOpenClawSecurityTurnCapsule, activateOpenClawSecurityTurnCapsule, readOpenClawSecurityTurnContext, setOpenClawSecurityAssistantProjection, readOpenClawSecurityAssistantProjection, invalidateOpenClawSecurityTurnCapsule, createOpenClawSecurityFixedReplacement, readOpenClawSecurityFixedReplacement };
 diff --git a/dist/plugin-sdk/hook-types-H9SC6W-p.d.ts b/dist/plugin-sdk/hook-types-H9SC6W-p.d.ts
 index f4a80fd..5c305b0 100644
 --- a/dist/plugin-sdk/hook-types-H9SC6W-p.d.ts

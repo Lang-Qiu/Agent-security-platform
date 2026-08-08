@@ -274,6 +274,20 @@ function makeTool(order: string[], executions: RecordValue[]): RecordValue {
   };
 }
 
+function passDecision(overrides: RecordValue = {}): RecordValue {
+  return {
+    schema_version: "openclaw-security-hook-result.v1",
+    correlation: {
+      runId: "run-1",
+      sessionKey: "session-1",
+      callId: "call-1"
+    },
+    health: { enforcement: "healthy", audit: "healthy" },
+    barrier: { outcome: "pass" },
+    ...overrides
+  };
+}
+
 async function runDefinition(
   modulesValue: Modules,
   options: {
@@ -282,6 +296,7 @@ async function runDefinition(
     turn?: RecordValue;
     toolCallId?: string;
     onSecurity?: (event: RecordValue, ctx: RecordValue) => void;
+    securityResponse?: unknown;
   }
 ): Promise<ToolRun & { result: RecordValue; replacement: RecordValue | null }> {
   const order: string[] = [];
@@ -297,6 +312,9 @@ async function runDefinition(
       const record = event as RecordValue;
       securityEvents.push(record);
       options.onSecurity?.(record, ctx as RecordValue);
+      if (Object.hasOwn(options, "securityResponse")) {
+        return options.securityResponse;
+      }
       return {
         schema_version: "openclaw-security-hook-result.v1",
         correlation: {
@@ -327,10 +345,25 @@ async function runDefinition(
     modulesValue.lifecycle,
     "readOpenClawSecurityFixedReplacement"
   );
+  const setAssistantProjection = assertFunction(
+    modulesValue.lifecycle,
+    "setOpenClawSecurityAssistantProjection"
+  );
   let replacement: RecordValue | null = null;
   const result = await withTurn(
     modulesValue.lifecycle,
     async () => {
+      setAssistantProjection({
+        schema_version: ASSISTANT_PROJECTION_SCHEMA,
+        text_parts: [],
+        tool_calls: [
+          {
+            call_id: options.toolCallId ?? "call-1",
+            tool_name: sourceTool.name,
+            arguments: { secret: "final", path: "/tmp/file" }
+          }
+        ]
+      });
       const value = await execute(
         options.toolCallId ?? "call-1",
         { secret: "raw", path: "/tmp/file" },
@@ -443,6 +476,125 @@ test("REQ-SBX-GENERAL-004 P4-T5 missing carrier and identity drift use the tool 
   assert.equal(drift.executions.length, 0);
 });
 
+test("REQ-SBX-GENERAL-004 P4-T5 the tool barrier rejects a final request that does not exactly match the model projection", async () => {
+  const modulesValue = await modules();
+  let toolHookCalls = 0;
+  await configureRunner(modulesValue.hookRunner, {
+    securityDecision: () => {
+      toolHookCalls += 1;
+      return passDecision();
+    }
+  });
+  const modelBarrier = assertFunction(
+    modulesValue.lifecycle,
+    "runOpenClawSecurityModelOutputBarrier"
+  );
+  const toToolDefinitions = assertFunction(modulesValue.toolSplit, "o");
+  const executions: RecordValue[] = [];
+  const order: string[] = [];
+  const tool = makeTool(order, executions);
+  const definition = toToolDefinitions([tool], toolContext())[0] as RecordValue;
+  const execute = assertFunction(definition, "execute");
+  const modelRunner = {
+    hasHooks: (name: string) => name === "before_model_output_delivery",
+    runBeforeModelOutputDelivery: async () => ({ outcome: "pass" })
+  };
+  const result = await withTurn(
+    modulesValue.lifecycle,
+    async () => {
+      const modelDecision = await modelBarrier({
+        event: {
+          runId: "run-1",
+          sessionKey: "session-1",
+          assistantTexts: ["use the file tool"],
+          lastAssistant: {
+            toolCalls: [
+              {
+                id: "call-1",
+                name: "read_file",
+                arguments: { secret: "model", path: "/tmp/file" }
+              }
+            ]
+          }
+        },
+        ctx: toolContext(),
+        hookRunner: modelRunner
+      });
+      assert.deepEqual(modelDecision, { outcome: "pass" });
+      return execute("call-1", { secret: "raw", path: "/tmp/file" }, void 0, void 0);
+    }
+  );
+  assert.equal(executions.length, 0);
+  assert.equal((result.details as RecordValue).status, "blocked");
+  assert.equal((result.content as Array<RecordValue>)[0]?.text, BLOCKED_TEXT);
+  assert.equal(toolHookCalls, 0);
+});
+
+test("REQ-SBX-GENERAL-004 P4-T5 every tool barrier failure path uses the fixed deny floor", async () => {
+  const cases: Array<{ name: string; response?: unknown; throws?: boolean }> = [
+    {
+      name: "handler throw",
+      throws: true
+    },
+    {
+      name: "correlation mismatch",
+      response: passDecision({
+        correlation: { runId: "other-run", sessionKey: "session-1", callId: "call-1" }
+      })
+    },
+    {
+      name: "ask replacement",
+      response: {
+        schema_version: "openclaw-security-hook-result.v1",
+        correlation: { runId: "run-1", sessionKey: "session-1", callId: "call-1" },
+        health: { enforcement: "healthy", audit: "healthy" },
+        barrier: {
+          outcome: "replace",
+          replacement_code: "security_review_required",
+          replacement_text: "Security review required. This action was not completed."
+        }
+      }
+    },
+    {
+      name: "unavailable replacement",
+      response: {
+        schema_version: "openclaw-security-hook-result.v1",
+        correlation: { runId: "run-1", sessionKey: "session-1", callId: "call-1" },
+        health: { enforcement: "unhealthy", audit: "healthy" },
+        barrier: {
+          outcome: "replace",
+          replacement_code: "sandbox_security_evaluation_unavailable",
+          replacement_text: UNAVAILABLE_TEXT
+        }
+      }
+    },
+    {
+      name: "malformed decision",
+      response: { barrier: { outcome: "replace" } }
+    }
+  ];
+
+  for (const scenario of cases) {
+    const modulesValue = await modules();
+    const value = await runDefinition(modulesValue, {
+      wrapped: false,
+      ...(scenario.throws
+        ? {
+            onSecurity: () => {
+              throw new Error(`${scenario.name} failure`);
+            }
+          }
+        : { securityResponse: scenario.response })
+    });
+    assert.equal(
+      (value.result.content as Array<RecordValue>)[0]?.text,
+      BLOCKED_TEXT,
+      scenario.name
+    );
+    assert.equal(value.executions.length, 0, scenario.name);
+  }
+});
+
 test("REQ-SBX-GENERAL-004 P4-T5 concurrent same-session tool barriers retain their own prompt and run", async () => {
   const modulesValue = await modules();
   const seen: Array<{ event: RecordValue; ctx: RecordValue }> = [];
@@ -459,6 +611,10 @@ test("REQ-SBX-GENERAL-004 P4-T5 concurrent same-session tool barriers retain the
     }
   });
   const toToolDefinitions = assertFunction(modulesValue.toolSplit, "o");
+  const setAssistantProjection = assertFunction(
+    modulesValue.lifecycle,
+    "setOpenClawSecurityAssistantProjection"
+  );
   const run = async (label: string): Promise<void> => {
     const order: string[] = [];
     const executions: RecordValue[] = [];
@@ -468,7 +624,20 @@ test("REQ-SBX-GENERAL-004 P4-T5 concurrent same-session tool barriers retain the
     const execute = assertFunction(definition, "execute");
     await withTurn(
       modulesValue.lifecycle,
-      () => execute(`call-${label}`, { secret: label }, void 0, void 0) as Promise<unknown>,
+      async () => {
+        setAssistantProjection({
+          schema_version: ASSISTANT_PROJECTION_SCHEMA,
+          text_parts: [],
+          tool_calls: [
+            {
+              call_id: `call-${label}`,
+              tool_name: "read_file",
+              arguments: { secret: "final", path: "/tmp/file" }
+            }
+          ]
+        });
+        await execute(`call-${label}`, { secret: label, path: "/tmp/file" }, void 0, void 0);
+      },
       { prompt: `prompt-${label}`, runId: `run-${label}`, sessionKey: "session-shared" }
     );
   };
@@ -504,6 +673,56 @@ test("REQ-SBX-GENERAL-004 P4-T5 host replacement creates the private marker and 
     "utf8"
   );
   assert.equal(source.includes(TOOL_BARRIER_MARKER), true);
+});
+
+test("REQ-SBX-GENERAL-004 P4-T5 a second call with the same marked parameters is denied without a second security hook", async () => {
+  const modulesValue = await modules();
+  let securityHookCalls = 0;
+  await configureRunner(modulesValue.hookRunner, {
+    securityDecision: () => {
+      securityHookCalls += 1;
+      return passDecision();
+    }
+  });
+  const barrier = assertFunction(
+    modulesValue.agentTools,
+    "runOpenClawSecurityToolBarrier"
+  );
+  const setAssistantProjection = assertFunction(
+    modulesValue.lifecycle,
+    "setOpenClawSecurityAssistantProjection"
+  );
+  const params = { path: "/tmp/file", secret: "final" };
+  const value = await withTurn(modulesValue.lifecycle, async () => {
+    setAssistantProjection({
+      schema_version: ASSISTANT_PROJECTION_SCHEMA,
+      text_parts: [],
+      tool_calls: [
+        {
+          call_id: "call-1",
+          tool_name: "read_file",
+          arguments: { ...params }
+        }
+      ]
+    });
+    const first = await barrier({
+      toolName: "read_file",
+      toolCallId: "call-1",
+      params,
+      ctx: toolContext()
+    });
+    const second = await barrier({
+      toolName: "read_file",
+      toolCallId: "call-1",
+      params,
+      ctx: toolContext()
+    });
+    return { first, second };
+  });
+  assert.deepEqual(value.first, { outcome: "pass" });
+  assert.equal(value.second.outcome, "replace");
+  assert.equal(value.second.text, BLOCKED_TEXT);
+  assert.equal(securityHookCalls, 1);
 });
 
 test("REQ-SBX-GENERAL-004 P4-T5 unpatched tool adapters have no final security barrier", () => {
