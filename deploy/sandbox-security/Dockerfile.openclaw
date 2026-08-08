@@ -22,8 +22,19 @@ COPY engines/sandbox/src /build/engines/sandbox/src
 
 WORKDIR /build/integrations/openclaw/general-security
 
-RUN pnpm install --frozen-lockfile
-RUN node scripts/apply-general-security-patch.mjs node_modules/openclaw
+# Install and apply the patch in ONE layer. pnpm links node_modules/openclaw as
+# a symlink into the .pnpm store; the patch script (by design) refuses a symlink
+# packageRoot, so resolve the real store directory — mirroring runtime-probe.ts,
+# which realpaths before patching. The script performs an atomic-swap rename of
+# that directory; on overlayfs a directory rename fails with EXDEV when the dir
+# lives in a lower (read-only) layer (no redirect_dir copy-up). Keeping install
+# and patch in the same RUN puts node_modules in the writable upper layer, so the
+# rename is a same-layer metadata operation. TMPDIR stays inside node_modules to
+# keep the swap on one filesystem.
+RUN pnpm install --frozen-lockfile \
+  && mkdir -p node_modules/.patch-tmp \
+  && TMPDIR="$(readlink -f node_modules/.patch-tmp)" node scripts/apply-general-security-patch.mjs "$(readlink -f node_modules/openclaw)" \
+  && rm -rf node_modules/.patch-tmp
 RUN pnpm run build
 RUN node --input-type=module -e 'import("./dist/index.js").then(({ verifyProductionRuntimeIdentity }) => verifyProductionRuntimeIdentity({ packageRoot: process.cwd() })).catch((error) => { console.error(error.name); process.exitCode = 1; })'
 RUN node --input-type=module -e 'import("./dist/index.js").then(({ runOpenClawSecurityRuntimeProbe }) => runOpenClawSecurityRuntimeProbe({ packageRoot: process.cwd() })).catch((error) => { console.error(error.name); process.exitCode = 1; })'
@@ -56,10 +67,13 @@ ENV HOME=/tmp/openclaw/home
 ENV TMPDIR=/tmp/openclaw
 ENV OPENCLAW_STATE_DIR=/run/openclaw-security
 ENV OPENCLAW_CONFIG_PATH=/opt/openclaw-general-security/config/openclaw-security.json5
+ENV PATH=/opt/openclaw-general-security/node_modules/.bin:$PATH
 
-RUN test "$(node node_modules/openclaw/openclaw.mjs --version)" = "2026.6.34"
+# `openclaw --version` prints a banner ("OpenClaw 2026.6.34 (<gitsha>)"), not a
+# bare version. Extract the semantic version field and assert it exactly.
+RUN test "$(node node_modules/openclaw/openclaw.mjs --version | awk '{print $2}')" = "2026.6.34"
 
 USER node
 
 ENTRYPOINT ["node", "--input-type=module", "-e"]
-CMD ["import { spawnSync } from 'node:child_process'; const runtime = await import('/opt/openclaw-general-security/dist/index.js'); await runtime.runOpenClawSecurityRuntimeProbe({ packageRoot: '/opt/openclaw-general-security' }); const child = spawnSync(process.execPath, ['/opt/openclaw-general-security/node_modules/openclaw/openclaw.mjs', 'gateway', '--bind', 'loopback', '--port', '19001'], { stdio: 'inherit' }); if (child.error) throw child.error; process.exitCode = child.status ?? 1;"]
+CMD ["import { spawnSync } from 'node:child_process'; const runtime = await import('/opt/openclaw-general-security/dist/index.js'); await runtime.runOpenClawSecurityRuntimeProbe({ packageRoot: '/opt/openclaw-general-security', configPath: process.env.OPENCLAW_CONFIG_PATH, env: { OPENCLAW_CONFIG_PATH: process.env.OPENCLAW_CONFIG_PATH, OPENCLAW_STATE_DIR: process.env.OPENCLAW_STATE_DIR, SANDBOX_SECURITY_POLICY_PROFILE_ID: process.env.SANDBOX_SECURITY_POLICY_PROFILE_ID, SANDBOX_SECURITY_PRODUCTION_MODE: process.env.SANDBOX_SECURITY_PRODUCTION_MODE, SANDBOX_SECURITY_AUDIT_ENDPOINT: process.env.SANDBOX_SECURITY_AUDIT_ENDPOINT, SANDBOX_SECURITY_AUDIT_CAPABILITY_TOKEN: process.env.SANDBOX_SECURITY_AUDIT_CAPABILITY_TOKEN } }); const child = spawnSync(process.execPath, ['/opt/openclaw-general-security/node_modules/openclaw/openclaw.mjs', 'gateway', '--bind', 'loopback', '--port', '19001'], { stdio: 'inherit' }); if (child.error) throw child.error; process.exitCode = child.status ?? 1;"]
