@@ -38,7 +38,9 @@ image label, checked-in file, shell history, or diagnostic output:
 export SANDBOX_SECURITY_POLICY_PROFILE_ID=sandbox-security-balanced.v1
 export SANDBOX_SECURITY_PRODUCTION_MODE=rule_only
 export SANDBOX_SECURITY_AUDIT_ENDPOINT=http://sandbox-security-backend:3001/internal/sandbox/security/enforcement-events
-export SANDBOX_SECURITY_AUDIT_CAPABILITY_TOKEN='<operator-issued sbxcap_v1 token>'
+read -r -s -p 'Sandbox security capability token: ' SANDBOX_SECURITY_AUDIT_CAPABILITY_TOKEN
+printf '\n'
+export SANDBOX_SECURITY_AUDIT_CAPABILITY_TOKEN
 ```
 
 The service publishes no host port, uses no named or anonymous volume, and

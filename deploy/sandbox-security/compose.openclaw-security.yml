@@ -18,9 +18,9 @@ services:
     mem_limit: 1g
     pids_limit: 256
     tmpfs:
-      - /run/openclaw-security
-      - /tmp/openclaw
-      - /workspace
+      - /run/openclaw-security:mode=1777
+      - /tmp/openclaw:mode=1777
+      - /workspace:mode=1777
     networks:
       - sandbox-security-internal-audit
     environment:
@@ -39,8 +39,18 @@ services:
         - >-
           import("/opt/openclaw-general-security/dist/index.js")
           .then(({ runOpenClawSecurityRuntimeProbe }) =>
-          runOpenClawSecurityRuntimeProbe({ packageRoot:
-          "/opt/openclaw-general-security" }))
+          runOpenClawSecurityRuntimeProbe({
+          packageRoot: "/opt/openclaw-general-security",
+          configPath: process.env.OPENCLAW_CONFIG_PATH,
+          env: {
+          OPENCLAW_CONFIG_PATH: process.env.OPENCLAW_CONFIG_PATH,
+          OPENCLAW_STATE_DIR: process.env.OPENCLAW_STATE_DIR,
+          SANDBOX_SECURITY_POLICY_PROFILE_ID: process.env.SANDBOX_SECURITY_POLICY_PROFILE_ID,
+          SANDBOX_SECURITY_PRODUCTION_MODE: process.env.SANDBOX_SECURITY_PRODUCTION_MODE,
+          SANDBOX_SECURITY_AUDIT_ENDPOINT: process.env.SANDBOX_SECURITY_AUDIT_ENDPOINT,
+          SANDBOX_SECURITY_AUDIT_CAPABILITY_TOKEN: process.env.SANDBOX_SECURITY_AUDIT_CAPABILITY_TOKEN
+          }
+          }))
           .catch(() => { process.exitCode = 1; });
       interval: 30s
       timeout: 15s
