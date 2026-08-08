@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const MANIFEST_SCHEMA = "openclaw-security-patch-manifest.v1";
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
@@ -358,6 +359,56 @@ export function applyVerifiedPatch(input) {
     return Object.freeze({ status: "applied" });
   } finally {
     rmSync(disposableParent, { recursive: true, force: true });
+  }
+}
+
+export function applyOpenClawGeneralSecurityPatch(input) {
+  if (!hasExactOwnDataKeys(input, ["packageRoot"])) {
+    fail("production input schema is invalid");
+  }
+  return applyVerifiedPatch({
+    packageRoot: input.packageRoot,
+    manifestPath: PRODUCTION_MANIFEST_PATH,
+    patchPath: PRODUCTION_PATCH_PATH,
+    expectedIdentity: PRODUCTION_EXPECTED_IDENTITY
+  });
+}
+
+const PRODUCTION_PATCH_PATH = fileURLToPath(
+  new URL("../patches/openclaw-2026.6.34-general-security.patch", import.meta.url)
+);
+const PRODUCTION_MANIFEST_PATH = fileURLToPath(
+  new URL(
+    "../patches/openclaw-2026.6.34-general-security.manifest.json",
+    import.meta.url
+  )
+);
+const PRODUCTION_EXPECTED_IDENTITY = Object.freeze({
+  package_name: "openclaw",
+  package_version: "2026.6.34",
+  npm_integrity:
+    "sha512-Rm4khBrWn9HYqE99NBryCFgjwlsIuwBqK5jIANn2773CGXJ1JIZkDn5twEHB+8SVFdh0FPNPHRVgZepzNJDfHg==",
+  tarball_sha256:
+    "d0edcbc937428ce1cb5729e444ea615651c9a8895807653ac2c4ed4e05122fa5"
+});
+
+function isMainModule() {
+  return (
+    process.argv[1] !== undefined &&
+    resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))
+  );
+}
+
+if (isMainModule()) {
+  const packageRoot = process.argv[2] ?? resolve(process.cwd(), "node_modules/openclaw");
+  try {
+    process.stdout.write(
+      `${JSON.stringify(applyOpenClawGeneralSecurityPatch({ packageRoot }))}\n`
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "patch failed";
+    process.stderr.write(`${message}\n`);
+    process.exitCode = 1;
   }
 }
 

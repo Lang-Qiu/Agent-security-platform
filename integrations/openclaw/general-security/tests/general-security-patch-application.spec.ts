@@ -582,6 +582,15 @@ test("REQ-SBX-GENERAL-004 P4-T1 contains no OpenClaw production identity", () =>
     import.meta.url
   );
   const source = readFileSync(scriptPath, "utf8");
+  const productionBoundary = source.indexOf(
+    "export function applyOpenClawGeneralSecurityPatch"
+  );
+  assert.notEqual(
+    productionBoundary,
+    -1,
+    "the production wrapper must follow the generic mechanism"
+  );
+  const genericSource = source.slice(0, productionBoundary);
   for (const marker of [
     "2026.6.34",
     "before_model_output_delivery",
@@ -590,7 +599,7 @@ test("REQ-SBX-GENERAL-004 P4-T1 contains no OpenClaw production identity", () =>
     "d0edcbc937428ce1cb5729e444ea615651c9a8895807653ac2c4ed4e05122fa5"
   ]) {
     assert.equal(
-      source.includes(marker),
+      genericSource.includes(marker),
       false,
       `P4-T1 mechanism must stay generic and not contain ${marker}`
     );

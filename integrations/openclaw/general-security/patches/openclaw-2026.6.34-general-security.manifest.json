@@ -1,0 +1,77 @@
+{
+  "schema_version": "openclaw-security-patch-manifest.v1",
+  "package_name": "openclaw",
+  "package_version": "2026.6.34",
+  "npm_integrity": "sha512-Rm4khBrWn9HYqE99NBryCFgjwlsIuwBqK5jIANn2773CGXJ1JIZkDn5twEHB+8SVFdh0FPNPHRVgZepzNJDfHg==",
+  "tarball_sha256": "d0edcbc937428ce1cb5729e444ea615651c9a8895807653ac2c4ed4e05122fa5",
+  "patch_tool": "git",
+  "patch_tool_version": "2.43.0",
+  "patch_sha256": "8e64e9fd5335d4d81a406e576c5ac9ceab583dc4efae24148ef600d876b33f07",
+  "files": [
+    {
+      "path": "dist/agent-runner.runtime-BUWW8f6n.js",
+      "sha256_before": "9df987c2c8efdeaa875aead6d486a5f5f4d835a805e5c835f490ef3c4aa1d2e0",
+      "sha256_after": "1b9e4539e0e973e0d47c008440e8bfa5ac9bbc60a6a6bc315ce0602e85eae0cb"
+    },
+    {
+      "path": "dist/agent-tools.before-tool-call-59sE70R-.js",
+      "sha256_before": "2f8ba157e5660c32b85826eb3269a59b8add55062e31ed3d6d1528dd1017ad4b",
+      "sha256_after": "5d0cf7f875a83ca11a7d016825a50882d13ca2df04585c0be18e77c334be62b2"
+    },
+    {
+      "path": "dist/cli-runner-B0eKIePw.js",
+      "sha256_before": "b78b9a928c7a2945c34b76184b2c9562317dcc19618b2b1df8e10db1bdfe593e",
+      "sha256_after": "7141c58fe0141829f5d8e7e2246b5a59eb207f02093248ebe7e6877d74c2ee15"
+    },
+    {
+      "path": "dist/command-registration-BBago94k.js",
+      "sha256_before": "6672f28552a828daa2375c62758b1756725970fc45b2232d66596a59b5e22546",
+      "sha256_after": "873bee8b1bd536e378e1bf073ae1202656221e706b30c61cec2cd3f2b496696a"
+    },
+    {
+      "path": "dist/deliver-CJEsHkyF.js",
+      "sha256_before": "3229fb60029f129b767fe9ca91be9f530f41395727f1bcffdfa23a4073b6857d",
+      "sha256_after": "c6463e937eb4a9ca1349b164cb946f03ec40232cc2e826a6a2b58bce2df44780"
+    },
+    {
+      "path": "dist/delivery-CExBlTq2.js",
+      "sha256_before": "abcd09249ed4a1c7c079924c3c537e334dc7944597dc7b03f370b5e03ed3f89a",
+      "sha256_after": "9b94276e57d358c7031a3be3ff62997ca48dcb025e476ed3b0d9aef319849f07"
+    },
+    {
+      "path": "dist/dispatch-BSYjC-fp.js",
+      "sha256_before": "8001214385bc1cf4d883e53d877b6e6aabf9692bbf5759f9c35872bd83150f61",
+      "sha256_after": "94f729af15062a3032a7fc28be584c5b81c4e21d85d8619b323fe6175aaa7bc9"
+    },
+    {
+      "path": "dist/hook-runner-global-D_43rcnU.js",
+      "sha256_before": "d2ade7ea51fff02574643574acfed5a7bbbe6b01fd5df5797c9ebaddd2674bda",
+      "sha256_after": "85fde9bab193bab9c4e0fc8b0296f0c1a58ab77ccb7513109289398f54894914"
+    },
+    {
+      "path": "dist/lifecycle-hook-helpers-Dowa8zK4.js",
+      "sha256_before": "a66e4b85966d1f9bbbb7b6123bb915a5cdeec433c0fae6f0bbd893b57958c085",
+      "sha256_after": "ca12234187db9302e599f10d560ff6d10697db101f1453e8cfd22190ed416111"
+    },
+    {
+      "path": "dist/plugin-sdk/hook-types-H9SC6W-p.d.ts",
+      "sha256_before": "f5b4912cb205b79e8ba5620554329c80dd070fd996ae0979260b66c16d349091",
+      "sha256_after": "79f701cdfd95e5d5a3e4eebaee65706f15652d0c21a4f6af39d0be132428561e"
+    },
+    {
+      "path": "dist/run-attempt-6K7vbtby.js",
+      "sha256_before": "808acfb32c37e6122d6ed54eda5fbc3c56683eade263b490a5b922c980696a38",
+      "sha256_after": "bf092e85dff8e5b4e2108952f3e6eec92491e981d94422e66e6bffba7a02df51"
+    },
+    {
+      "path": "dist/selection-DopzNY3I.js",
+      "sha256_before": "a5698c5523e87ad454cf89e4a5c940689403f7b6eac6f3d14c7205f1e3071ed6",
+      "sha256_after": "8d3fa06b3c465caca92b0aef91a8c95af7751d2d025861d5e107406e6361f773"
+    },
+    {
+      "path": "dist/tool-split-BKKaUdyz.js",
+      "sha256_before": "f6cb11210b69687a26ac079b48b341190c586450f2c46280284ff317ad805843",
+      "sha256_after": "00b1d32772387d54f11bd1c4169c30da3559b9cb7b69e176d32df01235b6f78c"
+    }
+  ]
+}

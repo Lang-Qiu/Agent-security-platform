@@ -6,7 +6,8 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --experimental-strip-types --experimental-test-isolation=none --test tests/general-security-*.spec.ts",
-    "test:patch": "node --experimental-strip-types --test tests/general-security-patch-application.spec.ts"
+    "test:patch": "node --experimental-strip-types --test tests/general-security-patch-application.spec.ts tests/general-security-patch-integrity.spec.ts",
+    "apply:patch": "node scripts/apply-general-security-patch.mjs"
   },
   "dependencies": {
     "openclaw": "2026.6.34"
