@@ -321,6 +321,83 @@ test("REQ-SBX-GENERAL-004 P4-T6 the patch catalogs exactly the reviewed outbound
   );
 });
 
+test("REQ-SBX-GENERAL-004 P4-T6 never persists an outbound payload before its final security barrier", () => {
+  const source = readFileSync(
+    join(patched().openclawDir, "dist", DELIVER_FILE),
+    "utf8"
+  );
+  const internalStart = source.indexOf(
+    "async function deliverOutboundPayloadsInternal"
+  );
+  const cleanupStart = source.indexOf(
+    "async function deliverOutboundPayloadsWithQueueCleanup"
+  );
+  assert.notEqual(internalStart, -1);
+  assert.notEqual(cleanupStart, -1);
+  const internal = source.slice(internalStart, cleanupStart);
+  assert.match(
+    internal,
+    /const queueId = null/,
+    "general-security outbound must use the non-durable delivery path"
+  );
+  assert.doesNotMatch(
+    internal,
+    /await enqueueDelivery\(/,
+    "raw outbound payloads must not enter the durable queue before security"
+  );
+});
+
+test("REQ-SBX-GENERAL-004 P4-T6 composed dispatch delivery carries one host-only barrier completion", async () => {
+  const lifecycle = await importChunk(patched(), LIFECYCLE_FILE);
+  const dispatchSource = readFileSync(
+    join(patched().openclawDir, "dist", DISPATCH_FILE),
+    "utf8"
+  );
+  const deliverSource = readFileSync(
+    join(patched().openclawDir, "dist", DELIVER_FILE),
+    "utf8"
+  );
+  assert.match(
+    dispatchSource,
+    /markOpenClawSecurityOutboundBarrierComplete/,
+    "dispatch must mark the already-enforced host payload"
+  );
+  assert.match(
+    deliverSource,
+    /isOpenClawSecurityOutboundBarrierComplete/,
+    "generic delivery must consume the dispatch completion"
+  );
+
+  const create = assertFunction(
+    lifecycle,
+    "createOpenClawSecurityTurnCapsule"
+  );
+  const runWith = assertFunction(
+    lifecycle,
+    "runWithOpenClawSecurityTurnCapsule"
+  );
+  const activate = assertFunction(
+    lifecycle,
+    "activateOpenClawSecurityTurnCapsule"
+  );
+  const mark = assertFunction(
+    lifecycle,
+    "markOpenClawSecurityOutboundBarrierComplete"
+  );
+  const isComplete = assertFunction(
+    lifecycle,
+    "isOpenClawSecurityOutboundBarrierComplete"
+  );
+  const candidate = payload();
+  const capsule = create();
+  await runWith(capsule, async () => {
+    activate({ prompt: "current exact prompt", runId: "run-1", sessionKey: "session-1" });
+    mark(candidate);
+    assert.equal(isComplete(candidate), true);
+  });
+  assert.equal(isComplete(candidate), false);
+});
+
 test("REQ-SBX-GENERAL-004 P4-T6 queued follow-up owns one capsule across model run and routed delivery", () => {
   const source = readFileSync(
     join(patched().openclawDir, "dist", AGENT_RUNNER_FILE),
