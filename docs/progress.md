@@ -1,3 +1,69 @@
+# 2026-08-08 - REQ-SBX-GENERAL-005 frontend evaluation workbench and audit console
+
+- phase/task: Phases 1-5 complete (theme gate, authenticated service layer,
+  presentational components, pages/routing, privacy/accessibility/closure)
+- requirement state: GENERAL-005 reaches `IMPLEMENTED_PENDING_GLOBAL_P6_GATE`
+  (its own terminal, dependency-bounded status; no predecessor is auto-verified
+  and no new backend gate is added)
+- scope: a cybersecurity-console frontend surface on a shared dark theme layer,
+  consuming only the two existing public GENERAL-003 routes through a new
+  authenticated client path and the existing shared exact-key normalizers; no
+  backend route, shared contract, or Engine semantics changed
+- implementation summary:
+  - Phase 1: permanent requirement gate, `console-theme.ts` token module with
+    measured WCAG contrast, dark+compact `ConfigProvider`, full `app.css`
+    inversion to `color-scheme: dark` with colour only in `:root`, and the
+    `StaticAnalysisResultSection` `<pre>` contrast repair (1.09:1 -> ~12.4:1)
+  - Phase 2: `requestAuthenticatedJson` transport (bearer always, idempotency
+    key POST-only, no server message surfaced), client limit pre-flight over
+    the shared bounds, evaluation/audit service over the real shared
+    normalizers, and the fifteen-code Chinese failure copy catalog
+  - Phase 3: eleven presentational components (value tag, capability panel,
+    request form + content/tool/limit sub-components, decision summary,
+    findings and detector-run tables, audit event table and cursor pager),
+    exhaustive over both discriminated unions
+  - Phase 4: workbench and audit pages with the client-generated request_id and
+    idempotency-key lifecycle (reuse on unchanged retry, regenerate on edit),
+    route + navigation registration under the `沙箱安全` group
+  - Phase 5: nine-channel privacy leak sentinel, static storage gate,
+    accessibility operability assertions, acceptance runbook, full regression
+- files:
+  - `frontend/src/styles/console-theme.ts`, `frontend/src/app/AppProviders.tsx`,
+    `frontend/src/styles/app.css`,
+    `frontend/src/components/task-detail/StaticAnalysisResultSection.tsx`
+  - `frontend/src/services/api-client.ts`,
+    `frontend/src/services/sandbox-security-service.ts`,
+    `frontend/src/utils/sandbox-security-limits.ts`,
+    `frontend/src/content/sandbox-security-copy.ts`
+  - `frontend/src/components/sandbox-security/*` (eleven components),
+    `frontend/src/pages/SandboxSecurityWorkbenchPage.tsx`,
+    `frontend/src/pages/SandboxSecurityAuditPage.tsx`
+  - `frontend/src/app/routes.tsx`, `frontend/src/app/navigation.tsx`,
+    `frontend/src/layouts/ConsoleLayout.tsx` (one-line `defaultOpenKeys`)
+  - `tests/repository/sandbox-security-frontend-spec.spec.ts` (requirement +
+    storage gate), `docs/superpowers/2026-08-07-general-005-frontend-acceptance-runbook.md`
+- tests:
+  - frontend baseline transition `221 -> 326` (30 files); all 221 original
+    tests pass with zero assertion edits
+  - `npm run test:repo` is 357/357; `npm run test:shared` is 224/224
+  - frontend typecheck exits 0 (only a pre-existing `baseUrl` tsconfig
+    deprecation, not GENERAL-005-attributable); `git diff --check` clean
+  - privacy sentinel 3/3 over the closed nine-channel list; static storage gate
+    reports zero offenders
+- reviews:
+  - Phase 1 closing review: PASS (0 Critical / 0 Important / 1 Minor)
+  - Phase 2 closing review: PASS (0 Critical / 0 Important / 2 Minor)
+  - Phase 3 closing review: PASS (0 Critical / 0 Important / 2 Minor)
+  - Phase 4 closing review: PASS (0 Critical / 0 Important / 0 Minor)
+- boundary:
+  - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`; GENERAL-003
+    and GENERAL-004 remain `IMPLEMENTED_PENDING_GLOBAL_P6_GATE`; none is
+    auto-verified by this transition
+  - the public route surface returns `evaluation_mode: "simulation"`; the UI is
+    not an enforcement decision point
+- next: no further requirement; GENERAL-005 is the terminal Track 1 frontend
+  requirement, dependency-bounded pending the global P6 gate
+
 # 2026-08-08 - REQ-SBX-GENERAL-004 Phase 5 deployment, privacy, and closure
 
 - phase/task: Phase 5 / P5-T1..P5-T4 (isolated image, Compose topology,

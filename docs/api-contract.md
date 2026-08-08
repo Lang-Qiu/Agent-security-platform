@@ -2452,3 +2452,58 @@ listener returns `404` for public sandbox paths. Existing `/health` and
 the complete `408`/`413` JSON envelope on the wire with `Connection: close`; a
 caller-aborted request is never written after its response or socket becomes
 non-writable.
+
+## REQ-SBX-GENERAL-005 Frontend Evaluation Workbench Contract
+
+The frontend adds no backend route, shared contract, or DTO. It consumes exactly
+the two public routes already defined by GENERAL-003 — see the route matrix in
+`REQ-SBX-GENERAL-003 Authenticated Backend API` and the audit shapes in
+`REQ-SBX-GENERAL-003 Shared Audit API Contract`; those are canonical and are not
+copied here. This section records only what is genuinely frontend-owned.
+
+Consumed routes:
+
+- `POST /api/sandbox/security/evaluations` — bearer capability, per-call
+  `Idempotency-Key`, JSON `SandboxSecurityRequest` body; `200
+  ApiResponse<SandboxSecurityDecision>`.
+- `GET /api/sandbox/security/audit-events?cursor=&limit=` — bearer capability,
+  scope `sandbox_security:audit:read`, bodyless; `200
+  ApiResponse<SandboxSecurityAuditPage>`.
+
+Client-generated identity and idempotency lifecycle:
+
+- `request_id` is generated per submit with `crypto.randomUUID()`.
+- `Idempotency-Key` is generated with `crypto.randomUUID()` at the moment of
+  submit, held with the in-flight request, and **reused** on retry of an
+  unchanged payload so the backend replays the stored decision. **Any edit to
+  the payload invalidates the key**; the next submit generates a fresh one.
+  Reusing a key after an edit would produce
+  `SANDBOX_SECURITY_IDEMPOTENCY_CONFLICT` (a client defect), so the client never
+  does this. The key is never written to a URL, storage, or log.
+
+Client-side limit pre-flight (mirrors no constant; every bound is imported from
+`shared/types/sandbox-security`): a request is rejected before any capability
+call when it exceeds `SANDBOX_SECURITY_MAX_CONTENT_ITEMS` (64), a text item
+exceeds `SANDBOX_SECURITY_MAX_TEXT_BYTES` (128 KiB), a JSON value exceeds
+`SANDBOX_SECURITY_MAX_JSON_DEPTH` (12) or `SANDBOX_SECURITY_MAX_JSON_NODES`
+(4096), or the whole request exceeds the canonical
+`SANDBOX_SECURITY_MAX_REQUEST_BYTES` (512 KiB — the engine bound, stricter than
+the 786432-byte HTTP admission cap, because clearing HTTP admission but
+exceeding the canonical bound wastes a capability call). A violation names only
+the failing rule and at most the item `source_id` — never the submitted value.
+
+Error mapping: all fifteen documented `error_code` values plus transport and
+validation failure are surfaced through a discriminated result union carrying
+`error_code`, HTTP status, and `Retry-After`; no server `message` is trusted or
+surfaced. `SANDBOX_SECURITY_UNAUTHORIZED`/`SANDBOX_SECURITY_FORBIDDEN` prompt for
+a fresh capability without discarding the typed payload;
+`SANDBOX_SECURITY_IDEMPOTENCY_CONFLICT` prompts a fresh key.
+
+Content-free rendering: the capability bearer token lives only in React state,
+is never rendered back after entry, and never enters a URL, storage, history,
+`document.title`, console, or log. Submitted content appears only in the owning
+form control and the outbound request body. The decision and audit views render
+only the content-free GENERAL-001/GENERAL-003 unions; `subject_refs`/
+`evidence_refs` positional data are content-free and safe to render. The public
+route returns `evaluation_mode: "simulation"`, and the workbench labels every
+decision as simulation, not enforcement.

@@ -43,9 +43,23 @@ flowchart TD
 - 负责用户发起扫描任务、查看状态、筛选风险、追踪处置。
 - 对接后端 API，不直接依赖各引擎内部实现。
 - 第一版已落地统一后台壳子，包含固定侧边导航、顶部上下文栏、`Overview` 路由与结果路由占位页。
-- 当前路由骨架包括：`/overview`、`/tasks`、`/tasks/:taskId`、`/results/assets`、`/results/static-analysis`、`/results/sandbox`、`/review-demo`。
+- 当前路由骨架包括：`/overview`、`/tasks`、`/tasks/:taskId`、`/results/assets`、`/results/static-analysis`、`/results/sandbox`、`/sandbox-security/workbench`、`/sandbox-security/audit`、`/review-demo`。
 
 前端只消费平台统一后的视图模型，不直接拼接不同引擎的原始数据格式。
+
+#### 2.1.1 REQ-SBX-GENERAL-005 沙箱安全评估工作台
+
+- 控制台主题层是 token 驱动的：暗色调色板与对比度经过验证的语义 token 集中在
+  `frontend/src/styles/console-theme.ts`，并在应用根部通过 `ConfigProvider`
+  以 `theme.darkAlgorithm` 加 `theme.compactAlgorithm` 一次性应用；`app.css`
+  在 `:root` 中声明 `color-scheme: dark` 并只在 `:root` 内出现颜色字面量。
+- 新增两个路由：`/sandbox-security/workbench`（评估工作台）与
+  `/sandbox-security/audit`（审计事件），归入导航分组 `沙箱安全`。二者只消费既有的
+  两个 GENERAL-003 公共路由，不新增任何后端路由或共享契约。
+- 工作台把运营者粘贴的能力令牌与提交内容仅保存在页面 React state 中：令牌只经
+  `Authorization` 头发出，`Idempotency-Key` 仅在评估路由（POST）发送，且在负载
+  编辑后重新生成；提交内容、令牌与审计游标都不写入 URL、浏览器存储、`history.state`、
+  `document.title` 或日志。审计视图只渲染内容无关的事件联合体。
 
 ### 2.2 后端平台层
 

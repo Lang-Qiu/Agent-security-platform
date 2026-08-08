@@ -10,7 +10,7 @@ Sandbox security evaluation workbench and content-free audit console
 
 ## Status
 
-IMPLEMENTATION_IN_PROGRESS
+IMPLEMENTED_PENDING_GLOBAL_P6_GATE
 
 ## Transition Authority
 
@@ -163,16 +163,23 @@ caller-configurable retry.
 
 ## Current Work
 
-- The documentation-only sprint switch to `REQ-SBX-GENERAL-005` is this commit.
-- Phase 1 (theme gate) is next: permanent requirement gate, console theme token
-  module, dark/compact `ConfigProvider`, and `app.css` inversion, all under the
-  frontend TDD baseline.
-- No production frontend file has been changed by this documentation commit.
+- All five Phases are complete, committed, and independently reviewed with no
+  unresolved Critical or Important finding.
+- The frontend baseline transitioned `221 -> 326` (221 pre-existing tests green
+  with zero assertion edits, plus the Phase 1 through Phase 5 additions);
+  `test:repo` is `357/357` and `test:shared` is `224/224`.
+- The privacy leak sentinel passes with the closed nine-channel list intact, the
+  static storage gate reports zero offenders, and the accessibility operability
+  gate (aria-live verdict, named controls, keyboard-reachable submit, associated
+  audit headers) passes at the Phase 1 verified contrast.
+- This documentation-closure commit records the requirement at
+  `IMPLEMENTED_PENDING_GLOBAL_P6_GATE`, the maximum its predecessors allow.
 
 ## Next Transition
 
-`GENERAL_004_TERMINAL` -> `GENERAL_005_SPRINT_SWITCH (doc-only)` ->
-`PHASE_1_IN_PROGRESS`
+`PHASE_5_COMPLETE` -> `GENERAL_005_IMPLEMENTED_PENDING_GLOBAL_P6_GATE`
 
-This commit records the sprint switch. Phase 1 execution begins immediately
-after, starting with the permanent GENERAL-005 requirement gate (P1-T1).
+GENERAL-005 cannot claim a status stronger than its predecessors: GENERAL-002
+remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE` and GENERAL-003 is not
+`VERIFIED`, so the requirement rests at `IMPLEMENTED_PENDING_GLOBAL_P6_GATE`
+pending the global P6 gate. No further requirement begins in this commit.

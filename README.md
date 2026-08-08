@@ -448,6 +448,26 @@ Expected: exact version `2026.6.34`, one `agent-security-sandbox-general`
 plugin, all four barriers, registration count one, enforcement healthy, and
 either healthy or the specified degraded audit when the backend is unattached.
 
+### GENERAL-005 sandbox security evaluation workbench
+
+REQ-SBX-GENERAL-005 adds two operator-console routes on the shared dark theme:
+
+- `/sandbox-security/workbench` (评估工作台) — submit content for a simulation
+  evaluation and read the decision, findings, and detector runs.
+- `/sandbox-security/audit` (审计事件) — page through the content-free audit
+  event stream with an opaque forward cursor.
+
+Both routes consume only the two existing public GENERAL-003 routes; no new
+backend route, shared contract, or Engine behavior is added. The workbench
+requires the operator to paste a short-lived public capability
+(`sbxcap_v1.*`, issued out-of-band from a trusted shell, one-hour maximum TTL).
+That token and every submitted content value are held in React state only: the
+frontend persists nothing to browser storage, writes neither to the URL nor to
+history, and logs neither. A privacy leak sentinel and a static storage gate
+enforce this. Every decision is labelled `simulation` and is not usable for
+real interception. The full operator acceptance sequence lives in
+`docs/superpowers/2026-08-07-general-005-frontend-acceptance-runbook.md`.
+
 # Track 1 OpenClaw Evidence Workflow
 
 The Track 1 path uses Node.js `>=22.19.0`, `pnpm@10.0.0`, OpenClaw
