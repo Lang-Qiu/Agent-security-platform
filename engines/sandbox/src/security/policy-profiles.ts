@@ -73,7 +73,7 @@ export interface SandboxSecurityDetectorSlotManifest {
 
 export interface SandboxSecurityPolicyProfileManifest {
   profile_id: SandboxSecurityPolicyProfileId;
-  normal_work_budget_ms: 5000;
+  normal_work_budget_ms: 5000 | 360000;
   trust_rules: readonly SandboxSecurityTrustRule[];
   detector_slots: readonly SandboxSecurityDetectorSlotManifest[];
   action_matrix: Readonly<SandboxSecurityActionMatrix>;
@@ -200,7 +200,7 @@ function makeSlots(input: {
       supported_stages: ALL_STAGES,
       base_obligation: input.localObligation,
       content_access: "raw_local",
-      timeout_ms: 1000,
+      timeout_ms: 60000,
       qualification_threshold: input.localQualify,
       routing_floor: input.localFloor,
       routing_rule: "configured_after_no_short_circuit",
@@ -213,7 +213,7 @@ function makeSlots(input: {
       supported_stages: ALL_STAGES,
       base_obligation: "optional",
       content_access: "sanitized_external",
-      timeout_ms: 4000,
+      timeout_ms: 300000,
       qualification_threshold: input.judgeQualify,
       routing_floor: input.judgeFloor,
       routing_rule: "unresolved_escalation_signal",
@@ -241,7 +241,7 @@ const STRICT_MATRIX: SandboxSecurityActionMatrix = {
 };
 
 function validateManifest(manifest: SandboxSecurityPolicyProfileManifest): void {
-  if (manifest.normal_work_budget_ms !== 5000) {
+  if (manifest.normal_work_budget_ms !== 360000) {
     throw new Error("invalid normal_work_budget_ms");
   }
   const slotIds = new Set<string>();
@@ -349,7 +349,7 @@ function assertStrictNotLessRestrictive(
 
 const BALANCED: SandboxSecurityPolicyProfileManifest = {
   profile_id: "sandbox-security-balanced.v1",
-  normal_work_budget_ms: 5000,
+  normal_work_budget_ms: 360000,
   trust_rules: TRUST_RULES,
   detector_slots: makeSlots({
     ruleQualify: 0.8,
@@ -367,7 +367,7 @@ const BALANCED: SandboxSecurityPolicyProfileManifest = {
 
 const STRICT: SandboxSecurityPolicyProfileManifest = {
   profile_id: "sandbox-security-strict.v1",
-  normal_work_budget_ms: 5000,
+  normal_work_budget_ms: 360000,
   trust_rules: TRUST_RULES,
   detector_slots: makeSlots({
     ruleQualify: 0.7,

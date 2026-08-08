@@ -86,6 +86,27 @@ export interface LimitValidationResult {
 }
 
 /**
+ * Serialized UTF-8 byte size of the request envelope this client would send.
+ * Returns `Number.POSITIVE_INFINITY` when the payload cannot be serialized
+ * (for example a cyclic `value`), which the caller reads as over-limit. Emits
+ * only a count, never the submitted content itself.
+ */
+export function measureEvaluationRequestBytes(input: EvaluationRequestInput): number {
+  const items = Array.isArray(input.contentItems) ? input.contentItems : [];
+  try {
+    return measureUtf8Bytes(
+      JSON.stringify({
+        stage: input.stage,
+        content_items: items,
+        tool_request: input.toolRequest ?? null
+      })
+    );
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+/**
  * Client-side pre-flight against the shared engine bounds. A violation names
  * only the failing rule and at most the item's source_id — never the submitted
  * value, a substring, or a byte offset.
@@ -115,18 +136,7 @@ export function validateEvaluationRequest(
     }
   }
 
-  let requestBytes = 0;
-  try {
-    requestBytes = measureUtf8Bytes(
-      JSON.stringify({
-        stage: input.stage,
-        content_items: items,
-        tool_request: input.toolRequest ?? null
-      })
-    );
-  } catch {
-    requestBytes = Number.POSITIVE_INFINITY;
-  }
+  const requestBytes = measureEvaluationRequestBytes(input);
   if (requestBytes > SANDBOX_SECURITY_MAX_REQUEST_BYTES) {
     violations.push({ rule: "request_bytes" });
   }

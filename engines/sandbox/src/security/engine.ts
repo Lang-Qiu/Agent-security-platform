@@ -88,7 +88,7 @@ type SandboxSecurityPolicyProfileResolver = (
   profileId: string
 ) => Readonly<SandboxSecurityPolicyProfileManifest>;
 
-const DEFAULT_NORMAL_WORK_BUDGET_MS = 5000;
+const DEFAULT_NORMAL_WORK_BUDGET_MS = 360000;
 const P6_LIVE_CAPTURE_NORMAL_WORK_BUDGET_MS = 360000;
 const P6_LIVE_CAPTURE_LOCAL_SLOT_TIMEOUT_MS = 60000;
 const P6_LIVE_CAPTURE_JUDGE_SLOT_TIMEOUT_MS = 300000;

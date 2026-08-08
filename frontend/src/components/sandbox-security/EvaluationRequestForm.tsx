@@ -1,7 +1,9 @@
-import { Button, Space } from "antd";
+import { useMemo } from "react";
+import { Button, Radio, Space, Typography } from "antd";
 
 import {
   SANDBOX_SECURITY_MAX_CONTENT_ITEMS,
+  SANDBOX_SECURITY_MAX_REQUEST_BYTES,
   SANDBOX_SECURITY_POLICY_PROFILE_IDS,
   SANDBOX_SECURITY_STAGES,
   type SandboxSecurityPolicyProfileId,
@@ -9,9 +11,16 @@ import {
   type SandboxSecuritySubmittedContentItem,
   type SandboxSecurityToolRequest
 } from "../../../../shared/types/sandbox-security";
-import type { LimitViolation } from "../../utils/sandbox-security-limits";
+import { describeSandboxSecurityViolation } from "../../content/sandbox-security-copy";
+import {
+  measureEvaluationRequestBytes,
+  type LimitViolation
+} from "../../utils/sandbox-security-limits";
 import { ContentItemRow } from "./ContentItemRow";
+import { RequestLimitMeter } from "./RequestLimitMeter";
 import { ToolRequestFields } from "./ToolRequestFields";
+
+const FIELDSET_STYLE = { border: "none", margin: 0, padding: 0 } as const;
 
 export interface EvaluationRequestFormProps {
   stage: SandboxSecurityStage;
@@ -64,6 +73,14 @@ export function EvaluationRequestForm({
   const addDisabled = contentItems.length >= SANDBOX_SECURITY_MAX_CONTENT_ITEMS;
   const submitDisabled = submitting || violations.length > 0;
 
+  // Serialising the whole payload is O(payload) and the payload bound is
+  // 512 KiB, so this must not run on renders that did not change the payload
+  // (a `submitting` flip or a new violation list would otherwise re-measure).
+  const usedBytes = useMemo(
+    () => measureEvaluationRequestBytes({ stage, contentItems, toolRequest }),
+    [stage, contentItems, toolRequest]
+  );
+
   const handleAddItem = () => {
     if (addDisabled) return;
     const nextIndex = contentItems.length;
@@ -89,41 +106,39 @@ export function EvaluationRequestForm({
       }}
     >
       <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-        <fieldset style={{ border: "none", margin: 0, padding: 0 }}>
-          <legend>阶段</legend>
+        <fieldset style={FIELDSET_STYLE}>
+          <legend className="sandbox-security-legend">阶段</legend>
           {SANDBOX_SECURITY_STAGES.map((option) => (
-            <label key={option} style={{ marginInlineEnd: 12 }}>
-              <input
-                type="radio"
-                name="sandbox-security-stage"
-                value={option}
-                checked={stage === option}
-                onChange={() => {
-                  const nextTool =
-                    option === "tool_request"
-                      ? toolRequest ?? { call_id: "", tool_name: "", arguments: {} }
-                      : null;
-                  emit({ stage: option, toolRequest: nextTool });
-                }}
-              />
-              {option}
-            </label>
+            <Radio
+              key={option}
+              name="sandbox-security-stage"
+              value={option}
+              checked={stage === option}
+              onChange={() => {
+                const nextTool =
+                  option === "tool_request"
+                    ? toolRequest ?? { call_id: "", tool_name: "", arguments: {} }
+                    : null;
+                emit({ stage: option, toolRequest: nextTool });
+              }}
+            >
+              <span style={{ fontFamily: "var(--console-mono)" }}>{option}</span>
+            </Radio>
           ))}
         </fieldset>
 
-        <fieldset style={{ border: "none", margin: 0, padding: 0 }}>
-          <legend>策略配置</legend>
+        <fieldset style={FIELDSET_STYLE}>
+          <legend className="sandbox-security-legend">策略配置</legend>
           {SANDBOX_SECURITY_POLICY_PROFILE_IDS.map((option) => (
-            <label key={option} style={{ marginInlineEnd: 12 }}>
-              <input
-                type="radio"
-                name="sandbox-security-profile"
-                value={option}
-                checked={policyProfileId === option}
-                onChange={() => emit({ policyProfileId: option })}
-              />
-              {option}
-            </label>
+            <Radio
+              key={option}
+              name="sandbox-security-profile"
+              value={option}
+              checked={policyProfileId === option}
+              onChange={() => emit({ policyProfileId: option })}
+            >
+              <span style={{ fontFamily: "var(--console-mono)" }}>{option}</span>
+            </Radio>
           ))}
         </fieldset>
 
@@ -155,6 +170,31 @@ export function EvaluationRequestForm({
             toolRequest={toolRequest}
             onChange={(nextTool) => emit({ toolRequest: nextTool })}
           />
+        ) : null}
+
+        <RequestLimitMeter
+          usedBytes={usedBytes}
+          limitBytes={SANDBOX_SECURITY_MAX_REQUEST_BYTES}
+        />
+
+        {violations.length > 0 ? (
+          // Bare aria-live with no ARIA role: the page-level failure Alert owns
+          // role="alert" and the decision summary owns role="status", and both
+          // page specs query those in the singular. A role here would make
+          // getByRole ambiguous. Copy names only the failing rule and at most a
+          // source_id — never the submitted value.
+          <div aria-live="polite" className="sandbox-security-violations">
+            <Typography.Text type="danger">提交被阻止：</Typography.Text>
+            <ul style={{ margin: "4px 0 0", paddingInlineStart: 20 }}>
+              {violations.map((violation) => (
+                <li key={`${violation.rule}:${violation.sourceId ?? ""}`}>
+                  <Typography.Text type="secondary">
+                    {describeSandboxSecurityViolation(violation)}
+                  </Typography.Text>
+                </li>
+              ))}
+            </ul>
+          </div>
         ) : null}
 
         <Button type="primary" htmlType="submit" disabled={submitDisabled}>

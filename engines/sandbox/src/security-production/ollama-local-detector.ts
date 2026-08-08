@@ -48,7 +48,7 @@ export type SandboxSecurityJudgeScreeningMode =
 const NORMALIZED_DIGEST = /^sha256:[a-f0-9]{64}$/;
 const WIRE_DIGEST = /^[a-f0-9]{64}$/;
 const MAX_RESPONSE_BYTES = 65536;
-const ORDINARY_WARMED_PROBE_LATENCY_MS = 1000;
+const ORDINARY_WARMED_PROBE_LATENCY_MS = 40000;
 const LIVE_CAPTURE_WARMED_PROBE_LATENCY_MS =
   SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.qualification_timeout_ms;
 const DECODER = new TextDecoder("utf-8", { fatal: true });

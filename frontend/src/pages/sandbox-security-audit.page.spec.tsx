@@ -101,6 +101,38 @@ describe("REQ-SBX-GENERAL-005 audit page", () => {
     expect(screen.getByRole("button", { name: /重新开始/ })).toBeInTheDocument();
   });
 
+  it("drops the previously loaded page when a forward read fails", async () => {
+    // Regression: a failed read used to leave the prior page's rows and pager on
+    // screen next to the error banner, so an operator could read a stale page as
+    // though it were the newly requested one.
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(page([EVENT], "sbxcur_v1.aaaa.bbbb"))
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({
+          success: false,
+          message: "err",
+          data: null,
+          error_code: "SANDBOX_SECURITY_STORAGE_UNAVAILABLE",
+          request_id: "http:2"
+        })
+      } as unknown as Response);
+    render(<SandboxSecurityAuditPage fetchImpl={fetchImpl} />);
+
+    fireEvent.change(screen.getByLabelText(/能力令牌/), { target: { value: "tok-abc" } });
+    fireEvent.click(screen.getByRole("button", { name: /加载审计/ }));
+    await waitFor(() => expect(screen.getByText("audit_read")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: /下一页/ }));
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+
+    expect(screen.queryByText("audit_read")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /下一页/ })).not.toBeInTheDocument();
+  });
+
   it("never renders a field that could carry raw content", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(page([EVENT], null));
     render(<SandboxSecurityAuditPage fetchImpl={fetchImpl} />);

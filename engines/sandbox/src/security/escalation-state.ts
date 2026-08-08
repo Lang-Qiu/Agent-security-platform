@@ -335,7 +335,14 @@ export function createSandboxSecurityEscalationState(): SandboxSecurityEscalatio
         });
       obligationToSignal = new Map();
       const materialized = paired.map((item, index) => {
-        const obligation_id = `obligation://sandbox/security/${input.decision_id}/${String(index + 1).padStart(4, "0")}`;
+        // The sanitizer's OBLIGATION_ID validator forbids ':' in the path
+        // segment, but the production runtime mints decision ids as
+        // `decision:<uuid>`. Replace ':' so the id satisfies the regex; the
+        // obligation_id is used only as an internal correlation key (map key,
+        // sanitizer input, judge echo) and is never parsed back into a
+        // decision id, so the substitution is safe and keeps it unique.
+        const obligationDecisionSegment = input.decision_id.replace(/:/g, "-");
+        const obligation_id = `obligation://sandbox/security/${obligationDecisionSegment}/${String(index + 1).padStart(4, "0")}`;
         obligationToSignal.set(
           obligation_id,
           mergeKey(item.signal.category, item.signal.subject_key)

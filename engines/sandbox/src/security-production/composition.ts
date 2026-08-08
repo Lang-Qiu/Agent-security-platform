@@ -87,7 +87,7 @@ type SandboxSecurityCompositionEngineFactory = (
 ) => SandboxSecurityEngine;
 
 const INVALID_COMPOSITION = "sandbox_security_production_composition_invalid";
-const ORDINARY_QUALIFICATION_TIMEOUT_MS = 1000;
+const ORDINARY_QUALIFICATION_TIMEOUT_MS = 40000;
 const LIVE_CAPTURE_QUALIFICATION_TIMEOUT_MS =
   SANDBOX_SECURITY_P6_LIVE_CAPTURE_TIMING.qualification_timeout_ms;
 const MODES: readonly SandboxSecurityProductionMode[] = [

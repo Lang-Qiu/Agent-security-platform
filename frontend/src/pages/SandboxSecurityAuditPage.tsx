@@ -61,6 +61,13 @@ export function SandboxSecurityAuditPage({ fetchImpl }: SandboxSecurityAuditPage
       setLoaded(true);
       return;
     }
+    // Drop the previously loaded page. Keeping it on screen next to an error
+    // banner invites the operator to read a stale page as the requested one —
+    // and with `loaded` still true the pager would render a second
+    // "重新开始" control alongside the error block's own.
+    setEvents([]);
+    setNextCursor(null);
+    setLoaded(false);
     setError(result);
   };
 

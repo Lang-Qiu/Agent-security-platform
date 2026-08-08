@@ -166,6 +166,43 @@ a {
   gap: 20px;
 }
 
+/* REQ-SBX-GENERAL-005: sandbox security console pages.
+   Page-level grid matching every other console page, plus token colours for the
+   native fieldset/legend/label elements that antd's theme algorithm cannot
+   reach (it styles antd components only, not bare HTML form furniture). */
+
+.sandbox-security-workbench-page,
+.sandbox-security-audit-page {
+  display: grid;
+  gap: 20px;
+}
+
+.sandbox-security-workbench-page legend,
+.sandbox-security-workbench-page label,
+.sandbox-security-audit-page label {
+  color: var(--console-muted);
+}
+
+.sandbox-security-workbench-page fieldset {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+/* antd Radio renders as a <label>; space the options inline and let them wrap
+   rather than making the fieldset a grid/flex container (that would pull the
+   <legend> into the same track as the options). */
+.sandbox-security-workbench-page fieldset > label {
+  margin-inline-end: 12px;
+}
+
+/* Defensive: any native control that survives in these pages still picks up
+   the console accent instead of the browser's light default. */
+.sandbox-security-workbench-page input,
+.sandbox-security-audit-page input {
+  accent-color: var(--console-accent);
+}
+
 .overview-hero {
   display: flex;
   align-items: flex-end;

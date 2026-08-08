@@ -1,3 +1,10 @@
+import {
+  SANDBOX_SECURITY_MAX_CONTENT_ITEMS,
+  SANDBOX_SECURITY_MAX_JSON_DEPTH,
+  SANDBOX_SECURITY_MAX_JSON_NODES,
+  SANDBOX_SECURITY_MAX_REQUEST_BYTES,
+  SANDBOX_SECURITY_MAX_TEXT_BYTES
+} from "../../../shared/types/sandbox-security";
 import type { SandboxSecurityCallResult } from "../services/api-client";
 
 /**
@@ -124,6 +131,58 @@ const UNAVAILABLE_COPY: CopyEntry = {
   title: "服务不可达",
   remedy: "网络或服务暂时不可用，请检查连接后重试。"
 };
+
+/**
+ * Client-side pre-flight violation rules emitted by
+ * `validateEvaluationRequest` plus the two page-level gates
+ * (`capability_required`, `content_empty`). Kept in one closed catalog so a new
+ * rule cannot reach the operator as a disabled button with no explanation.
+ */
+export const SANDBOX_SECURITY_VIOLATION_RULES = [
+  "capability_required",
+  "content_empty",
+  "content_items",
+  "text_bytes",
+  "json_depth",
+  "json_nodes",
+  "request_bytes",
+  "tool_request_required"
+] as const;
+
+export type SandboxSecurityViolationRule =
+  (typeof SANDBOX_SECURITY_VIOLATION_RULES)[number];
+
+const VIOLATION_COPY: Record<SandboxSecurityViolationRule, string> = {
+  capability_required: "请先粘贴能力令牌。",
+  content_empty: "每个来源的内容值都不能为空。",
+  content_items: `内容条目数必须在 1 到 ${SANDBOX_SECURITY_MAX_CONTENT_ITEMS} 之间。`,
+  text_bytes: `单条文本内容超出 ${SANDBOX_SECURITY_MAX_TEXT_BYTES} 字节上限。`,
+  json_depth: `JSON 嵌套深度超出 ${SANDBOX_SECURITY_MAX_JSON_DEPTH} 层上限。`,
+  json_nodes: `JSON 节点数超出 ${SANDBOX_SECURITY_MAX_JSON_NODES} 个上限。`,
+  request_bytes: `请求整体超出 ${SANDBOX_SECURITY_MAX_REQUEST_BYTES} 字节上限。`,
+  tool_request_required: "tool_request 阶段必须填写工具调用信息。"
+};
+
+const UNKNOWN_VIOLATION = "请求未通过客户端预检，请检查表单内容。";
+
+/**
+ * Maps a client-side pre-flight violation to human-facing Chinese copy. The
+ * returned string names only the failing rule, its shared numeric bound, and at
+ * most the item's `source_id` — never the submitted value, a substring, or a
+ * byte offset.
+ */
+export function describeSandboxSecurityViolation(violation: {
+  rule: string;
+  sourceId?: string;
+}): string {
+  const base =
+    violation.rule in VIOLATION_COPY
+      ? VIOLATION_COPY[violation.rule as SandboxSecurityViolationRule]
+      : UNKNOWN_VIOLATION;
+  return violation.sourceId === undefined
+    ? base
+    : `${base}（来源 ${violation.sourceId}）`;
+}
 
 /**
  * Maps a failed call result to human-facing Chinese copy. Never surfaces a

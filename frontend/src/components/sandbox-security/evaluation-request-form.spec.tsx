@@ -4,10 +4,12 @@ import { describe, expect, it, vi } from "vitest";
 import {
   SANDBOX_SECURITY_CLAIMED_SOURCE_TYPES,
   SANDBOX_SECURITY_MAX_CONTENT_ITEMS,
+  SANDBOX_SECURITY_MAX_REQUEST_BYTES,
   SANDBOX_SECURITY_MAX_TEXT_BYTES,
   SANDBOX_SECURITY_POLICY_PROFILE_IDS,
   SANDBOX_SECURITY_STAGES
 } from "../../../../shared/types/sandbox-security";
+import { describeSandboxSecurityViolation } from "../../content/sandbox-security-copy";
 import { EvaluationRequestForm } from "./EvaluationRequestForm";
 import { RequestLimitMeter } from "./RequestLimitMeter";
 
@@ -83,19 +85,84 @@ describe("REQ-SBX-GENERAL-005 evaluation request form", () => {
     expect(screen.getByRole("button", { name: /提交评估/ })).toBeDisabled();
   });
 
-  it("caps the add-item control at the shared item bound", () => {
-    const items = Array.from(
-      { length: SANDBOX_SECURITY_MAX_CONTENT_ITEMS },
-      (_unused, index) => ({
-        source_id: `src-${index}`,
-        claimed_source_type: "user_input" as const,
-        media_type: "text/plain" as const,
-        value: "x",
-        provenance_ref: `source://client/${index}`
-      })
+  // Explicit budget: this is the only test that mounts the maximum bound, which
+  // is 64 items x (2 antd Selects + 1 TextArea) = 192 themed controls. Measured
+  // at ~4.5 s in jsdom against the 5 s default, so it was already borderline and
+  // failed intermittently under the single-worker full suite. The cost is antd
+  // control mounting, not application logic.
+  it(
+    "caps the add-item control at the shared item bound",
+    () => {
+      const items = Array.from(
+        { length: SANDBOX_SECURITY_MAX_CONTENT_ITEMS },
+        (_unused, index) => ({
+          source_id: `src-${index}`,
+          claimed_source_type: "user_input" as const,
+          media_type: "text/plain" as const,
+          value: "x",
+          provenance_ref: `source://client/${index}`
+        })
+      );
+      render(<EvaluationRequestForm {...baseProps} contentItems={items} />);
+      expect(screen.getByRole("button", { name: /新增来源/ })).toBeDisabled();
+    },
+    20000
+  );
+
+  it("explains why submit is blocked instead of only disabling it", () => {
+    render(
+      <EvaluationRequestForm
+        {...baseProps}
+        violations={[{ rule: "text_bytes", sourceId: "src-1" }]}
+      />
     );
-    render(<EvaluationRequestForm {...baseProps} contentItems={items} />);
-    expect(screen.getByRole("button", { name: /新增来源/ })).toBeDisabled();
+    // A disabled control with no stated reason is a dead end for the operator.
+    expect(
+      screen.getByText(describeSandboxSecurityViolation({ rule: "text_bytes", sourceId: "src-1" }))
+    ).toBeInTheDocument();
+  });
+
+  it("lists every pending violation, not just the first", () => {
+    render(
+      <EvaluationRequestForm
+        {...baseProps}
+        violations={[{ rule: "capability_required" }, { rule: "content_empty" }]}
+      />
+    );
+    expect(
+      screen.getByText(describeSandboxSecurityViolation({ rule: "capability_required" }))
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(describeSandboxSecurityViolation({ rule: "content_empty" }))
+    ).toBeInTheDocument();
+  });
+
+  it("shows no violation region when the payload is clean", () => {
+    render(<EvaluationRequestForm {...baseProps} />);
+    expect(screen.queryByText(/提交被阻止/)).not.toBeInTheDocument();
+  });
+
+  it("surfaces the request byte budget against the shared whole-request bound", () => {
+    render(<EvaluationRequestForm {...baseProps} />);
+    const meter = screen.getByRole("progressbar");
+    expect(meter).toHaveAttribute("aria-valuemax", String(SANDBOX_SECURITY_MAX_REQUEST_BYTES));
+    // A real payload measures above zero, proving the meter is fed the actual
+    // serialized request rather than a placeholder constant.
+    expect(Number(meter.getAttribute("aria-valuenow"))).toBeGreaterThan(0);
+  });
+
+  it("keeps the violation region free of any submitted value", () => {
+    const canary = "SECRET-CANARY-VALUE";
+    render(
+      <EvaluationRequestForm
+        {...baseProps}
+        contentItems={[{ ...baseProps.contentItems[0], value: canary }]}
+        violations={[{ rule: "text_bytes", sourceId: "src-1" }]}
+      />
+    );
+    expect(screen.getByText(/提交被阻止/).parentElement?.textContent ?? "").not.toContain(
+      "SECRET-CANARY"
+    );
   });
 
   it("never places a submitted value in a title or data attribute", async () => {
