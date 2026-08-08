@@ -1,3 +1,81 @@
+# 2026-08-08 - REQ-SBX-GENERAL-004 Phase 5 deployment, privacy, and closure
+
+- phase/task: Phase 5 / P5-T1..P5-T4 (isolated image, Compose topology,
+  permanent privacy/isolation gates, durable docs, dependency-bounded closure)
+- requirement state: GENERAL-004 reaches `IMPLEMENTED_PENDING_GLOBAL_P6_GATE`
+  (its own terminal, dependency-bounded status; the canonical GENERAL-003
+  P6-T4 durable-status literal below remains the single gated occurrence)
+- scope: standalone general-security OpenClaw `2026.6.34` image, non-durable
+  Compose runtime, permanent privacy/Track-1 gates, and durable documentation;
+  no GENERAL-001/002 Engine or GENERAL-003 public v1 contract changed
+- execution prerequisite recovered this session: Docker was absent from the
+  build host, so P5-T1/P5-T2's mandatory image-build and container probes had
+  never actually executed when first committed. Docker Engine `29.7.2` +
+  Compose `v5.4.0` + buildx were installed natively (systemd), and the Docker
+  Hub registry block was worked around through `mirror.gcr.io`; the pinned base
+  digest `sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90`
+  was confirmed byte-identical through the mirror, so the digest pin is intact.
+- P5-T1/P5-T2 build-path corrections (surfaced on first real Docker execution;
+  each is a caller-side fix that leaves the sealed P4 patch script and its
+  guards unchanged):
+  - `5221ead` fix(sandbox): repair protected OpenClaw image build path — the
+    Dockerfile passed the pnpm `node_modules/openclaw` symlink to the patch
+    script (which by design refuses a symlink root) and ran install and patch in
+    separate layers, so the atomic-swap rename hit overlayfs `EXDEV`; install
+    and patch are now one `RUN` (dir in the writable upper layer) with the store
+    path dereferenced, and the version check reads the banner field exactly.
+  - `c72d616` fix(sandbox): make protected runtime tmpfs writable by non-root —
+    the three tmpfs mounts came up `root:root 0755`, so the non-root `node`
+    runtime could not create its temp/state dirs; they now mount `mode=1777`
+    (world-writable + sticky, matching `/tmp` semantics), and the committed
+    P5-T2 topology test normalizes the mode suffix and asserts it is present.
+  - the runtime probe closed environment now anchors `TMPDIR` under the writable
+    `stateDir`, so OpenClaw's temp-dir resolver creates its per-uid fallback dir
+    on tmpfs instead of the read-only root; the Compose healthcheck uses the
+    same probe and therefore also starts cleanly.
+- P5-T3 permanent privacy/isolation gate: `1d89fa2` test(sandbox): gate OpenClaw
+  enforcement privacy — the real-event privacy matrix drives allow/alert/ask/
+  deny, required-failure, engine timeout/throw/slot-unavailable, correlation
+  drift, and audit unavailable/malformed across all four patched barriers;
+  the artifact scanner rejects literal/case-folded/NFKC/JSON-escaped/percent/
+  base64/hex/SHA-256 sentinel encodings; the Track-1 snapshot helper and static
+  isolation checks confirm no nested import of Track 1, no dual plugin IDs, no
+  public exposure of the internal audit route, and no persistent queue/volume.
+- real Docker acceptance evidence (dummy-only config, no model invocation):
+  - `docker compose --profile sandbox-security config` renders one
+    `openclaw-security` service, no host ports, no durable volumes, three tmpfs
+    mounts, read-only root, non-root user, all caps dropped, `no-new-privileges`
+  - image builds via `deploy/sandbox-security/Dockerfile.openclaw`; the builder
+    stage runs `verifyProductionRuntimeIdentity` and the P4 runtime probe green
+  - `openclaw --version` = `2026.6.34`
+  - `plugins inspect agent-security-sandbox-general --runtime --json` reports
+    `plugin_id=agent-security-sandbox-general`, the four barriers
+    `before_agent_run`, `before_model_output_delivery`, `before_tool_execution`,
+    `before_message_delivery`, `plugin_registration_count=1`, and empty
+    diagnostics
+  - the authoritative in-container runtime probe returns `input/model_output/
+    tool/outbound` ordered and correlated, `engine_failure_closed`, and
+    `audit_content_free` all true
+- non-Docker verification (this session):
+  - `test:integration:openclaw:security`: `191/191`
+  - `typecheck:integration:openclaw:security`: exit 0
+  - `test:repo`: `350/350`
+  - `test:shared`, `test:engine:sandbox`, `test:engine:sandbox:production`,
+    `test:track1:openclaw`: all exit 0, Track 1 unchanged
+  - `test:backend`: one failure, `backend task center keeps mock and semgrep
+    providers aligned on the standardized static-analysis read contract` — the
+    pre-existing missing-local-`semgrep` failure documented in prior phases,
+    outside GENERAL-004 scope and touched by no GENERAL-004 change
+  - `git diff --check`: clean
+- dependency-bounded global gate: `TMPDIR=/tmp/npm run test:all` remains gated
+  by the GENERAL-002 global P6 recapture/replay; its expected fail-closed result
+  is recorded, never bypassed. GENERAL-002 is `VERIFIED`, but GENERAL-003 and
+  GENERAL-004 keep their own independent global P6 gates and are not
+  auto-verified. GENERAL-004 is therefore `IMPLEMENTED_PENDING_GLOBAL_P6_GATE`,
+  not `VERIFIED`.
+- no public enforcement API, frontend, or audit UI was added; GENERAL-005
+  remains deferred.
+
 # 2026-08-07 - REQ-SBX-GENERAL-002 formal P6/P7 acceptance VERIFIED
 
 - phase/task: Phase 6 complete-run evidence and Phase 7 hermetic closure

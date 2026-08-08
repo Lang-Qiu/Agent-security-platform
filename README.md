@@ -403,6 +403,51 @@ npm run test:shared
 npm run test:backend
 npm run typecheck:backend
 ```
+
+### GENERAL-004 protected OpenClaw enforcement runtime
+
+REQ-SBX-GENERAL-004 packages a standalone, patched OpenClaw `2026.6.34`
+runtime that enforces the GENERAL-002 Engine at four awaited barriers
+(`before_agent_run`, `before_model_output_delivery`, `before_tool_execution`,
+`before_message_delivery`). It is isolated from Track 1 (which stays on OpenClaw
+`2026.6.10`) and adds no public route. The full operator runbook —
+prerequisites, dedicated `sbxcap_v1.*` capability issuance (one-hour maximum TTL,
+no automatic rotation), startup order, audit-degraded behavior, tmpfs/no-volume
+model, health inspection, and safe stop — lives in
+`deploy/sandbox-security/README.md`.
+
+The image builds only the nested `integrations/openclaw/general-security`
+package plus its public Engine/shared inputs, installs with the frozen nested
+lockfile, verifies the official package identity, applies the sealed
+`2026.6.34` patch, revalidates every post-patch hash, and reruns the
+package/patch/four-barrier probe at container startup before hooks register. It
+runs as non-root with a read-only root filesystem, all capabilities dropped,
+`no-new-privileges`, no host port, no durable volume, and every OpenClaw
+session/transcript/workspace/plugin-scratch path on tmpfs. Audit events flow
+only to the internal
+`POST /internal/sandbox/security/enforcement-events` route with the dedicated
+`sandbox_security:enforcement:audit:write` capability.
+
+```bash
+# Build and probe the protected runtime (dummy-only config, no model call).
+docker network create --internal sandbox-security-internal-audit
+export SANDBOX_SECURITY_POLICY_PROFILE_ID=sandbox-security-balanced.v1
+export SANDBOX_SECURITY_PRODUCTION_MODE=rule_only
+export SANDBOX_SECURITY_AUDIT_CAPABILITY_TOKEN=sbxcap_v1.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+docker compose -f deploy/sandbox-security/compose.openclaw-security.yml \
+  --profile sandbox-security config
+docker compose -f deploy/sandbox-security/compose.openclaw-security.yml \
+  --profile sandbox-security build openclaw-security
+docker compose -f deploy/sandbox-security/compose.openclaw-security.yml \
+  --profile sandbox-security run --rm --no-deps --entrypoint openclaw \
+  openclaw-security plugins inspect agent-security-sandbox-general \
+  --runtime --json
+```
+
+Expected: exact version `2026.6.34`, one `agent-security-sandbox-general`
+plugin, all four barriers, registration count one, enforcement healthy, and
+either healthy or the specified degraded audit when the backend is unattached.
+
 # Track 1 OpenClaw Evidence Workflow
 
 The Track 1 path uses Node.js `>=22.19.0`, `pnpm@10.0.0`, OpenClaw

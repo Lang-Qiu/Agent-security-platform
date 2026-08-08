@@ -330,6 +330,47 @@ partial startup 同样遵循清理边界：public bind 成功而 internal bind �
 public listener，再关闭 module/database；public bind 失败或 Engine/migration/recovery
 失败时不留下任何 listener、timer 或数据库句柄。正常 shutdown 先停止两个 listener
 接收并等待 in-flight handlers，最后执行 maintenance -> database 的 reverse order。
+
+## GENERAL-004 OpenClaw Enforcement Runtime and Deployment
+
+GENERAL-004 在独立的 `openclaw@2026.6.34` 运行时内强制四个最终 awaited barrier：
+`before_agent_run`、`before_model_output_delivery`、`before_tool_execution` 和
+`before_message_delivery`，各注册且仅注册一次。plugin handler 只返回固定的私有
+`openclaw-security-hook-result.v1` envelope；patched host runner 独立校验自身
+event/context correlation 与 `health.enforcement`，容忍 `audit: "degraded"`，只把
+nested `barrier` 返回给发起调用点。envelope 非法、correlation 漂移或 enforcement
+health 失败时选择固定 fail-closed `sandbox_security_evaluation_unavailable`，绝不放行。
+
+authority 按 stage 重建：`user_input` 取当前 prompt；`model_output` 取当前 prompt
+加精确 assistant projection；`tool_request` 取 prompt、匹配的 model output 与最终
+tool request。composite system prompt、通用 history、workspace、memory、retrieval 与
+猜测的 tool 目标都被排除。Engine `allow`/`alert` 继续；`ask` 替换为 review-required、
+`deny` 替换为 policy-blocked，均无交互审批或 resume。user/model/outbound 失败下限为
+`ask`，tool 失败下限为 `deny`；audit 失败只改变 `audit`，从不改变 host action。
+每次 evaluation 由 plugin 注入的 `request:<UUIDv4>` 标识，fail-closed 签发。
+
+进程内 GENERAL-002 production Engine 通过公开 index 组合，全局并发上限为四且无等待
+队列，caller abort 固定 10000 ms，audit client deadline 固定 1000 ms 且无重试队列。
+audit 与被选 host action 正交：使用 backend 注入的 identity/server time、replay-safe
+event ID，且不含 raw/sanitized/hashed/provider 内容。
+
+部署为 digest-pin 的隔离镜像（`deploy/sandbox-security/Dockerfile.openclaw`），
+只构建 nested general-security 包及其公开 Engine/shared 构建输入，校验并应用经封存的
+patch，然后以非 root（`node`）用户、只读根文件系统运行。启动时重新校验
+package、patch 字节、patched-file 与四 barrier，再注册 hooks；build-time 校验不替代
+startup 校验。pnpm 以符号链接方式将 `node_modules/openclaw` 指向 `.pnpm` store，patch
+脚本按设计拒绝符号链接根，因此镜像在同一 `RUN` 层内 `readlink -f` 解析真实 store 目录
+后再打 patch，避免 overlayfs 跨层 rename 的 `EXDEV`。
+
+Compose（`deploy/sandbox-security/compose.openclaw-security.yml`）只定义
+`openclaw-security` 一个服务：无 host port、无持久卷、三个 tmpfs 挂载
+（`/run/openclaw-security`、`/tmp/openclaw`、`/workspace`，`mode=1777` 使非 root 用户
+可创建各自的私有子目录），只读根、`cap_drop: ALL`、`no-new-privileges`，并绑定
+CPU/内存/PID 上限。它挂到运营方提供的内部 audit 网络，GENERAL-003 backend 作为独立
+服务以固定内部主机名 `sandbox-security-backend` 接入；GENERAL-004 不定义出站网络/防火墙
+要求。四个不可变 plugin 值只在进程启动时以环境变量提供，镜像与配置中不含任何 token
+字面量或默认值。正常关闭由 `SIGTERM` 触发，tmpfs 随容器移除而消失，重启无持久状态。
+
 ## REQ-07 Backend Engine Adapter Baseline
 
 当前 backend 在 `task-center` 内新增了一层稳定的引擎接入边界：

@@ -10,7 +10,7 @@ OpenClaw sandbox security enforcement
 
 ## Status
 
-IMPLEMENTATION_IN_PROGRESS
+IMPLEMENTED_PENDING_GLOBAL_P6_GATE
 
 ## Transition Authority
 
