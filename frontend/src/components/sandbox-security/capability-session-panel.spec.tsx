@@ -49,6 +49,51 @@ describe("REQ-SBX-GENERAL-005 capability session panel", () => {
     expect(screen.getByText(/仅保存在内存/)).toBeInTheDocument();
   });
 
+  it("shows a held badge and removes the password field after entry settles", () => {
+    render(
+      <CapabilitySessionPanel
+        hasToken
+        onTokenChange={vi.fn()}
+        onClear={vi.fn()}
+      />
+    );
+    expect(screen.getByText("TOKEN HELD · 令牌已持有")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/能力令牌/)).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /清除令牌/ })).toBeEnabled();
+  });
+
+  it("returns to editable rejected state without rendering the held token", () => {
+    render(
+      <CapabilitySessionPanel
+        hasToken
+        requiresNewCapability
+        onTokenChange={vi.fn()}
+        onClear={vi.fn()}
+      />
+    );
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByLabelText(/能力令牌/)).toHaveAttribute("type", "password");
+    expect(document.body).not.toHaveTextContent("tok-secret");
+  });
+
+  it("settles a replacement token after blur when the rejected state clears", () => {
+    const props = {
+      hasToken: true,
+      onTokenChange: vi.fn(),
+      onClear: vi.fn()
+    };
+    const { rerender } = render(
+      <CapabilitySessionPanel {...props} requiresNewCapability />
+    );
+    const field = screen.getByLabelText(/能力令牌/);
+    fireEvent.change(field, { target: { value: "tok-replacement" } });
+    fireEvent.blur(field);
+    expect(props.onTokenChange).toHaveBeenCalledWith("tok-replacement");
+    rerender(<CapabilitySessionPanel {...props} requiresNewCapability={false} />);
+    expect(screen.getByText("TOKEN HELD · 令牌已持有")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/能力令牌/)).not.toBeInTheDocument();
+  });
+
   it("prompts for a fresh token when the backend reported it unusable", () => {
     render(
       <CapabilitySessionPanel

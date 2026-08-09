@@ -115,7 +115,7 @@ describe("REQ-SBX-GENERAL-005 privacy sentinel", () => {
     const valueField = screen.getByLabelText(/内容值|content value/i);
     fireEvent.change(valueField, { target: { value: CONTENT_CANARY } });
 
-    fireEvent.click(screen.getByRole("button", { name: /提交评估|submit/i }));
+    fireEvent.click(screen.getByRole("button", { name: /开始评估|submit/i }));
 
     await waitFor(() => {
       expect(fetchStub).toHaveBeenCalled();
@@ -176,7 +176,7 @@ describe("REQ-SBX-GENERAL-005 privacy sentinel", () => {
     fireEvent.change(screen.getByLabelText(/内容值|content value/i), {
       target: { value: "benign" }
     });
-    fireEvent.click(screen.getByRole("button", { name: /提交评估|submit/i }));
+    fireEvent.click(screen.getByRole("button", { name: /开始评估|submit/i }));
 
     await waitFor(() => {
       expect(fetchStub).toHaveBeenCalled();

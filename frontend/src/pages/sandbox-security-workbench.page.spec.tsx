@@ -50,7 +50,7 @@ describe("REQ-SBX-GENERAL-005 evaluation workbench page", () => {
   it("blocks submission until a capability token is present", () => {
     render(<SandboxSecurityWorkbenchPage />);
     fireEvent.change(screen.getByLabelText(/内容值/), { target: { value: "test payload" } });
-    expect(screen.getByRole("button", { name: /提交评估/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /开始评估|评估中/ })).toBeDisabled();
   });
 
   it("sends the bearer token and a generated idempotency key on submit", async () => {
@@ -58,7 +58,7 @@ describe("REQ-SBX-GENERAL-005 evaluation workbench page", () => {
     render(<SandboxSecurityWorkbenchPage fetchImpl={fetchImpl} />);
 
     pasteTokenAndFill();
-    fireEvent.click(screen.getByRole("button", { name: /提交评估/ }));
+    fireEvent.click(screen.getByRole("button", { name: /开始评估|评估中/ }));
 
     await waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
     const init = fetchImpl.mock.calls[0][1] as RequestInit;
@@ -75,7 +75,7 @@ describe("REQ-SBX-GENERAL-005 evaluation workbench page", () => {
     render(<SandboxSecurityWorkbenchPage fetchImpl={fetchImpl} />);
 
     pasteTokenAndFill();
-    fireEvent.click(screen.getByRole("button", { name: /提交评估/ }));
+    fireEvent.click(screen.getByRole("button", { name: /开始评估|评估中/ }));
     await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("button", { name: /重试/ }));
@@ -91,11 +91,11 @@ describe("REQ-SBX-GENERAL-005 evaluation workbench page", () => {
     render(<SandboxSecurityWorkbenchPage fetchImpl={fetchImpl} />);
 
     pasteTokenAndFill();
-    fireEvent.click(screen.getByRole("button", { name: /提交评估/ }));
+    fireEvent.click(screen.getByRole("button", { name: /开始评估|评估中/ }));
     await waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
 
     fireEvent.change(screen.getByLabelText(/内容值/), { target: { value: "test payload changed" } });
-    fireEvent.click(screen.getByRole("button", { name: /提交评估/ }));
+    fireEvent.click(screen.getByRole("button", { name: /开始评估|评估中/ }));
     await waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2));
 
     const first = new Headers((fetchImpl.mock.calls[0][1] as RequestInit).headers);
@@ -108,7 +108,7 @@ describe("REQ-SBX-GENERAL-005 evaluation workbench page", () => {
     render(<SandboxSecurityWorkbenchPage fetchImpl={fetchImpl} />);
 
     pasteTokenAndFill();
-    fireEvent.click(screen.getByRole("button", { name: /提交评估/ }));
+    fireEvent.click(screen.getByRole("button", { name: /开始评估|评估中/ }));
 
     await waitFor(() => expect(screen.getByText("risk_detected")).toBeInTheDocument());
     expect(screen.getByText("deny")).toBeInTheDocument();
@@ -119,10 +119,16 @@ describe("REQ-SBX-GENERAL-005 evaluation workbench page", () => {
     render(<SandboxSecurityWorkbenchPage fetchImpl={fetchImpl} />);
 
     pasteTokenAndFill();
-    fireEvent.click(screen.getByRole("button", { name: /提交评估/ }));
+    fireEvent.click(screen.getByRole("button", { name: /开始评估|评估中/ }));
 
     await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
     expect(screen.getByLabelText(/内容值/)).toHaveValue("test payload");
+    expect(screen.getByLabelText(/能力令牌/)).toHaveValue("");
+    expect(screen.getByRole("button", { name: /开始评估/ })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText(/能力令牌/), {
+      target: { value: "tok-replacement" }
+    });
+    expect(screen.getByRole("button", { name: /开始评估/ })).toBeEnabled();
   });
 
   it("never places submitted content or the token in the URL", async () => {
@@ -130,7 +136,7 @@ describe("REQ-SBX-GENERAL-005 evaluation workbench page", () => {
     render(<SandboxSecurityWorkbenchPage fetchImpl={fetchImpl} />);
 
     pasteTokenAndFill();
-    fireEvent.click(screen.getByRole("button", { name: /提交评估/ }));
+    fireEvent.click(screen.getByRole("button", { name: /开始评估|评估中/ }));
     await waitFor(() => expect(fetchImpl).toHaveBeenCalled());
 
     const url = `${window.location.pathname}${window.location.search}${window.location.hash}`;
@@ -145,7 +151,7 @@ describe("REQ-SBX-GENERAL-005 evaluation workbench page", () => {
 
     render(<SandboxSecurityWorkbenchPage fetchImpl={fetchImpl} />);
     pasteTokenAndFill();
-    fireEvent.click(screen.getByRole("button", { name: /提交评估/ }));
+    fireEvent.click(screen.getByRole("button", { name: /开始评估|评估中/ }));
     await waitFor(() => expect(fetchImpl).toHaveBeenCalled());
 
     for (const spy of [localSet, sessionSet]) {
@@ -164,7 +170,7 @@ describe("REQ-SBX-GENERAL-005 evaluation workbench page", () => {
 
     fireEvent.change(screen.getByLabelText(/能力令牌/), { target: { value: "tok-abc" } });
     fireEvent.change(screen.getByLabelText(/内容值/), { target: { value: "" } });
-    fireEvent.click(screen.getByRole("button", { name: /提交评估/ }));
+    fireEvent.click(screen.getByRole("button", { name: /开始评估|评估中/ }));
 
     expect(fetchImpl).not.toHaveBeenCalled();
   });
@@ -174,7 +180,7 @@ describe("REQ-SBX-GENERAL-005 evaluation workbench page", () => {
     render(<SandboxSecurityWorkbenchPage fetchImpl={fetchImpl} />);
 
     pasteTokenAndFill();
-    fireEvent.click(screen.getByRole("button", { name: /提交评估/ }));
+    fireEvent.click(screen.getByRole("button", { name: /开始评估|评估中/ }));
 
     await waitFor(() => expect(screen.getByText("risk_detected")).toBeInTheDocument());
     const live = screen.getByRole("status");
@@ -200,7 +206,7 @@ describe("REQ-SBX-GENERAL-005 evaluation workbench page", () => {
     // a disabled control cannot receive focus. Fill a valid payload so the
     // control is actionable, then prove it is keyboard-reachable.
     pasteTokenAndFill();
-    const submit = screen.getByRole("button", { name: /提交评估/ });
+    const submit = screen.getByRole("button", { name: /开始评估|评估中/ });
     submit.focus();
     expect(submit).toHaveFocus();
   });

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Button, Space, Typography } from "antd";
+import { Button, Typography } from "antd";
 
 import {
   SANDBOX_SECURITY_MAX_CONTENT_ITEMS,
@@ -27,6 +27,7 @@ export interface EvaluationRequestFormProps {
   toolRequest: SandboxSecurityToolRequest | null;
   submitting: boolean;
   violations: LimitViolation[];
+  reduceMotion?: boolean;
   onChange: (next: {
     stage: SandboxSecurityStage;
     policyProfileId: SandboxSecurityPolicyProfileId;
@@ -36,13 +37,6 @@ export interface EvaluationRequestFormProps {
   onSubmit: () => void;
 }
 
-/**
- * Fully controlled evaluation request form. It owns no request state — the page
- * does — and holds every submitted value only in React props, never in the URL
- * or storage. The profile control is a fixed two-option selector because
- * `SandboxSecurityRequest` forbids caller-submitted profiles. Catalog options
- * come from shared constants; no local enum is duplicated.
- */
 export function EvaluationRequestForm({
   stage,
   policyProfileId,
@@ -50,6 +44,7 @@ export function EvaluationRequestForm({
   toolRequest,
   submitting,
   violations,
+  reduceMotion = false,
   onChange,
   onSubmit
 }: EvaluationRequestFormProps) {
@@ -71,9 +66,6 @@ export function EvaluationRequestForm({
   const addDisabled = contentItems.length >= SANDBOX_SECURITY_MAX_CONTENT_ITEMS;
   const submitDisabled = submitting || violations.length > 0;
 
-  // Serialising the whole payload is O(payload) and the payload bound is
-  // 512 KiB, so this must not run on renders that did not change the payload
-  // (a `submitting` flip or a new violation list would otherwise re-measure).
   const usedBytes = useMemo(
     () => measureEvaluationRequestBytes({ stage, contentItems, toolRequest }),
     [stage, contentItems, toolRequest]
@@ -98,36 +90,38 @@ export function EvaluationRequestForm({
 
   return (
     <form
+      className="console-panel workbench-request-composer"
       onSubmit={(event) => {
         event.preventDefault();
         if (!submitDisabled) onSubmit();
       }}
     >
-      <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-        <StageSelector
-          stage={stage}
-          onStageChange={(nextStage) => {
-            const nextTool =
-              nextStage === "tool_request"
-                ? toolRequest ?? { call_id: "", tool_name: "", arguments: {} }
-                : null;
-            emit({ stage: nextStage, toolRequest: nextTool });
-          }}
-        />
+      <StageSelector
+        stage={stage}
+        onStageChange={(nextStage) => {
+          const nextTool =
+            nextStage === "tool_request"
+              ? toolRequest ?? { call_id: "", tool_name: "", arguments: {} }
+              : null;
+          emit({ stage: nextStage, toolRequest: nextTool });
+        }}
+      />
 
-        <PolicySelector
-          policyProfileId={policyProfileId}
-          onPolicyProfileChange={(nextPolicyProfileId) =>
-            emit({ policyProfileId: nextPolicyProfileId })
-          }
-        />
+      <PolicySelector
+        policyProfileId={policyProfileId}
+        onPolicyProfileChange={(nextPolicyProfileId) =>
+          emit({ policyProfileId: nextPolicyProfileId })
+        }
+      />
 
+      <div className="workbench-source-stack">
         {contentItems.map((item, index) => (
           <ContentItemRow
             key={item.source_id}
             index={index}
             item={item}
             canRemove={contentItems.length > 1}
+            reduceMotion={reduceMotion}
             onChange={(nextItem) => {
               const next = contentItems.slice();
               next[index] = nextItem;
@@ -135,52 +129,56 @@ export function EvaluationRequestForm({
             }}
             onRemove={() => {
               emit({
-                contentItems: contentItems.filter((_unused, position) => position !== index)
+                contentItems: contentItems.filter(
+                  (_unused, position) => position !== index
+                )
               });
             }}
           />
         ))}
+      </div>
 
-        <Button onClick={handleAddItem} disabled={addDisabled}>
-          新增来源
-        </Button>
+      <Button onClick={handleAddItem} disabled={addDisabled}>
+        新增来源
+      </Button>
 
-        {stage === "tool_request" && toolRequest !== null ? (
-          <ToolRequestFields
-            toolRequest={toolRequest}
-            onChange={(nextTool) => emit({ toolRequest: nextTool })}
-          />
-        ) : null}
-
-        <RequestLimitMeter
-          usedBytes={usedBytes}
-          limitBytes={SANDBOX_SECURITY_MAX_REQUEST_BYTES}
+      {stage === "tool_request" && toolRequest !== null ? (
+        <ToolRequestFields
+          toolRequest={toolRequest}
+          onChange={(nextTool) => emit({ toolRequest: nextTool })}
         />
+      ) : null}
 
-        {violations.length > 0 ? (
-          // Bare aria-live with no ARIA role: the page-level failure Alert owns
-          // role="alert" and the decision summary owns role="status", and both
-          // page specs query those in the singular. A role here would make
-          // getByRole ambiguous. Copy names only the failing rule and at most a
-          // source_id — never the submitted value.
-          <div aria-live="polite" className="sandbox-security-violations">
-            <Typography.Text type="danger">提交被阻止：</Typography.Text>
-            <ul style={{ margin: "4px 0 0", paddingInlineStart: 20 }}>
-              {violations.map((violation) => (
-                <li key={`${violation.rule}:${violation.sourceId ?? ""}`}>
-                  <Typography.Text type="secondary">
-                    {describeSandboxSecurityViolation(violation)}
-                  </Typography.Text>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
+      <RequestLimitMeter
+        usedBytes={usedBytes}
+        limitBytes={SANDBOX_SECURITY_MAX_REQUEST_BYTES}
+      />
 
-        <Button type="primary" htmlType="submit" disabled={submitDisabled}>
-          提交评估
-        </Button>
-      </Space>
+      {violations.length > 0 ? (
+        <div aria-live="polite" className="sandbox-security-violations">
+          <Typography.Text type="danger">提交被阻止：</Typography.Text>
+          <ul>
+            {violations.map((violation) => (
+              <li key={`${violation.rule}:${violation.sourceId ?? ""}`}>
+                <Typography.Text type="secondary">
+                  {describeSandboxSecurityViolation(violation)}
+                </Typography.Text>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      <Button
+        className="workbench-evaluate-btn"
+        type="primary"
+        htmlType="submit"
+        block
+        loading={submitting}
+        disabled={submitDisabled}
+      >
+        {submitting ? "评估中..." : "开始评估"}
+      </Button>
     </form>
   );
 }

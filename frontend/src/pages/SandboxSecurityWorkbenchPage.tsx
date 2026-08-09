@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Alert, Button, Typography } from "antd";
+import { Typography } from "antd";
 import { motion, useReducedMotion } from "motion/react";
 
 import type {
@@ -10,10 +10,8 @@ import type {
 } from "../../../shared/types/sandbox-security";
 import type { SandboxSecurityDecision } from "../../../shared/types/sandbox-security";
 import { CapabilitySessionPanel } from "../components/sandbox-security/CapabilitySessionPanel";
-import { DecisionSummaryPanel } from "../components/sandbox-security/DecisionSummaryPanel";
-import { DetectorRunTable } from "../components/sandbox-security/DetectorRunTable";
+import { EvaluationInspector } from "../components/sandbox-security/EvaluationInspector";
 import { EvaluationRequestForm } from "../components/sandbox-security/EvaluationRequestForm";
-import { FindingsTable } from "../components/sandbox-security/FindingsTable";
 import {
   describeSandboxSecurityFailure,
   type SandboxSecurityFailureCopy
@@ -100,6 +98,18 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
     : null;
   const requiresNewCapability = failureCopy?.requiresNewCapability ?? false;
 
+  // Inspector state machine: loading while the API is in flight, error for
+  // non-capability failures, result once a decision arrives, idle otherwise.
+  // 401 errors set requiresNewCapability=true and are handled by the
+  // CapabilitySessionPanel — the inspector stays idle in that case.
+  const inspectorState = submitting
+    ? "loading"
+    : error !== null && !requiresNewCapability
+      ? "error"
+      : decision !== null
+        ? "result"
+        : "idle";
+
   const runEvaluation = async (key: string) => {
     setSubmitting(true);
     const result: SandboxSecurityCallResult<SandboxSecurityDecision> =
@@ -118,6 +128,9 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
       setDecision(result.data);
       setError(null);
       return;
+    }
+    if (describeSandboxSecurityFailure(result).requiresNewCapability) {
+      setCapabilityToken("");
     }
     setDecision(null);
     setError(result);
@@ -173,6 +186,7 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
             toolRequest={toolRequest}
             submitting={submitting}
             violations={violations}
+            reduceMotion={reduceMotion ?? false}
             onChange={(next) => {
               setStage(next.stage);
               setPolicyProfileId(next.policyProfileId);
@@ -186,64 +200,27 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
 
         <div className="sandbox-workbench-results">
           {/* Persistent simulation marker. Carries no ARIA role: the decision
-              summary owns the only role="status" and the failure block owns the
-              only role="alert". */}
+              summary owns the only role="status" and the inspector error owns
+              the only role="alert". */}
           <motion.div className="sandbox-simulation-badge" {...enterAt(0)}>
             SIMULATION / 仿真
           </motion.div>
 
-          {/* The only page-level alert. Mutually exclusive with the capability
-              panel's alert via !requiresNewCapability, and never co-present
-              with a decision because runEvaluation clears the decision on
-              error. */}
-          {failureCopy && !requiresNewCapability ? (
-            <motion.div className="sandbox-workbench-failure" {...enterAt(1)}>
-              <Alert
-                role="alert"
-                type="error"
-                showIcon
-                title={failureCopy.title}
-                description={failureCopy.remedy}
-              />
-              {isRetryable ? (
-                <Button
-                  className="sandbox-workbench-retry"
-                  size="small"
-                  onClick={handleRetry}
-                >
-                  重试请求
-                </Button>
-              ) : null}
-            </motion.div>
-          ) : null}
-
-          {decision ? (
-            <>
-              {/* DecisionSummaryPanel brings its own .console-panel surface,
-                  so it is not wrapped in another one (never stack two
-                  translucent surfaces). */}
-              <motion.div {...enterAt(1)}>
-                <DecisionSummaryPanel decision={decision} />
-              </motion.div>
-              <motion.section className="console-panel" {...enterAt(2)}>
-                <Typography.Title level={4}>风险发现</Typography.Title>
-                <FindingsTable findings={decision.findings} />
-              </motion.section>
-              <motion.section className="console-panel" {...enterAt(3)}>
-                <Typography.Title level={4}>检测器执行</Typography.Title>
-                <DetectorRunTable runs={decision.detector_runs} />
-              </motion.section>
-            </>
-          ) : (
-            <motion.div
-              className="sandbox-workbench-empty console-panel"
-              {...enterAt(1)}
-            >
-              <Typography.Text type="secondary">
-                提交左侧请求后，决策摘要、风险发现与检测器执行将显示在这里。
-              </Typography.Text>
-            </motion.div>
-          )}
+          {/* EvaluationInspector owns all result-pane states: idle hint,
+              loading shimmer, error alert with optional retry, and the full
+              cinematic result reveal (EvidenceTrace → InsightGrid → DecisionHero
+              → ExecutionTrace). D13 layout/reveal decoupling happens inside. */}
+          <EvaluationInspector
+            inspectorState={inspectorState}
+            decision={decision}
+            contentItems={contentItems}
+            stage={stage}
+            policyProfileId={policyProfileId}
+            failureCopy={requiresNewCapability ? null : failureCopy}
+            isRetryable={isRetryable}
+            onRetry={handleRetry}
+            reduceMotion={reduceMotion ?? false}
+          />
         </div>
       </div>
     </section>

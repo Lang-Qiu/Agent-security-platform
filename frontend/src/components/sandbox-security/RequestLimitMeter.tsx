@@ -1,21 +1,18 @@
-import { consolePalette } from "../../styles/console-theme";
-
 export interface RequestLimitMeterProps {
   usedBytes: number;
   limitBytes: number;
 }
 
-/**
- * Accessible usage meter for the request byte budget. It reports the used and
- * maximum byte counts through ARIA without ever echoing submitted content — it
- * receives only two numbers. An over-limit state is marked with
- * `aria-invalid="true"` so it is conveyed by more than colour alone.
- */
 export function RequestLimitMeter({ usedBytes, limitBytes }: RequestLimitMeterProps) {
   const overLimit = usedBytes > limitBytes;
-  const ratio = limitBytes > 0 ? Math.min(usedBytes / limitBytes, 1) : 0;
+  const ratio = limitBytes > 0 ? usedBytes / limitBytes : 0;
+  const fillPercent = Math.min(Math.max(ratio * 100, 0), 100);
+  const nearLimit = !overLimit && ratio > 0.9;
+
   return (
     <div
+      className="workbench-byte-meter"
+      data-over-limit={overLimit ? "true" : "false"}
       role="progressbar"
       aria-label="请求字节用量"
       aria-valuemin={0}
@@ -23,27 +20,16 @@ export function RequestLimitMeter({ usedBytes, limitBytes }: RequestLimitMeterPr
       aria-valuenow={usedBytes}
       aria-invalid={overLimit ? "true" : "false"}
     >
-      <div
-        style={{
-          height: 6,
-          borderRadius: 3,
-          background: "var(--console-surface-raised)"
-        }}
-      >
+      <div className="workbench-byte-meter__track" aria-hidden="true">
         <div
-          style={{
-            width: `${ratio * 100}%`,
-            height: "100%",
-            borderRadius: 3,
-            background: overLimit
-              ? consolePalette.severityCritical
-              : consolePalette.accent
-          }}
+          className="workbench-byte-meter__fill"
+          style={{ width: `${fillPercent}%` }}
         />
       </div>
-      <span style={{ fontFamily: "var(--console-mono)", fontSize: "0.75rem" }}>
-        {usedBytes} / {limitBytes}
-      </span>
+      <div className="workbench-byte-meter__copy" data-mono="true">
+        <span>{usedBytes} / {limitBytes} B</span>
+        {nearLimit ? <span className="workbench-byte-meter__warning">接近上限</span> : null}
+      </div>
     </div>
   );
 }
