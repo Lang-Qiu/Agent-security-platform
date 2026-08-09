@@ -1,4 +1,5 @@
-import { render, screen, within } from "@testing-library/react";
+import { useState } from "react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -32,7 +33,67 @@ const baseProps = {
   onSubmit: vi.fn()
 };
 
+function ControlledEvaluationRequestForm() {
+  const [state, setState] = useState({
+    stage: baseProps.stage,
+    policyProfileId: baseProps.policyProfileId,
+    contentItems: baseProps.contentItems,
+    toolRequest: baseProps.toolRequest
+  });
+
+  return (
+    <EvaluationRequestForm
+      {...baseProps}
+      {...state}
+      onChange={setState}
+    />
+  );
+}
+
 describe("REQ-SBX-GENERAL-005 evaluation request form", () => {
+  it("renders radio-semantic horizontal stage tabs with the selected Chinese description", () => {
+    render(<ControlledEvaluationRequestForm />);
+    const group = screen.getByRole("group", { name: "阶段" });
+    expect(within(group).getAllByRole("radio")).toHaveLength(3);
+    expect(screen.getByText("评估用户输入内容，检测注入与越权意图")).toBeInTheDocument();
+
+    fireEvent.click(within(group).getByRole("radio", { name: "tool_request" }));
+    expect(
+      screen.getByText("评估工具调用请求，检测参数劫持与作用域滥用")
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/工具名称/)).toBeInTheDocument();
+  });
+
+  it("renders a verified read-only policy status instead of switch semantics", () => {
+    render(<ControlledEvaluationRequestForm />);
+    const status = screen.getByTestId("security-policy-status");
+    expect(status).toHaveTextContent("POLICY: sandbox-security-balanced.v1");
+    expect(status).toHaveTextContent("规则必检 · 本地模型可选 · 高/严重风险短路");
+    expect(status).not.toHaveAttribute("role", "switch");
+    expect(status).not.toHaveAttribute("aria-checked");
+
+    fireEvent.click(
+      screen.getByRole("radio", { name: "sandbox-security-strict.v1 严格" })
+    );
+    expect(status).toHaveTextContent(
+      "规则与本地模型必检 · 中/高/严重风险短路"
+    );
+  });
+
+  it("emits only the existing request fields when policy selection changes", () => {
+    const onChange = vi.fn();
+    render(<EvaluationRequestForm {...baseProps} onChange={onChange} />);
+    fireEvent.click(
+      screen.getByRole("radio", { name: "sandbox-security-strict.v1 严格" })
+    );
+    expect(onChange).toHaveBeenCalledWith({
+      stage: "user_input",
+      policyProfileId: "sandbox-security-strict.v1",
+      contentItems: baseProps.contentItems,
+      toolRequest: null
+    });
+  });
+
   it("offers exactly the three shared stages", () => {
     render(<EvaluationRequestForm {...baseProps} />);
     const group = screen.getByRole("group", { name: /阶段/ });

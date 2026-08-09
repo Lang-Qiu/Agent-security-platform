@@ -1,11 +1,9 @@
 import { useMemo } from "react";
-import { Button, Radio, Space, Typography } from "antd";
+import { Button, Space, Typography } from "antd";
 
 import {
   SANDBOX_SECURITY_MAX_CONTENT_ITEMS,
   SANDBOX_SECURITY_MAX_REQUEST_BYTES,
-  SANDBOX_SECURITY_POLICY_PROFILE_IDS,
-  SANDBOX_SECURITY_STAGES,
   type SandboxSecurityPolicyProfileId,
   type SandboxSecurityStage,
   type SandboxSecuritySubmittedContentItem,
@@ -17,10 +15,10 @@ import {
   type LimitViolation
 } from "../../utils/sandbox-security-limits";
 import { ContentItemRow } from "./ContentItemRow";
+import { PolicySelector } from "./PolicySelector";
 import { RequestLimitMeter } from "./RequestLimitMeter";
+import { StageSelector } from "./StageSelector";
 import { ToolRequestFields } from "./ToolRequestFields";
-
-const FIELDSET_STYLE = { border: "none", margin: 0, padding: 0 } as const;
 
 export interface EvaluationRequestFormProps {
   stage: SandboxSecurityStage;
@@ -106,41 +104,23 @@ export function EvaluationRequestForm({
       }}
     >
       <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
-        <fieldset style={FIELDSET_STYLE}>
-          <legend className="sandbox-security-legend">阶段</legend>
-          {SANDBOX_SECURITY_STAGES.map((option) => (
-            <Radio
-              key={option}
-              name="sandbox-security-stage"
-              value={option}
-              checked={stage === option}
-              onChange={() => {
-                const nextTool =
-                  option === "tool_request"
-                    ? toolRequest ?? { call_id: "", tool_name: "", arguments: {} }
-                    : null;
-                emit({ stage: option, toolRequest: nextTool });
-              }}
-            >
-              <span style={{ fontFamily: "var(--console-mono)" }}>{option}</span>
-            </Radio>
-          ))}
-        </fieldset>
+        <StageSelector
+          stage={stage}
+          onStageChange={(nextStage) => {
+            const nextTool =
+              nextStage === "tool_request"
+                ? toolRequest ?? { call_id: "", tool_name: "", arguments: {} }
+                : null;
+            emit({ stage: nextStage, toolRequest: nextTool });
+          }}
+        />
 
-        <fieldset style={FIELDSET_STYLE}>
-          <legend className="sandbox-security-legend">策略配置</legend>
-          {SANDBOX_SECURITY_POLICY_PROFILE_IDS.map((option) => (
-            <Radio
-              key={option}
-              name="sandbox-security-profile"
-              value={option}
-              checked={policyProfileId === option}
-              onChange={() => emit({ policyProfileId: option })}
-            >
-              <span style={{ fontFamily: "var(--console-mono)" }}>{option}</span>
-            </Radio>
-          ))}
-        </fieldset>
+        <PolicySelector
+          policyProfileId={policyProfileId}
+          onPolicyProfileChange={(nextPolicyProfileId) =>
+            emit({ policyProfileId: nextPolicyProfileId })
+          }
+        />
 
         {contentItems.map((item, index) => (
           <ContentItemRow
