@@ -26,10 +26,10 @@
 | D10 | All new CSS appended to `app.css`; no new stylesheet; no new `:root` tokens |
 | D11 | EvidenceTrace: thin technical rail, presentation-layer reveal only (NEW) |
 | D12 | ExecutionTrace: derived from real `SandboxSecurityDecision` fields only (NEW) |
-| D13 | Result reveal order: Evidence → Findings → Detectors → Decision climax (REVISED) |
+| D13 | Layout order and reveal order are **decoupled** (R2.1): DOM layout = EvidenceTrace→DecisionHero→InsightGrid→ExecutionTrace; Reveal animation = EvidenceTrace→Findings→Detectors→DecisionHero climax→ExecutionTrace |
 | D14 | StageSelector: horizontal segmented, not 3 vertical cards (REVISED) |
 | D15 | SourceStack: compact rows=2, inline controls for 1080p density (REVISED) |
-| D16 | InsightGrid: Findings + Detectors side by side below DecisionHero (NEW) |
+| D16 | InsightGrid: FindingsCascade + DetectorChain side by side; positioned **below** DecisionHero in DOM layout (NEW) |
 | D17 | SecurityPolicyStatus: read-only policy property badge, no toggle semantics (NEW) |
 
 ## Design Contract v0.1
@@ -185,13 +185,21 @@ SandboxSecurityWorkbenchPage
         ├── [state=loading] InspectorRunning
         ├── [state=error]   InspectorError
         │
-        └── [state=result]  (reveal sequence §7)
-            ├── FindingsCascade            (t≈0.6s)
-            ├── InsightGrid                (t≈1.0s)
-            │   ├── DetectorSection (DetectorChain)
-            │   └── [metadata strip]
-            ├── DecisionHero               (t≈2.2s ← CLIMAX)
-            └── ExecutionTrace             ← NEW (t≈3.x, settles)
+        └── [state=result]  layout order ≠ reveal order (D13)
+            │  DOM layout (top→bottom, always this position):
+            ├── DecisionHero       ← fixed position; hidden until t≈2.2s reveal
+            ├── InsightGrid        ← below DecisionHero in DOM
+            │   ├── FindingsCascade (left or full-width)
+            │   └── DetectorSection (DetectorChain)
+            └── ExecutionTrace     ← NEW (settles last)
+            │
+            │  Reveal animation order (presentation layer):
+            │  t≈0.0s EvidenceTrace result presentation
+            │  t≈0.2s FindingsCascade (stagger)
+            │  t≈0.8s DetectorChain (elapsed_ms reveal)
+            │  t≈1.8s EvidenceTrace rail reaches DECISION
+            │  t≈2.2s DecisionHero unmasks ← CLIMAX
+            │  t≈3.2s ExecutionTrace stagger
 ```
 
 ### 2.2 Grid
@@ -335,11 +343,13 @@ CSS: `.workbench-runtime-header`
 
 See §5 for full design. Summary of states:
 
-- `idle`: rail drawn at ~15% opacity; nodes faintly visible; no animation
-- `loading`: rail at 40% opacity; active pulse on all nodes; EVALUATING
-- `result`: presentation reveal animates SOURCE→RULE→MODEL→JUDGE→DECISION
-  in sync with the broader result sequence (§7)
-- `settled`: each node shows actual detector_kind status color; trace rests
+- `idle`: rail at ~15% opacity; nodes faintly visible; no animation
+- `loading`: rail and nodes stay **static** at ~15% opacity (same as idle);
+  no per-node pulse, no progressive lighting; only EVALUATING badge and
+  generic shimmer rows communicate "evaluation in progress"
+- `result`: presentation-layer reveal starts **only after API returns**;
+  SOURCE→RULE→MODEL→JUDGE→DECISION animates in sequence (§7)
+- `settled`: each node shows execution-status color (see §5.3); no animation
 
 ### 4.3 State: idle
 
@@ -369,21 +379,25 @@ Alert + retry Button. Unchanged from R1. No new components.
 
 ### 4.6 State: result
 
-See §7 for full reveal sequence. Final settled layout:
+See §7 for full reveal sequence. Final **DOM layout** (top-to-bottom):
 
 ```
 RuntimeHeader
-EvidenceTrace (settled, status colors)
+EvidenceTrace (settled, execution-status colors)
 ─────────────────────────────────────
-FindingsCascade (full width)
+DecisionHero  ← FIXED POSITION, always visible location
+              (opacity:0 initially; unmasks at t≈2.2s during reveal)
 ─────────────────────────────────────
-InsightGrid (2 columns)
- DetectorSection │ [metadata strip]
+InsightGrid (2 columns, below DecisionHero)
+ FindingsCascade (left) │ DetectorSection (right)
 ─────────────────────────────────────
-DecisionHero  ← VISUAL CLIMAX
-─────────────────────────────────────
-ExecutionTrace (settled)
+ExecutionTrace (settled, at bottom)
 ```
+
+**Layout vs reveal**: DecisionHero is always at its final DOM position
+(second block after EvidenceTrace), ensuring it dominates the 1920×1080
+viewport. Its entrance animation (opacity+spring) unmasks it last during
+the presentation sequence, creating the climax effect.
 
 ## 5. EvidenceTrace Design
 
@@ -423,25 +437,40 @@ the current policy. It is never hidden — absence is information.
 
 ### 5.3 States
 
-**idle**: All nodes and rail at `opacity: 0.15`. No animation. Faint structure.
+**idle**: All nodes and rail at `opacity: 0.15`. No animation. Faint structure hint.
 
-**loading**: Rail at `opacity: 0.4`. All nodes pulse with a slow CSS keyframe
-(`workbench-trace-idle-pulse`, 2s ease infinite). No detector-specific
-lighting. Communicates "evaluation active", not real detector progress.
+**loading**: Nodes and rail stay **static** at `opacity: 0.15`. No pulse, no
+progressive lighting, no per-node animation. The EVALUATING badge and shimmer
+rows (in InspectorRunning) communicate "evaluation in progress". EvidenceTrace
+must never imply real detector execution is happening step by step.
 
-**result presentation** (see §7 for timing):
-- t≈0.2s: SOURCE node lights cyan
-- t≈0.4s: rail draws left-to-right from SOURCE to RULE
-- t≈0.7s: RULE node lights (color = matched/no_match from runs)
-- t≈0.9s: rail continues to MODEL
-- t≈1.1s: MODEL node lights
-- t≈1.3s: rail continues to JUDGE
-- t≈1.5s: JUDGE node lights
-- t≈1.8s: rail reaches DECISION; DECISION node briefly glows
-- (decision climax begins at this moment — §7)
+**result presentation** (starts only after API returns — see §7 for timing):
+- t≈0.0s: SOURCE node lights **cyan** (executed)
+- t≈0.2s: rail draws SOURCE→RULE
+- t≈0.6s: RULE node lights — **execution status color** (see settled table)
+- t≈0.9s: rail continues to MODEL; MODEL node lights — execution status color
+- t≈1.3s: rail continues to JUDGE; JUDGE node lights — execution status color
+- t≈1.8s: rail reaches DECISION node; DECISION node brief glow then settles
+  to **verdict/action color** (the only node that uses risk semantics)
 
-**settled**: All nodes show final status color (cyan=active, allow-green=no risk,
-deny-red=risk, muted=skipped). Rail fully drawn. No animation.
+**settled** — node color table (execution status, not risk level):
+
+| Status | Color token | When |
+|---|---|---|
+| Executed without error | `--console-accent` (cyan) | status = matched or no_match |
+| Timeout | `--console-severity-medium` (amber) | status = timeout |
+| Execution error | `--console-severity-high` (orange) | status = failed or invalid_result |
+| Skipped / not used | `--console-muted` | status = skipped, or no detectors of this kind |
+
+**DECISION node is the only exception**: it shows verdict/action semantics:
+- deny → `--console-action-deny` (red)
+- allow → `--console-action-allow` (green)
+- indeterminate → `--console-muted`
+
+**Key rule**: RULE/MODEL/JUDGE node colors reflect whether execution completed
+successfully, NOT whether risk was found. A RULE detector that matched (found
+risk) still shows cyan — it executed correctly. Risk severity is expressed
+solely by FindingsCascade and DecisionHero, not by trace node color.
 
 ### 5.4 CSS
 
@@ -521,53 +550,69 @@ all steps appear instantly after decision is visible.
 ### 7.1 Loading phase (pre-result)
 
 ```
-EVALUATING badge (CSS pulse)
-EvidenceTrace: loading state (slow idle pulse, no detector IDs)
-3 shimmer rows: rule · local_model · external_judge  (type labels only)
+EVALUATING badge (CSS pulse — workbench-pulse-badge)
+EvidenceTrace: static, opacity ~0.15 (no pulse, no per-node animation)
+3 shimmer rows: rule · local_model · external_judge  (type labels only,
+               NO detector IDs, NO progress)
+DecisionHero: not yet in DOM (rendered only when decision !== null)
 ```
 
-### 7.2 Result presentation sequence
+**EvidenceTrace during loading is intentionally inert.** Only the EVALUATING
+badge and shimmer rows communicate that evaluation is in progress.
+
+### 7.2 Layout vs reveal decoupling
+
+All result-state DOM elements mount simultaneously when `decision` arrives.
+DecisionHero is at its **fixed visual position** (second block after
+EvidenceTrace) from the moment it mounts. Its initial CSS state is
+`opacity: 0; transform: scale(0.95)` so it is spatially reserved but
+invisible. The reveal sequence uses animation to uncover it last.
 
 ```
-API returns
+API returns → decision state set → all result components mount at once
+              (DecisionHero is in DOM at final position, but opacity:0)
 │
-t=0.0s  EvidenceTrace switches to result presentation
-        SOURCE node lights cyan
+t=0.0s  EvidenceTrace switches to result presentation mode
+        SOURCE node transitions to cyan
 
-t=0.2s  FindingsCascade mounts (below EvidenceTrace)
+t=0.2s  FindingsCascade reveals (components already in DOM)
         severity-ordered stagger, 0.08s per item
-        EvidenceTrace: rail draws SOURCE→RULE
+        EvidenceTrace: rail segment SOURCE→RULE draws
 
-t=0.6s  EvidenceTrace: RULE node lights (run status color)
-        rail continues toward MODEL
+t=0.6s  EvidenceTrace: RULE node transitions to execution-status color
+        rail segment RULE→MODEL draws
 
-t=0.8s  InsightGrid mounts:
-        DetectorChain (left) — elapsed_ms-proportional reveal begins
-        Metadata strip (right) — policy/stage mono labels appear
+t=0.8s  DetectorChain elapsed_ms-proportional reveal begins
+        EvidenceTrace: MODEL node transitions
 
-t=1.1s  EvidenceTrace: MODEL node lights
-        rail continues toward JUDGE
+t=1.3s  EvidenceTrace: JUDGE node transitions
+        rail reaches JUDGE→DECISION segment
 
-t=1.4s  EvidenceTrace: JUDGE node lights
-        DetectorChain fully settled
+t=1.8s  EvidenceTrace: DECISION node brief glow then settles to verdict color
+        ← evidence chain visual complete
+        ← viewer attention drawn upward toward DecisionHero position
 
-t=1.8s  EvidenceTrace: rail reaches DECISION node
-        DECISION node brief local glow (one pulse, not loop)
-        ← evidence chain is complete
-
-t=2.2s  DecisionHero mounts ← VISUAL CLIMAX
-        verdictSpring(risk_level) drives entrance
+t=2.2s  DecisionHero UNMASKS (opacity 0→1, scale 0.95→1)
+        verdictSpring(risk_level) drives the entrance spring
         pulse ring expands once, fades (0.9s easeOut, no loop)
         verdict / action / risk_level large ValueTags land
         SpringNumber metrics settle
 
-t=3.2s  ExecutionTrace mounts
-        steps stagger in top-to-bottom, 60ms each
+t=3.2s  ExecutionTrace steps stagger in, 60ms each
 
 t≈4.0s  All settled. No loops. No continuous flash.
 ```
 
-Total sequence: ~4 seconds. Short, clear, one climax.
+Total sequence: ~4 seconds. DecisionHero at fixed upper position;
+unmasks last for climax effect.
+
+### 7.3 Reduced motion
+
+API returns → all result content immediately visible at full opacity.
+No delays, no spring travel, no pulse, no trace animation.
+EvidenceTrace shows settled state instantly with execution-status colors.
+DecisionHero appears at full opacity immediately (no unmask delay).
+Role="status" fires immediately for screen readers.
 
 ### 7.3 Reduced motion
 
@@ -636,18 +681,21 @@ must not display a fake decision-level confidence value.
 
 | Moment | Component | Spec |
 |---|---|---|
-| EvidenceTrace idle pulse | CSS keyframe | `workbench-trace-idle-pulse` 2s ease infinite |
-| EvidenceTrace result draw | CSS transition / Motion | rail segments fade+scale in sequence (§7) |
-| DECISION node glow | Motion | opacity+scale 1 pulse, 0.6s, no loop |
-| EVALUATING badge | CSS keyframe | `workbench-pulse-badge` 1.4s ease infinite |
-| Shimmer rows | CSS keyframe | `workbench-shimmer` 1.5s linear infinite |
-| FindingsCascade reveal | MOMENTUM_SPRING, 0.08s stagger | existing component |
-| DetectorChain reveal | elapsed_ms schedule | existing component |
-| DecisionHero entrance | `verdictSpring(risk_level)` | existing VerdictHero |
+| EvidenceTrace result draw | CSS transition / Motion | rail segments + node transitions in sequence per §7 |
+| DECISION node glow | Motion | opacity+scale 1 pulse at t≈1.8s, 0.6s, **no loop** |
+| EVALUATING badge (loading only) | CSS keyframe | `workbench-pulse-badge` 1.4s ease infinite; stops when result arrives |
+| Shimmer rows (loading only) | CSS keyframe | `workbench-shimmer` 1.5s linear infinite; stops when result arrives |
+| FindingsCascade reveal | MOMENTUM_SPRING, 0.08s stagger | existing component; opacity controlled by result state |
+| DetectorChain reveal | elapsed_ms schedule | existing component; starts at t≈0.8s |
+| DecisionHero **unmask** | `verdictSpring(risk_level)` | existing VerdictHero; opacity 0→1 at t≈2.2s from fixed position |
 | DecisionHero pulse ring | 0.9s easeOut, no loop | existing VerdictHero |
-| ExecutionTrace steps | CALM_SPRING, 60ms stagger | new component |
-| SpotlightSurface glow | SHOWCASE_SPOTLIGHT_SPRING | existing component |
-| SourceCard enter | CALM_SPRING | new card |
+| ExecutionTrace steps | CALM_SPRING, 60ms stagger | new component; t≈3.2s |
+| SpotlightSurface glow | SHOWCASE_SPOTLIGHT_SPRING | idle + loading states only |
+| SourceCard enter | CALM_SPRING | new card add |
+
+**EvidenceTrace during loading: no animation.** Static at opacity ~0.15.
+The `workbench-trace-idle-pulse` keyframe is **not applied** during loading state.
+It is removed from the animation inventory. Only the EVALUATING badge pulses.
 
 ### 9.2 What must not animate after settle
 
@@ -806,7 +854,10 @@ everything immediately.
 
 Captures at: 1920×1080 (idle, loading, result), 1440×900 (result)
 
-- [ ] First-glance hierarchy: EvidenceTrace → Findings → Detectors → Decision dominates
+- [ ] First-glance hierarchy: EvidenceTrace (thin rail, not dominant) →
+      DecisionHero at fixed upper-right position (visually dominant after unmask)
+- [ ] During reveal: EvidenceTrace rail draws, Findings/Detectors appear first,
+      then DecisionHero unmasks as visual climax — correct order confirmed
 - [ ] Landing / Showcase consistency: same product family
 - [ ] Left/right visual balance: right pane clearly heavier
 - [ ] 1080p: 3 sources visible without excessive scroll, Evaluate CTA discoverable
@@ -869,22 +920,31 @@ import { CALM_SPRING, MOMENTUM_SPRING, verdictSpring }
 ## 14. Acceptance Criteria
 
 1. First glance: Workbench reads as the same product family as Showcase / Landing.
-2. EvidenceTrace is present in all states; idle state is visible but not attention-grabbing.
-3. EvidenceTrace settled: node colors match actual `detector_kind` outcomes.
-4. Result reveal order: Findings → InsightGrid → DecisionHero (climax) → ExecutionTrace.
-5. DecisionHero is the final and dominant visual element; verdict/action/severity
+2. EvidenceTrace is present in all states; idle and loading states are static
+   (no animation); visible but not attention-grabbing at low opacity.
+3. EvidenceTrace settled: RULE/MODEL/JUDGE nodes show **execution-status colors**
+   (cyan=completed, amber=timeout, orange=error, muted=skipped). DECISION node
+   alone shows verdict/action semantics. Risk severity never colors trace nodes.
+4. DOM layout: EvidenceTrace → DecisionHero → InsightGrid → ExecutionTrace.
+   DecisionHero is at fixed upper position; invisible (opacity:0) until t≈2.2s.
+5. Reveal animation order: EvidenceTrace → Findings → Detectors → DecisionHero
+   unmask (climax) → ExecutionTrace. DecisionHero is the last to reveal,
+   while remaining physically above Findings/Detectors in the DOM.
+6. DecisionHero is the dominant visual element after unmask; verdict/action/severity
    readable at projector distance within 3 seconds.
-6. Loading state: no detector IDs, no fake progress, no fake percentages shown.
-7. ExecutionTrace: every step derives from real `SandboxSecurityDecision` data.
+7. Loading state: EvidenceTrace stays static (no per-node pulse); no detector IDs,
+   no fake progress, no fake percentages shown in shimmer rows.
+8. ExecutionTrace: every step derives from real `SandboxSecurityDecision` data.
    No fabricated execution events.
-8. SecurityPolicyStatus: read-only label; no toggle, no `role="switch"`.
-9. All existing privacy tests pass: token not in DOM, content not in URL/storage.
-10. `role="status"` on DecisionHero fires; screen reader announces verdict.
-11. Reduced motion: all result content immediately visible with no delays.
-12. Color literal gate: no raw hex/rgba in new CSS or TSX files.
-13. Three sources + all left-pane controls visible at 1920×1080 without forced scroll.
-14. Build passes; TypeScript no new errors; all tests pass.
-15. No backend, shared contract, engine, or Console page changed.
+9. SecurityPolicyStatus: read-only label; no toggle, no `role="switch"`.
+10. All existing privacy tests pass: token not in DOM, content not in URL/storage.
+11. `role="status"` on DecisionHero fires; screen reader announces verdict.
+12. Reduced motion: all result content immediately visible with no delays;
+    DecisionHero appears at full opacity immediately (no unmask delay).
+13. Color literal gate: no raw hex/rgba in new CSS or TSX files.
+14. Three sources + all left-pane controls visible at 1920×1080 without forced scroll.
+15. Build passes; TypeScript no new errors; all tests pass.
+16. No backend, shared contract, engine, or Console page changed.
 
 ---
 
@@ -892,32 +952,25 @@ import { CALM_SPRING, MOMENTUM_SPRING, verdictSpring }
 *Self-review: see §15 below*
 *Next step after approval: superpowers:writing-plans*
 
-## 15. Spec Self-Review (R2)
+## 15. Spec Self-Review (R2.1)
 
 Checklist run inline; all items resolved before commit.
 
 | Check | Result |
 |---|---|
 | TBD / TODO / placeholder scan | ✅ None found |
-| Architecture ↔ sections consistency | ✅ §2 tree matches §3–6 components |
+| Architecture ↔ sections consistent | ✅ §2 tree matches §4.6 layout; layout≠reveal decoupled in both |
 | FailClosedToggle fully removed | ✅ Removed from decisions, left pane, CSS, tests, criteria |
-| EvidenceTrace in architecture/motion/test/criteria | ✅ §4.2, §5, §9, §12.2, §14 |
-| ExecutionTrace in architecture/test/criteria | ✅ §6, §12.2, §14 |
-| One-shot API honesty intact | ✅ §7 honesty rule, §12.2 loading-no-fake-progress |
+| EvidenceTrace in arch/motion/test/criteria | ✅ §4.2, §5, §9, §12.2, §14 |
+| ExecutionTrace in arch/test/criteria | ✅ §6, §12.2, §14 |
+| EvidenceTrace loading is static (no per-node pulse) | ✅ §4.2, §5.3, §7.1, §9.1 all confirm static |
+| EvidenceTrace node colors = execution status only | ✅ §5.3 table + Key rule paragraph; DECISION node is the only exception |
+| Layout/reveal decoupling documented | ✅ §2.1 tree, §4.6, §7.2 all state: DOM layout ≠ reveal order |
+| One-shot API honesty intact | ✅ §7 honesty rule; §7.1 loading static; §7.2 "all components mount simultaneously" |
 | No fabricated backend fields | ✅ §6.2 derivation table; §8.4 no fake confidence |
-| Test plan matches new design | ✅ FailClosed tests removed; EvidenceTrace/ExecutionTrace/SecurityPolicyStatus tests added |
-| Engineering impact matches new components | ✅ EvidenceTrace.tsx + ExecutionTrace.tsx added; FailClosedToggle.tsx absent |
-| Acceptance criteria updated for new reveal order | ✅ §14 item 4: Findings→InsightGrid→DecisionHero→ExecutionTrace |
-| Scope: frontend only | ✅ §13.4 explicitly unchanged list confirmed |
-| Design Contract v0.1 present | ✅ Standalone section with canvas/accent/glow/motion rules |
-
-One open question for user confirmation:
-
-> **Q1**: InsightGrid layout (§4.6 / §2.1): the spec places `FindingsCascade`
-> full-width above a 2-column `InsightGrid` (DetectorChain + metadata strip),
-> then `DecisionHero` below both. At narrow viewports or when findings are
-> many, this could push DecisionHero far down. Should the fallback be:
-> (a) collapse InsightGrid to single column and shrink FindingsCascade to
-> a max-height scrollable area; or (b) user confirms this is acceptable
-> for demo scenarios where findings are typically 2–4 items?
+| Test plan matches new design | ✅ §12.2 has EvidenceTrace loading/node-color/layout tests |
+| Acceptance criteria updated | ✅ 16 items; items 2–7 cover the R2.1 fixes |
+| Scope: frontend only | ✅ §13.4 confirmed |
+| Design Contract v0.1 present | ✅ Standalone section |
+| Q1 (InsightGrid max-height) resolved by D13 | ✅ DecisionHero now above InsightGrid; pushing-down concern eliminated |
 
