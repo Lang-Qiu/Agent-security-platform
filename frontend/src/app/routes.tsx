@@ -6,6 +6,7 @@ import { OverviewPage } from "../pages/OverviewPage";
 import { ReviewDemoPage } from "../pages/ReviewDemoPage";
 import { SandboxAlertsPage } from "../pages/SandboxAlertsPage";
 import { SandboxSecurityAuditPage } from "../pages/SandboxSecurityAuditPage";
+import { SandboxSecurityShowcasePage } from "../pages/SandboxSecurityShowcasePage";
 import { SandboxSecurityWorkbenchPage } from "../pages/SandboxSecurityWorkbenchPage";
 import { StaticAnalysisPage } from "../pages/StaticAnalysisPage";
 import { TaskDetailPage } from "../pages/TaskDetailPage";
@@ -55,6 +56,14 @@ export const appRoutes: RouteObject[] = [
       {
         path: "review-demo",
         element: <ReviewDemoPage />
+      },
+      {
+        // Demonstration surface. Registered as its own route rather than as a
+        // third child of the sandbox-security group: the GENERAL-005 navigation
+        // spec pins that group at exactly two children, and the workbench route
+        // must keep its no-mock-fallback guarantee.
+        path: "sandbox-security-showcase",
+        element: <SandboxSecurityShowcasePage />
       }
     ]
   }

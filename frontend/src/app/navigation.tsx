@@ -4,7 +4,8 @@ import {
   CompassOutlined,
   RadarChartOutlined,
   SafetyCertificateOutlined,
-  ScanOutlined
+  ScanOutlined,
+  ThunderboltOutlined
 } from "@ant-design/icons";
 
 import type { ReactNode } from "react";
@@ -79,5 +80,13 @@ export const consoleNavigation: ConsoleNavigationItem[] = [
     label: "评审模式",
     path: "/review-demo",
     icon: <CompassOutlined />
+  },
+  // Top-level, not a third child of the sandbox-security group: the
+  // GENERAL-005 navigation spec pins that group at exactly two children.
+  {
+    key: "/sandbox-security-showcase",
+    label: "评估演示",
+    path: "/sandbox-security-showcase",
+    icon: <ThunderboltOutlined />
   }
 ];

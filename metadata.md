@@ -5,7 +5,7 @@
 - Type: repository metadata and engineering baseline
 - Scope: applies to the entire repository
 - Status: initial template, can be refined as architecture and tooling are finalized
-- Last updated: `2026-03-26`
+- Last updated: `2026-08-09`
 
 ## Purpose
 This file defines the project-specific constraints and stable engineering conventions for this repository.
@@ -61,12 +61,14 @@ Do not optimize for short-lived demo speed at the cost of architecture drift.
 - Location: `frontend/`
 - Language: TypeScript
 - Framework direction: React
-- UX direction: information-dense, admin-console style, close to Ant Design Pro simple
+- UX direction for operator-facing console surfaces: information-dense, admin-console style, close to Ant Design Pro simple
+- UX direction for the public product landing route: presentation-oriented, expressive, landing-page composition (see `Frontend Conventions`)
 - Expected responsibility:
   - task list and task detail pages
   - risk/result presentation
   - operator workflows and filtering
   - platform-facing API consumption only
+  - public product landing surface at the site root
 
 ### Backend
 - Location: `backend/`
@@ -118,7 +120,9 @@ Do not optimize for short-lived demo speed at the cost of architecture drift.
 ## Frontend Conventions
 - Prefer React + TypeScript component decomposition that is easy to test
 - Keep presentational components separate from platform data integration concerns when practical
-- Follow the established console-style information hierarchy instead of marketing-page patterns
+- Operator-facing console surfaces follow the established console-style information hierarchy instead of marketing-page patterns
+- Authorized exception (user decision, `2026-08-09`): the public product landing route is a presentation surface. It may use landing-page composition, expressive motion, large-scale typography, and its own dedicated presentation components. The exception is scoped to the landing route's own component tree and stylesheet; it does not authorize marketing patterns inside the Security Operations Console, and it does not authorize changing console behavior, console data flow, or business logic
+- The landing surface and the console must remain visually continuous: both consume the same colour, spacing, radius, and typography token source, and the landing route may extend that token set with a presentation layer rather than forking it
 - New frontend behavior should align with `docs/api-contract.md` and `shared/` contracts
 - Frontend requirement work should default to `$react-best-practices`
 - If the task has strong visual and interaction design goals, combine with `$frontend-design`

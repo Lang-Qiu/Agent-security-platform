@@ -10033,3 +10033,38 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   - GENERAL-002 remains `PROVISIONAL_ACCEPTED_PENDING_P6_RECAPTURE`, and
     GENERAL-003 is not `VERIFIED`
 - next: P2-T3 private capability provisioning and authentication
+
+## 2026-08-09 - Competition application form formal draft
+
+- type: documentation-only requirement; full TDD is not applicable because no
+  production behavior, contract, configuration, or test code changed
+- status: `COMPLETE`
+- deliverable:
+  - added the formal competition application draft covering work name,
+    innovation, technical advancement, application prospects, design
+    completeness, and a 5-8 minute demonstration sequence
+  - included a capability-to-column allocation matrix, technical/readable/final
+    versions, a claim-evidence-status ledger, deduplication notes, and a final
+    paste-ready version
+  - limited current capability claims to the simulation evaluation chain and
+    excluded OS-level sandboxing, activated runtime interception, accepted
+    quality metrics, and tamper-proof audit claims
+- evidence basis:
+  - reused the completed `docs/competition-poster/01` through `08` inventory,
+    scope, capability, fact, copy, and risky-claim records
+  - performed targeted source checks for the two public API routes, runtime
+    requirements, the fixed prompt-injection demo fixture, rule severity and
+    short-circuit policy, and the frontend simulation marker
+- verification:
+  - required-section, placeholder, and trailing-whitespace scans passed for the
+    new draft; `git diff --check -- docs/progress.md` also passed for this entry
+  - the paste-ready section contains none of the prohibited overclaim patterns;
+    risky wording appears only in explanatory limitations and Claim Evidence
+    counterexamples
+  - focused runtime tests were not rerun: the active Node.js is `22.17.0`, the
+    required `22.19.0` is unavailable, `nvm` is not installed, and WSL has no
+    Node.js; the draft cites only the prior audit's actually executed results
+- files:
+  - `docs/competition-poster/09-competition-application-form.md`
+  - `docs/progress.md`
+- suggested commit: `docs(competition): draft evidence-backed application form`

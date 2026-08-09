@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Alert, Button, Space, Typography } from "antd";
+import { Alert, Button, Typography } from "antd";
+import { motion, useReducedMotion } from "motion/react";
 
 import type {
   SandboxSecurityPolicyProfileId,
@@ -58,6 +59,29 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
   const [submitting, setSubmitting] = useState(false);
   const [decision, setDecision] = useState<SandboxSecurityDecision | null>(null);
   const [error, setError] = useState<ErrorResult | null>(null);
+  // Unconditional hook call. Entrance uses a critically damped spring
+  // (bounce 0): the result arrives without overshoot because no gesture
+  // momentum preceded it. Under reduced motion every entrance collapses to an
+  // instant opacity change, matching the prefers-reduced-motion contract that
+  // app.css already establishes for .console-panel.
+  const reduceMotion = useReducedMotion();
+  const enterAt = (index: number) =>
+    reduceMotion
+      ? {
+          initial: { opacity: 0 },
+          animate: { opacity: 1 },
+          transition: { duration: 0 }
+        }
+      : {
+          initial: { opacity: 0, y: 8 },
+          animate: { opacity: 1, y: 0 },
+          transition: {
+            type: "spring" as const,
+            bounce: 0,
+            duration: 0.4,
+            delay: index * 0.06
+          }
+        };
 
   const limitCheck = validateEvaluationRequest({ stage, contentItems, toolRequest });
   const violations: LimitViolation[] = [...limitCheck.violations];
@@ -121,57 +145,107 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
 
   return (
     <section className="sandbox-security-workbench-page">
-      <Typography.Title level={3}>评估工作台</Typography.Title>
-      <Typography.Paragraph type="secondary">
-        提交内容以在模拟模式下评估沙箱安全策略。结果仅供分析，不用于实际拦截。
-      </Typography.Paragraph>
-      <Space orientation="vertical" size="large" style={{ width: "100%" }}>
-        <CapabilitySessionPanel
-          hasToken={capabilityToken.trim().length > 0}
-          requiresNewCapability={requiresNewCapability}
-          onTokenChange={setCapabilityToken}
-          onClear={() => setCapabilityToken("")}
-        />
-        <EvaluationRequestForm
-          stage={stage}
-          policyProfileId={policyProfileId}
-          contentItems={contentItems}
-          toolRequest={toolRequest}
-          submitting={submitting}
-          violations={violations}
-          onChange={(next) => {
-            setStage(next.stage);
-            setPolicyProfileId(next.policyProfileId);
-            setContentItems(next.contentItems);
-            setToolRequest(next.toolRequest);
-            invalidateKey();
-          }}
-          onSubmit={handleSubmit}
-        />
-        {failureCopy && !requiresNewCapability ? (
-          <Space orientation="vertical" size="small" style={{ width: "100%" }}>
-            <Alert
-              role="alert"
-              type="error"
-              showIcon
-              title={failureCopy.title}
-              description={failureCopy.remedy}
-            />
-            {isRetryable ? (
-              <Button size="small" onClick={handleRetry}>
-                重试请求
-              </Button>
-            ) : null}
-          </Space>
-        ) : null}
-        {decision ? (
-          <>
-            <DecisionSummaryPanel decision={decision} />
-            <FindingsTable findings={decision.findings} />
-            <DetectorRunTable runs={decision.detector_runs} />
-          </>
-        ) : null}
-      </Space>
+      <header className="sandbox-workbench-header">
+        <Typography.Title level={3}>评估工作台</Typography.Title>
+        <Typography.Paragraph type="secondary">
+          提交内容以在模拟模式下评估沙箱安全策略。结果仅供分析，不用于实际拦截。
+        </Typography.Paragraph>
+      </header>
+
+      {/* Two-pane workbench: input on the left, results on the right. The
+          results pane is sticky on wide screens so the verdict stays in view
+          while the form scrolls (summary before detail), and reorders above the
+          input below 1100px so a returned verdict needs no scrolling. The
+          reorder is CSS-only, so DOM and tab order stay
+          capability -> form -> submit -> result. */}
+      <div className="sandbox-workbench-grid">
+        <div className="sandbox-workbench-input">
+          <CapabilitySessionPanel
+            hasToken={capabilityToken.trim().length > 0}
+            requiresNewCapability={requiresNewCapability}
+            onTokenChange={setCapabilityToken}
+            onClear={() => setCapabilityToken("")}
+          />
+          <EvaluationRequestForm
+            stage={stage}
+            policyProfileId={policyProfileId}
+            contentItems={contentItems}
+            toolRequest={toolRequest}
+            submitting={submitting}
+            violations={violations}
+            onChange={(next) => {
+              setStage(next.stage);
+              setPolicyProfileId(next.policyProfileId);
+              setContentItems(next.contentItems);
+              setToolRequest(next.toolRequest);
+              invalidateKey();
+            }}
+            onSubmit={handleSubmit}
+          />
+        </div>
+
+        <div className="sandbox-workbench-results">
+          {/* Persistent simulation marker. Carries no ARIA role: the decision
+              summary owns the only role="status" and the failure block owns the
+              only role="alert". */}
+          <motion.div className="sandbox-simulation-badge" {...enterAt(0)}>
+            SIMULATION / 仿真
+          </motion.div>
+
+          {/* The only page-level alert. Mutually exclusive with the capability
+              panel's alert via !requiresNewCapability, and never co-present
+              with a decision because runEvaluation clears the decision on
+              error. */}
+          {failureCopy && !requiresNewCapability ? (
+            <motion.div className="sandbox-workbench-failure" {...enterAt(1)}>
+              <Alert
+                role="alert"
+                type="error"
+                showIcon
+                title={failureCopy.title}
+                description={failureCopy.remedy}
+              />
+              {isRetryable ? (
+                <Button
+                  className="sandbox-workbench-retry"
+                  size="small"
+                  onClick={handleRetry}
+                >
+                  重试请求
+                </Button>
+              ) : null}
+            </motion.div>
+          ) : null}
+
+          {decision ? (
+            <>
+              {/* DecisionSummaryPanel brings its own .console-panel surface,
+                  so it is not wrapped in another one (never stack two
+                  translucent surfaces). */}
+              <motion.div {...enterAt(1)}>
+                <DecisionSummaryPanel decision={decision} />
+              </motion.div>
+              <motion.section className="console-panel" {...enterAt(2)}>
+                <Typography.Title level={4}>风险发现</Typography.Title>
+                <FindingsTable findings={decision.findings} />
+              </motion.section>
+              <motion.section className="console-panel" {...enterAt(3)}>
+                <Typography.Title level={4}>检测器执行</Typography.Title>
+                <DetectorRunTable runs={decision.detector_runs} />
+              </motion.section>
+            </>
+          ) : (
+            <motion.div
+              className="sandbox-workbench-empty console-panel"
+              {...enterAt(1)}
+            >
+              <Typography.Text type="secondary">
+                提交左侧请求后，决策摘要、风险发现与检测器执行将显示在这里。
+              </Typography.Text>
+            </motion.div>
+          )}
+        </div>
+      </div>
     </section>
   );
 }

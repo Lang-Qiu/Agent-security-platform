@@ -33,6 +33,12 @@
   --console-tile-bg: rgba(22, 34, 47, 0.96);
   --console-case-bg: rgba(22, 34, 47, 0.6);
   --console-attempt-bg: rgba(22, 34, 47, 0.92);
+  /* Showcase route. These live in :root because the repository colour gate
+     exempts only this block; every rule below must reference them by name. */
+  --console-showcase-spotlight: rgba(34, 211, 238, 0.1);
+  --console-showcase-scrim: rgba(6, 11, 17, 0.72);
+  --console-showcase-chip: rgba(22, 34, 47, 0.85);
+  --console-showcase-rail: rgba(34, 211, 238, 0.18);
 }
 
 * {
@@ -201,6 +207,119 @@ a {
 .sandbox-security-workbench-page input,
 .sandbox-security-audit-page input {
   accent-color: var(--console-accent);
+}
+
+/* REQ-SBX-GENERAL-005: two-pane evaluation workbench.
+   Input on the left, results on the right. The results pane is sticky so the
+   verdict stays in view while the long request form scrolls (summary before
+   detail), and it reorders above the input below 1100px so a returned verdict
+   needs no scrolling. The reorder is visual only: DOM order stays
+   capability -> form -> submit -> result, so tab and reading order are
+   unaffected. Columns follow the same minmax() convention as
+   .supervision-workbench. */
+
+.sandbox-workbench-header {
+  display: grid;
+  gap: 4px;
+  max-width: 68ch;
+}
+
+.sandbox-workbench-header .ant-typography {
+  margin-block: 0;
+}
+
+.sandbox-workbench-grid {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.85fr) minmax(480px, 1.15fr);
+  gap: 20px;
+  /* Required for the sticky results pane: a stretched grid item cannot stick. */
+  align-items: start;
+}
+
+.sandbox-workbench-grid > * {
+  min-width: 0;
+}
+
+.sandbox-workbench-input,
+.sandbox-workbench-results,
+.sandbox-workbench-failure {
+  display: grid;
+  gap: 20px;
+}
+
+.sandbox-workbench-results {
+  position: sticky;
+  top: 24px;
+}
+
+/* The retry control sits under its alert at intrinsic width, not stretched
+   across the failure block's grid track. */
+.sandbox-workbench-retry {
+  justify-self: start;
+}
+
+/* Motion owns the entrance of everything in the results pane, so the shared
+   rise-in keyframe must not also run here — two entrance animations on one
+   element compound into a visible double move. The input pane keeps rise-in. */
+.sandbox-workbench-results .console-panel {
+  animation: none;
+}
+
+/* Persistent simulation marker. A pill of accent material, not a status
+   region: the decision summary owns the only role="status". */
+.sandbox-simulation-badge {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 14px;
+  border: 1px solid var(--console-border-strong);
+  border-radius: 999px;
+  background: var(--console-accent-soft);
+  color: var(--console-accent);
+  backdrop-filter: blur(10px);
+  font-size: 0.75rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.sandbox-workbench-empty {
+  display: grid;
+  place-items: center;
+  min-height: 220px;
+  padding-inline: 32px;
+  text-align: center;
+}
+
+/* Result panels: a tight heading, then the table. The table scrolls inside its
+   own panel so the page body never scrolls sideways in the narrower column. */
+.sandbox-workbench-results .console-panel > .ant-typography {
+  margin-block: 0 16px;
+}
+
+.sandbox-workbench-results .ant-table-wrapper {
+  overflow-x: auto;
+}
+
+@media (max-width: 1100px) {
+  .sandbox-workbench-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Results first once the columns collapse, so a verdict is visible without
+     scrolling past the form. Visual order only. */
+  .sandbox-workbench-results {
+    position: static;
+    order: -1;
+  }
+}
+
+/* Frostier material when the viewer asks for less transparency: raise the
+   surface to a solid token and drop the blur. */
+@media (prefers-reduced-transparency: reduce) {
+  .sandbox-simulation-badge {
+    background: var(--console-surface-raised);
+    backdrop-filter: none;
+  }
 }
 
 .overview-hero {
@@ -824,5 +943,560 @@ a {
 @media (max-width: 1100px) {
   .review-demo-page__body {
     grid-template-columns: 1fr;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Sandbox security evaluation showcase (/sandbox-security-showcase).
+   A presentation surface. Every colour is a var(--console-*) reference, so the
+   app.css literal gate stays green; the four showcase tokens it uses are
+   declared in the :root block at the top of this file.
+   --------------------------------------------------------------------------- */
+
+.sandbox-security-showcase-page {
+  display: grid;
+  gap: 28px;
+}
+
+/* Utility: visually hidden but present for assistive technology. Used by
+   SpringNumber to expose the settled value while the animated digits are
+   aria-hidden. */
+.showcase-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Identifiers, digests and byte counts read as machine values. */
+.sandbox-security-showcase-page [data-mono="true"] {
+  font-family: var(--console-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Header ------------------------------------------------------------- */
+
+.showcase-header {
+  display: grid;
+  gap: 10px;
+  max-width: 74ch;
+  /* Parallax moves this layer; promoting it keeps the drift on the compositor. */
+  will-change: transform;
+}
+
+.showcase-header__title.ant-typography {
+  margin: 0;
+  /* Large type wants negative tracking and tight leading. */
+  font-size: clamp(2rem, 4.4vw, 3.25rem);
+  line-height: 1.04;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
+}
+
+.showcase-header__body.ant-typography {
+  margin: 0;
+  max-width: 62ch;
+}
+
+.showcase-header__provenance {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 12px;
+  max-width: 68ch;
+}
+
+.showcase-header__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+/* --- Magnetic spotlight surface ----------------------------------------- */
+
+.showcase-spotlight {
+  position: relative;
+  overflow: hidden;
+  padding: 28px;
+  border: 1px solid var(--console-border-strong);
+  border-radius: 24px;
+  background: var(--console-surface);
+  box-shadow: var(--console-shadow);
+  backdrop-filter: blur(10px);
+  isolation: isolate;
+}
+
+/* Pure decoration: never intercepts a pointer, never reaches AT. */
+.showcase-spotlight__glow {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.showcase-spotlight__content {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 22px;
+  min-width: 0;
+}
+
+/* --- Act heading -------------------------------------------------------- */
+
+.showcase-act__heading {
+  display: grid;
+  gap: 6px;
+  max-width: 66ch;
+}
+
+.showcase-act__eyebrow.ant-typography {
+  color: var(--console-accent);
+  font-size: 0.75rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.showcase-act__title.ant-typography {
+  margin: 0;
+  font-size: clamp(1.4rem, 2.2vw, 2rem);
+  line-height: 1.12;
+  letter-spacing: -0.012em;
+}
+
+.showcase-act__body.ant-typography {
+  margin: 0;
+}
+
+/* --- Act one: payload seal --------------------------------------------- */
+
+.showcase-payload {
+  display: grid;
+  gap: 10px;
+}
+
+.showcase-payload__item {
+  display: grid;
+  grid-template-columns: minmax(64px, auto) minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--console-border);
+  border-radius: 12px;
+  background: var(--console-showcase-chip);
+  min-width: 0;
+}
+
+.showcase-payload__id {
+  color: var(--console-accent);
+  font-size: 0.85rem;
+}
+
+.showcase-payload__type {
+  color: var(--console-muted);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.showcase-payload__media,
+.showcase-payload__bytes {
+  color: var(--console-muted-dim);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.showcase-payload__seal {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--console-accent-strong);
+  border-radius: 12px;
+  background: var(--console-accent-soft);
+}
+
+.showcase-payload__seal-value {
+  color: var(--console-accent);
+  font-family: var(--console-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 1.35rem;
+  font-weight: 600;
+}
+
+/* --- Act two: detector chain ------------------------------------------- */
+
+.showcase-chain {
+  display: grid;
+  grid-template-columns: 3px minmax(0, 1fr);
+  gap: 0 18px;
+}
+
+.showcase-chain__rail {
+  border-radius: 999px;
+  background: var(--console-border);
+  overflow: hidden;
+}
+
+.showcase-chain__rail-fill {
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--console-accent);
+  transform-origin: top center;
+}
+
+.showcase-chain__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.showcase-chain__item {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1.4fr) minmax(0, 0.7fr) auto auto;
+  align-items: center;
+  gap: 8px 14px;
+  padding: 11px 14px;
+  border: 1px solid var(--console-border);
+  border-radius: 12px;
+  background: var(--console-showcase-chip);
+  min-width: 0;
+}
+
+.showcase-chain__dot {
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--console-border-interactive);
+  border-radius: 999px;
+}
+
+.showcase-chain__name {
+  font-family: var(--console-mono);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.showcase-chain__kind {
+  color: var(--console-muted-dim);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.showcase-chain__status {
+  font-family: var(--console-mono);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+.showcase-chain__elapsed {
+  color: var(--console-muted);
+  font-family: var(--console-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.78rem;
+  white-space: nowrap;
+  text-align: right;
+}
+
+/* --- Act three: verdict hero ------------------------------------------- */
+
+.showcase-verdict {
+  position: relative;
+  display: grid;
+  gap: 20px;
+  padding: 8px 0 4px;
+}
+
+/* One expanding ring on arrival. Decorative, hidden from AT. */
+.showcase-verdict__pulse {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 180px;
+  height: 180px;
+  margin: -60px 0 0 -40px;
+  border: 1px solid var(--console-action-deny);
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.showcase-verdict__pulse[data-risk="low"],
+.showcase-verdict__pulse[data-risk="info"] {
+  border-color: var(--console-accent);
+}
+
+/* Idle states for the two gated act-three surfaces. They hold the vertical
+   space the real content will occupy, so releasing the sequence does not shove
+   the rest of the page downward. */
+.showcase-verdict__placeholder,
+.showcase-cascade--idle {
+  display: grid;
+  place-items: center;
+  min-height: 96px;
+  padding: 20px;
+  border: 1px dashed var(--console-border-strong);
+  border-radius: 12px;
+  text-align: center;
+}
+
+.showcase-verdict__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  /* The hero moment: the contract values read large. */
+  font-size: 1.05rem;
+}
+
+.showcase-verdict__metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 16px;
+  margin: 0;
+}
+
+.showcase-verdict__metric {
+  display: grid;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--console-border-strong);
+  border-radius: 14px;
+  background: var(--console-tile-bg);
+}
+
+.showcase-verdict__metric dt {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.showcase-verdict__metric dd {
+  margin: 0;
+  font-family: var(--console-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 1.6rem;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+/* --- Act three: findings cascade + shared-element detail ---------------- */
+
+.showcase-cascade {
+  display: grid;
+  gap: 12px;
+}
+
+.showcase-cascade__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.showcase-cascade__item {
+  min-width: 0;
+}
+
+.showcase-cascade__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  width: 100%;
+  padding: 12px 16px 12px 14px;
+  border: 1px solid var(--console-border);
+  border-radius: 14px;
+  background: var(--console-showcase-chip);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  min-height: 52px;
+}
+
+.showcase-cascade__row:hover {
+  border-color: var(--console-border-interactive);
+}
+
+.showcase-cascade__row:focus-visible {
+  outline: 2px solid var(--console-accent);
+  outline-offset: 2px;
+}
+
+/* Severity encoded in form as well as colour, so it survives a colour-blind
+   read and a greyscale print. */
+.showcase-cascade__severity-stripe {
+  width: 3px;
+  align-self: stretch;
+  min-height: 22px;
+  border-radius: 999px;
+  background: var(--console-severity-info);
+}
+
+.showcase-cascade__row[data-severity="critical"] .showcase-cascade__severity-stripe {
+  background: var(--console-severity-critical);
+}
+
+.showcase-cascade__row[data-severity="high"] .showcase-cascade__severity-stripe {
+  background: var(--console-severity-high);
+}
+
+.showcase-cascade__row[data-severity="medium"] .showcase-cascade__severity-stripe {
+  background: var(--console-severity-medium);
+}
+
+.showcase-cascade__row[data-severity="low"] .showcase-cascade__severity-stripe {
+  background: var(--console-severity-low);
+}
+
+.showcase-cascade__confidence {
+  margin-left: auto;
+  color: var(--console-muted);
+  font-family: var(--console-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+}
+
+.showcase-cascade__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  background: var(--console-showcase-scrim);
+  backdrop-filter: blur(3px);
+}
+
+.showcase-cascade__detail {
+  position: fixed;
+  z-index: 901;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(560px, calc(100vw - 40px));
+  max-height: min(80vh, 640px);
+  overflow-y: auto;
+  display: grid;
+  gap: 14px;
+}
+
+.showcase-cascade__detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.showcase-cascade__detail-fields {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.showcase-cascade__detail-fields dt {
+  margin: 0 0 2px;
+  font-size: 0.8rem;
+}
+
+.showcase-cascade__detail-fields dd {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.showcase-cascade__positions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.showcase-cascade__positions li {
+  padding: 8px 12px;
+  border: 1px solid var(--console-border);
+  border-radius: 10px;
+  background: var(--console-surface-raised);
+  font-size: 0.8rem;
+}
+
+.showcase-cascade__wrap {
+  overflow-wrap: anywhere;
+}
+
+.showcase-cascade__close {
+  justify-self: start;
+  padding: 7px 14px;
+  border: 1px solid var(--console-border-interactive);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--console-accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.showcase-cascade__close:focus-visible {
+  outline: 2px solid var(--console-accent);
+  outline-offset: 2px;
+}
+
+/* Motion owns every entrance on this page, so the shared rise-in keyframe must
+   not also run here — two entrances on one element compound visibly. */
+.sandbox-security-showcase-page .console-panel {
+  animation: none;
+}
+
+.sandbox-security-showcase-page .ant-table-wrapper {
+  overflow-x: auto;
+}
+
+@media (max-width: 900px) {
+  .showcase-spotlight {
+    padding: 20px;
+    border-radius: 20px;
+  }
+
+  .showcase-payload__item,
+  .showcase-chain__item {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .showcase-chain__elapsed {
+    text-align: left;
+  }
+}
+
+/* The spotlight is a pointer affordance and a large moving tint; drop it when
+   the viewer asks for less motion or less transparency. */
+@media (prefers-reduced-motion: reduce) {
+  .showcase-spotlight__glow {
+    display: none;
+  }
+
+  .showcase-header {
+    will-change: auto;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .showcase-spotlight {
+    background: var(--console-surface-raised);
+    backdrop-filter: none;
+  }
+
+  .showcase-spotlight__glow {
+    display: none;
+  }
+
+  .showcase-cascade__scrim {
+    backdrop-filter: none;
   }
 }

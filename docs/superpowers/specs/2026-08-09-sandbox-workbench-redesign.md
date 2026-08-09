@@ -88,10 +88,14 @@ Do not globally reduce `.console-panel` radius.
 |---|---|---|
 | UI | hover / select / focus | 200ms |
 | Narrative | section reveal, stagger | 400ms |
-| Cinematic | evidence trace, detector chain, decision | 3s total sequence |
+| Cinematic | evidence trace, detector chain, decision | Cinematic presentation target: approximately 3–4s total |
 
 No loops after settle. No fake progress. No continuous pulse except during
 active loading (EVALUATING badge). Reduced motion collapses all to instant opacity.
+
+**Timing note**: Specific timing values are visual tuning targets, not
+behavioral or test contracts. They may be adjusted slightly during
+implementation and visual QA.
 
 ### Future Consolidation Note
 
@@ -217,8 +221,10 @@ Right pane sticky, `top: 24px`. Below 1100px: single column, right pane
 
 ## 3. Left Pane: Request Composer
 
-Design goal at 1920×1080: all controls (Credential → Stage → Policy → Sources ×3
-→ Meter → CTA) fit in one working context without forced vertical scroll.
+Primary presentation goal at 1920×1080: in the `user_input + 3 sources`
+scenario, the Evaluate CTA is easy to find in the initial working viewport.
+Extended scenarios such as `tool_request` may scroll naturally; do not compress
+font sizes, spacing, or control hit areas to force zero scroll.
 
 ### 3.1 SecurityCredentialPanel
 
@@ -268,7 +274,12 @@ SecurityPolicyStatus badge showing the security property of the selected policy.
 - Selected: accent border + soft fill
 
 **SecurityPolicyStatus (read-only, no toggle):**
-Shows a fixed security property for each policy, derived from known policy semantics.
+Shows a fixed security property for each policy, derived from the repository's
+existing authoritative policy definition / metadata. If structured metadata is
+unavailable, the frontend mapping may only reflect verified existing policy
+semantics; it must not create a new security guarantee.
+The example below is illustrative; its wording must come from that authoritative
+source rather than from a newly invented frontend claim.
 This is a read-only informational label, never a toggle.
 
 ```
@@ -368,7 +379,7 @@ InspectorIdle (SpotlightSurface)
 InspectorRunning (SpotlightSurface)
 ├── .console-panel
 ├── EVALUATING badge (pulsing)
-├── EvidenceTrace (loading state — pulse, NO fake detector IDs)
+├── EvidenceTrace (loading state — static, low opacity, NO fake detector IDs)
 └── three type rows (rule · local_model · external_judge) with shimmer
     NO detector IDs, NO progress bars, NO fake percentages
 ```
@@ -481,8 +492,6 @@ solely by FindingsCascade and DecisionHero, not by trace node color.
 .workbench-evidence-trace__label   /* mono, 0.65rem, below node */
 ```
 
-`@keyframes workbench-trace-idle-pulse`: opacity 0.4 → 0.7 → 0.4, 2s ease infinite.
-Disabled under `prefers-reduced-motion: reduce`.
 
 ## 6. ExecutionTrace Design
 
@@ -512,6 +521,8 @@ is shown as `SKIPPED` with muted styling. The step is never hidden.
 
 No step is shown without a real derivation. No invented "chain of thought"
 or model internal steps. No fake processing times for non-detector steps.
+`decision_id` is displayed as an opaque value; the UI must not assume a prefix,
+hash, or other identifier format.
 
 ### 6.3 Visual design
 
@@ -524,7 +535,7 @@ A vertical timeline (or compact horizontal row on wide viewports):
 ◉ MODEL_EVALUATION    2 run · 1 matched · 998 ms
 ◉ JUDGE_EVALUATION    1 timeout · 1840 ms
 ◉ POLICY_REDUCTION    balanced.v1 → risk_detected · deny · critical
-◉ JUDGMENT_COMPLETE   decision:sha256:9e04… · simulation
+◉ JUDGMENT_COMPLETE   decision_id: ... · simulation
 ```
 
 Each row:
@@ -551,7 +562,8 @@ all steps appear instantly after decision is visible.
 
 ```
 EVALUATING badge (CSS pulse — workbench-pulse-badge)
-EvidenceTrace: static, opacity ~0.15 (no pulse, no per-node animation)
+EvidenceTrace: completely static, low opacity (~0.15) (no node pulse,
+              no progressive lighting, no per-node animation)
 3 shimmer rows: rule · local_model · external_judge  (type labels only,
                NO detector IDs, NO progress)
 DecisionHero: not yet in DOM (rendered only when decision !== null)
@@ -567,6 +579,10 @@ DecisionHero is at its **fixed visual position** (second block after
 EvidenceTrace) from the moment it mounts. Its initial CSS state is
 `opacity: 0; transform: scale(0.95)` so it is spatially reserved but
 invisible. The reveal sequence uses animation to uncover it last.
+
+The relative reveal order is the presentation contract. The illustrative
+timing values below are visual tuning targets, not behavioral or test
+contracts, and may be adjusted slightly during implementation and visual QA.
 
 ```
 API returns → decision state set → all result components mount at once
@@ -603,8 +619,8 @@ t=3.2s  ExecutionTrace steps stagger in, 60ms each
 t≈4.0s  All settled. No loops. No continuous flash.
 ```
 
-Total sequence: ~4 seconds. DecisionHero at fixed upper position;
-unmasks last for climax effect.
+The cinematic presentation target is approximately 3–4s total. DecisionHero
+stays at its fixed upper position and unmasks last for the climax effect.
 
 ### 7.3 Reduced motion
 
@@ -612,13 +628,6 @@ API returns → all result content immediately visible at full opacity.
 No delays, no spring travel, no pulse, no trace animation.
 EvidenceTrace shows settled state instantly with execution-status colors.
 DecisionHero appears at full opacity immediately (no unmask delay).
-Role="status" fires immediately for screen readers.
-
-### 7.3 Reduced motion
-
-API returns → all result content immediately visible at full opacity.
-No delays, no spring travel, no pulse, no trace animation.
-EvidenceTrace shows settled state instantly with status colors.
 Role="status" fires immediately for screen readers.
 
 ### 7.4 Re-submit behavior
@@ -693,27 +702,25 @@ must not display a fake decision-level confidence value.
 | SpotlightSurface glow | SHOWCASE_SPOTLIGHT_SPRING | idle + loading states only |
 | SourceCard enter | CALM_SPRING | new card add |
 
-**EvidenceTrace during loading: no animation.** Static at opacity ~0.15.
-The `workbench-trace-idle-pulse` keyframe is **not applied** during loading state.
-It is removed from the animation inventory. Only the EVALUATING badge pulses.
+**EvidenceTrace during loading: no animation.** It is completely static at
+low opacity (~0.15): no node pulse and no progressive lighting. Only the
+EVALUATING badge and loading shimmer rows animate.
 
 ### 9.2 What must not animate after settle
 
-No loops. No continuous pulse. No permanent glow. After t≈4s everything
-is static and stable for presenter explanation.
+No loops. No continuous pulse. No permanent glow. After the presentation
+settles, everything is static and stable for presenter explanation.
 
 ### 9.3 Reduced motion contract
 
-All reveals collapse to instant opacity. Delays = 0. No spring travel.
+All reveal gates are canceled immediately and reveals collapse to instant
+opacity. Delays = 0. No spring travel.
 No pulse ring. No trace draw. No shimmer. No glow pulse.
 All content immediately visible at full opacity.
 
 ### 9.4 CSS keyframes (appended to app.css)
 
 ```css
-@keyframes workbench-trace-idle-pulse {
-  0%, 100% { opacity: 0.4; }  50% { opacity: 0.7; }
-}
 @keyframes workbench-pulse-badge {
   0%, 100% { opacity: 1; }  50% { opacity: 0.55; }
 }
@@ -721,7 +728,7 @@ All content immediately visible at full opacity.
   0% { transform: translateX(-100%); }
   100% { transform: translateX(200%); }
 }
-/* All three disabled under prefers-reduced-motion: reduce */
+/* Loading-only keyframes are disabled under prefers-reduced-motion: reduce */
 ```
 
 ## 10. CSS Architecture
@@ -748,8 +755,7 @@ All color values must reference existing `var(--console-*)`.
 .workbench-shimmer-row                 ← CSS keyframe
 
 /* EvidenceTrace */
-.workbench-evidence-trace / __rail / __node / __label
-.workbench-trace-idle-pulse            ← CSS keyframe on node
+.workbench-evidence-trace / __rail / __node / __label  /* loading: static, low opacity */
 
 /* DecisionHero */
 .workbench-decision-hero / __context-chips / __meta
@@ -829,12 +835,12 @@ DOM query updates permitted; no semantic assertion may be weakened.
 | Inspector state machine | `workbench.page.spec.tsx` | idle→loading→result/error |
 | EvidenceTrace node mapping | `workbench.page.spec.tsx` | correct nodes present; aria-hidden on nodes |
 | EvidenceTrace loading — no fake IDs | `workbench.page.spec.tsx` | shimmer rows have no detector IDs or % values |
-| Reveal order | `workbench.page.spec.tsx` | FindingsCascade in DOM before DecisionHero |
+| Reveal order | `workbench.page.spec.tsx` | Assert DecisionHero is before InsightGrid in DOM; normal motion starts DecisionHero pre-reveal; Findings/Detectors activate before its reveal gate; DecisionHero eventually becomes visible; reduced motion cancels all reveal gates immediately |
 | Result fully visible eventually | `workbench.page.spec.tsx` | after API mock resolves, all result info present |
 | Reduced motion — immediate visibility | `workbench.page.spec.tsx` | no delays; all content visible on first render |
 | DecisionHero role=status preserved | `decision-rendering.spec.tsx` | live region fires correctly |
 | ExecutionTrace real data only | `workbench.page.spec.tsx` | no step rendered without real derivation |
-| SecurityPolicyStatus read-only | `evaluation-request-form.spec.tsx` | no role=switch, no aria-checked; not passed to service |
+| SecurityPolicyStatus read-only | `evaluation-request-form.spec.tsx` | no role=switch, no aria-checked, not passed to service; mapping uses authoritative policy definition/metadata or verified existing semantics only |
 | Stage tab selection | `evaluation-request-form.spec.tsx` | tab click updates stage; tool fields appear/disappear |
 | Source card compact | `evaluation-request-form.spec.tsx` | add/remove works; rows=2 |
 | Color literal gate | `frontend-console-theme-literals.spec.ts` | no raw hex/rgba in new CSS |
@@ -846,9 +852,12 @@ DOM query updates permitted; no semantic assertion may be weakened.
 - role=switch / aria-checked behavior
 
 **Presentation timing**: do not assert fixed millisecond delays. Assert
-that after a mock API resolves: (a) loading does not show fake progress,
-(b) result content is eventually fully visible, (c) reduced motion shows
-everything immediately.
+relative activation and visibility states instead: after a mock API resolves,
+(a) loading does not show fake progress, (b) DecisionHero starts pre-reveal
+under normal motion, (c) Findings/Detectors presentation activation precedes
+the DecisionHero reveal gate, (d) result content is eventually fully visible,
+and (e) reduced motion cancels every reveal gate and shows everything
+immediately.
 
 ### 12.3 Visual QA checklist (1920×1080 primary)
 
@@ -860,7 +869,10 @@ Captures at: 1920×1080 (idle, loading, result), 1440×900 (result)
       then DecisionHero unmasks as visual climax — correct order confirmed
 - [ ] Landing / Showcase consistency: same product family
 - [ ] Left/right visual balance: right pane clearly heavier
-- [ ] 1080p: 3 sources visible without excessive scroll, Evaluate CTA discoverable
+- [ ] Primary 1920×1080 scenario (`user_input` + 3 sources): Evaluate CTA is
+      easy to find in the initial working viewport
+- [ ] Extended scenarios such as `tool_request` may scroll naturally; do not
+      compress font sizes, spacing, or control hit areas to force zero scroll
 - [ ] Stage tabs: compact, all 3 readable
 - [ ] Source cards: compact rows=2, header metadata inline
 - [ ] EvidenceTrace: visible but not attention-grabbing at idle
@@ -880,7 +892,7 @@ Captures at: 1920×1080 (idle, loading, result), 1440×900 (result)
 | File | Change |
 |---|---|
 | `SandboxSecurityWorkbenchPage.tsx` | Layout refactor; EvaluationInspector; reveal sequence timing |
-| `app.css` | Append `.workbench-*` block; override grid proportion; 3 keyframes |
+| `app.css` | Append `.workbench-*` block; override grid proportion; 2 loading keyframes |
 | `CapabilitySessionPanel.tsx` | Held-state visual; interface unchanged |
 | `EvaluationRequestForm.tsx` | StageSelector split out; PolicySelector split out |
 | `ContentItemRow.tsx` | SourceCard compact layout; rows=2 |
@@ -920,29 +932,40 @@ import { CALM_SPRING, MOMENTUM_SPRING, verdictSpring }
 ## 14. Acceptance Criteria
 
 1. First glance: Workbench reads as the same product family as Showcase / Landing.
-2. EvidenceTrace is present in all states; idle and loading states are static
-   (no animation); visible but not attention-grabbing at low opacity.
+2. EvidenceTrace is present in all states; idle and loading states are
+   completely static at low opacity, with no node pulse or progressive lighting.
 3. EvidenceTrace settled: RULE/MODEL/JUDGE nodes show **execution-status colors**
    (cyan=completed, amber=timeout, orange=error, muted=skipped). DECISION node
    alone shows verdict/action semantics. Risk severity never colors trace nodes.
 4. DOM layout: EvidenceTrace → DecisionHero → InsightGrid → ExecutionTrace.
-   DecisionHero is at fixed upper position; invisible (opacity:0) until t≈2.2s.
+   DecisionHero is at fixed upper position and starts in a pre-reveal state until
+   its reveal gate opens.
 5. Reveal animation order: EvidenceTrace → Findings → Detectors → DecisionHero
-   unmask (climax) → ExecutionTrace. DecisionHero is the last to reveal,
-   while remaining physically above Findings/Detectors in the DOM.
+   unmask (climax) → ExecutionTrace. Findings/Detectors presentation activation
+   precedes the DecisionHero reveal; DecisionHero is the last to reveal while
+   remaining physically above Findings/Detectors in the DOM. Exact millisecond
+   values are visual tuning targets, not behavioral or test contracts.
 6. DecisionHero is the dominant visual element after unmask; verdict/action/severity
    readable at projector distance within 3 seconds.
-7. Loading state: EvidenceTrace stays static (no per-node pulse); no detector IDs,
-   no fake progress, no fake percentages shown in shimmer rows.
+7. Loading state: EvidenceTrace stays completely static at low opacity (no
+   node pulse or progressive lighting); no detector IDs, no fake progress, and
+   no fake percentages are shown in shimmer rows.
 8. ExecutionTrace: every step derives from real `SandboxSecurityDecision` data.
    No fabricated execution events.
 9. SecurityPolicyStatus: read-only label; no toggle, no `role="switch"`.
+   Its value comes from the repository's authoritative policy definition /
+   metadata, or from verified existing policy semantics when structured
+   metadata is unavailable; it must not create a new security guarantee.
 10. All existing privacy tests pass: token not in DOM, content not in URL/storage.
 11. `role="status"` on DecisionHero fires; screen reader announces verdict.
-12. Reduced motion: all result content immediately visible with no delays;
-    DecisionHero appears at full opacity immediately (no unmask delay).
+12. Reduced motion: all reveal gates are canceled immediately and all result
+    content is visible with no delays; DecisionHero appears at full opacity
+    immediately (no unmask delay).
 13. Color literal gate: no raw hex/rgba in new CSS or TSX files.
-14. Three sources + all left-pane controls visible at 1920×1080 without forced scroll.
+14. In the primary `user_input + 3 sources` scenario, the Evaluate CTA is easy
+    to find in the initial 1920×1080 working viewport. Extended scenarios such
+    as `tool_request` may scroll naturally; typography, spacing, and control
+    usability must not be compressed to force zero scroll.
 15. Build passes; TypeScript no new errors; all tests pass.
 16. No backend, shared contract, engine, or Console page changed.
 
@@ -970,7 +993,11 @@ Checklist run inline; all items resolved before commit.
 | No fabricated backend fields | ✅ §6.2 derivation table; §8.4 no fake confidence |
 | Test plan matches new design | ✅ §12.2 has EvidenceTrace loading/node-color/layout tests |
 | Acceptance criteria updated | ✅ 16 items; items 2–7 cover the R2.1 fixes |
+| Reveal order test matches DOM/reveal contract | ✅ §12.2 asserts DecisionHero before InsightGrid in DOM, pre-reveal state, earlier Findings/Detectors activation, eventual visibility, and immediate reduced-motion gate cancellation |
+| EvidenceTrace loading pulse cleanup | ✅ §4, §5, §7, §9, and CSS inventory require fully static low opacity; no legacy pulse keyframe or class remains |
+| Motion target and timing contract | ✅ Design Contract and §7/§9 use approximately 3–4s total; timings are visual tuning targets, not behavioral/test contracts |
+| SecurityPolicyStatus source authority | ✅ §3.3 and §14 require authoritative policy definition/metadata or verified existing semantics only; no new guarantee is invented |
+| 1920×1080 acceptance scope | ✅ Primary `user_input + 3 sources` requires an easy-to-find CTA; extended `tool_request` scenarios may scroll naturally |
 | Scope: frontend only | ✅ §13.4 confirmed |
 | Design Contract v0.1 present | ✅ Standalone section |
 | Q1 (InsightGrid max-height) resolved by D13 | ✅ DecisionHero now above InsightGrid; pushing-down concern eliminated |
-
