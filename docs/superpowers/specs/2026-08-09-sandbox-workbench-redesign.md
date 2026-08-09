@@ -374,24 +374,41 @@ The chain plays once and settles. `active` is always `true` when rendered.
 
 ```
 API returns
-  t=0ms    decision state set
-  t=0ms    DecisionHero mounts   → verdictSpring entrance (risk_level driven)
-  t=0ms    pulse ring expands once, fades (0.9s easeOut, no loop)
-  t=300ms  FindingsCascade mounts → severity-ordered stagger (0.08s per item)
-  t=800ms  DetectorChain mounts  → elapsed_ms-proportional reveal
-             (fast rule detectors arrive quickly,
-              local_model detectors have visible pause,
-              timeout/failed detectors land in error color)
+  t=0ms     decision state set
+  t=0ms     DecisionHero mounts   → verdictSpring entrance (risk_level driven)
+  t=0ms     pulse ring expands once, fades (0.9s easeOut, no loop)
+  t=700ms   FindingsCascade mounts → severity-ordered stagger (0.08s per item)
+  t=1600ms  DetectorChain mounts  → elapsed_ms-proportional reveal
+               (fast rule detectors arrive quickly,
+                local_model detectors have visible pause,
+                timeout/failed detectors land in error color)
 ```
 
-The `enterAt(index)` helper already in `SandboxSecurityWorkbenchPage`
-handles this via `delay: index * 0.06`. For larger delays (300ms, 800ms),
-use explicit `transition={{ delay: 0.3 }}` and `transition={{ delay: 0.8 }}`
-on the respective `motion.div` wrappers.
+Rationale: Decision settles in ~0.3–0.5s depending on risk_level; 700ms
+gives the verdict full time to land and be read before Findings arrive.
+Another 900ms before DetectorChain ensures each section feels like a
+distinct reveal moment rather than a rapid flush.
+
+The `enterAt(index)` helper in `SandboxSecurityWorkbenchPage` handles
+the existing small stagger (delay: index * 0.06). For the larger inter-
+section delays, use explicit values on the wrapping `motion.div`:
+
+```tsx
+{/* Findings — 700ms after decision */}
+<motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+  transition={{ type: "spring", bounce: 0, duration: 0.4, delay: 0.7 }}>
+  <FindingsSection ... />
+</motion.div>
+
+{/* Detectors — 1600ms after decision */}
+<motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
+  transition={{ type: "spring", bounce: 0, duration: 0.4, delay: 1.6 }}>
+  <DetectorSection ... />
+</motion.div>
+```
 
 Under `prefers-reduced-motion: reduce`: all delays collapse to 0,
-all entrances are instant opacity changes (already handled by `reduceMotion`
-prop in promoted components and `useReducedMotion` hook in page).
+all entrances are instant opacity changes (no spring travel).
 
 ## 5. Motion Design
 
