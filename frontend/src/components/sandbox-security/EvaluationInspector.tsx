@@ -1,269 +1,282 @@
-// EvaluationInspector — right-pane state machine: idle / loading / error / result.
+// EvaluationInspector — exclusive idle / loading / error / result rendering plus
+// the finite post-response reveal sequence.
 //
-// Design: spec R2.1 §4, §7.
-// Owns the reveal sequence: all result DOM elements mount simultaneously when
-// the decision arrives, but are unveiled in presentation order via timed reveal
-// gates. This decouples DOM layout (EvidenceTrace → DecisionHero → InsightGrid
-// → ExecutionTrace) from reveal order (EvidenceTrace → Findings → Detectors →
-// DecisionHero climax → ExecutionTrace). D13.
+// Design: spec R2.1 §4, §7. D13 (layout order != reveal order).
 //
-// Honesty rule (§7): every timed reveal is a comprehension layer over
-// already-received data. No reveal implies streaming or fake progress.
+// Honesty rule (§7): the API is one-shot. Every timed reveal below is a
+// comprehension layer over data that has ALREADY arrived — no reveal implies
+// detector streaming, and no loading surface shows fake progress or percentages.
+//
+// This component owns the single polite live region for the Workbench decision.
+// It stays mounted and empty through idle, loading, error, and the pre-decision
+// result phases, and receives verdict text only when the Decision gate opens, so
+// the real page always updates an already-mounted node.
 
 import { useEffect, useState } from "react";
+import RadarChartOutlined from "@ant-design/icons/RadarChartOutlined";
 import { Alert, Button, Typography } from "antd";
 import { motion } from "motion/react";
 
 import type { SandboxSecurityDecision } from "../../../../shared/types/sandbox-security";
+import type { SandboxSecurityFailureCopy } from "../../content/sandbox-security-copy";
 import { DecisionSummaryPanel } from "./DecisionSummaryPanel";
 import { EvidenceTrace } from "./EvidenceTrace";
-import { ExecutionTrace } from "./ExecutionTrace";
-import type { EvaluationRequestFacts } from "./ExecutionTrace";
+import { ExecutionTrace, type EvaluationRequestFacts } from "./ExecutionTrace";
 import { DetectorChain } from "./showcase/DetectorChain";
 import { FindingsCascade } from "./showcase/FindingsCascade";
 import { SpotlightSurface } from "./showcase/SpotlightSurface";
-import { verdictSpring, CALM_SPRING, REDUCED_TRANSITION } from "./showcase/showcase-motion";
+import { CALM_SPRING, MOMENTUM_SPRING } from "./showcase/showcase-motion";
 
-const { Text } = Typography;
-
-export interface SandboxSecurityFailureCopy {
-  title: string;
-  remedy: string;
-  requiresNewCapability: boolean;
-}
-
-export type EvaluationInspectorState = "idle" | "loading" | "error" | "result";
-
-interface EvaluationResult {
-  readonly decision: SandboxSecurityDecision;
-  readonly requestFacts: EvaluationRequestFacts;
-}
+export type EvaluationInspectorState =
+  | { readonly kind: "idle" }
+  | { readonly kind: "loading" }
+  | {
+      readonly kind: "error";
+      readonly failure: SandboxSecurityFailureCopy;
+      readonly retryable: boolean;
+    }
+  | {
+      readonly kind: "result";
+      readonly decision: SandboxSecurityDecision;
+      readonly requestFacts: EvaluationRequestFacts;
+    };
 
 export interface EvaluationInspectorProps {
-  inspectorState: EvaluationInspectorState;
-  evaluationResult: EvaluationResult | null;
-  failureCopy: SandboxSecurityFailureCopy | null;
-  isRetryable: boolean;
-  onRetry: () => void;
+  state: EvaluationInspectorState;
   reduceMotion: boolean;
+  onRetry: () => void;
 }
 
-// ─── shimmer rows (loading state, aria-hidden) ────────────────────────────────
+type RevealPhase =
+  | "evidence"
+  | "findings"
+  | "detectors"
+  | "decision"
+  | "execution"
+  | "settled";
 
-const SHIMMER_TYPES = ["rule", "local_model", "external_judge"] as const;
+// Private initial visual-tuning targets only. Tests assert phase order and
+// eventual settlement; Visual QA may tune these without reordering phases.
+const INITIAL_REVEAL_STEPS: readonly { phase: RevealPhase; delayMs: number }[] = [
+  { phase: "findings", delayMs: 200 },
+  { phase: "detectors", delayMs: 800 },
+  { phase: "decision", delayMs: 2200 },
+  { phase: "execution", delayMs: 3200 },
+  { phase: "settled", delayMs: 4000 }
+];
 
-function ShimmerRows() {
+const REVEAL_ORDER: readonly RevealPhase[] = [
+  "evidence",
+  "findings",
+  "detectors",
+  "decision",
+  "execution",
+  "settled"
+];
+
+function hasReached(current: RevealPhase, target: RevealPhase): boolean {
+  return REVEAL_ORDER.indexOf(current) >= REVEAL_ORDER.indexOf(target);
+}
+
+function RuntimeHeader({ state }: { state: EvaluationInspectorState }) {
+  const decision = state.kind === "result" ? state.decision : null;
   return (
-    <div className="workbench-shimmer-rows" aria-hidden="true">
-      {SHIMMER_TYPES.map((type) => (
-        <div key={type} className="workbench-shimmer-row">
-          <span
-            className="workbench-shimmer-row__type"
-            style={{ fontFamily: "var(--console-mono)" }}
-          >
-            {type}
-          </span>
-          {/* Shimmer animation: the shimmer effect communicates that evaluation
-              is in progress. It must not show detector IDs, fake progress, or
-              fake percentages — only the detector kind label. (spec §7.1) */}
-          <span className="workbench-shimmer-row__bar" />
-        </div>
-      ))}
-    </div>
+    <header className="workbench-runtime-header">
+      <span className="workbench-section-eyebrow">EVALUATION RUNTIME</span>
+      <div className="workbench-runtime-header__chips" aria-hidden="true">
+        <span className="sandbox-simulation-badge">SIMULATION / 仿真</span>
+        {decision ? (
+          <>
+            <span data-mono="true">{decision.stage}</span>
+            <span data-mono="true">{decision.policy_profile_id}</span>
+          </>
+        ) : null}
+      </div>
+    </header>
   );
 }
 
-// ─── idle state content ───────────────────────────────────────────────────────
-
-function InspectorIdle() {
+function IdleInspector() {
+  // SpotlightSurface forwards ariaLabel to an ordinary div. The outer named
+  // EvaluationInspector <section> below—not this decorative shell—owns the
+  // accessible region semantics.
   return (
-    <SpotlightSurface className="console-panel workbench-inspector-idle" ariaLabel="等待评估">
-      <div className="workbench-inspector-idle__content">
-        <Text style={{ fontSize: "2rem", opacity: 0.4 }}>⊙</Text>
-        <Text strong>等待评估</Text>
-        <Text type="secondary">配置左侧请求并提交，判定结果将在此呈现。</Text>
+    <SpotlightSurface
+      className="console-panel workbench-inspector-idle"
+      ariaLabel="评估检查器空闲状态"
+    >
+      <RadarChartOutlined aria-hidden="true" />
+      <Typography.Title level={4}>等待评估</Typography.Title>
+      <Typography.Text type="secondary">
+        配置左侧请求并提交，判定结果将在此呈现。
+      </Typography.Text>
+    </SpotlightSurface>
+  );
+}
+
+function RunningInspector() {
+  // Detector-kind labels only. No detector IDs, no percentages, no progressbar:
+  // the API has not returned, so there is nothing honest to report per detector.
+  const kinds = ["rule", "local_model", "external_judge"] as const;
+  return (
+    <SpotlightSurface
+      className="console-panel workbench-inspector-running"
+      ariaLabel="评估检查器运行状态"
+    >
+      <span className="workbench-evaluating-badge" data-mono="true">
+        EVALUATING
+      </span>
+      <div className="workbench-inspector-running__rows">
+        {kinds.map((kind) => (
+          <div key={kind} className="workbench-shimmer-row" aria-hidden="true">
+            <span data-mono="true">{kind}</span>
+          </div>
+        ))}
       </div>
     </SpotlightSurface>
   );
 }
 
-// ─── loading state content ────────────────────────────────────────────────────
-
-function InspectorRunning() {
-  return (
-    <SpotlightSurface
-      className="console-panel workbench-inspector-running"
-      ariaLabel="评估进行中"
-    >
-      <div className="workbench-evaluating-badge">EVALUATING · 评估中</div>
-      {/* Shimmer rows: type labels only — no detector IDs, no fake percentages.
-          (spec §7.1: loading EvidenceTrace is completely static; only badge and
-          shimmer rows communicate that evaluation is in progress) */}
-      <ShimmerRows />
-    </SpotlightSurface>
-  );
-}
-
-// ─── result content — InsightGrid ─────────────────────────────────────────────
-
-interface InsightGridProps {
-  decision: SandboxSecurityDecision;
-  findingsActive: boolean;
-  detectorsActive: boolean;
-  reduceMotion: boolean;
-}
-
-function InsightGrid({
-  decision,
-  findingsActive,
-  detectorsActive,
-  reduceMotion
-}: InsightGridProps) {
-  return (
-    <div className="workbench-insight-grid">
-      <FindingsCascade
-        findings={decision.findings}
-        active={findingsActive}
-        reduceMotion={reduceMotion}
-      />
-      <DetectorChain
-        runs={decision.detector_runs}
-        active={detectorsActive}
-      />
-    </div>
-  );
-}
-
-// ─── main component ───────────────────────────────────────────────────────────
-
 export function EvaluationInspector({
-  inspectorState,
-  evaluationResult,
-  failureCopy,
-  isRetryable,
-  onRetry,
-  reduceMotion
+  state,
+  reduceMotion,
+  onRetry
 }: EvaluationInspectorProps) {
-  const decision = evaluationResult?.decision ?? null;
-
-  // Reveal gates for the result state (D13 layout/reveal decoupling).
-  const [findingsActive, setFindingsActive] = useState(false);
-  const [detectorsActive, setDetectorsActive] = useState(false);
-  const [decisionRevealed, setDecisionRevealed] = useState(false);
-  const [executionVisible, setExecutionVisible] = useState(false);
+  const resultId = state.kind === "result" ? state.decision.decision_id : null;
+  const [phase, setPhase] = useState<RevealPhase>(
+    reduceMotion ? "settled" : "evidence"
+  );
 
   useEffect(() => {
-    if (inspectorState !== "result" || !decision) {
-      setFindingsActive(false);
-      setDetectorsActive(false);
-      setDecisionRevealed(false);
-      setExecutionVisible(false);
+    if (resultId === null) {
+      setPhase(reduceMotion ? "settled" : "evidence");
       return;
     }
-
     if (reduceMotion) {
-      setFindingsActive(true);
-      setDetectorsActive(true);
-      setDecisionRevealed(true);
-      setExecutionVisible(true);
+      setPhase("settled");
       return;
     }
 
-    const t1 = window.setTimeout(() => setFindingsActive(true), 200);
-    const t2 = window.setTimeout(() => setDetectorsActive(true), 800);
-    const t3 = window.setTimeout(() => setDecisionRevealed(true), 2200);
-    const t4 = window.setTimeout(() => setExecutionVisible(true), 3200);
-
+    setPhase("evidence");
+    // The API has already returned all data. These timers sequence only a
+    // finite comprehension layer; they never represent detector streaming.
+    const timers = INITIAL_REVEAL_STEPS.map((step) =>
+      window.setTimeout(() => setPhase(step.phase), step.delayMs)
+    );
     return () => {
-      window.clearTimeout(t1);
-      window.clearTimeout(t2);
-      window.clearTimeout(t3);
-      window.clearTimeout(t4);
+      for (const timer of timers) window.clearTimeout(timer);
     };
-  }, [inspectorState, decision, reduceMotion]);
+  }, [reduceMotion, resultId]);
 
-  // EvidenceTrace props: discriminated union based on inspector state
-  const evidenceTraceProps: Parameters<typeof EvidenceTrace>[0] =
-    inspectorState === "result" && evaluationResult
-      ? {
-          state: "result",
-          decision: evaluationResult.decision,
-          sourceCount: evaluationResult.requestFacts.sourceCount,
-          reduceMotion
-        }
-      : inspectorState === "loading"
-        ? { state: "loading", reduceMotion }
-        : { state: "idle", reduceMotion };
+  const findingsActive = reduceMotion || hasReached(phase, "findings");
+  const detectorsActive = reduceMotion || hasReached(phase, "detectors");
+  const decisionActive = reduceMotion || hasReached(phase, "decision");
+  const executionActive = reduceMotion || hasReached(phase, "execution");
 
   return (
     <section
       className="workbench-evaluation-inspector"
       aria-label="评估检查器"
-      aria-busy={inspectorState === "loading" ? "true" : undefined}
+      aria-busy={state.kind === "loading"}
+      data-inspector-state={state.kind}
+      data-reveal-phase={state.kind === "result" ? phase : undefined}
     >
-      {/* EvidenceTrace: always visible, state-driven.
-          In idle and loading: completely static at low opacity — no animation,
-          no per-node pulse, no fake detector IDs (spec §5.3, §7.1). */}
-      <EvidenceTrace {...evidenceTraceProps} />
+      <RuntimeHeader state={state} />
 
-      {/* State-exclusive content */}
-      {inspectorState === "idle" && <InspectorIdle />}
+      {/* The single persistent Workbench decision live region. Stays mounted and
+          empty until the Decision gate opens, then updates in place. */}
+      <div role="status" aria-live="polite" className="showcase-sr-only">
+        {state.kind === "result" && decisionActive
+          ? `${state.decision.verdict} ${state.decision.action} ${state.decision.risk_level}`
+          : ""}
+      </div>
 
-      {inspectorState === "loading" && <InspectorRunning />}
+      {state.kind === "loading" ? (
+        <EvidenceTrace state="loading" reduceMotion={reduceMotion} />
+      ) : state.kind === "result" ? (
+        <EvidenceTrace
+          state={phase === "settled" ? "settled" : "result"}
+          decision={state.decision}
+          sourceCount={state.requestFacts.sourceCount}
+          reduceMotion={reduceMotion}
+        />
+      ) : (
+        <EvidenceTrace state="idle" reduceMotion={reduceMotion} />
+      )}
 
-      {inspectorState === "error" && failureCopy ? (
-        <div className="workbench-inspector-error console-panel">
+      {state.kind === "idle" ? <IdleInspector /> : null}
+      {state.kind === "loading" ? <RunningInspector /> : null}
+      {state.kind === "error" ? (
+        <section className="console-panel workbench-inspector-error">
           <Alert
+            role="alert"
             type="error"
             showIcon
-            title={failureCopy.title}
-            description={failureCopy.remedy}
+            title={state.failure.title}
+            description={state.failure.remedy}
           />
-          {isRetryable ? (
-            <Button size="small" onClick={onRetry}>
+          {state.retryable ? (
+            <Button className="sandbox-workbench-retry" size="small" onClick={onRetry}>
               重试请求
             </Button>
           ) : null}
-        </div>
+        </section>
       ) : null}
 
-      {inspectorState === "result" && decision && evaluationResult ? (
+      {state.kind === "result" ? (
         <>
-          <motion.div
-            className="workbench-decision-hero-reveal"
-            initial={reduceMotion ? { opacity: 1 } : { opacity: 0, scale: 0.95 }}
-            animate={
-              decisionRevealed
-                ? { opacity: 1, scale: 1 }
-                : reduceMotion
-                  ? { opacity: 1 }
-                  : { opacity: 0, scale: 0.95 }
-            }
-            transition={
-              reduceMotion
-                ? REDUCED_TRANSITION
-                : verdictSpring(decision.risk_level)
-            }
-          >
-            <DecisionSummaryPanel decision={decision} />
-          </motion.div>
-
-          <InsightGrid
-            decision={decision}
-            findingsActive={findingsActive}
-            detectorsActive={detectorsActive}
+          {/* Final DOM order: EvidenceTrace -> DecisionHero -> InsightGrid ->
+              ExecutionTrace. Reveal order differs (D13) and is driven by the
+              gates above; every pending wrapper is aria-hidden + inert. */}
+          <DecisionSummaryPanel
+            decision={state.decision}
+            variant="workbench"
+            active={decisionActive}
             reduceMotion={reduceMotion}
           />
-
-          {/* ExecutionTrace: settles last at t≈3.2s (spec §6.4). Uses frozen
-              requestFacts from submission — never reads live contentItems.
-              active=true so the section is always visible/reachable while the
-              EvaluationInspector result is mounted; opacity animation is handled
-              by the component itself based on the active prop. */}
+          <div className="workbench-insight-grid" data-testid="insight-grid">
+            <motion.section
+              className="console-panel workbench-insight-grid__findings"
+              data-testid="findings-presentation"
+              data-presentation-active={findingsActive ? "true" : "false"}
+              aria-hidden={findingsActive ? undefined : true}
+              inert={!findingsActive}
+              initial={false}
+              animate={{ opacity: findingsActive ? 1 : 0, y: findingsActive ? 0 : 8 }}
+              transition={reduceMotion ? { duration: 0 } : MOMENTUM_SPRING}
+            >
+              <p className="workbench-section-eyebrow">FINDINGS</p>
+              {state.decision.findings.length > 0 ? (
+                <FindingsCascade
+                  findings={state.decision.findings}
+                  active={findingsActive}
+                  reduceMotion={reduceMotion}
+                />
+              ) : (
+                <Typography.Text type="secondary">未产生风险发现。</Typography.Text>
+              )}
+            </motion.section>
+            <motion.section
+              className="console-panel workbench-insight-grid__detectors"
+              data-testid="detectors-presentation"
+              data-presentation-active={detectorsActive ? "true" : "false"}
+              aria-hidden={detectorsActive ? undefined : true}
+              inert={!detectorsActive}
+              initial={false}
+              animate={{ opacity: detectorsActive ? 1 : 0, y: detectorsActive ? 0 : 8 }}
+              transition={reduceMotion ? { duration: 0 } : CALM_SPRING}
+            >
+              <p className="workbench-section-eyebrow">DETECTOR CHAIN</p>
+              <DetectorChain
+                runs={state.decision.detector_runs}
+                active={detectorsActive}
+              />
+            </motion.section>
+          </div>
           <ExecutionTrace
-            decision={decision}
-            requestFacts={evaluationResult.requestFacts}
-            active={true}
+            decision={state.decision}
+            requestFacts={state.requestFacts}
+            active={executionActive}
             reduceMotion={reduceMotion}
           />
         </>

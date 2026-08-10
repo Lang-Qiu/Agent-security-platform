@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Typography } from "antd";
-import { motion, useReducedMotion } from "motion/react";
+import { useReducedMotion } from "motion/react";
 
 import type {
   SandboxSecurityPolicyProfileId,
@@ -10,7 +10,10 @@ import type {
 } from "../../../shared/types/sandbox-security";
 import type { SandboxSecurityDecision } from "../../../shared/types/sandbox-security";
 import { CapabilitySessionPanel } from "../components/sandbox-security/CapabilitySessionPanel";
-import { EvaluationInspector } from "../components/sandbox-security/EvaluationInspector";
+import {
+  EvaluationInspector,
+  type EvaluationInspectorState
+} from "../components/sandbox-security/EvaluationInspector";
 import { EvaluationRequestForm } from "../components/sandbox-security/EvaluationRequestForm";
 import type { EvaluationRequestFacts } from "../components/sandbox-security/ExecutionTrace";
 import {
@@ -72,24 +75,6 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
   // and every Workbench motion surface without repeated ?? false.
   const reduceMotion = useReducedMotion() ?? false;
 
-  const enterAt = (index: number) =>
-    reduceMotion
-      ? {
-          initial: { opacity: 0 },
-          animate: { opacity: 1 },
-          transition: { duration: 0 }
-        }
-      : {
-          initial: { opacity: 0, y: 8 },
-          animate: { opacity: 1, y: 0 },
-          transition: {
-            type: "spring" as const,
-            bounce: 0,
-            duration: 0.4,
-            delay: index * 0.06
-          }
-        };
-
   const limitCheck = validateEvaluationRequest({ stage, contentItems, toolRequest });
   const violations: LimitViolation[] = [...limitCheck.violations];
   if (capabilityToken.trim().length === 0) {
@@ -106,14 +91,6 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
     ? describeSandboxSecurityFailure(error)
     : null;
   const requiresNewCapability = failureCopy?.requiresNewCapability ?? false;
-
-  const inspectorState = submitting
-    ? "loading"
-    : error !== null && !requiresNewCapability
-      ? "error"
-      : evaluationResult !== null
-        ? "result"
-        : "idle";
 
   const runEvaluation = async (key: string, requestFacts: EvaluationRequestFacts) => {
     setSubmitting(true);
@@ -180,13 +157,36 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
     idempotencyKey !== null &&
     lastRequestFacts !== null;
 
+  // One exclusive view-state union for the presentational Inspector. A 401 sets
+  // requiresNewCapability and is surfaced by CapabilitySessionPanel, so the
+  // Inspector stays idle in that case rather than showing a duplicate alert.
+  const inspectorState: EvaluationInspectorState = submitting
+    ? { kind: "loading" }
+    : evaluationResult
+      ? {
+          kind: "result",
+          decision: evaluationResult.decision,
+          requestFacts: evaluationResult.requestFacts
+        }
+      : failureCopy && !requiresNewCapability
+        ? {
+            kind: "error",
+            failure: failureCopy,
+            retryable: isRetryable
+          }
+        : { kind: "idle" };
+
   return (
     <section className="sandbox-security-workbench-page">
       <header className="sandbox-workbench-header">
-        <Typography.Title level={3}>评估工作台</Typography.Title>
-        <Typography.Paragraph type="secondary">
-          提交内容以在模拟模式下评估沙箱安全策略。结果仅供分析，不用于实际拦截。
-        </Typography.Paragraph>
+        <div>
+          <p className="workbench-section-eyebrow">沙箱安全 · 评估工作台</p>
+          <Typography.Title level={3}>评估工作台</Typography.Title>
+          <Typography.Paragraph type="secondary">
+            提交内容以在模拟模式下评估沙箱安全策略。结果仅供分析，不用于实际拦截。
+          </Typography.Paragraph>
+        </div>
+        <span className="sandbox-simulation-badge">SIMULATION / 仿真</span>
       </header>
 
       <div className="sandbox-workbench-grid">
@@ -217,17 +217,10 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
         </div>
 
         <div className="sandbox-workbench-results">
-          <motion.div className="sandbox-simulation-badge" {...enterAt(0)}>
-            SIMULATION / 仿真
-          </motion.div>
-
           <EvaluationInspector
-            inspectorState={inspectorState}
-            evaluationResult={evaluationResult}
-            failureCopy={requiresNewCapability ? null : failureCopy}
-            isRetryable={isRetryable}
-            onRetry={handleRetry}
+            state={inspectorState}
             reduceMotion={reduceMotion}
+            onRetry={handleRetry}
           />
         </div>
       </div>

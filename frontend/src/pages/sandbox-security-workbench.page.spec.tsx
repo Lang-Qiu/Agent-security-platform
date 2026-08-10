@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
   SandboxDetectorRun,
@@ -7,6 +7,18 @@ import type {
 } from "../../../shared/types/sandbox-security";
 
 import { SandboxSecurityWorkbenchPage } from "./SandboxSecurityWorkbenchPage";
+
+// Reduced motion is the default so the pre-existing success/privacy semantics
+// settle immediately; only the reveal-order test opts into normal motion.
+const motionPreference = vi.hoisted(() => ({ reduced: true }));
+
+vi.mock("motion/react", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("motion/react")>();
+  return {
+    ...actual,
+    useReducedMotion: () => motionPreference.reduced
+  };
+});
 
 const DECISION = {
   schema_version: "sandbox-security-decision.v1",
@@ -95,6 +107,32 @@ const TRACE_DECISION: SandboxSecurityDecision = {
   created_at: "2026-08-10T00:00:01.000Z"
 };
 
+// One real finding so the reveal test can assert findings presentation without
+// importing authored Showcase fixture data.
+const REVEAL_DECISION: SandboxSecurityDecision = {
+  ...TRACE_DECISION,
+  findings: [
+    {
+      finding_id:
+        "finding:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      detector_id: "detector://rule-engine/injection/v1",
+      detector_version: "1.0.0",
+      category: "prompt_injection",
+      severity: "critical",
+      confidence: 0.91,
+      reason_code: "sandbox_security_prompt_injection",
+      subject_refs: [
+        {
+          kind: "content_source",
+          source_token: "source://sandbox/security/client-0001/0002",
+          locator: { kind: "text_byte_range", start_byte: 4, end_byte: 18 }
+        }
+      ],
+      evidence_refs: ["evidence://sandbox/security/client-0001/0002"]
+    }
+  ]
+};
+
 function okResponse(data: unknown) {
   return {
     ok: true,
@@ -132,9 +170,76 @@ function createDeferred<T>(): {
   return { promise, resolve, reject };
 }
 
+async function flushAsyncWork() {
+  await act(async () => {
+    for (let pass = 0; pass < 12; pass += 1) {
+      await Promise.resolve();
+    }
+  });
+}
+
+/**
+ * Steps the presentation clock until the Inspector reports the requested phase.
+ * Asserts relative phase order only — never elapsed milliseconds or timer counts,
+ * because the reveal delays are visual tuning inputs rather than contracts.
+ */
+async function advanceInspectorToPhase(
+  phase: "findings" | "detectors" | "decision" | "execution" | "settled"
+) {
+  const inspector = screen.getByLabelText("评估检查器");
+  for (
+    let attempt = 0;
+    attempt < 500 && inspector.getAttribute("data-reveal-phase") !== phase;
+    attempt += 1
+  ) {
+    await act(async () => vi.advanceTimersToNextTimerAsync());
+  }
+  expect(inspector).toHaveAttribute("data-reveal-phase", phase);
+}
+
+const FOCUSABLE_SELECTOR = [
+  "a[href]",
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "summary",
+  '[contenteditable="true"]',
+  '[tabindex]:not([tabindex="-1"])'
+].join(",");
+
+/**
+ * Waits until EvidenceTrace is bound to a returned decision. Both `result` and
+ * `settled` are result-bound states in the trace's own union: `settled` is the
+ * post-reveal resting state, which reduced motion reaches on the first render.
+ * Asserting either keeps these checks about data binding rather than about
+ * presentation timing.
+ */
+async function expectResultBoundTrace(trace: HTMLElement): Promise<void> {
+  await waitFor(() =>
+    expect(["result", "settled"]).toContain(trace.getAttribute("data-state"))
+  );
+}
+
+function expectPendingSurfaceIsNotKeyboardReachable(
+  surface: HTMLElement
+): void {
+  expect(surface).toHaveAttribute("aria-hidden", "true");
+  expect(surface).toHaveAttribute("inert");
+  for (const node of surface.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)) {
+    expect(node.closest("[inert]")).not.toBeNull();
+  }
+}
+
 describe("REQ-SBX-GENERAL-005 evaluation workbench page", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    motionPreference.reduced = true;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    motionPreference.reduced = true;
   });
 
   it("blocks submission until a capability token is present", () => {
@@ -337,7 +442,7 @@ describe("REQ-SBX-GENERAL-005 evaluation workbench page", () => {
     fireEvent.click(screen.getByRole("button", { name: /开始评估/ }));
 
     const trace = await screen.findByTestId("evidence-trace");
-    await waitFor(() => expect(trace).toHaveAttribute("data-state", "result"));
+    await expectResultBoundTrace(trace);
     expect(within(trace).getByTestId("evidence-node-rule")).toHaveAttribute(
       "data-outcome",
       "completed"
@@ -391,7 +496,7 @@ describe("REQ-SBX-GENERAL-005 evaluation workbench page", () => {
       fireEvent.click(screen.getByRole("button", { name: /开始评估/ }));
 
       const trace = await screen.findByTestId("evidence-trace");
-      await waitFor(() => expect(trace).toHaveAttribute("data-state", "result"));
+      await expectResultBoundTrace(trace);
       expect(within(trace).getByTestId("evidence-node-decision")).toHaveAttribute(
         "data-outcome",
         outcome
@@ -460,7 +565,7 @@ describe("REQ-SBX-GENERAL-005 evaluation workbench page", () => {
       fireEvent.click(screen.getByRole("button", { name: /开始评估/ }));
 
       const evidence = await screen.findByTestId("evidence-trace");
-      await waitFor(() => expect(evidence).toHaveAttribute("data-state", "result"));
+      await expectResultBoundTrace(evidence);
       expect(within(evidence).getByTestId("evidence-node-rule")).toHaveAttribute(
         "data-outcome",
         "completed"
@@ -507,7 +612,7 @@ describe("REQ-SBX-GENERAL-005 evaluation workbench page", () => {
     fireEvent.click(screen.getByRole("button", { name: /开始评估/ }));
 
     const trace = await screen.findByTestId("evidence-trace");
-    await waitFor(() => expect(trace).toHaveAttribute("data-state", "result"));
+    await expectResultBoundTrace(trace);
     expect(within(trace).getByTestId("evidence-node-judge")).toHaveAttribute(
       "data-outcome",
       "skipped"
@@ -515,6 +620,195 @@ describe("REQ-SBX-GENERAL-005 evaluation workbench page", () => {
     expect(await screen.findByTestId("execution-step-judge_evaluation")).toHaveTextContent(
       "SKIPPED"
     );
+  });
+
+  it("REQ-SBX-WORKBENCH-R2 renders one idle inspector with an inert trace", () => {
+    render(<SandboxSecurityWorkbenchPage />);
+    const inspector = screen.getByLabelText("评估检查器");
+    expect(inspector).toHaveAttribute("data-inspector-state", "idle");
+    expect(inspector).toHaveAttribute("aria-busy", "false");
+    expect(within(inspector).getByText("等待评估")).toBeInTheDocument();
+    expect(within(inspector).getByTestId("evidence-trace")).toHaveAttribute(
+      "data-state",
+      "idle"
+    );
+    expect(within(inspector).getByRole("status")).toBeEmptyDOMElement();
+  });
+
+  it("REQ-SBX-WORKBENCH-R2 shows honest loading copy while the API promise is pending", async () => {
+    const deferred = createDeferred<Response>();
+    const fetchImpl = vi.fn().mockReturnValueOnce(deferred.promise);
+    render(<SandboxSecurityWorkbenchPage fetchImpl={fetchImpl} />);
+    pasteTokenAndFill();
+    fireEvent.click(screen.getByRole("button", { name: /开始评估/ }));
+
+    await waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+    const inspector = screen.getByLabelText("评估检查器");
+    expect(inspector).toHaveAttribute("data-inspector-state", "loading");
+    expect(inspector).toHaveAttribute("aria-busy", "true");
+    expect(within(inspector).getByText("EVALUATING")).toBeInTheDocument();
+    expect(within(inspector).getByText("rule")).toBeInTheDocument();
+    expect(within(inspector).getByText("local_model")).toBeInTheDocument();
+    expect(within(inspector).getByText("external_judge")).toBeInTheDocument();
+    expect(within(inspector).queryByText("rule.injection")).not.toBeInTheDocument();
+    expect(within(inspector).queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(inspector).not.toHaveTextContent(/\d+%/);
+    expect(within(inspector).getByRole("status")).toBeEmptyDOMElement();
+
+    deferred.resolve(okResponse(TRACE_DECISION));
+    await waitFor(() =>
+      expect(inspector).toHaveAttribute("data-inspector-state", "result")
+    );
+  });
+
+  it("REQ-SBX-WORKBENCH-R2 replaces loading with a retryable error inspector", async () => {
+    const deferred = createDeferred<Response>();
+    const fetchImpl = vi.fn().mockReturnValueOnce(deferred.promise);
+    render(<SandboxSecurityWorkbenchPage fetchImpl={fetchImpl} />);
+    pasteTokenAndFill();
+    fireEvent.click(screen.getByRole("button", { name: /开始评估/ }));
+    await waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+
+    deferred.resolve(
+      errorResponse(503, "SANDBOX_SECURITY_STORAGE_UNAVAILABLE")
+    );
+    const inspector = screen.getByLabelText("评估检查器");
+    await waitFor(() =>
+      expect(inspector).toHaveAttribute("data-inspector-state", "error")
+    );
+    expect(within(inspector).getByRole("alert")).toBeInTheDocument();
+    expect(within(inspector).getByRole("button", { name: /重试/ })).toBeEnabled();
+  });
+
+  it("REQ-SBX-WORKBENCH-R2 removes the previous result as soon as re-submit starts", async () => {
+    const secondResponse = createDeferred<Response>();
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(okResponse(TRACE_DECISION))
+      .mockReturnValueOnce(secondResponse.promise);
+    render(<SandboxSecurityWorkbenchPage fetchImpl={fetchImpl} />);
+    pasteTokenAndFill();
+    fireEvent.click(screen.getByRole("button", { name: /开始评估/ }));
+    await waitFor(() => expect(screen.getByText("risk_detected")).toBeInTheDocument());
+
+    fireEvent.change(screen.getByLabelText("内容值 src-0"), {
+      target: { value: "changed payload" }
+    });
+    fireEvent.click(screen.getByRole("button", { name: /开始评估/ }));
+    const inspector = screen.getByLabelText("评估检查器");
+    expect(inspector).toHaveAttribute("data-inspector-state", "loading");
+    expect(within(inspector).queryByText("risk_detected")).not.toBeInTheDocument();
+
+    secondResponse.resolve(okResponse(TRACE_DECISION));
+    await waitFor(() =>
+      expect(inspector).toHaveAttribute("data-inspector-state", "result")
+    );
+  });
+
+  it("REQ-SBX-WORKBENCH-R2 keeps final DOM order while revealing findings and detectors before decision", async () => {
+    motionPreference.reduced = false;
+    vi.useFakeTimers();
+    const deferred = createDeferred<Response>();
+    const fetchImpl = vi.fn().mockReturnValueOnce(deferred.promise);
+    render(<SandboxSecurityWorkbenchPage fetchImpl={fetchImpl} />);
+    pasteTokenAndFill();
+    fireEvent.click(screen.getByRole("button", { name: /开始评估/ }));
+    deferred.resolve(okResponse(REVEAL_DECISION));
+    await flushAsyncWork();
+
+    const inspector = screen.getByLabelText("评估检查器");
+    const liveRegion = within(inspector).getByRole("status");
+    expect(liveRegion).toBeEmptyDOMElement();
+    expect(inspector).toHaveAttribute("data-inspector-state", "result");
+    expect(inspector).toHaveAttribute("data-reveal-phase", "evidence");
+    const trace = within(inspector).getByTestId("evidence-trace");
+    const decision = within(inspector).getByLabelText("评估决策摘要");
+    const insight = within(inspector).getByTestId("insight-grid");
+    const execution = within(inspector).getByTestId("execution-trace");
+    const findings = within(insight).getByTestId("findings-presentation");
+    const detectors = within(insight).getByTestId("detectors-presentation");
+    const ordered = [trace, decision, insight, execution];
+    for (let index = 0; index < ordered.length - 1; index += 1) {
+      expect(
+        ordered[index].compareDocumentPosition(ordered[index + 1]) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy();
+    }
+    expect(decision).toHaveAttribute("data-reveal-state", "pending");
+    expect(findings).toHaveAttribute("data-presentation-active", "false");
+    expect(detectors).toHaveAttribute("data-presentation-active", "false");
+    expectPendingSurfaceIsNotKeyboardReachable(decision);
+    expectPendingSurfaceIsNotKeyboardReachable(findings);
+    expectPendingSurfaceIsNotKeyboardReachable(detectors);
+    expectPendingSurfaceIsNotKeyboardReachable(execution);
+
+    await advanceInspectorToPhase("findings");
+    expect(findings).toHaveAttribute("data-presentation-active", "true");
+    expect(findings).not.toHaveAttribute("aria-hidden");
+    expect(findings).not.toHaveAttribute("inert");
+    const findingButton = within(findings).getByRole("button", { expanded: false });
+    findingButton.focus();
+    expect(findingButton).toHaveFocus();
+    expectPendingSurfaceIsNotKeyboardReachable(detectors);
+    expect(decision).toHaveAttribute("data-reveal-state", "pending");
+
+    await advanceInspectorToPhase("detectors");
+    expect(detectors).toHaveAttribute("data-presentation-active", "true");
+    expect(detectors).not.toHaveAttribute("aria-hidden");
+    expect(detectors).not.toHaveAttribute("inert");
+    expect(decision).toHaveAttribute("data-reveal-state", "pending");
+    expectPendingSurfaceIsNotKeyboardReachable(decision);
+
+    await advanceInspectorToPhase("decision");
+    expect(decision).toHaveAttribute("data-reveal-state", "visible");
+    expect(decision).not.toHaveAttribute("aria-hidden");
+    expect(decision).not.toHaveAttribute("inert");
+    expect(within(inspector).getByRole("status")).toBe(liveRegion);
+    expect(liveRegion).toHaveTextContent("risk_detected deny critical");
+    expectPendingSurfaceIsNotKeyboardReachable(execution);
+
+    await advanceInspectorToPhase("execution");
+    expect(execution).toHaveAttribute("data-reveal-state", "visible");
+    expect(execution).not.toHaveAttribute("aria-hidden");
+    expect(execution).not.toHaveAttribute("inert");
+    expect(within(inspector).getByText("prompt_injection")).toBeInTheDocument();
+    await advanceInspectorToPhase("settled");
+  });
+
+  it("REQ-SBX-WORKBENCH-R2 cancels every reveal gate under reduced motion", async () => {
+    motionPreference.reduced = true;
+    const fetchImpl = vi.fn().mockResolvedValue(okResponse(REVEAL_DECISION));
+    render(<SandboxSecurityWorkbenchPage fetchImpl={fetchImpl} />);
+    const inspector = screen.getByLabelText("评估检查器");
+    const liveRegion = within(inspector).getByRole("status");
+    expect(liveRegion).toBeEmptyDOMElement();
+    pasteTokenAndFill();
+    fireEvent.click(screen.getByRole("button", { name: /开始评估/ }));
+
+    await waitFor(() =>
+      expect(inspector).toHaveAttribute("data-inspector-state", "result")
+    );
+    expect(inspector).toHaveAttribute("data-reveal-phase", "settled");
+    expect(within(inspector).getByLabelText("评估决策摘要")).toHaveAttribute(
+      "data-reveal-state",
+      "visible"
+    );
+    expect(within(inspector).getByTestId("execution-trace")).toHaveAttribute(
+      "data-reveal-state",
+      "visible"
+    );
+    for (const surface of [
+      within(inspector).getByLabelText("评估决策摘要"),
+      within(inspector).getByTestId("findings-presentation"),
+      within(inspector).getByTestId("detectors-presentation"),
+      within(inspector).getByTestId("execution-trace")
+    ]) {
+      expect(surface).not.toHaveAttribute("aria-hidden");
+      expect(surface).not.toHaveAttribute("inert");
+    }
+    expect(within(inspector).getByRole("status")).toBe(liveRegion);
+    expect(liveRegion).toHaveTextContent("risk_detected deny critical");
+    expect(within(inspector).getByText("prompt_injection")).toBeInTheDocument();
   });
 
   it("REQ-SBX-WORKBENCH-R2 marks a detector kind with only skipped runs as skipped", async () => {
@@ -542,7 +836,7 @@ describe("REQ-SBX-GENERAL-005 evaluation workbench page", () => {
     fireEvent.click(screen.getByRole("button", { name: /开始评估/ }));
 
     const trace = await screen.findByTestId("evidence-trace");
-    await waitFor(() => expect(trace).toHaveAttribute("data-state", "result"));
+    await expectResultBoundTrace(trace);
     expect(within(trace).getByTestId("evidence-node-judge")).toHaveAttribute(
       "data-outcome",
       "skipped"

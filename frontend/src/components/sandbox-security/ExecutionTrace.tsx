@@ -155,6 +155,9 @@ export function ExecutionTrace({
       data-reveal-state={visible ? "visible" : "pending"}
       aria-label="评估执行轨迹"
       aria-hidden={visible ? undefined : true}
+      // inert, not opacity, is the interaction gate: it removes the pending
+      // subtree from sequential focus navigation entirely.
+      inert={!visible}
       initial={false}
       animate={{ opacity: visible ? 1 : 0, y: visible ? 0 : 6 }}
       transition={reduceMotion ? { duration: 0 } : CALM_SPRING}
