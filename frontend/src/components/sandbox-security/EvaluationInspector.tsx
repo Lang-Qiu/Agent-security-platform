@@ -22,8 +22,8 @@ import type { SandboxSecurityFailureCopy } from "../../content/sandbox-security-
 import { DecisionSummaryPanel } from "./DecisionSummaryPanel";
 import { EvidenceTrace } from "./EvidenceTrace";
 import { ExecutionTrace, type EvaluationRequestFacts } from "./ExecutionTrace";
-import { DetectorChain } from "./showcase/DetectorChain";
-import { FindingsCascade } from "./showcase/FindingsCascade";
+import { WorkbenchDetectorTable } from "./WorkbenchDetectorTable";
+import { WorkbenchFindingsTable } from "./WorkbenchFindingsTable";
 import { SpotlightSurface } from "./showcase/SpotlightSurface";
 import { CALM_SPRING, MOMENTUM_SPRING } from "./showcase/showcase-motion";
 
@@ -245,16 +245,8 @@ export function EvaluationInspector({
               animate={{ opacity: findingsActive ? 1 : 0, y: findingsActive ? 0 : 8 }}
               transition={reduceMotion ? { duration: 0 } : MOMENTUM_SPRING}
             >
-              <p className="workbench-section-eyebrow">FINDINGS</p>
-              {state.decision.findings.length > 0 ? (
-                <FindingsCascade
-                  findings={state.decision.findings}
-                  active={findingsActive}
-                  reduceMotion={reduceMotion}
-                />
-              ) : (
-                <Typography.Text type="secondary">未产生风险发现。</Typography.Text>
-              )}
+              <p className="workbench-section-eyebrow">RISK FINDINGS</p>
+              <WorkbenchFindingsTable findings={state.decision.findings} />
             </motion.section>
             <motion.section
               className="console-panel workbench-insight-grid__detectors"
@@ -266,11 +258,8 @@ export function EvaluationInspector({
               animate={{ opacity: detectorsActive ? 1 : 0, y: detectorsActive ? 0 : 8 }}
               transition={reduceMotion ? { duration: 0 } : CALM_SPRING}
             >
-              <p className="workbench-section-eyebrow">DETECTOR CHAIN</p>
-              <DetectorChain
-                runs={state.decision.detector_runs}
-                active={detectorsActive}
-              />
+              <p className="workbench-section-eyebrow">DETECTOR EXECUTION</p>
+              <WorkbenchDetectorTable runs={state.decision.detector_runs} />
             </motion.section>
           </div>
           <ExecutionTrace

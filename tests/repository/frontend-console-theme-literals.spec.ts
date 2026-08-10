@@ -40,6 +40,8 @@ test("no frontend source file outside the theme module hardcodes a colour", () =
     "frontend/src/components/sandbox-security/PolicySelector.tsx",
     "frontend/src/components/sandbox-security/RequestLimitMeter.tsx",
     "frontend/src/components/sandbox-security/StageSelector.tsx",
+    "frontend/src/components/sandbox-security/WorkbenchDetectorTable.tsx",
+    "frontend/src/components/sandbox-security/WorkbenchFindingsTable.tsx",
     "frontend/src/pages/SandboxSecurityWorkbenchPage.tsx"
   ]) {
     const source = read(path);
@@ -67,7 +69,9 @@ test("app.css contains the complete sandbox Workbench redesign contract", () => 
     ".workbench-decision-hero",
     ".workbench-insight-grid",
     ".workbench-execution-trace",
-    ".workbench-trace-step--error"
+    ".workbench-trace-step--error",
+    ".workbench-findings-table",
+    ".workbench-detector-table"
   ] as const;
 
   // A bare substring check is satisfied by a longer descendant name: deleting

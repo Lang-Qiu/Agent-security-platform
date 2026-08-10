@@ -3,9 +3,53 @@ import {
   SANDBOX_SECURITY_MAX_JSON_DEPTH,
   SANDBOX_SECURITY_MAX_JSON_NODES,
   SANDBOX_SECURITY_MAX_REQUEST_BYTES,
-  SANDBOX_SECURITY_MAX_TEXT_BYTES
+  SANDBOX_SECURITY_MAX_TEXT_BYTES,
+  type SandboxSecurityRiskCategory
 } from "../../../shared/types/sandbox-security";
 import type { SandboxSecurityCallResult } from "../services/api-client";
+
+/**
+ * One human-facing sentence per risk category, for the RISK FINDINGS summary
+ * column.
+ *
+ * This copy is deliberately CLIENT-SIDE and deliberately keyed on `category`
+ * alone. Two reasons, both contractual:
+ *
+ * 1. `reason_code` is mechanically `sandbox_security_${category}`, so it carries
+ *    no information a category-keyed map does not already have. A server-sent
+ *    summary string would duplicate an existing enum.
+ * 2. A summary produced from what a detector actually matched would carry
+ *    matched content out of the engine and into the decision payload, breaking
+ *    the content-free rendering guarantee the privacy suite enforces. Keeping
+ *    the sentence here means it is derived from the category enum only and can
+ *    never quote a submitted value.
+ *
+ * Each sentence therefore describes the CATEGORY OF RISK, never the evidence.
+ */
+const RISK_CATEGORY_SUMMARY: Record<SandboxSecurityRiskCategory, string> = {
+  prompt_injection: "检测到试图注入指令、覆盖既有约束的模式。",
+  jailbreak: "检测到试图绕过安全策略与角色限制的模式。",
+  instruction_override: "检测到试图替换或压制上层指令的模式。",
+  privilege_escalation: "检测到试图获取超出当前授权范围能力的模式。",
+  sensitive_data_exposure: "检测到可能导致敏感数据或个人标识外泄的模式。",
+  tool_hijacking: "检测到试图劫持工具调用或篡改调用参数的模式。",
+  unsafe_side_effect: "检测到可能产生不可逆或高风险副作用的模式。",
+  memory_poisoning: "检测到试图污染长期记忆或检索内容的模式。",
+  trust_boundary_violation: "检测到跨越信任边界、混用不同来源权限的模式。"
+};
+
+const UNKNOWN_CATEGORY_SUMMARY = "检测到不属于既有类别的风险模式。";
+
+/**
+ * Maps a finding's risk category to one human-facing Chinese sentence. Derived
+ * from the category enum only: it never receives, quotes, or paraphrases a
+ * submitted value, a matched substring, or a byte offset.
+ */
+export function describeSandboxSecurityRiskCategory(category: string): string {
+  return category in RISK_CATEGORY_SUMMARY
+    ? RISK_CATEGORY_SUMMARY[category as SandboxSecurityRiskCategory]
+    : UNKNOWN_CATEGORY_SUMMARY;
+}
 
 /**
  * The fifteen documented GENERAL-003 error codes, in the order of the API
