@@ -880,9 +880,14 @@ a {
   overflow-wrap: anywhere;
 }
 
+/* RISK FINDINGS spans the full column with DETECTOR EXECUTION stacked beneath.
+   Six columns plus a readable Chinese sentence do not fit a half-width panel:
+   at 2-up the panel was 375px while the fixed columns alone needed ~512px, so
+   the SUMMARY column was starved and clipped off the panel edge. Full width
+   gives the sentence real room; the height cost is measured, not assumed. */
 .workbench-insight-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
   gap: 16px;
 }
@@ -983,8 +988,12 @@ a {
   text-overflow: ellipsis;
 }
 
+/* Every other cell is clamped to nowrap, so SUMMARY must be the one column that
+   absorbs the slack — `width: 100%` on a collapsed table makes it take whatever
+   the fixed columns leave instead of shrinking to min-content. */
 .workbench-findings-table__summary {
-  min-width: 12ch;
+  width: 100%;
+  min-width: 20ch;
   color: var(--console-ink);
   line-height: 1.5;
 }

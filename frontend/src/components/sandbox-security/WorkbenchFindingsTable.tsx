@@ -20,6 +20,7 @@ import type {
 } from "../../../../shared/types/sandbox-security";
 import { describeSandboxSecurityRiskCategory } from "../../content/sandbox-security-copy";
 import { SandboxSecurityValueTag } from "./SandboxSecurityValueTag";
+import { detectorShortLabel } from "./detector-id";
 
 const SEVERITY_ORDER: Record<SandboxSecurityFinding["severity"], number> = {
   critical: 0,
@@ -28,23 +29,38 @@ const SEVERITY_ORDER: Record<SandboxSecurityFinding["severity"], number> = {
   low: 3
 };
 
-/** Compact position label, e.g. `srctok-1 [128:244]`. Positions only. */
+/**
+ * Shorten a long URI-shaped token from the FRONT, keeping the tail.
+ *
+ * Real tokens look like `source://sandbox/security/user_input/src-1`: every row
+ * shares the long prefix and differs only at the end. CSS `text-overflow`
+ * elides the tail — precisely the discriminating part — so all rows render
+ * identically. Trimming the head instead keeps rows distinguishable. The
+ * disclosure carries every token in full.
+ */
+function keepTail(token: string, maxChars: number): string {
+  return token.length <= maxChars ? token : `…${token.slice(-maxChars)}`;
+}
+
+/** Compact position label, e.g. `…user_input/src-1 [128:244]`. Positions only. */
 function describePosition(ref: SandboxSecurityFindingSubjectRef): string {
   if (ref.kind === "content_source") {
+    const source = keepTail(ref.source_token, 18);
     if (ref.locator.kind === "text_byte_range") {
-      return `${ref.source_token} [${ref.locator.start_byte}:${ref.locator.end_byte}]`;
+      return `${source} [${ref.locator.start_byte}:${ref.locator.end_byte}]`;
     }
     if (ref.locator.kind === "json_pointer") {
-      return `${ref.source_token} ${ref.locator.pointer}`;
+      return `${source} ${ref.locator.pointer}`;
     }
-    return `${ref.source_token} whole_source`;
+    return `${source} whole_source`;
   }
+  const call = keepTail(ref.call_token, 14);
   if (ref.component === "arguments") {
     const pointer =
       ref.locator.kind === "json_pointer" ? ref.locator.pointer : "whole_arguments";
-    return `${ref.call_token} arguments ${pointer}`;
+    return `${call} arguments ${pointer}`;
   }
-  return `${ref.call_token} ${ref.component}`;
+  return `${call} ${ref.component}`;
 }
 
 export interface WorkbenchFindingsTableProps {
@@ -104,8 +120,12 @@ export function WorkbenchFindingsTable({ findings }: WorkbenchFindingsTableProps
                       value={finding.severity}
                     />
                   </td>
-                  <td data-mono="true" className="workbench-findings-table__detector">
-                    {finding.detector_id}
+                  <td
+                    data-mono="true"
+                    className="workbench-findings-table__detector"
+                    title={finding.detector_id}
+                  >
+                    {detectorShortLabel(finding.detector_id)}
                   </td>
                   <td data-mono="true" className="workbench-findings-table__source">
                     {positions.length > 0 ? describePosition(positions[0]) : "—"}

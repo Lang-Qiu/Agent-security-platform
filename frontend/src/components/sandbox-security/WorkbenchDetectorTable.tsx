@@ -10,11 +10,15 @@
 
 import type { SandboxDetectorRun } from "../../../../shared/types/sandbox-security";
 import { SandboxSecurityValueTag } from "./SandboxSecurityValueTag";
+import { detectorShortLabel } from "./detector-id";
 
-/** Trailing path segment of a detector id, e.g. `instruction-override`. */
-function shortName(detectorId: string): string {
-  const segments = detectorId.split("/");
-  return segments[segments.length - 1] || detectorId;
+/**
+ * Milliseconds as an integer. The engine reports `elapsed_ms` as a float from a
+ * monotonic clock (e.g. 82.48789799993392); a duration column showing fourteen
+ * decimals is unreadable and implies precision the measurement does not have.
+ */
+function durationMs(elapsedMs: number): string {
+  return Number.isFinite(elapsedMs) ? String(Math.round(elapsedMs)) : "—";
 }
 
 /**
@@ -82,9 +86,15 @@ export function WorkbenchDetectorTable({ runs }: WorkbenchDetectorTableProps) {
                   </span>
                 </td>
                 <td className="workbench-detector-table__detector">
-                  <span data-mono="true">{shortName(run.detector_id)}</span>
+                  <span data-mono="true" title={run.detector_id}>
+                    {detectorShortLabel(run.detector_id)}
+                  </span>
+                  {/* `detector_kind` is what the label above already resolves to
+                      for stock slots, so repeating it here would waste the only
+                      line this cell has. Obligation and the status-specific
+                      field are what the label cannot express. */}
                   <span className="workbench-detector-table__meta" data-mono="true">
-                    {run.detector_kind} · {run.obligation}
+                    {run.obligation}
                     {variant === "" ? null : ` · ${variant}`}
                   </span>
                 </td>
@@ -95,7 +105,7 @@ export function WorkbenchDetectorTable({ runs }: WorkbenchDetectorTableProps) {
                   />
                 </td>
                 <td className="workbench-detector-table__ms" data-mono="true">
-                  {run.elapsed_ms}
+                  {durationMs(run.elapsed_ms)}
                 </td>
               </tr>
             );

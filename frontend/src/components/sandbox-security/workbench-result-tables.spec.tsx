@@ -90,7 +90,36 @@ describe("WorkbenchFindingsTable", () => {
     render(<WorkbenchFindingsTable findings={[BYTE_RANGE_FINDING]} />);
     expect(screen.getByText("srctok-1 [128:244]")).toBeInTheDocument();
     expect(screen.getByText("0.78")).toBeInTheDocument();
+    // This fixture's id is short-form `{kind}/{variant}` with a NON-default
+    // variant, so both parts discriminate and both are kept. Contrast the stock
+    // registry ids (`.../rule/default/v1`), where the variant is dropped.
     expect(screen.getByText("rule/sensitive-data")).toBeInTheDocument();
+  });
+
+  it("keeps the tail of a long source token so rows stay distinguishable", () => {
+    // Real tokens share a long prefix and differ only at the end; eliding the
+    // tail would render every row identically.
+    const longToken: SandboxSecurityFinding = {
+      ...BYTE_RANGE_FINDING,
+      finding_id: "finding:long-1",
+      subject_refs: [
+        {
+          kind: "content_source",
+          source_token: "source://sandbox/security/user_input/src-7",
+          locator: { kind: "text_byte_range", start_byte: 10, end_byte: 20 }
+        }
+      ]
+    };
+    render(<WorkbenchFindingsTable findings={[longToken]} />);
+    const cell = screen.getByText(/src-7 \[10:20\]$/);
+    expect(cell).toBeInTheDocument();
+    expect(cell.textContent?.startsWith("…")).toBe(true);
+    expect(cell.textContent).not.toContain("source://sandbox/security/user");
+  });
+
+  it("exposes the full detector id via title while showing the short label", () => {
+    render(<WorkbenchFindingsTable findings={[BYTE_RANGE_FINDING]} />);
+    expect(screen.getByTitle("rule/sensitive-data")).toBeInTheDocument();
   });
 
   it("derives the summary sentence from category alone", () => {
@@ -222,5 +251,55 @@ describe("WorkbenchDetectorTable", () => {
   it("renders nothing when the policy ran no detectors", () => {
     const { container } = render(<WorkbenchDetectorTable runs={[]} />);
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it("rounds a monotonic-clock duration to whole milliseconds", () => {
+    // The engine reports elapsed_ms as a float; fourteen decimals is unreadable
+    // and implies precision the measurement does not have.
+    const floatRun: SandboxDetectorRun = {
+      ...RUNS[0],
+      elapsed_ms: 82.48789799993392
+    };
+    render(<WorkbenchDetectorTable runs={[floatRun]} />);
+    expect(screen.getByText("82")).toBeInTheDocument();
+    expect(screen.queryByText("82.48789799993392")).not.toBeInTheDocument();
+  });
+
+  it("names a detector by its kind, skipping the version and default variant", () => {
+    // These are the real registry ids, shaped {kind}/{variant}/{version}. Taking
+    // the trailing segment yields "v1" on every row; stripping the version and
+    // taking the new tail yields "default" on every row. Both carry no
+    // information — the kind is what discriminates.
+    const stock: SandboxDetectorRun[] = [
+      { ...RUNS[0], detector_id: "detector://sandbox/security/rule/default/v1" },
+      {
+        ...RUNS[0],
+        detector_id: "detector://sandbox/security/local/default/v1",
+        detector_version: "2.0.0"
+      }
+    ];
+    render(<WorkbenchDetectorTable runs={stock} />);
+    expect(screen.getByText("rule")).toBeInTheDocument();
+    expect(screen.getByText("local")).toBeInTheDocument();
+    expect(screen.queryByText("v1")).not.toBeInTheDocument();
+    expect(screen.queryByText("default")).not.toBeInTheDocument();
+  });
+
+  it("keeps a non-default variant, which does discriminate", () => {
+    const tuned: SandboxDetectorRun[] = [
+      { ...RUNS[0], detector_id: "detector://sandbox/security/rule/strict/v1" }
+    ];
+    render(<WorkbenchDetectorTable runs={tuned} />);
+    expect(screen.getByText("rule/strict")).toBeInTheDocument();
+  });
+
+  it("exposes the full detector id via title", () => {
+    const stock: SandboxDetectorRun[] = [
+      { ...RUNS[0], detector_id: "detector://sandbox/security/rule/default/v1" }
+    ];
+    render(<WorkbenchDetectorTable runs={stock} />);
+    expect(
+      screen.getByTitle("detector://sandbox/security/rule/default/v1")
+    ).toBeInTheDocument();
   });
 });
