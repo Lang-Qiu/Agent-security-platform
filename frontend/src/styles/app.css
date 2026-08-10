@@ -373,6 +373,7 @@ a {
 }
 
 .workbench-credential-panel {
+  display: grid;
   gap: 14px;
   transition:
     border-color 180ms ease,

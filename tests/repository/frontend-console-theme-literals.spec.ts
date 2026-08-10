@@ -70,8 +70,39 @@ test("app.css contains the complete sandbox Workbench redesign contract", () => 
     ".workbench-trace-step--error"
   ] as const;
 
+  // A bare substring check is satisfied by a longer descendant name: deleting
+  // `.workbench-decision-hero` while keeping `.workbench-decision-hero__reserve`
+  // would pass. Require a real rule head instead.
+  const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   for (const selector of requiredSelectors) {
-    assert.ok(css.includes(selector), `missing Workbench selector: ${selector}`);
+    assert.match(
+      css,
+      new RegExp(`${escape(selector)}(?![\\w-])`),
+      `missing Workbench selector rule: ${selector}`
+    );
+  }
+
+  // Every gapped Workbench container must establish a formatting context that
+  // honours `gap`. A `gap` on a `display: block` section is silently inert and
+  // collapses the panel's rows flush against each other.
+  for (const [selector, expected] of [
+    [".workbench-credential-panel", "grid"],
+    [".workbench-evidence-trace", "grid"],
+    [".workbench-execution-trace", "grid"],
+    [".workbench-insight-grid", "grid"],
+    [".workbench-stage-tabs", "grid"],
+    [".workbench-byte-meter", "grid"],
+    [".workbench-credential-panel__heading", "flex"]
+  ] as const) {
+    const rule = css.match(
+      new RegExp(`\\n${escape(selector)}\\s*\\{([^}]*)\\}`)
+    );
+    assert.ok(rule, `missing rule for ${selector}`);
+    assert.match(
+      rule[1],
+      new RegExp(`display:\\s*${expected}`),
+      `${selector} declares gap/row layout and must set display: ${expected}`
+    );
   }
   assert.match(
     css,
@@ -79,9 +110,35 @@ test("app.css contains the complete sandbox Workbench redesign contract", () => 
   );
   assert.match(css, /@keyframes\s+workbench-pulse-badge/);
   assert.match(css, /@keyframes\s+workbench-shimmer/);
-  assert.match(
-    css,
-    /@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{\s*\.showcase-spotlight__glow\s*\{\s*display:\s*none;\s*\}/
+
+  // Asserting the keyframes merely exist does not prove they are ever switched
+  // off. Both Workbench loading animations are infinite, so the reduced-motion
+  // shutdown is the accessibility contract and must be asserted directly. The
+  // showcase glow lives in its own block and is checked separately below, so an
+  // unrelated showcase edit can no longer fail the Workbench contract.
+  const reducedMotionBlocks = [
+    ...css.matchAll(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{([\s\S]*?)\n\}/g)
+  ].map((match) => match[1]);
+  assert.ok(reducedMotionBlocks.length > 0, "no reduced-motion block found");
+  const workbenchQuiet = reducedMotionBlocks.find((block) =>
+    block.includes(".workbench-")
+  );
+  assert.ok(workbenchQuiet, "missing Workbench reduced-motion shutdown");
+  for (const selector of [
+    ".workbench-evaluating-badge",
+    ".workbench-shimmer-row::after"
+  ]) {
+    assert.ok(
+      workbenchQuiet.includes(selector),
+      `${selector} runs an infinite animation and must be quieted under reduced motion`
+    );
+  }
+  assert.match(workbenchQuiet, /animation:\s*none/);
+  assert.ok(
+    reducedMotionBlocks.some((block) =>
+      /\.showcase-spotlight__glow\s*\{[^}]*display:\s*none/.test(block)
+    ),
+    "showcase spotlight glow must be hidden under reduced motion"
   );
 
   for (const [outcome, token] of [
@@ -93,25 +150,54 @@ test("app.css contains the complete sandbox Workbench redesign contract", () => 
     ["decision-ask", "--console-accent"],
     ["decision-deny", "--console-action-deny"]
   ] as const) {
-    const marker = `data-outcome="${outcome}"`;
-    const start = css.indexOf(marker);
-    const end = css.indexOf("}", start);
-    assert.notEqual(start, -1, `missing EvidenceTrace outcome: ${outcome}`);
-    assert.ok(
-      css.slice(start, end).includes(`var(${token})`),
-      `${outcome} must use ${token}`
+    // Bind the token to the properties that actually colour the node. A
+    // presence-only check passes when the node is recoloured grey and the token
+    // survives in an unrelated declaration or a comment.
+    const rule = css.match(
+      new RegExp(
+        `\\.workbench-evidence-trace__node\\[data-outcome="${outcome}"\\][^{]*\\{([^}]*)\\}`
+      )
     );
+    assert.ok(rule, `missing EvidenceTrace outcome rule: ${outcome}`);
+    for (const property of ["border-color", "background"]) {
+      assert.match(
+        rule[1],
+        new RegExp(`${property}:\\s*var\\(${escape(token)}\\)`),
+        `${outcome} must set ${property} to var(${token})`
+      );
+    }
   }
 
+  // Anchor to a rule head at line start and tolerate whitespace: an unanchored
+  // `indexOf(selector + " {")` also matches descendant rules such as
+  // `.sandbox-workbench-results .console-panel {`, so it can silently measure a
+  // different rule, and it breaks on any reformat that removes the space.
   const radiusFor = (selector: string): number => {
-    const start = css.indexOf(`${selector} {`);
-    assert.notEqual(start, -1, `missing radius selector: ${selector}`);
-    const end = css.indexOf("}", start);
-    const match = css.slice(start, end).match(/border-radius:\s*(\d+)px/);
+    const rule = css.match(
+      new RegExp(`\\n${escape(selector)}\\s*\\{([^}]*)\\}`)
+    );
+    assert.ok(rule, `missing radius selector: ${selector}`);
+    const match = rule[1].match(/border-radius:\s*(\d+)px/);
     assert.ok(match, `missing px radius in ${selector}`);
     return Number(match[1]);
   };
   assert.equal(radiusFor(".console-panel"), 24);
+
+  // The narrow-viewport override must stay inside the Spec's major-surface
+  // range rather than drifting to an arbitrary value.
+  const narrowPanelRadius = css.match(
+    /@media\s*\(max-width:\s*900px\)\s*\{[\s\S]*?\n {2}\.console-panel\s*\{([^}]*)\}/
+  );
+  if (narrowPanelRadius) {
+    const narrow = narrowPanelRadius[1].match(/border-radius:\s*(\d+)px/);
+    if (narrow) {
+      const value = Number(narrow[1]);
+      assert.ok(
+        value >= 20 && value <= 24,
+        `narrow-viewport .console-panel radius ${value}px escapes the 20-24px major range`
+      );
+    }
+  }
 
   const composerOverride = css.match(
     /\.workbench-credential-panel,\s*\.workbench-request-composer\s*\{([^}]*)\}/s
@@ -123,6 +209,37 @@ test("app.css contains the complete sandbox Workbench redesign contract", () => 
   );
   assert.ok(insightOverride);
   assert.doesNotMatch(insightOverride[1], /border-radius/);
+
+  // A descendant rule head such as `.workbench-decision-hero .showcase-verdict`
+  // satisfies the inventory check above, so assert the base rule separately: it
+  // carries the overflow containment that keeps VerdictHero's oversized pulse
+  // ring from producing page-level scrollbars.
+  const heroBase = css.match(/\n\.workbench-decision-hero\s*\{([^}]*)\}/);
+  assert.ok(heroBase, "missing .workbench-decision-hero base rule");
+  assert.match(
+    heroBase[1],
+    /overflow:\s*hidden/,
+    ".workbench-decision-hero must contain its own overflow"
+  );
+
+  // Inspecting only the captured override rule is defeated by any later rule
+  // that redeclares the radius. These panels must inherit .console-panel's
+  // radius everywhere, so assert it is never redeclared anywhere in the file.
+  for (const selector of [
+    ".workbench-request-composer",
+    ".workbench-credential-panel",
+    ".workbench-decision-hero"
+  ]) {
+    for (const rule of css.matchAll(
+      new RegExp(`${escape(selector)}(?![\\w-])[^{}]*\\{([^}]*)\\}`, "g")
+    )) {
+      assert.doesNotMatch(
+        rule[1],
+        /border-radius/,
+        `${selector} must inherit .console-panel's radius, not redeclare it`
+      );
+    }
+  }
 
   const evidenceRadius = radiusFor(".workbench-evidence-trace");
   assert.ok(evidenceRadius >= 8 && evidenceRadius <= 12);

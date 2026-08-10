@@ -60,6 +60,16 @@ flowchart TD
   `Authorization` 头发出，`Idempotency-Key` 仅在评估路由（POST）发送，且在负载
   编辑后重新生成；提交内容、令牌与审计游标都不写入 URL、浏览器存储、`history.state`、
   `document.title` 或日志。审计视图只渲染内容无关的事件联合体。
+- R2 保持页面为请求状态、能力令牌、幂等键和 API 调用的唯一所有者；页面只冻结
+  `client_submitted_at`、来源数量和请求字节数三个 content-free 提交事实，并将它们与
+  同一次响应的 decision 绑定。表单后续编辑不能改变已返回结果的执行轨迹。
+- `EvaluationInspector` 只接收 `idle | loading | error | result` 判别联合并独占右栏渲染。
+  `loading` 不投射检测器结果；响应返回后才运行有限的一次性呈现序列，reduced motion
+  在首个结果帧直接进入 `settled`。
+- 结果 wrapper 始终按 EvidenceTrace → DecisionHero → Findings/Detector context →
+  ExecutionTrace 的 DOM 顺序挂载；未 reveal 的 wrapper 同时设置 `aria-hidden` 与
+  `inert`，交互后代可延迟挂载，gate 打开后才进入键盘顺序，但不会移动 wrapper。
+  RULE、MODEL、JUDGE 使用 detector execution status，只有 DECISION 使用判定语义色。
 
 ### 2.2 后端平台层
 

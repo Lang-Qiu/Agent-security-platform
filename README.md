@@ -468,6 +468,19 @@ enforce this. Every decision is labelled `simulation` and is not usable for
 real interception. The full operator acceptance sequence lives in
 `docs/superpowers/2026-08-07-general-005-frontend-acceptance-runbook.md`.
 
+The Workbench now presents the same one-shot response as a finite runtime
+sequence: a static causal evidence rail, a fixed-position decision hero,
+findings and detector context, and a content-free execution trace. This is a
+post-response comprehension layer, not detector streaming or enforcement
+progress. Reloading or submitting a new request removes the prior result.
+
+Reduced-motion clients receive the complete settled result on the first result
+frame. Runtime labels use only returned decision fields plus a client-side,
+content-free submission snapshot (`client_submitted_at`, source count, and
+request byte count); `REQUEST_SUBMITTED` is visibly scoped as `CLIENT_SUBMITTED`
+and never implies a server receipt event,
+and raw content and capability values never enter the result projection.
+
 # Track 1 OpenClaw Evidence Workflow
 
 The Track 1 path uses Node.js `>=22.19.0`, `pnpm@10.0.0`, OpenClaw
