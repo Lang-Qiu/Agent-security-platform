@@ -12,13 +12,18 @@ import type { SandboxSecurityDecision } from "../../../shared/types/sandbox-secu
 import { CapabilitySessionPanel } from "../components/sandbox-security/CapabilitySessionPanel";
 import { EvaluationInspector } from "../components/sandbox-security/EvaluationInspector";
 import { EvaluationRequestForm } from "../components/sandbox-security/EvaluationRequestForm";
+import type { EvaluationRequestFacts } from "../components/sandbox-security/ExecutionTrace";
 import {
   describeSandboxSecurityFailure,
   type SandboxSecurityFailureCopy
 } from "../content/sandbox-security-copy";
 import { evaluateSandboxSecurityRequest } from "../services/sandbox-security-service";
 import type { SandboxSecurityCallResult } from "../services/api-client";
-import { validateEvaluationRequest, type LimitViolation } from "../utils/sandbox-security-limits";
+import {
+  measureEvaluationRequestBytes,
+  validateEvaluationRequest,
+  type LimitViolation
+} from "../utils/sandbox-security-limits";
 
 export interface SandboxSecurityWorkbenchPageProps {
   fetchImpl?: typeof fetch;
@@ -28,6 +33,11 @@ type ErrorResult =
   | { kind: "error"; httpStatus: number; errorCode: string | null; retryAfterSeconds: number | null }
   | { kind: "invalid" }
   | { kind: "unavailable" };
+
+interface EvaluationResult {
+  readonly decision: SandboxSecurityDecision;
+  readonly requestFacts: EvaluationRequestFacts;
+}
 
 const DEFAULT_ITEM: SandboxSecuritySubmittedContentItem = {
   source_id: "src-0",
@@ -54,15 +64,14 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
   ]);
   const [toolRequest, setToolRequest] = useState<SandboxSecurityToolRequest | null>(null);
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
+  const [lastRequestFacts, setLastRequestFacts] = useState<EvaluationRequestFacts | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [decision, setDecision] = useState<SandboxSecurityDecision | null>(null);
+  const [evaluationResult, setEvaluationResult] = useState<EvaluationResult | null>(null);
   const [error, setError] = useState<ErrorResult | null>(null);
-  // Unconditional hook call. Entrance uses a critically damped spring
-  // (bounce 0): the result arrives without overshoot because no gesture
-  // momentum preceded it. Under reduced motion every entrance collapses to an
-  // instant opacity change, matching the prefers-reduced-motion contract that
-  // app.css already establishes for .console-panel.
-  const reduceMotion = useReducedMotion();
+  // Normalize reduceMotion to boolean once — drives SourceCard entry, Inspector,
+  // and every Workbench motion surface without repeated ?? false.
+  const reduceMotion = useReducedMotion() ?? false;
+
   const enterAt = (index: number) =>
     reduceMotion
       ? {
@@ -98,20 +107,18 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
     : null;
   const requiresNewCapability = failureCopy?.requiresNewCapability ?? false;
 
-  // Inspector state machine: loading while the API is in flight, error for
-  // non-capability failures, result once a decision arrives, idle otherwise.
-  // 401 errors set requiresNewCapability=true and are handled by the
-  // CapabilitySessionPanel — the inspector stays idle in that case.
   const inspectorState = submitting
     ? "loading"
     : error !== null && !requiresNewCapability
       ? "error"
-      : decision !== null
+      : evaluationResult !== null
         ? "result"
         : "idle";
 
-  const runEvaluation = async (key: string) => {
+  const runEvaluation = async (key: string, requestFacts: EvaluationRequestFacts) => {
     setSubmitting(true);
+    setEvaluationResult(null);
+    setError(null);
     const result: SandboxSecurityCallResult<SandboxSecurityDecision> =
       await evaluateSandboxSecurityRequest({
         capabilityToken,
@@ -125,36 +132,53 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
       });
     setSubmitting(false);
     if (result.kind === "ok") {
-      setDecision(result.data);
-      setError(null);
+      setEvaluationResult({ decision: result.data, requestFacts });
       return;
     }
     if (describeSandboxSecurityFailure(result).requiresNewCapability) {
       setCapabilityToken("");
     }
-    setDecision(null);
     setError(result);
   };
 
   const handleSubmit = () => {
     if (violations.length > 0 || submitting) return;
-    const key = idempotencyKey ?? crypto.randomUUID();
-    if (idempotencyKey === null) setIdempotencyKey(key);
-    void runEvaluation(key);
+    const canReuse = idempotencyKey !== null && lastRequestFacts !== null;
+    const key = canReuse ? idempotencyKey : crypto.randomUUID();
+    const requestFacts = canReuse
+      ? lastRequestFacts
+      : {
+          clientSubmittedAt: new Date().toISOString(),
+          sourceCount: contentItems.length,
+          requestBytes: measureEvaluationRequestBytes({
+            stage,
+            contentItems,
+            toolRequest
+          })
+        };
+    if (!canReuse) {
+      setIdempotencyKey(key);
+      setLastRequestFacts(requestFacts);
+    }
+    void runEvaluation(key, requestFacts);
   };
 
   const handleRetry = () => {
-    if (idempotencyKey === null || submitting) return;
-    void runEvaluation(idempotencyKey);
+    if (idempotencyKey === null || lastRequestFacts === null || submitting) return;
+    void runEvaluation(idempotencyKey, lastRequestFacts);
   };
 
-  const invalidateKey = () => setIdempotencyKey(null);
+  const invalidateKey = () => {
+    setIdempotencyKey(null);
+    setLastRequestFacts(null);
+  };
 
   const isRetryable =
     error !== null &&
     error.kind === "error" &&
     !requiresNewCapability &&
-    idempotencyKey !== null;
+    idempotencyKey !== null &&
+    lastRequestFacts !== null;
 
   return (
     <section className="sandbox-security-workbench-page">
@@ -165,12 +189,6 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
         </Typography.Paragraph>
       </header>
 
-      {/* Two-pane workbench: input on the left, results on the right. The
-          results pane is sticky on wide screens so the verdict stays in view
-          while the form scrolls (summary before detail), and reorders above the
-          input below 1100px so a returned verdict needs no scrolling. The
-          reorder is CSS-only, so DOM and tab order stay
-          capability -> form -> submit -> result. */}
       <div className="sandbox-workbench-grid">
         <div className="sandbox-workbench-input">
           <CapabilitySessionPanel
@@ -186,7 +204,7 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
             toolRequest={toolRequest}
             submitting={submitting}
             violations={violations}
-            reduceMotion={reduceMotion ?? false}
+            reduceMotion={reduceMotion}
             onChange={(next) => {
               setStage(next.stage);
               setPolicyProfileId(next.policyProfileId);
@@ -199,27 +217,17 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
         </div>
 
         <div className="sandbox-workbench-results">
-          {/* Persistent simulation marker. Carries no ARIA role: the decision
-              summary owns the only role="status" and the inspector error owns
-              the only role="alert". */}
           <motion.div className="sandbox-simulation-badge" {...enterAt(0)}>
             SIMULATION / 仿真
           </motion.div>
 
-          {/* EvaluationInspector owns all result-pane states: idle hint,
-              loading shimmer, error alert with optional retry, and the full
-              cinematic result reveal (EvidenceTrace → InsightGrid → DecisionHero
-              → ExecutionTrace). D13 layout/reveal decoupling happens inside. */}
           <EvaluationInspector
             inspectorState={inspectorState}
-            decision={decision}
-            contentItems={contentItems}
-            stage={stage}
-            policyProfileId={policyProfileId}
+            evaluationResult={evaluationResult}
             failureCopy={requiresNewCapability ? null : failureCopy}
             isRetryable={isRetryable}
             onRetry={handleRetry}
-            reduceMotion={reduceMotion ?? false}
+            reduceMotion={reduceMotion}
           />
         </div>
       </div>
