@@ -1,3 +1,57 @@
+# 2026-08-10 - Sandbox Workbench R2 cinematic runtime redesign
+
+- phase/task: GENERAL-005 UI refinement / approved R2 Workbench redesign
+- requirement state: GENERAL-005 remains `IMPLEMENTED_PENDING_GLOBAL_P6_GATE`;
+  this refinement does not auto-verify any predecessor or alter the global P6
+  dependency
+- scope: compact request composer, authority-backed stage/policy presentation,
+  exclusive Inspector states, honest one-shot causal and lifecycle traces,
+  fixed-position decision climax, finite reveal choreography, and complete
+  reduced-motion behavior
+- trust boundary: no backend route, shared DTO, Engine behavior, service call,
+  persistence channel, routing, navigation, dependency, or Showcase fixture
+  changed; the result projection uses only the returned decision and a frozen
+  content-free submission snapshot
+- validation: focused Workbench/component/privacy/Showcase suites (106 tests),
+  complete frontend suite (31 files / 393 tests), production build, and the
+  colour-literal/selector presentation gate (4/4) pass; `git diff --check` is
+  silent. Three gates cannot run in this Windows environment and are unchanged
+  pre-existing conditions, each reproduced at base commit `cfde185`: the root
+  `npm test` chain is blocked because `unshare --net` is denied (no
+  CAP_SYS_ADMIN in Git Bash or WSL), so `benchmark:sandbox-security:replay`
+  cannot execute; `tsc --noEmit -p frontend/tsconfig.json` exits 2 solely on
+  the pre-existing `TS5101 baseUrl` deprecation with zero source errors; and
+  `npm run test:repo` exits 1 at 353/358, whose 5 failures all reproduce at
+  base and are Windows path-separator or pre-existing-CSS conditions unrelated
+  to this redesign
+- visual acceptance: NOT PERFORMED. The plan's three reference-led rounds
+  require a real one-shot decision, and no public capability could be minted
+  because the internal issuing route
+  `:3001/internal/sandbox/security/capabilities` refuses connections in this
+  environment. Capturing the Workbench with fabricated data is forbidden by the
+  plan, so no round was run and no capture produced. The CSS ships the plan's
+  declared starting geometry (EvidenceTrace 12 px, ExecutionTrace 20 px);
+  tuning within the 8-12 px inner and 20-24 px major ranges remains available.
+  This gate is outstanding and requires a human operator with the internal
+  admin route reachable
+- review: closing review found no blockers across eight dimensions (one-shot API
+  honesty, token/content privacy, detector status aggregation including mixed
+  executed/skipped, structured JSON editing, DOM order with live-region timing
+  and reduced-motion settlement, type ownership with Showcase backward
+  compatibility, CSS token discipline with geometry contract, and documentation
+  accuracy). One layout defect was found and fixed: `.workbench-credential-panel`
+  declared `gap: 14px` while nothing in its cascade set `display`, so the
+  panel's rows rendered flush on cold load in the default no-token state. The
+  one-line fix (`display: grid`) was verified in the minified bundle and driven
+  RED→GREEN. The permanent presentation gate was hardened beyond the plan's
+  verbatim text and proven via mutation testing: deleting the reduced-motion
+  block, recolouring the error node, deleting the decision-hero base rule,
+  appending a later composer radius override, and removing the credential-panel
+  display all correctly fail the gate; a harmless whitespace reformat correctly
+  passes
+- next: stop after this single redesign requirement and await explicit user
+  direction; do not start another GENERAL requirement
+
 # 2026-08-08 - REQ-SBX-GENERAL-005 frontend evaluation workbench and audit console
 
 - phase/task: Phases 1-5 complete (theme gate, authenticated service layer,
