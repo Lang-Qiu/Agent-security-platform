@@ -13,7 +13,7 @@
 // the real page always updates an already-mounted node.
 
 import { useEffect, useState } from "react";
-import RadarChartOutlined from "@ant-design/icons/RadarChartOutlined";
+import { RadarChartOutlined } from "@ant-design/icons";
 import { Alert, Button, Typography } from "antd";
 import { motion } from "motion/react";
 

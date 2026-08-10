@@ -1,0 +1,558 @@
+<title>Workbench Motion Directions</title>
+<style>
+  /* Committed dark security-console world — matches the product's color-scheme: dark.
+     Every color painted explicitly so the page holds on any host ground. */
+  :root {
+    --bg: #0d1520;
+    --surface: #121c28;
+    --surface-raised: #16222f;
+    --ink: #e4edf5;
+    --muted: #8fa3b8;
+    --muted-dim: #7d92a8;
+    --accent: #22d3ee;
+    --accent-soft: #0f2a35;
+    --accent-strong: #0e7490;
+    --border: #1f2d3d;
+    --border-strong: #2c3e52;
+    --border-interactive: #51708f;
+    --allow: #34d399;
+    --deny: #f87171;
+    --high: #fb923c;
+    --mono: "JetBrains Mono", "Fira Code", ui-monospace, "SFMono-Regular", monospace;
+    --sans: "Aptos", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: var(--sans);
+    color: var(--ink);
+    background:
+      radial-gradient(circle at top left, rgba(34,211,238,0.08), transparent 25%),
+      var(--bg);
+    line-height: 1.55;
+  }
+
+  .wrap {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 48px 28px 80px;
+  }
+
+  /* ---- masthead ---- */
+  .masthead { margin-bottom: 40px; }
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 12px;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 16px;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 8px var(--accent);
+  }
+  h1 {
+    margin: 0 0 12px;
+    font-size: clamp(1.7rem, 3vw, 2.4rem);
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+  .lede {
+    max-width: 62ch;
+    color: var(--muted);
+    font-size: 1.02rem;
+    margin: 0;
+  }
+  .lede code {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
+
+  /* ---- direction block ---- */
+  .direction {
+    border-top: 1px solid var(--border);
+    padding: 36px 0;
+  }
+  .direction:last-child { border-bottom: 1px solid var(--border); }
+  .dir-head {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    margin-bottom: 6px;
+  }
+  .dir-num {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+  .dir-head h2 {
+    margin: 0;
+    font-size: 1.18rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  .dir-why {
+    color: var(--muted);
+    font-size: 0.92rem;
+    max-width: 68ch;
+    margin: 0 0 22px 34px;
+  }
+  .dir-why b { color: var(--ink); font-weight: 600; }
+
+  .compare {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-left: 34px;
+  }
+  @media (max-width: 720px) {
+    .compare { grid-template-columns: 1fr; }
+    .dir-why, .compare { margin-left: 0; }
+  }
+
+  .cell {
+    border: 1px solid var(--border-strong);
+    border-radius: 16px;
+    background: var(--surface);
+    padding: 22px 20px 20px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-height: 176px;
+  }
+  .cell.good { border-color: var(--accent-strong); }
+  .cell-tag {
+    position: absolute;
+    top: 14px; right: 14px;
+    font-family: var(--mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted-dim);
+  }
+  .cell.good .cell-tag { color: var(--accent); }
+  .cell-label {
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+  .demo-stage {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 0;
+  }
+  .replay {
+    align-self: flex-start;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--muted);
+    background: transparent;
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: border-color 160ms var(--ease-out), color 160ms var(--ease-out);
+  }
+  .replay:hover { color: var(--accent); border-color: var(--border-interactive); }
+  .replay:active { transform: scale(0.96); }
+  .replay:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ---- shared demo pieces ---- */
+  .btn {
+    font-family: var(--sans);
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: #06212b;
+    background: var(--accent);
+    border: none;
+    border-radius: 8px;
+    padding: 9px 18px;
+    cursor: pointer;
+  }
+  .btn.ghost {
+    color: var(--ink);
+    background: var(--surface-raised);
+    border: 1px solid var(--border-strong);
+  }
+  /* D1: press feedback */
+  .btn.feel { transition: transform 160ms var(--ease-out); }
+  .btn.feel:active { transform: scale(0.97); }
+  .btn.flat:active { /* no feedback — the "before" */ }
+
+  /* mini panel used across stagger + reveal demos */
+  .panel {
+    width: 100%;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: var(--surface-raised);
+    padding: 11px 13px;
+    font-size: 0.8rem;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+  .panel .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--accent); flex: none;
+  }
+  .panel.allow .dot { background: var(--allow); }
+  .panel.deny .dot { background: var(--deny); }
+  .panel .id { font-family: var(--mono); color: var(--ink); }
+  .stack { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+
+  /* D2 before: simultaneous, 420ms ease */
+  .stack.before-anim.run .panel {
+    animation: riseSlow 420ms ease both;
+  }
+  @keyframes riseSlow {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  /* D2 after: staggered, 240ms ease-out */
+  .stack.after-anim .panel { opacity: 0; }
+  .stack.after-anim.run .panel {
+    animation: riseFast 240ms var(--ease-out) both;
+  }
+  .stack.after-anim.run .panel:nth-child(1) { animation-delay: 0ms; }
+  .stack.after-anim.run .panel:nth-child(2) { animation-delay: 55ms; }
+  .stack.after-anim.run .panel:nth-child(3) { animation-delay: 110ms; }
+  @keyframes riseFast {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* D3: meter */
+  .meter-demo { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+  .meter-track {
+    height: 6px; border-radius: 3px;
+    background: var(--surface-raised);
+    overflow: hidden;
+  }
+  .meter-fill {
+    height: 100%; border-radius: 3px;
+    background: var(--accent);
+    transform-origin: left center;
+  }
+  .meter-fill.smooth { transition: transform 220ms var(--ease-out); }
+  .meter-fill.jumpy  { /* width-driven, instant repaint */ }
+  .meter-readout {
+    font-family: var(--mono); font-size: 0.72rem; color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .slider {
+    width: 100%; accent-color: var(--accent); cursor: pointer;
+  }
+
+  /* D4: submit → result reveal with blur mask */
+  .submit-demo { width: 100%; display: flex; flex-direction: column; gap: 12px; align-items: center; }
+  .result-slot { width: 100%; min-height: 46px; display: flex; align-items: center; justify-content: center; }
+  .verdict {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--mono); font-size: 0.82rem;
+    padding: 7px 14px; border-radius: 999px;
+    border: 1px solid var(--allow);
+    color: var(--allow);
+    background: rgba(52,211,153,0.08);
+  }
+  .verdict .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--allow); }
+  /* after: reveal from scale(0.98) */
+  .verdict.reveal {
+    opacity: 0; transform: scale(0.98);
+    animation: verdictIn 260ms var(--ease-out) forwards;
+  }
+  @keyframes verdictIn {
+    to { opacity: 1; transform: scale(1); }
+  }
+  /* after: content blur while loading */
+  .btn.loading { position: relative; color: transparent; }
+  .btn.loading::after {
+    content: "";
+    position: absolute; inset: 0; margin: auto;
+    width: 15px; height: 15px; border-radius: 50%;
+    border: 2px solid rgba(6,33,43,0.35);
+    border-top-color: #06212b;
+    animation: spin 620ms linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* before: hard-cut result, no press feel */
+  .verdict.hardcut { /* appears instantly */ }
+
+  .note {
+    margin: 40px 0 0;
+    padding: 18px 20px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 0 10px 10px 0;
+    background: var(--accent-soft);
+    color: var(--muted);
+    font-size: 0.88rem;
+  }
+  .note b { color: var(--ink); }
+
+  @media (prefers-reduced-motion: reduce) {
+    /* Motion-sensitive: keep opacity, drop translate/scale. */
+    .stack.before-anim.run .panel,
+    .stack.after-anim.run .panel { animation: fadeOnly 200ms ease both; }
+    .verdict.reveal { animation: fadeOnly 200ms ease forwards; transform: none; }
+    .btn.feel:active { transform: none; }
+    @keyframes fadeOnly { from { opacity: 0; } to { opacity: 1; } }
+  }
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <span class="eyebrow">Simulation · Motion Study</span>
+    <h1>评估工作台 · 手感优化方向</h1>
+    <p class="lede">
+      针对 <code>SandboxSecurityWorkbenchPage</code> 的五个可交互对比。左侧是现状，右侧是 Emil
+      设计工程框架下的调整。每个演示都可点右上角 <code>replay</code> 重放，规律在慢放时最明显。
+    </p>
+  </header>
+
+  <!-- D1 -->
+  <section class="direction">
+    <div class="dir-head"><span class="dir-num">01</span><h2>按钮按压反馈</h2></div>
+    <p class="dir-why">
+      <b>提交评估 / 新增来源 / 清除令牌</b> 目前按下无任何反馈。可按压元素应给即时应答——
+      <code>scale(0.97)</code> 让界面"听得到"点击。试着按住下面两个按钮对比。
+    </p>
+    <div class="compare">
+      <div class="cell">
+        <span class="cell-tag">before</span>
+        <span class="cell-label">按下无位移，感觉像图片</span>
+        <div class="demo-stage"><button class="btn flat">提交评估</button></div>
+      </div>
+      <div class="cell good">
+        <span class="cell-tag">after</span>
+        <span class="cell-label">scale(0.97) · 160ms ease-out</span>
+        <div class="demo-stage"><button class="btn feel">提交评估</button></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- D2 -->
+  <section class="direction">
+    <div class="dir-head"><span class="dir-num">02</span><h2>结果面板错峰进入</h2></div>
+    <p class="dir-why">
+      现状：所有 <code>.console-panel</code> 用 <b>420ms ease</b> 同时 rise-in。改为
+      <b>240ms ease-out</b> 并错峰 55ms 依次落位，引导视线按 决策 → findings → detectors 走查。
+    </p>
+    <div class="compare">
+      <div class="cell">
+        <span class="cell-tag">before</span>
+        <span class="cell-label">420ms ease · 同时出现</span>
+        <div class="demo-stage">
+          <div class="stack before-anim" data-stack>
+            <div class="panel"><span class="dot"></span>Decision summary</div>
+            <div class="panel"><span class="dot"></span>Findings</div>
+            <div class="panel"><span class="dot"></span>Detector runs</div>
+          </div>
+        </div>
+        <button class="replay" data-replay>replay</button>
+      </div>
+      <div class="cell good">
+        <span class="cell-tag">after</span>
+        <span class="cell-label">240ms ease-out · stagger 55ms</span>
+        <div class="demo-stage">
+          <div class="stack after-anim" data-stack>
+            <div class="panel"><span class="dot"></span>Decision summary</div>
+            <div class="panel allow"><span class="dot"></span>Findings</div>
+            <div class="panel"><span class="dot"></span>Detector runs</div>
+          </div>
+        </div>
+        <button class="replay" data-replay>replay</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- D3 -->
+  <section class="direction">
+    <div class="dir-head"><span class="dir-num">03</span><h2>用量条平滑跟随</h2></div>
+    <p class="dir-why">
+      <code>RequestLimitMeter</code> 现在直接改 <code>width</code>，输入时逐字跳变并触发 layout。
+      改用 <code>transform: scaleX()</code> + <b>220ms ease-out</b>，走 GPU 且平滑跟随。拖动滑块对比。
+    </p>
+    <div class="compare">
+      <div class="cell">
+        <span class="cell-tag">before</span>
+        <span class="cell-label">width 变更 · 瞬时跳变 + 重排</span>
+        <div class="demo-stage">
+          <div class="meter-demo">
+            <div class="meter-track"><div class="meter-fill jumpy" data-meter-before style="width:36%"></div></div>
+            <span class="meter-readout" data-readout-before>184320 / 512000</span>
+            <input class="slider" type="range" min="0" max="100" value="36" data-slider="before">
+          </div>
+        </div>
+      </div>
+      <div class="cell good">
+        <span class="cell-tag">after</span>
+        <span class="cell-label">transform scaleX · 平滑 · GPU</span>
+        <div class="demo-stage">
+          <div class="meter-demo">
+            <div class="meter-track"><div class="meter-fill smooth" data-meter-after style="transform:scaleX(0.36)"></div></div>
+            <span class="meter-readout" data-readout-after>184320 / 512000</span>
+            <input class="slider" type="range" min="0" max="100" value="36" data-slider="after">
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- D4 -->
+  <section class="direction">
+    <div class="dir-head"><span class="dir-num">04</span><h2>提交 → 结果的编排</h2></div>
+    <p class="dir-why">
+      现状：提交仅禁用按钮，结果硬切入。改为按钮 <b>loading 态</b>给进行中反馈，结果从
+      <code>scale(0.98)+opacity:0</code> 落定——元素不该凭空出现。点两侧"提交"对比。
+    </p>
+    <div class="compare">
+      <div class="cell">
+        <span class="cell-tag">before</span>
+        <span class="cell-label">无进度暗示 · 结果硬切</span>
+        <div class="demo-stage">
+          <div class="submit-demo">
+            <div class="result-slot" data-slot="before"></div>
+            <button class="btn flat" data-submit="before">提交评估</button>
+          </div>
+        </div>
+      </div>
+      <div class="cell good">
+        <span class="cell-tag">after</span>
+        <span class="cell-label">loading spinner · 结果 scale 落定</span>
+        <div class="demo-stage">
+          <div class="submit-demo">
+            <div class="result-slot" data-slot="after"></div>
+            <button class="btn feel" data-submit="after">提交评估</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- D5 -->
+  <section class="direction">
+    <div class="dir-head"><span class="dir-num">05</span><h2>放行/拦截 verdict 的克制强调</h2></div>
+    <p class="dir-why">
+      verdict 是整页高潮，值得<b>一次</b>落定强调；但因高频查看不宜过度——所以只在首现时
+      scale 落定，重复渲染不再动。语义色（allow 绿 / deny 红）独立于品牌青，凭形与色双通道读出。
+    </p>
+    <div class="compare">
+      <div class="cell">
+        <span class="cell-tag">before</span>
+        <span class="cell-label">纯文字 · 无形态差异</span>
+        <div class="demo-stage">
+          <span style="font-family:var(--mono);font-size:0.86rem;color:var(--allow)">verdict: no_detected_risk</span>
+        </div>
+      </div>
+      <div class="cell good">
+        <span class="cell-tag">after</span>
+        <span class="cell-label">pill + dot · 首现落定</span>
+        <div class="demo-stage">
+          <span class="verdict reveal" data-verdict><span class="dot"></span>no_detected_risk</span>
+        </div>
+        <button class="replay" data-replay-verdict>replay</button>
+      </div>
+    </div>
+  </section>
+
+  <p class="note">
+    <b>约束已保留：</b>页面已在 <code>@media (prefers-reduced-motion: reduce)</code> 下降级——
+    本原型同样在该模式下只保留 opacity、去掉所有位移与缩放。所有动效时长 &lt;300ms，仅动
+    <code>transform</code> 与 <code>opacity</code>（走 GPU）。落地时改动集中在 <code>app.css</code>、
+    <code>RequestLimitMeter.tsx</code> 与几个按钮，不触碰任何安全语义或无障碍活区。
+  </p>
+</div>
+
+<script>
+  // D2 + D5: replay by re-triggering animation class
+  function replay(stack) {
+    stack.classList.remove("run");
+    void stack.offsetWidth; // reflow
+    stack.classList.add("run");
+  }
+  document.querySelectorAll("[data-replay]").forEach((btn) => {
+    const stack = btn.closest(".cell").querySelector("[data-stack]");
+    btn.addEventListener("click", () => replay(stack));
+  });
+  // auto-play stacks once on load
+  document.querySelectorAll("[data-stack]").forEach((s) => replay(s));
+
+  document.querySelectorAll("[data-replay-verdict]").forEach((btn) => {
+    const v = btn.closest(".cell").querySelector("[data-verdict]");
+    btn.addEventListener("click", () => {
+      v.classList.remove("reveal");
+      void v.offsetWidth;
+      v.classList.add("reveal");
+    });
+  });
+
+  // D3: meters
+  const LIMIT = 512000;
+  function fmt(n) { return n.toLocaleString("en-US"); }
+  const sBefore = document.querySelector('[data-slider="before"]');
+  const mBefore = document.querySelector("[data-meter-before]");
+  const rBefore = document.querySelector("[data-readout-before]");
+  sBefore.addEventListener("input", () => {
+    const pct = Number(sBefore.value);
+    mBefore.style.width = pct + "%";              // width-driven: jumpy
+    rBefore.textContent = fmt(Math.round(LIMIT * pct / 100)) + " / " + fmt(LIMIT);
+  });
+  const sAfter = document.querySelector('[data-slider="after"]');
+  const mAfter = document.querySelector("[data-meter-after]");
+  const rAfter = document.querySelector("[data-readout-after]");
+  sAfter.addEventListener("input", () => {
+    const pct = Number(sAfter.value);
+    mAfter.style.transform = "scaleX(" + (pct / 100) + ")"; // transform: smooth
+    rAfter.textContent = fmt(Math.round(LIMIT * pct / 100)) + " / " + fmt(LIMIT);
+  });
+
+  // D4: submit choreography
+  function wireSubmit(mode) {
+    const btn = document.querySelector('[data-submit="' + mode + '"]');
+    const slot = document.querySelector('[data-slot="' + mode + '"]');
+    btn.addEventListener("click", () => {
+      if (btn.disabled) return;
+      if (mode === "before") {
+        // hard-cut: result appears instantly, no loading
+        slot.innerHTML = '<span class="verdict hardcut"><span class="dot"></span>no_detected_risk</span>';
+        setTimeout(() => { slot.innerHTML = ""; }, 1400);
+      } else {
+        btn.classList.add("loading");
+        btn.disabled = true;
+        slot.innerHTML = "";
+        setTimeout(() => {
+          btn.classList.remove("loading");
+          btn.disabled = false;
+          slot.innerHTML = '<span class="verdict reveal"><span class="dot"></span>no_detected_risk</span>';
+          setTimeout(() => { slot.innerHTML = ""; }, 1600);
+        }, 780);
+      }
+    });
+  }
+  wireSubmit("before");
+  wireSubmit("after");
+</script>
