@@ -74,6 +74,47 @@ describe("REQ-SBX-GENERAL-005 decision summary", () => {
   });
 });
 
+describe("DecisionSummaryPanel VerdictHero wrapper", () => {
+  it("workbench variant has .workbench-decision-hero class on the panel", () => {
+    const { container } = render(
+      <DecisionSummaryPanel decision={DECISION} variant="workbench" active reduceMotion />
+    );
+    expect(container.querySelector(".workbench-decision-hero")).not.toBeNull();
+  });
+
+  it("shows stage chip above the verdict", () => {
+    render(<DecisionSummaryPanel decision={DECISION} variant="workbench" active reduceMotion />);
+    expect(screen.getByText("user_input")).toBeInTheDocument();
+  });
+
+  it("shows policy chip above the verdict", () => {
+    render(<DecisionSummaryPanel decision={DECISION} variant="workbench" active reduceMotion />);
+    expect(screen.getByText("sandbox-security-strict.v1")).toBeInTheDocument();
+  });
+
+  it("context chips are wrapped in aria-hidden container", () => {
+    const { container } = render(
+      <DecisionSummaryPanel decision={DECISION} variant="workbench" active reduceMotion />
+    );
+    const contextChips = container.querySelector(".workbench-decision-hero__context-chips");
+    expect(contextChips).not.toBeNull();
+    expect(contextChips).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("renders VerdictHero verdict tags when active", () => {
+    render(<DecisionSummaryPanel decision={DECISION} variant="workbench" active reduceMotion />);
+    expect(screen.getAllByText("risk_detected").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("deny").length).toBeGreaterThan(0);
+  });
+
+  it("meta section has .workbench-decision-hero__meta class", () => {
+    const { container } = render(
+      <DecisionSummaryPanel decision={DECISION} variant="workbench" active reduceMotion />
+    );
+    expect(container.querySelector(".workbench-decision-hero__meta")).not.toBeNull();
+  });
+});
+
 describe("REQ-SBX-GENERAL-005 findings table", () => {
   it("renders category, severity, confidence, and reason code", () => {
     render(<FindingsTable findings={[FINDING]} />);
@@ -180,5 +221,69 @@ describe("REQ-SBX-GENERAL-005 detector run table", () => {
   it("renders elapsed milliseconds for every run", () => {
     render(<DetectorRunTable runs={runs} />);
     expect(screen.getByText(/812/)).toBeInTheDocument();
+  });
+});
+
+describe("REQ-SBX-WORKBENCH-R2 decision workbench variant", () => {
+  it("reserves the decision position before its reveal gate", () => {
+    const { rerender } = render(
+      <DecisionSummaryPanel
+        decision={DECISION}
+        variant="workbench"
+        active={false}
+        reduceMotion={false}
+      />
+    );
+    const panel = screen.getByLabelText("评估决策摘要");
+    expect(panel).toHaveAttribute("data-reveal-state", "pending");
+    expect(panel).toHaveAttribute("aria-hidden", "true");
+    expect(panel).toHaveAttribute("inert");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByText("risk_detected")).not.toBeInTheDocument();
+
+    rerender(
+      <DecisionSummaryPanel
+        decision={DECISION}
+        variant="workbench"
+        active
+        reduceMotion={false}
+      />
+    );
+    expect(panel).toHaveAttribute("data-reveal-state", "visible");
+    expect(panel).not.toHaveAttribute("aria-hidden");
+    expect(panel).not.toHaveAttribute("inert");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.getByText("risk_detected")).toBeInTheDocument();
+  });
+
+  it("exposes the decision immediately under reduced motion", () => {
+    render(
+      <DecisionSummaryPanel
+        decision={DECISION}
+        variant="workbench"
+        active={false}
+        reduceMotion
+      />
+    );
+    const panel = screen.getByLabelText("评估决策摘要");
+    expect(panel).toHaveAttribute("data-reveal-state", "visible");
+    expect(panel).not.toHaveAttribute("aria-hidden");
+    expect(panel).not.toHaveAttribute("inert");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
+  it("keeps opaque identities and simulation limits below the hero", () => {
+    render(
+      <DecisionSummaryPanel
+        decision={DECISION}
+        variant="workbench"
+        active
+        reduceMotion
+      />
+    );
+    expect(screen.getByText("decision:1")).toBeInTheDocument();
+    expect(screen.getByText("req-1")).toBeInTheDocument();
+    expect(screen.getByText(/不可用于实际拦截/)).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 });
