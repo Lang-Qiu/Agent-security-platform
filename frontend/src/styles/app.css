@@ -230,7 +230,7 @@ a {
 
 .sandbox-workbench-grid {
   display: grid;
-  grid-template-columns: minmax(320px, 0.85fr) minmax(480px, 1.15fr);
+  grid-template-columns: minmax(300px, 0.75fr) minmax(500px, 1.25fr);
   gap: 20px;
   /* Required for the sticky results pane: a stretched grid item cannot stick. */
   align-items: start;
@@ -317,6 +317,742 @@ a {
    surface to a solid token and drop the blur. */
 @media (prefers-reduced-transparency: reduce) {
   .sandbox-simulation-badge {
+    background: var(--console-surface-raised);
+    backdrop-filter: none;
+  }
+}
+
+/* REQ-SBX-GENERAL-005 / R2: cinematic runtime Workbench. */
+
+.sandbox-workbench-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  max-width: none;
+}
+
+.sandbox-workbench-header > div {
+  display: grid;
+  gap: 4px;
+  max-width: 68ch;
+}
+
+.sandbox-workbench-header .ant-typography {
+  margin-block: 0;
+}
+
+.sandbox-security-workbench-page [data-mono="true"] {
+  font-family: var(--console-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.sandbox-security-workbench-page .sandbox-simulation-badge {
+  font-family: var(--console-mono);
+}
+
+.workbench-section-eyebrow {
+  margin: 0;
+  color: var(--console-accent);
+  font-family: var(--console-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  line-height: 1.4;
+  text-transform: uppercase;
+}
+
+.workbench-evaluation-inspector,
+.workbench-request-composer {
+  display: grid;
+  gap: 20px;
+}
+
+.workbench-credential-panel,
+.workbench-request-composer {
+  padding: 18px;
+}
+
+.workbench-credential-panel {
+  gap: 14px;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+.workbench-credential-panel--held {
+  border-color: var(--console-accent-strong);
+  background: var(--console-accent-soft);
+}
+
+.workbench-credential-panel__heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}
+
+.workbench-credential-panel__entry {
+  display: grid;
+  gap: 8px;
+}
+
+.workbench-credential-status {
+  color: var(--console-action-allow);
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+}
+
+.workbench-stage-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.workbench-stage-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 42px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--console-border);
+  border-bottom-color: var(--console-border-strong);
+  border-radius: 10px;
+  background: var(--console-surface-raised);
+  color: var(--console-muted);
+}
+
+.workbench-stage-tab:hover,
+.workbench-stage-tab--selected {
+  color: var(--console-accent);
+}
+
+.workbench-stage-tab--selected {
+  border-bottom-color: var(--console-accent);
+  box-shadow: inset 0 -2px 0 var(--console-accent);
+}
+
+.workbench-stage-tab > .ant-radio,
+.workbench-policy-card > .ant-radio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.workbench-stage-tab > span:last-child {
+  min-width: 0;
+  padding: 0;
+  overflow-wrap: anywhere;
+}
+
+.workbench-stage-tab:has(.ant-radio-input:focus-visible),
+.workbench-policy-card:has(.ant-radio-input:focus-visible) {
+  outline: 2px solid var(--console-accent);
+  outline-offset: 2px;
+}
+
+.workbench-stage-desc {
+  min-height: 1.5em;
+  color: var(--console-muted);
+  font-size: 0.82rem;
+}
+
+.workbench-policy-selector {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.workbench-policy-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 13px 14px;
+  border: 1px solid var(--console-border);
+  border-radius: 12px;
+  background: var(--console-surface-raised);
+  cursor: pointer;
+}
+
+.workbench-policy-card:hover,
+.workbench-policy-card--selected {
+  border-color: var(--console-accent-strong);
+  background: var(--console-accent-soft);
+}
+
+.workbench-policy-card > span:last-child {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 0;
+}
+
+.workbench-policy-card__label {
+  color: var(--console-ink);
+  font-weight: 600;
+}
+
+.workbench-policy-card__id {
+  min-width: 0;
+  color: var(--console-muted-dim);
+  font-size: 0.7rem;
+  overflow-wrap: anywhere;
+}
+
+.workbench-policy-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  grid-column: 1 / -1;
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-left: 3px solid var(--console-accent);
+  background: var(--console-accent-soft);
+  color: var(--console-muted);
+  font-family: var(--console-mono);
+  font-size: 0.78rem;
+}
+
+.workbench-source-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.workbench-source-card {
+  display: grid;
+  gap: 8px;
+  padding: 11px;
+  border: 1px solid var(--console-border);
+  border-radius: 12px;
+  background: var(--console-showcase-chip);
+}
+
+.workbench-source-card:focus-within {
+  border-color: var(--console-border-interactive);
+}
+
+.workbench-source-card__header {
+  display: grid;
+  grid-template-columns: minmax(58px, auto) minmax(0, 0.8fr) minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.workbench-source-card__header .ant-select {
+  width: 100%;
+  min-width: 0;
+}
+
+.workbench-source-card__id {
+  color: var(--console-accent);
+  font-size: 0.75rem;
+}
+
+.workbench-source-card__size {
+  color: var(--console-muted-dim);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.workbench-source-card__value {
+  font-family: var(--console-mono);
+  resize: vertical;
+}
+
+.workbench-request-composer .sandbox-security-violations ul {
+  margin: 4px 0 0;
+  padding-inline-start: 20px;
+}
+
+.workbench-byte-meter {
+  display: grid;
+  gap: 7px;
+}
+
+.workbench-byte-meter__track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--console-border);
+  overflow: hidden;
+}
+
+.workbench-byte-meter__fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--console-accent);
+  transition: width 180ms ease;
+}
+
+.workbench-byte-meter[data-over-limit="true"] .workbench-byte-meter__fill {
+  background: var(--console-severity-critical);
+}
+
+.workbench-byte-meter__copy {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--console-muted-dim);
+  font-size: 0.72rem;
+}
+
+.workbench-byte-meter__warning {
+  color: var(--console-severity-medium);
+}
+
+.workbench-evaluate-btn.ant-btn {
+  min-height: 46px;
+  border-radius: 12px;
+  box-shadow: 0 12px 30px var(--console-hero-tint-strong);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.workbench-runtime-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.workbench-runtime-header__chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.workbench-runtime-header__chips > span:not(.sandbox-simulation-badge) {
+  max-width: 220px;
+  padding: 5px 9px;
+  border: 1px solid var(--console-border);
+  border-radius: 999px;
+  color: var(--console-muted-dim);
+  font-size: 0.68rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workbench-evidence-trace {
+  display: grid;
+  grid-template-columns: auto minmax(20px, 1fr) auto minmax(20px, 1fr) auto minmax(20px, 1fr) auto minmax(20px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--console-border);
+  border-radius: 12px;
+  background: var(--console-surface);
+  overflow: hidden;
+}
+
+.workbench-evidence-trace__item {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+}
+
+.workbench-evidence-trace__rail {
+  width: 100%;
+  height: 2px;
+  background: var(--console-accent-strong);
+  transform-origin: left center;
+}
+
+.workbench-evidence-trace__node {
+  position: relative;
+  z-index: 1;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--console-border-interactive);
+  border-radius: 999px;
+  background: var(--console-surface-raised);
+}
+
+.workbench-evidence-trace__node[data-outcome="completed"] {
+  border-color: var(--console-accent);
+  background: var(--console-accent);
+}
+
+.workbench-evidence-trace__node[data-outcome="timeout"] {
+  border-color: var(--console-severity-medium);
+  background: var(--console-severity-medium);
+}
+
+.workbench-evidence-trace__node[data-outcome="error"],
+.workbench-evidence-trace__node[data-outcome="decision-alert"] {
+  border-color: var(--console-severity-high);
+  background: var(--console-severity-high);
+}
+
+.workbench-evidence-trace__node[data-outcome="decision-allow"] {
+  border-color: var(--console-action-allow);
+  background: var(--console-action-allow);
+}
+
+.workbench-evidence-trace__node[data-outcome="decision-deny"] {
+  border-color: var(--console-action-deny);
+  background: var(--console-action-deny);
+}
+
+.workbench-evidence-trace__node[data-outcome="decision-ask"] {
+  border-color: var(--console-accent);
+  background: var(--console-accent);
+}
+
+.workbench-evidence-trace__node[data-outcome="skipped"],
+.workbench-evidence-trace__node[data-outcome="pending"],
+.workbench-evidence-trace__node[data-outcome="decision-neutral"] {
+  border-color: var(--console-muted);
+  background: var(--console-surface-raised);
+}
+
+.workbench-evidence-trace__decision-glow {
+  position: absolute;
+  top: 0;
+  width: 28px;
+  height: 28px;
+  margin-top: -8px;
+  border: 1px solid var(--console-accent);
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.workbench-evidence-trace__label {
+  color: var(--console-muted);
+  font-family: var(--console-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+}
+
+.workbench-evidence-trace[data-state="idle"] .workbench-evidence-trace__label,
+.workbench-evidence-trace[data-state="loading"] .workbench-evidence-trace__label {
+  opacity: 0.15;
+}
+
+.workbench-inspector-idle,
+.workbench-inspector-running,
+.workbench-inspector-error {
+  min-height: 230px;
+}
+
+.workbench-inspector-idle .showcase-spotlight__content {
+  place-items: center;
+  align-content: center;
+  min-height: 172px;
+  text-align: center;
+}
+
+.workbench-inspector-idle .anticon {
+  color: var(--console-accent);
+  font-size: 2.4rem;
+}
+
+.workbench-inspector-idle .ant-typography {
+  margin: 0;
+}
+
+.workbench-inspector-running .showcase-spotlight__content {
+  align-content: center;
+  min-height: 172px;
+}
+
+.workbench-inspector-error {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+
+.workbench-evaluating-badge {
+  justify-self: start;
+  padding: 7px 12px;
+  border: 1px solid var(--console-accent-strong);
+  border-radius: 999px;
+  background: var(--console-accent-soft);
+  color: var(--console-accent);
+  animation: workbench-pulse-badge 1.4s ease infinite;
+}
+
+.workbench-inspector-running__rows {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.workbench-shimmer-row {
+  position: relative;
+  min-height: 42px;
+  padding: 12px 14px;
+  border: 1px solid var(--console-border);
+  border-radius: 10px;
+  background: var(--console-surface-raised);
+  color: var(--console-muted-dim);
+  overflow: hidden;
+}
+
+.workbench-shimmer-row::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--console-veil), transparent);
+  animation: workbench-shimmer 1.5s linear infinite;
+}
+
+.workbench-decision-hero {
+  position: relative;
+  min-height: 250px;
+  overflow: hidden;
+}
+
+.workbench-decision-hero__reserve {
+  min-height: 190px;
+  display: grid;
+  align-content: center;
+}
+
+.workbench-decision-hero__content {
+  display: grid;
+  gap: 14px;
+}
+
+.workbench-decision-hero .showcase-verdict__tags {
+  font-size: 1.15rem;
+}
+
+.workbench-decision-hero .showcase-verdict__tags .ant-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  font-size: 1.15rem;
+}
+
+.workbench-decision-hero__context-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.workbench-decision-hero__context-chips > span {
+  padding: 5px 9px;
+  border: 1px solid var(--console-border);
+  border-radius: 999px;
+  color: var(--console-muted);
+  font-size: 0.7rem;
+  overflow-wrap: anywhere;
+}
+
+.workbench-decision-hero__meta {
+  display: grid;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.workbench-decision-hero__meta > summary {
+  color: var(--console-muted);
+  cursor: pointer;
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.workbench-decision-hero__meta dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.workbench-decision-hero__meta dl > div {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.35fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.workbench-decision-hero__meta dt,
+.workbench-decision-hero__meta dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.workbench-insight-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+}
+
+.workbench-insight-grid > .console-panel {
+  min-width: 0;
+  padding: 18px;
+}
+
+.workbench-insight-grid__findings,
+.workbench-insight-grid__detectors {
+  display: grid;
+  gap: 14px;
+}
+
+.workbench-execution-trace {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--console-border-strong);
+  border-radius: 20px;
+  background: var(--console-surface);
+}
+
+.workbench-execution-trace ol {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workbench-trace-step {
+  display: grid;
+  grid-template-columns: 12px minmax(120px, 0.42fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--console-border);
+}
+
+.workbench-trace-step:last-child {
+  border-bottom: 0;
+}
+
+.workbench-trace-step__dot {
+  width: 9px;
+  height: 9px;
+  margin-top: 4px;
+  border: 2px solid var(--console-accent);
+  border-radius: 999px;
+  background: var(--console-surface-raised);
+}
+
+.workbench-trace-step--warn .workbench-trace-step__dot {
+  border-color: var(--console-severity-medium);
+}
+
+.workbench-trace-step--error .workbench-trace-step__dot {
+  border-color: var(--console-action-deny);
+}
+
+.workbench-trace-step--skipped .workbench-trace-step__dot {
+  border-color: var(--console-muted);
+}
+
+.workbench-trace-step__label {
+  color: var(--console-accent);
+  font-size: 0.68rem;
+  overflow-wrap: anywhere;
+}
+
+.workbench-trace-step__detail {
+  min-width: 0;
+  color: var(--console-muted);
+  font-family: var(--console-mono);
+  font-size: 0.76rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes workbench-pulse-badge {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@keyframes workbench-shimmer {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(200%);
+  }
+}
+
+@media (max-width: 1100px) {
+  .workbench-insight-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 700px) {
+  .sandbox-workbench-header,
+  .workbench-runtime-header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .workbench-runtime-header__chips {
+    justify-content: flex-start;
+  }
+
+  .workbench-stage-tabs,
+  .workbench-policy-selector {
+    grid-template-columns: 1fr;
+  }
+
+  .workbench-source-card__header,
+  .workbench-trace-step {
+    grid-template-columns: 1fr;
+  }
+
+  .workbench-evidence-trace {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+
+  .workbench-evidence-trace__item {
+    grid-template-columns: auto 1fr;
+    align-items: center;
+  }
+
+  .workbench-evidence-trace__rail {
+    width: 2px;
+    height: 14px;
+    margin-left: 5px;
+    transform-origin: top center;
+  }
+
+  .workbench-trace-step__detail {
+    white-space: normal;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workbench-credential-panel,
+  .workbench-byte-meter__fill {
+    transition: none;
+  }
+
+  .workbench-evaluating-badge,
+  .workbench-shimmer-row::after {
+    animation: none;
+  }
+
+  .workbench-shimmer-row::after,
+  .workbench-evidence-trace__decision-glow {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .workbench-evidence-trace,
+  .workbench-execution-trace {
     background: var(--console-surface-raised);
     backdrop-filter: none;
   }
