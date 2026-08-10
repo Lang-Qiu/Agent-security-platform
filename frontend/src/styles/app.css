@@ -972,7 +972,15 @@ a {
 .workbench-findings-table__source {
   color: var(--console-muted);
   font-size: 0.72rem;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+}
+
+/* The detector id is the longest free-form cell; clamp it rather than let it
+   drive row height. The disclosure carries detector_id@version in full. */
+.workbench-findings-table__detector {
+  max-width: 22ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .workbench-findings-table__summary {
@@ -981,9 +989,15 @@ a {
   line-height: 1.5;
 }
 
+/* One line each: the row must stay scannable at operator density. The full
+   sentence, all positions, and every uncolumned field remain reachable through
+   the row's disclosure, so clamping here hides nothing. */
 .workbench-findings-table__summary-text {
   display: block;
   margin-top: 3px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .workbench-findings-table__more {
@@ -1084,12 +1098,21 @@ a {
   display: grid;
   gap: 2px;
   min-width: 0;
-  overflow-wrap: anywhere;
+  max-width: 26ch;
+}
+
+.workbench-detector-table__detector > span:first-child {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .workbench-detector-table__meta {
   color: var(--console-muted-dim);
   font-size: 0.66rem;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .workbench-detector-table__ms {
