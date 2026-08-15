@@ -1,12 +1,79 @@
 import type {
+  SandboxDetectorRunErrorCode,
+  SandboxDetectorRunObligation,
   SandboxDetectorRunStatus,
+  SandboxDetectorSkipReason,
   SandboxSecurityAction,
+  SandboxSecurityDecision,
   SandboxSecurityPolicyProfileId,
   SandboxSecurityRiskCategory,
   SandboxSecuritySeverity,
   SandboxSecurityStage,
   SandboxSecurityVerdict
 } from "./sandbox-security.ts";
+
+export type SandboxSecurityEvaluationStreamStage =
+  | "source"
+  | "rule"
+  | "model"
+  | "judge"
+  | "decision";
+
+export type SandboxSecurityEvaluationStreamDelivery = "live" | "replayed";
+
+export type SandboxSecurityEvaluationSourceResult = Readonly<{
+  source_count: number;
+  tool_request_present: boolean;
+  elapsed_ms: number;
+}>;
+
+export type SandboxSecurityEvaluationDetectorResult = Readonly<{
+  detector_id: string;
+  detector_version: string;
+  detector_kind: "rule" | "local_model" | "external_judge";
+  obligation: SandboxDetectorRunObligation;
+  elapsed_ms: number;
+  error_code?: SandboxDetectorRunErrorCode;
+  skip_reason?: SandboxDetectorSkipReason;
+}>;
+
+export type SandboxSecurityEvaluationStreamEvent =
+  | Readonly<{
+      schema_version: "sandbox-security-evaluation-stream.v1";
+      event_type: "stage";
+      request_id: string;
+      sequence: 1;
+      stage: "source";
+      status: "completed";
+      delivery: SandboxSecurityEvaluationStreamDelivery;
+      result: SandboxSecurityEvaluationSourceResult;
+    }>
+  | Readonly<{
+      schema_version: "sandbox-security-evaluation-stream.v1";
+      event_type: "stage";
+      request_id: string;
+      sequence: 2 | 3 | 4;
+      stage: "rule" | "model" | "judge";
+      status: SandboxDetectorRunStatus;
+      delivery: SandboxSecurityEvaluationStreamDelivery;
+      result: SandboxSecurityEvaluationDetectorResult;
+    }>
+  | Readonly<{
+      schema_version: "sandbox-security-evaluation-stream.v1";
+      event_type: "decision";
+      request_id: string;
+      sequence: 5;
+      stage: "decision";
+      delivery: SandboxSecurityEvaluationStreamDelivery;
+      decision: SandboxSecurityDecision;
+    }>
+  | Readonly<{
+      schema_version: "sandbox-security-evaluation-stream.v1";
+      event_type: "error";
+      request_id: string;
+      error_code: string;
+      retryable: boolean;
+    }>;
 
 export type SandboxSecurityCapabilityScope =
   | "sandbox_security:evaluate"

@@ -2,7 +2,15 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 
 import { DomainError } from "./common/errors/domain-error.ts";
 import { readJsonBody } from "./common/http/json-body.ts";
-import { createErrorHttpResponse, createSuccessHttpResponse, writeJsonResponse } from "./common/http/http-response.ts";
+import {
+  acceptsEventStream,
+  createErrorHttpResponse,
+  createSuccessHttpResponse,
+  endServerSentEvents,
+  writeJsonResponse,
+  writeServerSentEvent
+} from "./common/http/http-response.ts";
+import { normalizeSandboxSecurityEvaluationStreamEvent } from "../../shared/contracts/sandbox-security-api.ts";
 import { createRequestId } from "./common/http/request-id.ts";
 import { matchRoute } from "./common/http/router.ts";
 import { createTaskCenterModule } from "./modules/task-center/task-center.module.ts";
@@ -41,6 +49,8 @@ export class AppModule {
 
   async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const requestId = createRequestId();
+    let evaluationStream = false;
+    let evaluationRequestId = requestId;
 
     try {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -86,14 +96,56 @@ export class AppModule {
               500
             );
           }
-          writeJsonResponse(
-            response,
+          evaluationStream = acceptsEventStream(request);
+          if (!evaluationStream) {
+            writeJsonResponse(
+              response,
+              await this.sandboxSecurityModule.publicController.evaluate(
+                request,
+                requestId
+              ),
+              request
+            );
+            return;
+          }
+          {
+            const abortController = new AbortController();
+            const abortOnDisconnect = () => {
+              if (!response.writableEnded) abortController.abort();
+            };
+            request.once("aborted", abortOnDisconnect);
+            response.once("close", abortOnDisconnect);
+            let delivery: "live" | "replayed" = "live";
             await this.sandboxSecurityModule.publicController.evaluate(
               request,
-              requestId
-            ),
-            request
-          );
+              requestId,
+              {
+                signal: abortController.signal,
+                on_stage: (event) => {
+                  evaluationRequestId = event.request_id;
+                  delivery = event.delivery;
+                  writeServerSentEvent(response, "stage", event);
+                },
+                on_decision: (decision) => {
+                  evaluationRequestId = decision.request_id;
+                  const event = normalizeSandboxSecurityEvaluationStreamEvent({
+                    schema_version: "sandbox-security-evaluation-stream.v1",
+                    event_type: "decision",
+                    request_id: decision.request_id,
+                    sequence: 5,
+                    stage: "decision",
+                    delivery,
+                    decision
+                  });
+                  if (event === null || event.event_type !== "decision") {
+                    throw new Error("sandbox_security_stream_decision_invalid");
+                  }
+                  writeServerSentEvent(response, "decision", event);
+                }
+              }
+            );
+            endServerSentEvents(response);
+          }
           return;
         case "listSandboxSecurityAuditEvents":
           if (!this.sandboxSecurityModule) {
@@ -167,6 +219,29 @@ export class AppModule {
         }
       }
     } catch (error) {
+      if (evaluationStream && response.headersSent) {
+        const code =
+          error instanceof SandboxSecurityHttpError
+            ? error.code
+            : isSandboxSecurityServiceError(error)
+              ? error.code
+              : "SANDBOX_SECURITY_INTERNAL_ERROR";
+        const event = normalizeSandboxSecurityEvaluationStreamEvent({
+          schema_version: "sandbox-security-evaluation-stream.v1",
+          event_type: "error",
+          request_id: evaluationRequestId,
+          error_code: code,
+          retryable:
+            code === "SANDBOX_SECURITY_INTERNAL_ERROR" ||
+            code === "SANDBOX_SECURITY_STORAGE_UNAVAILABLE" ||
+            code === "SANDBOX_SECURITY_CONCURRENCY_LIMITED"
+        });
+        if (event !== null && event.event_type === "error") {
+          writeServerSentEvent(response, "error", event);
+        }
+        endServerSentEvents(response);
+        return;
+      }
       if (error instanceof SandboxSecurityHttpError) {
         writeJsonResponse(
           response,

@@ -1,8 +1,10 @@
 import { normalizeSandboxSecurityDecision } from "../../../../shared/contracts/sandbox-security.ts";
+import { normalizeSandboxSecurityEvaluationStreamEvent } from "../../../../shared/contracts/sandbox-security-api.ts";
 import type {
   SandboxSecurityDecision,
   SandboxSecurityRequest
 } from "../../../../shared/types/sandbox-security.ts";
+import type { SandboxSecurityEvaluationStreamEvent } from "../../../../shared/types/sandbox-security-api.ts";
 import { createSandboxSecuritySimulationEvaluationRequest } from "./simulation-authority.ts";
 import {
   createSandboxSecurityServiceError,
@@ -28,6 +30,10 @@ const IDEMPOTENCY_RETENTION_MS = 24 * 60 * 60 * 1000;
 type SandboxSecuritySubmissionCorrelation = Pick<
   SandboxSecurityRequest,
   "request_id" | "stage" | "policy_profile_id"
+>;
+type SandboxSecurityEvaluationStageEvent = Extract<
+  SandboxSecurityEvaluationStreamEvent,
+  { event_type: "stage" }
 >;
 
 function internalError(): ReturnType<typeof createSandboxSecurityServiceError> {
@@ -74,6 +80,84 @@ function normalizeDecisionForSubmission(
     throw internalError();
   }
   return decision;
+}
+
+function createStageEmitter(
+  requestId: string,
+  onStage: (event: SandboxSecurityEvaluationStageEvent) => void
+): (event: SandboxSecurityEvaluationStageEvent) => void {
+  let expectedSequence = 1;
+  return (event) => {
+    const normalized = normalizeSandboxSecurityEvaluationStreamEvent(event);
+    if (
+      normalized === null ||
+      normalized.event_type !== "stage" ||
+      normalized.request_id !== requestId ||
+      normalized.sequence !== expectedSequence ||
+      expectedSequence > 4
+    ) {
+      throw internalError();
+    }
+    expectedSequence += 1;
+    onStage(normalized);
+  };
+}
+
+function replayStageEvents(
+  submission: Readonly<SandboxSecurityRequest>,
+  decision: Readonly<SandboxSecurityDecision>,
+  emit: (event: SandboxSecurityEvaluationStageEvent) => void
+): void {
+  emit({
+    schema_version: "sandbox-security-evaluation-stream.v1",
+    event_type: "stage",
+    request_id: submission.request_id,
+    sequence: 1,
+    stage: "source",
+    status: "completed",
+    delivery: "replayed",
+    result: {
+      source_count: submission.content_items.length,
+      tool_request_present: submission.tool_request !== undefined,
+      elapsed_ms: 0
+    }
+  });
+  const slots = [
+    [2, "rule", "rule"],
+    [3, "model", "local_model"],
+    [4, "judge", "external_judge"]
+  ] as const;
+  for (const [sequence, stage, detectorKind] of slots) {
+    const run = decision.detector_runs.find(
+      (candidate) => candidate.detector_kind === detectorKind
+    );
+    if (run === undefined) throw internalError();
+    const event = {
+      schema_version: "sandbox-security-evaluation-stream.v1",
+      event_type: "stage",
+      request_id: submission.request_id,
+      sequence,
+      stage,
+      status: run.status,
+      delivery: "replayed",
+      result: {
+        detector_id: run.detector_id,
+        detector_version: run.detector_version,
+        detector_kind: run.detector_kind,
+        obligation: run.obligation,
+        elapsed_ms: run.elapsed_ms,
+        ...(run.status === "failed" ||
+        run.status === "timeout" ||
+        run.status === "invalid_result"
+          ? { error_code: run.error_code }
+          : {}),
+        ...(run.status === "skipped" ? { skip_reason: run.skip_reason } : {})
+      }
+    };
+    const normalized = normalizeSandboxSecurityEvaluationStreamEvent(event);
+    if (normalized === null || normalized.event_type !== "stage") throw internalError();
+    emit(normalized);
+  }
 }
 
 function assertFingerprint(value: unknown): asserts value is `hmac-sha256:${string}` {
@@ -216,7 +300,13 @@ export function createSandboxSecurityEvaluationService(input: Readonly<{
 
   return {
     async evaluate(evaluationInput): Promise<Readonly<SandboxSecurityDecision>> {
-      const { capability, submission, idempotency_key: rawKey, signal } = evaluationInput;
+      const {
+        capability,
+        submission,
+        idempotency_key: rawKey,
+        signal,
+        on_stage: onStage
+      } = evaluationInput;
       const startedAt = runtime.monotonicNowMs();
 
       try {
@@ -248,6 +338,9 @@ export function createSandboxSecurityEvaluationService(input: Readonly<{
         stage: evaluationRequest.submission.stage,
         policy_profile_id: evaluationRequest.submission.policy_profile_id
       });
+      const emitStage = onStage
+        ? createStageEmitter(submissionCorrelation.request_id, onStage)
+        : undefined;
 
       let fingerprint: `hmac-sha256:${string}`;
       try {
@@ -344,13 +437,15 @@ export function createSandboxSecurityEvaluationService(input: Readonly<{
       }
 
       if (claimKind === "completed") {
-        return normalizeDecisionForSubmission(
+        const replayed = normalizeDecisionForSubmission(
           (claimResult as Extract<
             SandboxSecurityIdempotencyClaimResult,
             { kind: "completed" }
           >).response,
           submissionCorrelation
         );
+        if (emitStage) replayStageEvents(submission, replayed, emitStage);
+        return replayed;
       }
       if (claimKind === "in_progress") {
         throw createSandboxSecurityServiceError({
@@ -415,7 +510,7 @@ export function createSandboxSecurityEvaluationService(input: Readonly<{
       let engineFailed = false;
       let releaseFailed = false;
       try {
-        engineValue = await gateway.evaluate(evaluationRequest, signal);
+        engineValue = await gateway.evaluate(evaluationRequest, signal, emitStage);
       } catch {
         engineFailed = true;
       } finally {

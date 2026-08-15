@@ -1,6 +1,10 @@
 // Master C runtime exports
 export { createSandboxSecurityEngine } from "./engine.ts";
-export type { SandboxSecurityEngine } from "./engine.ts";
+export type {
+  SandboxSecurityEngine,
+  SandboxSecurityEngineStageObservation,
+  SandboxSecurityEngineStageObserver
+} from "./engine.ts";
 
 export {
   createSandboxSecurityCanonicalFingerprintService

@@ -209,6 +209,42 @@ function createDependencies(calls: string[], options: Readonly<{
   const evaluationService: SandboxSecurityEvaluationService = {
     async evaluate(input) {
       calls.push(`evaluate:${input.idempotency_key}`);
+      const onStage = (input as unknown as {
+        on_stage?: (event: Record<string, unknown>) => void;
+      }).on_stage;
+      onStage?.({
+        schema_version: "sandbox-security-evaluation-stream.v1",
+        event_type: "stage",
+        request_id: "request-http-1",
+        sequence: 1,
+        stage: "source",
+        status: "completed",
+        delivery: "live",
+        result: { source_count: 1, tool_request_present: false, elapsed_ms: 0 }
+      });
+      for (const [sequence, stage, detectorKind, skipReason] of [
+        [2, "rule", "rule", null],
+        [3, "model", "local_model", "optional_not_configured"],
+        [4, "judge", "external_judge", "routing_not_selected"]
+      ] as const) {
+        onStage?.({
+          schema_version: "sandbox-security-evaluation-stream.v1",
+          event_type: "stage",
+          request_id: "request-http-1",
+          sequence,
+          stage,
+          status: skipReason === null ? "no_match" : "skipped",
+          delivery: "live",
+          result: {
+            detector_id: `${stage}-detector`,
+            detector_version: "1.0.0",
+            detector_kind: detectorKind,
+            obligation: skipReason === null ? "profile_required" : "optional_not_selected",
+            elapsed_ms: 0,
+            ...(skipReason === null ? {} : { skip_reason: skipReason })
+          }
+        });
+      }
       if (options.slowEvaluation === true) {
         await new Promise<void>((resolve) => setTimeout(resolve, 25));
       }
@@ -657,6 +693,59 @@ test("REQ-SBX-GENERAL-003 all five sandbox security routes succeed through injec
         "audit-purge"
       ]
     );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("REQ-SBX-GENERAL-006 streams five ordered SSE events and preserves the final decision", async () => {
+  const fixture = await startInjectedSandboxSecurityServers();
+  try {
+    const response = await fetch(
+      `http://127.0.0.1:${fixture.publicPort}/api/sandbox/security/evaluations`,
+      {
+        method: "POST",
+        headers: {
+          Accept: "text/event-stream",
+          Authorization: `Bearer ${PUBLIC_TOKEN}`,
+          "Content-Type": "application/json",
+          "Idempotency-Key": "idempotency-http-stream-1"
+        },
+        body: JSON.stringify(VALID_EVALUATION)
+      }
+    );
+    const body = await response.text();
+    const frames = body
+      .trim()
+      .split("\n\n")
+      .map((frame) => {
+        const lines = frame.split("\n");
+        return {
+          event: lines.find((line) => line.startsWith("event: "))?.slice(7),
+          data: JSON.parse(
+            lines.find((line) => line.startsWith("data: "))?.slice(6) ?? "null"
+          )
+        };
+      });
+
+    assert.equal(response.status, 200);
+    assert.match(response.headers.get("content-type") ?? "", /^text\/event-stream/);
+    assert.deepEqual(frames.map((frame) => frame.event), [
+      "stage",
+      "stage",
+      "stage",
+      "stage",
+      "decision"
+    ]);
+    assert.deepEqual(frames.map((frame) => frame.data.sequence), [1, 2, 3, 4, 5]);
+    assert.deepEqual(frames.map((frame) => frame.data.stage), [
+      "source",
+      "rule",
+      "model",
+      "judge",
+      "decision"
+    ]);
+    assert.equal(frames[4]?.data.decision.decision_id, "decision-http-1");
   } finally {
     await fixture.close();
   }

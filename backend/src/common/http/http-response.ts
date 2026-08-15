@@ -116,3 +116,40 @@ export function writeJsonResponse(
   response.setHeader("content-type", "application/json; charset=utf-8");
   response.end(JSON.stringify(httpResponse.body));
 }
+
+export function acceptsEventStream(request: IncomingMessage): boolean {
+  const raw = request.headers.accept;
+  const values: string[] = Array.isArray(raw)
+    ? raw
+    : raw === undefined
+      ? []
+      : [raw];
+  return values.some((value) =>
+    value
+      .split(",")
+      .some((part) => part.split(";", 1)[0]?.trim().toLowerCase() === "text/event-stream")
+  );
+}
+
+function canWriteStream(response: ServerResponse): boolean {
+  return !response.writableEnded && !response.destroyed && response.writable !== false;
+}
+
+export function writeServerSentEvent(
+  response: ServerResponse,
+  eventName: "stage" | "decision" | "error",
+  data: unknown
+): void {
+  if (!canWriteStream(response)) return;
+  if (!response.headersSent) {
+    response.statusCode = 200;
+    response.setHeader("content-type", "text/event-stream; charset=utf-8");
+    response.setHeader("cache-control", "no-cache, no-transform");
+    response.setHeader("x-accel-buffering", "no");
+  }
+  response.write(`event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+export function endServerSentEvents(response: ServerResponse): void {
+  if (canWriteStream(response)) response.end();
+}

@@ -8,7 +8,8 @@ import {
 } from "../types/sandbox-security.ts";
 import type {
   SandboxSecurityAuditEvent,
-  SandboxSecurityAuditPage
+  SandboxSecurityAuditPage,
+  SandboxSecurityEvaluationStreamEvent
 } from "../types/sandbox-security-api.ts";
 
 const EXPECTED_DETECTOR_RUN_STATUSES = [
@@ -438,4 +439,125 @@ test("REQ-SBX-GENERAL-003 rejects page unknown fields and preserves input arrays
   assert.ok(output);
   output.events.pop();
   assert.equal(accepted.events.length, 1);
+});
+
+const STREAM_REQUEST_ID = "request_stream_001";
+
+function makeStreamStageEvent(
+  sequence: 1 | 2 | 3 | 4,
+  stage: "source" | "rule" | "model" | "judge",
+  status: "completed" | "matched" | "no_match" | "skipped" = "no_match"
+) {
+  return {
+    schema_version: "sandbox-security-evaluation-stream.v1",
+    event_type: "stage",
+    request_id: STREAM_REQUEST_ID,
+    sequence,
+    stage,
+    status,
+    delivery: "live",
+    result:
+      stage === "source"
+        ? { source_count: 1, tool_request_present: false, elapsed_ms: 2 }
+        : {
+            detector_id: `detector://sandbox/security/${stage}/default/v1`,
+            detector_version: "1.0.0",
+            detector_kind:
+              stage === "rule"
+                ? "rule"
+                : stage === "model"
+                  ? "local_model"
+                  : "external_judge",
+            obligation: "profile_required",
+            elapsed_ms: 3,
+            ...(status === "skipped" ? { skip_reason: "routing_not_selected" } : {})
+          }
+  };
+}
+
+function makeStreamDecisionEvent() {
+  return {
+    schema_version: "sandbox-security-evaluation-stream.v1",
+    event_type: "decision",
+    request_id: STREAM_REQUEST_ID,
+    sequence: 5,
+    stage: "decision",
+    delivery: "live",
+    decision: {
+      schema_version: "sandbox-security-decision.v1",
+      decision_id: "decision_stream_001",
+      request_id: STREAM_REQUEST_ID,
+      evaluation_mode: "simulation",
+      stage: "user_input",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      verdict: "no_detected_risk",
+      action: "allow",
+      risk_level: "info",
+      findings: [],
+      detector_runs: [],
+      evidence_refs: [],
+      created_at: VALID_TIMESTAMP
+    }
+  };
+}
+
+test("REQ-SBX-GENERAL-006 accepts the five ordered content-free stream events", () => {
+  assert.equal(typeof shared.normalizeSandboxSecurityEvaluationStreamEvent, "function");
+  const normalize = shared.normalizeSandboxSecurityEvaluationStreamEvent;
+  const events = [
+    makeStreamStageEvent(1, "source", "completed"),
+    makeStreamStageEvent(2, "rule", "no_match"),
+    makeStreamStageEvent(3, "model", "skipped"),
+    makeStreamStageEvent(4, "judge", "skipped"),
+    makeStreamDecisionEvent()
+  ];
+  const normalized = events.map((event) => normalize(event));
+  assert.ok(normalized.every(Boolean));
+  assert.deepEqual(
+    normalized.map((event) =>
+      event && event.event_type !== "error" ? event.sequence : null
+    ),
+    [1, 2, 3, 4, 5]
+  );
+});
+
+test("REQ-SBX-GENERAL-006 rejects reordered, extra-key, and content-bearing stream events", () => {
+  const normalize = shared.normalizeSandboxSecurityEvaluationStreamEvent;
+  const valid = makeStreamStageEvent(2, "rule");
+  assert.equal(normalize({ ...valid, sequence: 1 }), null);
+  assert.equal(normalize({ ...valid, extra: true }), null);
+  assert.equal(
+    normalize({ ...valid, result: { ...valid.result, rule_snippet: "secret" } }),
+    null
+  );
+  assert.equal(
+    normalize({ ...valid, status: "completed", result: { ...valid.result, error_code: "x" } }),
+    null
+  );
+});
+
+test("REQ-SBX-GENERAL-006 rejects malformed decision and error events", () => {
+  const normalize = shared.normalizeSandboxSecurityEvaluationStreamEvent;
+  const decision = makeStreamDecisionEvent();
+  assert.equal(normalize({ ...decision, sequence: 4 }), null);
+  assert.equal(normalize({ ...decision, decision: { ...decision.decision, raw_input: "secret" } }), null);
+  assert.equal(
+    normalize({
+      schema_version: "sandbox-security-evaluation-stream.v1",
+      event_type: "error",
+      request_id: STREAM_REQUEST_ID,
+      error_code: "engine_error",
+      retryable: true,
+      secret: "token"
+    }),
+    null
+  );
+  const error = normalize({
+    schema_version: "sandbox-security-evaluation-stream.v1",
+    event_type: "error",
+    request_id: STREAM_REQUEST_ID,
+    error_code: "engine_error",
+    retryable: true
+  });
+  assert.ok(error && error.event_type === "error");
 });

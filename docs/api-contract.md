@@ -2148,7 +2148,7 @@ bootstrap-administrator capability and retention operations.
 
 | Listener | Method and path | Authentication | Input boundary | Success envelope |
 | --- | --- | --- | --- | --- |
-| public | `POST /api/sandbox/security/evaluations` | `Authorization: Bearer <capability>` plus `Idempotency-Key` | JSON `SandboxSecurityRequest`; 786432 raw bytes; 5000 ms body deadline | `200 ApiResponse<SandboxSecurityDecision>` |
+| public | `POST /api/sandbox/security/evaluations` | `Authorization: Bearer <capability>` plus `Idempotency-Key` | JSON `SandboxSecurityRequest`; 786432 raw bytes; 5000 ms body deadline | `200 ApiResponse<SandboxSecurityDecision>` or ordered `text/event-stream` when requested |
 | public | `GET /api/sandbox/security/audit-events` | `Authorization: Bearer <capability>` with `sandbox_security:audit:read` | only `cursor` and `limit` query keys; bodyless | `200 ApiResponse<SandboxSecurityAuditPage>` |
 | internal | `POST /internal/sandbox/security/capabilities` | `Authorization: Bearer <bootstrap-admin-token>` | exact public or private JSON issue DTO; 65536 raw bytes; 5000 ms body deadline | `201 ApiResponse<SandboxSecurityCapabilityIssueResult | SandboxSecurityEnforcementAuditCapabilityIssueResult>` |
 | internal | `POST /internal/sandbox/security/capabilities/:capabilityId/revoke` | `Authorization: Bearer <bootstrap-admin-token>` | bodyless; one percent-decode of the path ID | `200 ApiResponse<SandboxSecurityCapabilityPublicRecord>` |
@@ -2507,3 +2507,34 @@ only the content-free GENERAL-001/GENERAL-003 unions; `subject_refs`/
 `evidence_refs` positional data are content-free and safe to render. The public
 route returns `evaluation_mode: "simulation"`, and the workbench labels every
 decision as simulation, not enforcement.
+
+## REQ-SBX-GENERAL-006 Evaluation Runtime Stream Contract
+
+The existing evaluation route negotiates an optional runtime stream. A request
+whose `Accept` header contains `text/event-stream` receives
+`Content-Type: text/event-stream; charset=utf-8`; requests without that media
+type retain the GENERAL-003 JSON envelope and decision semantics.
+
+The SSE body is a sequence of exactly five successful frames for a completed
+evaluation. Each frame uses one `event` line and one JSON `data` line, separated
+by a blank line, and conforms to the shared
+`sandbox-security-evaluation-stream.v1` contract. Stage frames use sequences
+1..4 for `source`, `rule`, `model`, and `judge`; the `decision` frame uses
+sequence 5. Every frame carries the request correlation ID and a `live` or
+`replayed` delivery marker.
+
+Stage results are content-free. Detector metadata is limited to the normalized
+detector ID/version/kind, obligation, elapsed time, terminal status, and the
+closed `error_code` or `skip_reason` fields where applicable. MODEL and JUDGE
+emit explicit `skipped` results when their optional routing or configuration is
+not selected. The backend emits `DECISION` only after decision normalization and
+idempotency completion persistence succeed; replayed evaluations synthesize the
+four stage frames from the cached decision before the replayed decision frame.
+Post-header failures use the content-free stream `error` event; pre-header
+failures retain the normal JSON error envelope.
+
+The frontend validates schema, request correlation, event names, and sequences
+before invoking its stage callback. Stage state is React-memory-only and is
+discarded when the final decision branch mounts. The existing result structure
+(`EvidenceTrace`, decision summary, findings/detectors, `ExecutionTrace`) is
+unchanged after the `DECISION` frame.

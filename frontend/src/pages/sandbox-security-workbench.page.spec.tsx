@@ -661,6 +661,104 @@ describe("REQ-SBX-GENERAL-005 evaluation workbench page", () => {
     );
   });
 
+  it("REQ-SBX-GENERAL-006 renders each runtime stage before the final decision", async () => {
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const stream = new ReadableStream<Uint8Array>({
+      start(value) {
+        controller = value;
+      }
+    });
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(stream, {
+        status: 200,
+        headers: { "content-type": "text/event-stream; charset=utf-8" }
+      })
+    );
+    render(<SandboxSecurityWorkbenchPage fetchImpl={fetchImpl} />);
+    pasteTokenAndFill();
+    fireEvent.click(screen.getByRole("button", { name: /开始评估/ }));
+    await waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(1));
+    const request = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body));
+    const send = async (eventName: string, event: unknown) => {
+      await act(async () => {
+        controller.enqueue(
+          new TextEncoder().encode(
+            `event: ${eventName}\ndata: ${JSON.stringify(event)}\n\n`
+          )
+        );
+        await Promise.resolve();
+      });
+    };
+
+    await send("stage", {
+      schema_version: "sandbox-security-evaluation-stream.v1",
+      event_type: "stage",
+      request_id: request.request_id,
+      sequence: 1,
+      stage: "source",
+      status: "completed",
+      delivery: "live",
+      result: { source_count: 1, tool_request_present: false, elapsed_ms: 0 }
+    });
+    expect(await screen.findByTestId("runtime-stage-source")).toHaveAttribute(
+      "data-stage-status",
+      "completed"
+    );
+    expect(screen.getByTestId("runtime-stage-rule")).toHaveAttribute(
+      "data-stage-status",
+      "pending"
+    );
+
+    for (const [sequence, stage, detectorKind, skipReason] of [
+      [2, "rule", "rule", null],
+      [3, "model", "local_model", "optional_not_configured"],
+      [4, "judge", "external_judge", "routing_not_selected"]
+    ] as const) {
+      await send("stage", {
+        schema_version: "sandbox-security-evaluation-stream.v1",
+        event_type: "stage",
+        request_id: request.request_id,
+        sequence,
+        stage,
+        status: skipReason === null ? "no_match" : "skipped",
+        delivery: "live",
+        result: {
+          detector_id: `detector://sandbox/security/${stage}/default/v1`,
+          detector_version: "1.0.0",
+          detector_kind: detectorKind,
+          obligation: skipReason === null ? "profile_required" : "optional_not_selected",
+          elapsed_ms: 2,
+          ...(skipReason === null ? {} : { skip_reason: skipReason })
+        }
+      });
+    }
+    expect(screen.getByTestId("runtime-stage-judge")).toHaveAttribute(
+      "data-stage-status",
+      "skipped"
+    );
+    expect(screen.getByTestId("runtime-stage-judge")).toHaveTextContent(
+      "routing_not_selected"
+    );
+
+    await send("decision", {
+      schema_version: "sandbox-security-evaluation-stream.v1",
+      event_type: "decision",
+      request_id: request.request_id,
+      sequence: 5,
+      stage: "decision",
+      delivery: "live",
+      decision: { ...TRACE_DECISION, request_id: request.request_id }
+    });
+    controller.close();
+    await waitFor(() =>
+      expect(screen.getByLabelText("评估检查器")).toHaveAttribute(
+        "data-inspector-state",
+        "result"
+      )
+    );
+    expect(screen.getByTestId("insight-grid")).toBeInTheDocument();
+  });
+
   it("REQ-SBX-WORKBENCH-R2 replaces loading with a retryable error inspector", async () => {
     const deferred = createDeferred<Response>();
     const fetchImpl = vi.fn().mockReturnValueOnce(deferred.promise);

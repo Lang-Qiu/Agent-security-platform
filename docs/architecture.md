@@ -64,12 +64,24 @@ flowchart TD
   `client_submitted_at`、来源数量和请求字节数三个 content-free 提交事实，并将它们与
   同一次响应的 decision 绑定。表单后续编辑不能改变已返回结果的执行轨迹。
 - `EvaluationInspector` 只接收 `idle | loading | error | result` 判别联合并独占右栏渲染。
-  `loading` 不投射检测器结果；响应返回后才运行有限的一次性呈现序列，reduced motion
-  在首个结果帧直接进入 `settled`。
+  GENERAL-006 的 `loading/error` 状态携带 React 内存中的五阶段事件快照，固定渲染
+  `SOURCE → RULE → MODEL → JUDGE → DECISION` 行；只显示终态、跳过原因和归一化的
+  content-free 元数据，不投射原始输入或 detector 内容。收到最终决策后立即切换到
+  既有 `result` 分支，响应返回后的有限一次性呈现序列与 reduced motion 行为保持不变。
 - 结果 wrapper 始终按 EvidenceTrace → DecisionHero → Findings/Detector context →
   ExecutionTrace 的 DOM 顺序挂载；未 reveal 的 wrapper 同时设置 `aria-hidden` 与
   `inert`，交互后代可延迟挂载，gate 打开后才进入键盘顺序，但不会移动 wrapper。
   RULE、MODEL、JUDGE 使用 detector execution status，只有 DECISION 使用判定语义色。
+
+### GENERAL-006 Evaluation Runtime Streaming
+
+GENERAL-006 沿用 GENERAL-003 的 `POST /api/sandbox/security/evaluations` 路由，
+不新增平台入口。Controller 在请求协商到 `text/event-stream` 时建立可中止的 SSE
+响应，将 gateway 的真实 terminal-stage observer 映射为共享 stage event；普通 JSON
+请求仍走原有一次性响应路径。Service 层负责按 `SOURCE → RULE → MODEL → JUDGE`
+校验顺序转发 observer 事件，并在 `repository.complete` 成功后发送 `DECISION`，从而
+不会把未持久化的决策宣称为完成。重放路径只使用缓存决策合成 content-free 的四个
+阶段元数据事件；运行时阶段状态不写入 audit、URL、storage 或 telemetry。
 
 ### 2.2 后端平台层
 

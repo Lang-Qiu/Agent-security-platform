@@ -33,6 +33,7 @@ export interface SandboxSecurityRunLedgerSlotSnapshot {
     | "timeout"
     | "invalid_result";
   readonly obligation?: SandboxDetectorRunObligation;
+  readonly elapsed_ms?: number;
   readonly skip_reason?: SandboxDetectorSkipReason;
   readonly error_code?: SandboxDetectorRunErrorCode;
 }
@@ -388,6 +389,7 @@ export function createSandboxSecurityRunLedger(input: Readonly<{
           slot_id: slot.slot_id,
           status: slot.status,
           ...(slot.obligation ? { obligation: slot.obligation } : {}),
+          ...(slot.elapsed_ms !== undefined ? { elapsed_ms: slot.elapsed_ms } : {}),
           ...(slot.skip_reason ? { skip_reason: slot.skip_reason } : {}),
           ...(slot.error_code ? { error_code: slot.error_code } : {})
         }))

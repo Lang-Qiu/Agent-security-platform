@@ -12,6 +12,7 @@ import type { SandboxSecurityDecision } from "../../../shared/types/sandbox-secu
 import { CapabilitySessionPanel } from "../components/sandbox-security/CapabilitySessionPanel";
 import {
   EvaluationInspector,
+  type EvaluationInspectorStageEvents,
   type EvaluationInspectorState
 } from "../components/sandbox-security/EvaluationInspector";
 import { EvaluationRequestForm } from "../components/sandbox-security/EvaluationRequestForm";
@@ -20,7 +21,7 @@ import {
   describeSandboxSecurityFailure,
   type SandboxSecurityFailureCopy
 } from "../content/sandbox-security-copy";
-import { evaluateSandboxSecurityRequest } from "../services/sandbox-security-service";
+import { streamSandboxSecurityEvaluation } from "../services/sandbox-security-service";
 import type { SandboxSecurityCallResult } from "../services/api-client";
 import {
   measureEvaluationRequestBytes,
@@ -69,6 +70,7 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
   const [idempotencyKey, setIdempotencyKey] = useState<string | null>(null);
   const [lastRequestFacts, setLastRequestFacts] = useState<EvaluationRequestFacts | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [runtimeStages, setRuntimeStages] = useState<EvaluationInspectorStageEvents>({});
   const [evaluationResult, setEvaluationResult] = useState<EvaluationResult | null>(null);
   const [error, setError] = useState<ErrorResult | null>(null);
   // Normalize reduceMotion to boolean once — drives SourceCard entry, Inspector,
@@ -94,10 +96,11 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
 
   const runEvaluation = async (key: string, requestFacts: EvaluationRequestFacts) => {
     setSubmitting(true);
+    setRuntimeStages({});
     setEvaluationResult(null);
     setError(null);
     const result: SandboxSecurityCallResult<SandboxSecurityDecision> =
-      await evaluateSandboxSecurityRequest({
+      await streamSandboxSecurityEvaluation({
         capabilityToken,
         idempotencyKey: key,
         requestId: crypto.randomUUID(),
@@ -105,7 +108,10 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
         policyProfileId,
         contentItems,
         toolRequest: toolRequest ?? undefined,
-        options: fetchImpl ? { fetchImpl } : undefined
+        options: fetchImpl ? { fetchImpl } : undefined,
+        onStage: (event) => {
+          setRuntimeStages((current) => ({ ...current, [event.stage]: event }));
+        }
       });
     setSubmitting(false);
     if (result.kind === "ok") {
@@ -161,7 +167,7 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
   // requiresNewCapability and is surfaced by CapabilitySessionPanel, so the
   // Inspector stays idle in that case rather than showing a duplicate alert.
   const inspectorState: EvaluationInspectorState = submitting
-    ? { kind: "loading" }
+    ? { kind: "loading", runtimeStages }
     : evaluationResult
       ? {
           kind: "result",
@@ -172,7 +178,8 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
         ? {
             kind: "error",
             failure: failureCopy,
-            retryable: isRetryable
+            retryable: isRetryable,
+            runtimeStages
           }
         : { kind: "idle" };
 

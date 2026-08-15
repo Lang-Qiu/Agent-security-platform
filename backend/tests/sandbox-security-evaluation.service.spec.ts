@@ -5,8 +5,10 @@ import test from "node:test";
 import { normalizeSandboxSecurityRequest } from "../../shared/contracts/sandbox-security-request.ts";
 import { normalizeSandboxSecurityDecision } from "../../shared/contracts/sandbox-security.ts";
 import type { SandboxSecurityEvaluationRequest } from "../../engines/sandbox/src/security/index.ts";
+import type { SandboxSecurityEngineStageObservation } from "../../engines/sandbox/src/security/index.ts";
 import type { SandboxSecurityRequest, SandboxSecurityDecision } from "../../shared/types/sandbox-security.ts";
 import type { SandboxSecurityAuditEvent } from "../../shared/types/sandbox-security-api.ts";
+import type { SandboxSecurityEvaluationStreamEvent } from "../../shared/types/sandbox-security-api.ts";
 import * as boundary from "../src/modules/sandbox-security/sandbox-security.module.ts";
 import type { SandboxSecurityEvaluationGateway } from "../src/modules/sandbox-security/ports/evaluation.gateway.ts";
 import {
@@ -125,6 +127,7 @@ function makeGatewayPortsFixture(input: Readonly<{
   fingerprint_error?: unknown;
   engine_error?: unknown;
   decision?: unknown;
+  stage_observations?: readonly Record<string, unknown>[];
 }> = {}) {
   const calls: string[] = [];
   const evaluate_signals: (AbortSignal | undefined)[] = [];
@@ -132,11 +135,15 @@ function makeGatewayPortsFixture(input: Readonly<{
   const engine = {
     async evaluate(
       _request: SandboxSecurityEvaluationRequest,
-      signal?: AbortSignal
+      signal?: AbortSignal,
+      observer?: (observation: SandboxSecurityEngineStageObservation) => void
     ) {
       calls.push("engine.evaluate");
       evaluate_signals.push(signal);
       if (input.engine_error !== undefined) throw input.engine_error;
+      for (const observation of input.stage_observations ?? []) {
+        observer?.(observation as SandboxSecurityEngineStageObservation);
+      }
       return decision as Readonly<SandboxSecurityDecision>;
     }
   };
@@ -239,6 +246,49 @@ test("REQ-SBX-GENERAL-003 production gateway preserves a caller abort signal", a
 
   assert.equal(fixture.evaluate_signals[0], controller.signal);
   assert.equal(fixture.evaluate_signals[0]?.aborted, true);
+});
+
+test("REQ-SBX-GENERAL-006 production gateway maps engine observations to exact live stage events", async () => {
+  const fixture = makeGatewayPortsFixture({
+    stage_observations: [
+      {
+        stage: "source",
+        status: "completed",
+        source_count: 1,
+        tool_request_present: false,
+        elapsed_ms: 0
+      },
+      {
+        stage: "rule",
+        status: "no_match",
+        detector_id: "detector://sandbox/security/rule/default/v1",
+        detector_version: "1.0.0",
+        detector_kind: "rule",
+        obligation: "profile_required",
+        elapsed_ms: 4
+      }
+    ]
+  });
+  const gateway = await createGatewayWithPorts(fixture.ports);
+  const events: SandboxSecurityEvaluationStreamEvent[] = [];
+
+  await (gateway.evaluate as (...args: any[]) => Promise<unknown>)(
+    FIXED_EVALUATION_REQUEST,
+    undefined,
+    (event: SandboxSecurityEvaluationStreamEvent) => events.push(event)
+  );
+
+  assert.deepEqual(
+    events.map((event) =>
+      event.event_type === "stage"
+        ? [event.sequence, event.stage, event.status, event.delivery]
+        : []
+    ),
+    [
+      [1, "source", "completed", "live"],
+      [2, "rule", "no_match", "live"]
+    ]
+  );
 });
 
 test("REQ-SBX-GENERAL-003 production gateway rejects invalid Decisions and defensively normalizes valid Decisions", async () => {
@@ -406,6 +456,7 @@ function makeEvaluationFixture(input: Readonly<{
   authorization_monotonic_advance?: number;
   production_scope?: string;
   authorizer_error?: unknown;
+  stage_events?: readonly SandboxSecurityEvaluationStreamEvent[];
 }> = {}) {
   const state = {
     calls: [] as string[],
@@ -501,11 +552,12 @@ function makeEvaluationFixture(input: Readonly<{
       if (state.fingerprint_error !== undefined) throw state.fingerprint_error;
       return state.fingerprint;
     },
-    async evaluate(request, signal) {
+    async evaluate(request, signal, onStage) {
       state.calls.push("gateway.evaluate");
       state.evaluate_requests.push(request);
       state.evaluate_signals.push(signal);
       if (state.gateway_error !== undefined) throw state.gateway_error;
+      for (const event of input.stage_events ?? []) onStage?.(event as never);
       return structuredClone(state.gateway_decision);
     }
   };
@@ -707,6 +759,95 @@ test("REQ-SBX-GENERAL-003 replays a completed decision without a slot or Engine 
   assert.equal(replay.decision.request_id, "request-001");
   result.findings.push({} as never);
   assert.equal(FIXED_DECISION.findings.length, 0);
+});
+
+test("REQ-SBX-GENERAL-006 forwards live stages before completion persistence", async () => {
+  const sourceEvent = {
+    schema_version: "sandbox-security-evaluation-stream.v1",
+    event_type: "stage",
+    request_id: "request-001",
+    sequence: 1,
+    stage: "source",
+    status: "completed",
+    delivery: "live",
+    result: { source_count: 1, tool_request_present: false, elapsed_ms: 0 }
+  } as const satisfies SandboxSecurityEvaluationStreamEvent;
+  const fixture = makeEvaluationFixture({ stage_events: [sourceEvent] });
+  const order: string[] = [];
+  const originalComplete = fixture.repository.complete.bind(fixture.repository);
+  fixture.repository.complete = (value) => {
+    order.push("persisted");
+    originalComplete(value);
+  };
+
+  await fixture.service.evaluate({
+    ...evaluateInput(),
+    on_stage(event: SandboxSecurityEvaluationStreamEvent) {
+      order.push(`stage:${event.event_type === "stage" ? event.stage : "invalid"}`);
+    }
+  } as never);
+
+  assert.deepEqual(order, ["stage:source", "persisted"]);
+});
+
+test("REQ-SBX-GENERAL-006 synthesizes four replayed stages without an Engine call", async () => {
+  const replayDecision: SandboxSecurityDecision = {
+    ...FIXED_DECISION,
+    detector_runs: [
+      {
+        detector_id: "detector://sandbox/security/rule/default/v1",
+        detector_version: "1.0.0",
+        detector_kind: "rule",
+        obligation: "profile_required",
+        elapsed_ms: 2,
+        status: "no_match",
+        finding_ids: []
+      },
+      {
+        detector_id: "detector://sandbox/security/local/default/v1",
+        detector_version: "1.0.0",
+        detector_kind: "local_model",
+        obligation: "optional_not_selected",
+        elapsed_ms: 0,
+        status: "skipped",
+        skip_reason: "optional_not_configured"
+      },
+      {
+        detector_id: "detector://sandbox/security/judge/default/v1",
+        detector_version: "1.0.0",
+        detector_kind: "external_judge",
+        obligation: "optional_not_selected",
+        elapsed_ms: 0,
+        status: "skipped",
+        skip_reason: "routing_not_selected"
+      }
+    ]
+  };
+  const fixture = makeEvaluationFixture({
+    claim: { kind: "completed", response: replayDecision },
+    replay_decision: replayDecision
+  });
+  const events: SandboxSecurityEvaluationStreamEvent[] = [];
+
+  await fixture.service.evaluate({
+    ...evaluateInput(),
+    on_stage: (event: SandboxSecurityEvaluationStreamEvent) => events.push(event)
+  } as never);
+
+  assert.equal(fixture.state.calls.includes("gateway.evaluate"), false);
+  assert.deepEqual(
+    events.map((event) =>
+      event.event_type === "stage"
+        ? [event.sequence, event.stage, event.status, event.delivery]
+        : []
+    ),
+    [
+      [1, "source", "completed", "replayed"],
+      [2, "rule", "no_match", "replayed"],
+      [3, "model", "skipped", "replayed"],
+      [4, "judge", "skipped", "replayed"]
+    ]
+  );
 });
 
 test("REQ-SBX-GENERAL-003 rejects in-progress and fingerprint-conflict claims without a slot", async () => {

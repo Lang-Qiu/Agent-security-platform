@@ -7,6 +7,7 @@ import type {
   SandboxSecurityRequest,
   SandboxSecurityStage
 } from "../../../../shared/types/sandbox-security.ts";
+import type { SandboxSecurityEvaluationStreamEvent } from "../../../../shared/types/sandbox-security-api.ts";
 import type {
   SandboxSecurityAuditEvent,
   SandboxSecurityAuditPage,
@@ -467,6 +468,9 @@ export interface SandboxSecurityEvaluationService {
     idempotency_key: string;
     submission: SandboxSecurityRequest;
     signal?: AbortSignal;
+    on_stage?: (
+      event: Extract<SandboxSecurityEvaluationStreamEvent, { event_type: "stage" }>
+    ) => void;
   }>): Promise<Readonly<SandboxSecurityDecision>>;
 }
 

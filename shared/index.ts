@@ -128,7 +128,12 @@ export type {
   SandboxSecurityAuditCategoryCounts,
   SandboxSecurityAuditRunStatusCounts,
   SandboxSecurityAuditEvent,
-  SandboxSecurityAuditPage
+  SandboxSecurityAuditPage,
+  SandboxSecurityEvaluationStreamStage,
+  SandboxSecurityEvaluationStreamDelivery,
+  SandboxSecurityEvaluationSourceResult,
+  SandboxSecurityEvaluationDetectorResult,
+  SandboxSecurityEvaluationStreamEvent
 } from "./types/sandbox-security-api.ts";
 export type {
   SandboxSecurityEnforcementAuditCapabilityScope,
@@ -156,7 +161,8 @@ export {
 } from "./contracts/sandbox-security.ts";
 export {
   normalizeSandboxSecurityAuditEvent,
-  normalizeSandboxSecurityAuditPage
+  normalizeSandboxSecurityAuditPage,
+  normalizeSandboxSecurityEvaluationStreamEvent
 } from "./contracts/sandbox-security-api.ts";
 export {
   normalizeSandboxSecurityEnforcementAuditRequest,

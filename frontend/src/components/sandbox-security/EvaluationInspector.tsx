@@ -3,9 +3,9 @@
 //
 // Design: spec R2.1 §4, §7. D13 (layout order != reveal order).
 //
-// Honesty rule (§7): the API is one-shot. Every timed reveal below is a
-// comprehension layer over data that has ALREADY arrived — no reveal implies
-// detector streaming, and no loading surface shows fake progress or percentages.
+// Honesty rule (§7): runtime rows show only validated stream events. The timed
+// result reveal below remains a comprehension layer over the final decision and
+// never implies additional detector execution.
 //
 // This component owns the single polite live region for the Workbench decision.
 // It stays mounted and empty through idle, loading, error, and the pre-decision
@@ -18,6 +18,10 @@ import { Alert, Button, Typography } from "antd";
 import { motion } from "motion/react";
 
 import type { SandboxSecurityDecision } from "../../../../shared/types/sandbox-security";
+import type {
+  SandboxSecurityEvaluationStreamEvent,
+  SandboxSecurityEvaluationStreamStage
+} from "../../../../shared/types/sandbox-security-api";
 import type { SandboxSecurityFailureCopy } from "../../content/sandbox-security-copy";
 import { DecisionSummaryPanel } from "./DecisionSummaryPanel";
 import { EvidenceTrace } from "./EvidenceTrace";
@@ -29,17 +33,28 @@ import { CALM_SPRING, MOMENTUM_SPRING } from "./showcase/showcase-motion";
 
 export type EvaluationInspectorState =
   | { readonly kind: "idle" }
-  | { readonly kind: "loading" }
+  | {
+      readonly kind: "loading";
+      readonly runtimeStages: EvaluationInspectorStageEvents;
+    }
   | {
       readonly kind: "error";
       readonly failure: SandboxSecurityFailureCopy;
       readonly retryable: boolean;
+      readonly runtimeStages: EvaluationInspectorStageEvents;
     }
   | {
       readonly kind: "result";
       readonly decision: SandboxSecurityDecision;
       readonly requestFacts: EvaluationRequestFacts;
     };
+
+export type EvaluationInspectorStageEvents = Partial<
+  Record<
+    SandboxSecurityEvaluationStreamStage,
+    Extract<SandboxSecurityEvaluationStreamEvent, { event_type: "stage" }>
+  >
+>;
 
 export interface EvaluationInspectorProps {
   state: EvaluationInspectorState;
@@ -73,6 +88,14 @@ const REVEAL_ORDER: readonly RevealPhase[] = [
   "execution",
   "settled"
 ];
+
+const RUNTIME_STAGE_ROWS = [
+  { stage: "source", label: "SOURCE", detectorKind: "source" },
+  { stage: "rule", label: "RULE", detectorKind: "rule" },
+  { stage: "model", label: "MODEL", detectorKind: "local_model" },
+  { stage: "judge", label: "JUDGE", detectorKind: "external_judge" },
+  { stage: "decision", label: "DECISION", detectorKind: "decision" }
+] as const;
 
 function hasReached(current: RevealPhase, target: RevealPhase): boolean {
   return REVEAL_ORDER.indexOf(current) >= REVEAL_ORDER.indexOf(target);
@@ -114,10 +137,11 @@ function IdleInspector() {
   );
 }
 
-function RunningInspector() {
-  // Detector-kind labels only. No detector IDs, no percentages, no progressbar:
-  // the API has not returned, so there is nothing honest to report per detector.
-  const kinds = ["rule", "local_model", "external_judge"] as const;
+function RunningInspector({
+  runtimeStages
+}: {
+  runtimeStages: EvaluationInspectorStageEvents;
+}) {
   return (
     <SpotlightSurface
       className="console-panel workbench-inspector-running"
@@ -126,12 +150,34 @@ function RunningInspector() {
       <span className="workbench-evaluating-badge" data-mono="true">
         EVALUATING
       </span>
-      <div className="workbench-inspector-running__rows">
-        {kinds.map((kind) => (
-          <div key={kind} className="workbench-shimmer-row" aria-hidden="true">
-            <span data-mono="true">{kind}</span>
-          </div>
-        ))}
+      <div className="workbench-inspector-running__rows" aria-live="polite">
+        {RUNTIME_STAGE_ROWS.map(({ stage, label, detectorKind }) => {
+          const event = runtimeStages[stage];
+          const status = event?.status ?? "pending";
+          const metadata = event?.event_type === "stage"
+            ? event.stage === "source"
+              ? `${event.result.source_count} source${event.result.source_count === 1 ? "" : "s"}`
+              : event.result.skip_reason ?? event.result.detector_kind
+            : detectorKind;
+          return (
+            <div
+              key={stage}
+              className="workbench-runtime-stage-row"
+              data-testid={`runtime-stage-${stage}`}
+              data-stage-status={status}
+            >
+              <span className="workbench-runtime-stage-row__label" data-mono="true">
+                {label}
+              </span>
+              <span className="workbench-runtime-stage-row__status" data-mono="true">
+                {status}
+              </span>
+              <span className="workbench-runtime-stage-row__metadata" data-mono="true">
+                {metadata}
+              </span>
+            </div>
+          );
+        })}
       </div>
     </SpotlightSurface>
   );
@@ -205,22 +251,27 @@ export function EvaluationInspector({
       )}
 
       {state.kind === "idle" ? <IdleInspector /> : null}
-      {state.kind === "loading" ? <RunningInspector /> : null}
+      {state.kind === "loading" ? (
+        <RunningInspector runtimeStages={state.runtimeStages} />
+      ) : null}
       {state.kind === "error" ? (
-        <section className="console-panel workbench-inspector-error">
-          <Alert
-            role="alert"
-            type="error"
-            showIcon
-            title={state.failure.title}
-            description={state.failure.remedy}
-          />
-          {state.retryable ? (
-            <Button className="sandbox-workbench-retry" size="small" onClick={onRetry}>
-              重试请求
-            </Button>
-          ) : null}
-        </section>
+        <>
+          <section className="console-panel workbench-inspector-error">
+            <Alert
+              role="alert"
+              type="error"
+              showIcon
+              title={state.failure.title}
+              description={state.failure.remedy}
+            />
+            {state.retryable ? (
+              <Button className="sandbox-workbench-retry" size="small" onClick={onRetry}>
+                重试请求
+              </Button>
+            ) : null}
+          </section>
+          <RunningInspector runtimeStages={state.runtimeStages} />
+        </>
       ) : null}
 
       {state.kind === "result" ? (

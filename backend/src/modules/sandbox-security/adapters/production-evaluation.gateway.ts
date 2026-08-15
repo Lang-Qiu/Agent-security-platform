@@ -2,6 +2,7 @@ import {
   createSandboxSecurityCanonicalFingerprintService,
   type SandboxSecurityCanonicalFingerprintService,
   type SandboxSecurityEngine,
+  type SandboxSecurityEngineStageObservation,
   type SandboxSecurityEvaluationRequest,
   type SandboxSecurityRuntimePorts
 } from "../../../../../engines/sandbox/src/security/index.ts";
@@ -9,10 +10,12 @@ import {
   createSandboxSecurityProductionEngine
 } from "../../../../../engines/sandbox/src/security-production/index.ts";
 import {
+  normalizeSandboxSecurityEvaluationStreamEvent,
   normalizeSandboxSecurityDecision,
   type SandboxSecurityDecision
 } from "../../../../../shared/index.ts";
 import type { SandboxSecurityEvaluationGateway } from "../ports/evaluation.gateway.ts";
+import type { SandboxSecurityEvaluationStageEvent } from "../ports/evaluation.gateway.ts";
 import type {
   SandboxSecurityHmacService,
   SandboxSecurityProductionMode
@@ -20,6 +23,49 @@ import type {
 import { createSandboxSecurityServiceError } from "../sandbox-security.errors.ts";
 
 const FINGERPRINT_PATTERN = /^hmac-sha256:[a-f0-9]{64}$/;
+const STAGE_SEQUENCE = { source: 1, rule: 2, model: 3, judge: 4 } as const;
+
+function mapStageObservation(
+  requestId: string,
+  observation: SandboxSecurityEngineStageObservation
+): SandboxSecurityEvaluationStageEvent {
+  const event = observation.stage === "source"
+    ? {
+        schema_version: "sandbox-security-evaluation-stream.v1",
+        event_type: "stage",
+        request_id: requestId,
+        sequence: 1,
+        stage: "source",
+        status: "completed",
+        delivery: "live",
+        result: {
+          source_count: observation.source_count,
+          tool_request_present: observation.tool_request_present,
+          elapsed_ms: observation.elapsed_ms
+        }
+      }
+    : {
+        schema_version: "sandbox-security-evaluation-stream.v1",
+        event_type: "stage",
+        request_id: requestId,
+        sequence: STAGE_SEQUENCE[observation.stage],
+        stage: observation.stage,
+        status: observation.status,
+        delivery: "live",
+        result: {
+          detector_id: observation.detector_id,
+          detector_version: observation.detector_version,
+          detector_kind: observation.detector_kind,
+          obligation: observation.obligation,
+          elapsed_ms: observation.elapsed_ms,
+          ...(observation.error_code ? { error_code: observation.error_code } : {}),
+          ...(observation.skip_reason ? { skip_reason: observation.skip_reason } : {})
+        }
+      };
+  const normalized = normalizeSandboxSecurityEvaluationStreamEvent(event);
+  if (normalized === null || normalized.event_type !== "stage") throw internalError();
+  return normalized;
+}
 
 function internalError(): ReturnType<typeof createSandboxSecurityServiceError> {
   return createSandboxSecurityServiceError({
@@ -65,11 +111,18 @@ export async function createSandboxSecurityProductionEvaluationGatewayWithPorts(
     },
     async evaluate(
       request: Readonly<SandboxSecurityEvaluationRequest>,
-      signal?: AbortSignal
+      signal?: AbortSignal,
+      onStage?: (event: SandboxSecurityEvaluationStageEvent) => void
     ): Promise<Readonly<SandboxSecurityDecision>> {
       let decision: unknown;
       try {
-        decision = await engine.evaluate(request, signal);
+        decision = await engine.evaluate(
+          request,
+          signal,
+          onStage
+            ? (observation) => onStage(mapStageObservation(request.submission.request_id, observation))
+            : undefined
+        );
       } catch {
         throw internalError();
       }

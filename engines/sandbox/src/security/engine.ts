@@ -71,16 +71,45 @@ import {
   normalizeSandboxSecurityDecision
 } from "../../../../shared/contracts/sandbox-security.ts";
 import type {
+  SandboxDetectorRunErrorCode,
+  SandboxDetectorRunObligation,
+  SandboxDetectorRunStatus,
+  SandboxDetectorSkipReason,
   SandboxDetectorRun,
   SandboxSecurityDecision,
   SandboxSecurityFinding,
   SandboxSecuritySeverity
 } from "../../../../shared/types/sandbox-security.ts";
 
+export type SandboxSecurityEngineStageObservation =
+  | Readonly<{
+      stage: "source";
+      status: "completed";
+      source_count: number;
+      tool_request_present: boolean;
+      elapsed_ms: number;
+    }>
+  | Readonly<{
+      stage: "rule" | "model" | "judge";
+      status: SandboxDetectorRunStatus;
+      detector_id: string;
+      detector_version: string;
+      detector_kind: "rule" | "local_model" | "external_judge";
+      obligation: SandboxDetectorRunObligation;
+      elapsed_ms: number;
+      error_code?: SandboxDetectorRunErrorCode;
+      skip_reason?: SandboxDetectorSkipReason;
+    }>;
+
+export type SandboxSecurityEngineStageObserver = (
+  observation: SandboxSecurityEngineStageObservation
+) => void;
+
 export interface SandboxSecurityEngine {
   evaluate(
     request: Readonly<SandboxSecurityEvaluationRequest>,
-    callerSignal?: AbortSignal
+    callerSignal?: AbortSignal,
+    stageObserver?: SandboxSecurityEngineStageObserver
   ): Promise<Readonly<SandboxSecurityDecision>>;
 }
 
@@ -305,7 +334,7 @@ function createSandboxSecurityEngineInternal(deps: {
   }
 
   return {
-    async evaluate(request, callerSignal) {
+    async evaluate(request, callerSignal, stageObserver) {
       if (callerSignal?.aborted) {
         throwNamed(CANCELLED);
       }
@@ -385,6 +414,16 @@ function createSandboxSecurityEngineInternal(deps: {
         canonical_request_sha256: prepared.canonical_projection_sha256
       });
 
+      stageObserver?.(
+        deepFreeze({
+          stage: "source",
+          status: "completed",
+          source_count: snapshot.contents.length,
+          tool_request_present: snapshot.tool_request !== undefined,
+          elapsed_ms: 0
+        })
+      );
+
       if (deadline.remainingMs() <= 0) {
         throwNamed(INTERNAL, "pre_id_evaluation_budget_exhausted");
       }
@@ -445,6 +484,48 @@ function createSandboxSecurityEngineInternal(deps: {
             }
           : {})
       });
+
+      const observedSlots = new Set<string>();
+      const observeTerminalSlot = (
+        slot: Readonly<SandboxSecurityDetectorSlotManifest>
+      ): void => {
+        if (!stageObserver || observedSlots.has(slot.slot_id)) return;
+        const terminal = runLedger.snapshot().slots.find(
+          (item) => item.slot_id === slot.slot_id
+        );
+        if (
+          !terminal ||
+          terminal.status === "not_started" ||
+          terminal.status === "running"
+        ) {
+          return;
+        }
+        const stage =
+          slot.detector_kind === "rule"
+            ? "rule"
+            : slot.detector_kind === "local_model"
+              ? "model"
+              : "judge";
+        const observation = {
+          stage,
+          status: terminal.status,
+          detector_id: slot.slot_id,
+          detector_version: slot.detector_version,
+          detector_kind: slot.detector_kind,
+          obligation: terminal.obligation ?? "optional_not_selected",
+          elapsed_ms: terminal.elapsed_ms ?? 0,
+          ...(terminal.status === "timeout"
+            ? { error_code: "detector_timeout" as const }
+            : terminal.error_code
+              ? { error_code: terminal.error_code }
+              : {}),
+          ...(terminal.skip_reason
+            ? { skip_reason: terminal.skip_reason }
+            : {})
+        } as SandboxSecurityEngineStageObservation;
+        observedSlots.add(slot.slot_id);
+        stageObserver(deepFreeze(observation));
+      };
 
       const markSkip = (
         slot: Readonly<SandboxSecurityDetectorSlotManifest>,
@@ -694,6 +775,7 @@ function createSandboxSecurityEngineInternal(deps: {
             };
           }
         }
+        observeTerminalSlot(ruleSlot);
 
         // LOCAL
         // Selection is decided after rule short-circuit even if budget is already
@@ -750,6 +832,7 @@ function createSandboxSecurityEngineInternal(deps: {
             }
           }
         }
+        observeTerminalSlot(localSlot);
 
         // JUDGE
         // Short-circuit terminalization must run even when the work budget is
@@ -1295,6 +1378,9 @@ function createSandboxSecurityEngineInternal(deps: {
             markEvaluationTerminated(slot);
           }
         }
+      }
+      for (const slot of profile.detector_slots) {
+        observeTerminalSlot(slot);
       }
 
       // Publication

@@ -2,8 +2,10 @@ import {
   type SandboxSecurityAuditCategoryCounts,
   type SandboxSecurityAuditEvent,
   type SandboxSecurityAuditPage,
-  type SandboxSecurityCapabilityScope
+  type SandboxSecurityCapabilityScope,
+  type SandboxSecurityEvaluationStreamEvent
 } from "../types/sandbox-security-api.ts";
+import { normalizeSandboxSecurityDecision } from "./sandbox-security.ts";
 import {
   SANDBOX_SECURITY_ACTIONS,
   SANDBOX_SECURITY_POLICY_PROFILE_IDS as POLICY_PROFILE_CATALOG,
@@ -30,11 +32,17 @@ const AUDIT_RUN_STATUS_CATALOG = [
 ] as const satisfies readonly SandboxDetectorRunStatus[];
 const EVENT_SCHEMA_VERSION = "sandbox-security-audit-event.v1";
 const PAGE_SCHEMA_VERSION = "sandbox-security-audit-page.v1";
+const EVALUATION_STREAM_SCHEMA_VERSION =
+  "sandbox-security-evaluation-stream.v1";
 const EVENT_ID_PATTERN =
   /^audit:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const UTC_MILLISECOND_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})\.(\d{3})Z$/;
 const IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const DETECTOR_ID_PATTERN =
+  /^detector:\/\/[A-Za-z0-9][A-Za-z0-9._-]{0,63}(?:\/[A-Za-z0-9][A-Za-z0-9._-]{0,63}){1,7}$/;
+const DETECTOR_VERSION_PATTERN =
+  /^[0-9]+\.[0-9]+\.[0-9]+(?:-[a-z0-9.-]+)?$/;
 const SUBJECT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/;
 const AUTHORIZATION_SCOPE_PATTERN = /^authscope:hmac-sha256:[0-9a-f]{64}$/;
 const CAPABILITY_ID_PATTERN =
@@ -160,6 +168,14 @@ function isCatalogValue<const T extends readonly string[]>(
 
 function isIdentifier(value: unknown): value is string {
   return typeof value === "string" && IDENTIFIER_PATTERN.test(value);
+}
+
+function isDetectorId(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 128 && DETECTOR_ID_PATTERN.test(value);
+}
+
+function isDetectorVersion(value: unknown): value is string {
+  return typeof value === "string" && value.length <= 64 && DETECTOR_VERSION_PATTERN.test(value);
 }
 
 function isSubject(value: unknown): value is string {
@@ -597,4 +613,221 @@ export function normalizeSandboxSecurityAuditPage(
     events,
     next_cursor: value.next_cursor
   };
+}
+
+const STREAM_SEQUENCE_BY_STAGE = {
+  source: 1,
+  rule: 2,
+  model: 3,
+  judge: 4
+} as const;
+
+const STREAM_DETECTOR_KIND_BY_STAGE = {
+  rule: "rule",
+  model: "local_model",
+  judge: "external_judge"
+} as const;
+
+function normalizeStreamStage(
+  value: PlainRecord
+): SandboxSecurityEvaluationStreamEvent | null {
+  if (
+    !hasExactKeys(value, [
+      "schema_version",
+      "event_type",
+      "request_id",
+      "sequence",
+      "stage",
+      "status",
+      "delivery",
+      "result"
+    ]) ||
+    value.schema_version !== EVALUATION_STREAM_SCHEMA_VERSION ||
+    value.event_type !== "stage" ||
+    !isIdentifier(value.request_id) ||
+    !isCatalogValue(["live", "replayed"] as const, value.delivery) ||
+    !isCatalogValue(["source", "rule", "model", "judge"] as const, value.stage) ||
+    value.sequence !== STREAM_SEQUENCE_BY_STAGE[value.stage] ||
+    !isOwnEnumerableDataRecord(value.result)
+  ) {
+    return null;
+  }
+
+  if (value.stage === "source") {
+    if (
+      value.status !== "completed" ||
+      !hasExactKeys(value.result, [
+        "source_count",
+        "tool_request_present",
+        "elapsed_ms"
+      ]) ||
+      !isSafeCount(value.result.source_count) ||
+      typeof value.result.tool_request_present !== "boolean" ||
+      !isElapsedMs(value.result.elapsed_ms)
+    ) {
+      return null;
+    }
+    return {
+      schema_version: EVALUATION_STREAM_SCHEMA_VERSION,
+      event_type: "stage",
+      request_id: value.request_id,
+      sequence: 1,
+      stage: "source",
+      status: "completed",
+      delivery: value.delivery,
+      result: {
+        source_count: value.result.source_count,
+        tool_request_present: value.result.tool_request_present,
+        elapsed_ms: value.result.elapsed_ms
+      }
+    };
+  }
+
+  if (
+    !isCatalogValue(AUDIT_RUN_STATUS_CATALOG, value.status) ||
+    !isDetectorId(value.result.detector_id) ||
+    !isDetectorVersion(value.result.detector_version) ||
+    value.result.detector_kind !== STREAM_DETECTOR_KIND_BY_STAGE[value.stage] ||
+    !isCatalogValue(
+      ["profile_required", "runtime_required", "optional_not_selected"] as const,
+      value.result.obligation
+    ) ||
+    !isElapsedMs(value.result.elapsed_ms)
+  ) {
+    return null;
+  }
+
+  const baseKeys = [
+    "detector_id",
+    "detector_version",
+    "detector_kind",
+    "obligation",
+    "elapsed_ms"
+  ];
+  const result = {
+    detector_id: value.result.detector_id,
+    detector_version: value.result.detector_version,
+    detector_kind: value.result.detector_kind,
+    obligation: value.result.obligation,
+    elapsed_ms: value.result.elapsed_ms
+  };
+  if (value.status === "failed" || value.status === "timeout" || value.status === "invalid_result") {
+    if (
+      !hasExactKeys(value.result, [...baseKeys, "error_code"]) ||
+      !isIdentifier(value.result.error_code)
+    ) {
+      return null;
+    }
+    return {
+      schema_version: EVALUATION_STREAM_SCHEMA_VERSION,
+      event_type: "stage",
+      request_id: value.request_id,
+      sequence: STREAM_SEQUENCE_BY_STAGE[value.stage],
+      stage: value.stage,
+      status: value.status,
+      delivery: value.delivery,
+      result: { ...result, error_code: value.result.error_code }
+    } as SandboxSecurityEvaluationStreamEvent;
+  }
+  if (value.status === "skipped") {
+    if (
+      !hasExactKeys(value.result, [...baseKeys, "skip_reason"]) ||
+      !isCatalogValue(
+        [
+          "optional_not_configured",
+          "optional_not_selected",
+          "routing_not_selected",
+          "risk_short_circuit",
+          "evaluation_terminated"
+        ] as const,
+        value.result.skip_reason
+      )
+    ) {
+      return null;
+    }
+    return {
+      schema_version: EVALUATION_STREAM_SCHEMA_VERSION,
+      event_type: "stage",
+      request_id: value.request_id,
+      sequence: STREAM_SEQUENCE_BY_STAGE[value.stage],
+      stage: value.stage,
+      status: "skipped",
+      delivery: value.delivery,
+      result: { ...result, skip_reason: value.result.skip_reason }
+    } as SandboxSecurityEvaluationStreamEvent;
+  }
+  if (!hasExactKeys(value.result, baseKeys)) return null;
+  return {
+    schema_version: EVALUATION_STREAM_SCHEMA_VERSION,
+    event_type: "stage",
+    request_id: value.request_id,
+    sequence: STREAM_SEQUENCE_BY_STAGE[value.stage],
+    stage: value.stage,
+    status: value.status,
+    delivery: value.delivery,
+    result
+  } as SandboxSecurityEvaluationStreamEvent;
+}
+
+export function normalizeSandboxSecurityEvaluationStreamEvent(
+  value: unknown
+): SandboxSecurityEvaluationStreamEvent | null {
+  if (!isOwnEnumerableDataRecord(value)) return null;
+  if (value.event_type === "stage") return normalizeStreamStage(value);
+  if (value.event_type === "decision") {
+    if (
+      !hasExactKeys(value, [
+        "schema_version",
+        "event_type",
+        "request_id",
+        "sequence",
+        "stage",
+        "delivery",
+        "decision"
+      ]) ||
+      value.schema_version !== EVALUATION_STREAM_SCHEMA_VERSION ||
+      !isIdentifier(value.request_id) ||
+      value.sequence !== 5 ||
+      value.stage !== "decision" ||
+      !isCatalogValue(["live", "replayed"] as const, value.delivery)
+    ) {
+      return null;
+    }
+    const decision = normalizeSandboxSecurityDecision(value.decision);
+    if (decision === null || decision.request_id !== value.request_id) return null;
+    return {
+      schema_version: EVALUATION_STREAM_SCHEMA_VERSION,
+      event_type: "decision",
+      request_id: value.request_id,
+      sequence: 5,
+      stage: "decision",
+      delivery: value.delivery,
+      decision
+    };
+  }
+  if (value.event_type === "error") {
+    if (
+      !hasExactKeys(value, [
+        "schema_version",
+        "event_type",
+        "request_id",
+        "error_code",
+        "retryable"
+      ]) ||
+      value.schema_version !== EVALUATION_STREAM_SCHEMA_VERSION ||
+      !isIdentifier(value.request_id) ||
+      !isIdentifier(value.error_code) ||
+      typeof value.retryable !== "boolean"
+    ) {
+      return null;
+    }
+    return {
+      schema_version: EVALUATION_STREAM_SCHEMA_VERSION,
+      event_type: "error",
+      request_id: value.request_id,
+      error_code: value.error_code,
+      retryable: value.retryable
+    };
+  }
+  return null;
 }

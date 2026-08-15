@@ -504,6 +504,13 @@ findings and detector context, and a content-free execution trace. This is a
 post-response comprehension layer, not detector streaming or enforcement
 progress. Reloading or submitting a new request removes the prior result.
 
+REQ-SBX-GENERAL-006 adds optional real runtime streaming on the same evaluation
+route. Clients requesting `text/event-stream` see ordered `SOURCE`, `RULE`,
+`MODEL`, `JUDGE`, and `DECISION` stage results as they complete; MODEL/JUDGE
+short-circuits are explicit `skipped` results. Clients without that `Accept`
+value retain the existing JSON response, and the final decision still enters
+the unchanged result presentation.
+
 Reduced-motion clients receive the complete settled result on the first result
 frame. Runtime labels use only returned decision fields plus a client-side,
 content-free submission snapshot (`client_submitted_at`, source count, and

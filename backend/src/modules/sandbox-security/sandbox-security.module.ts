@@ -2,7 +2,10 @@ import type { IncomingMessage } from "node:http";
 
 import type { HttpResponse } from "../../common/http/http-response.ts";
 import { createSandboxSecurityAdminController } from "./sandbox-security-admin.controller.ts";
-import { createSandboxSecurityController } from "./sandbox-security.controller.ts";
+import {
+  createSandboxSecurityController,
+  type SandboxSecurityEvaluationDelivery
+} from "./sandbox-security.controller.ts";
 import {
   createSandboxSecurityEnforcementAuditController,
   type SandboxSecurityEnforcementAuditController
@@ -185,7 +188,11 @@ export {
 } from "./sandbox-security-enforcement-audit.controller.ts";
 
 export interface SandboxSecurityPublicController {
-  evaluate(request: IncomingMessage, requestId: string): Promise<HttpResponse>;
+  evaluate(
+    request: IncomingMessage,
+    requestId: string,
+    delivery?: Readonly<SandboxSecurityEvaluationDelivery>
+  ): Promise<HttpResponse>;
   listAuditEvents(
     request: IncomingMessage,
     url: URL,

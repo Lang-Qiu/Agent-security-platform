@@ -10272,3 +10272,43 @@ User sixth review identified that R31's `SUPERVISION_STATE_CHANGES` closed set w
   - `README.md`, `docs/architecture.md`, and `docs/api-contract.md` require no
     change because this requirement changes no product behavior or boundary
 - suggested commit: `docs(report): upgrade evidence-led visual system`
+
+## 2026-08-16 - REQ-SBX-GENERAL-006 Sandbox security evaluation runtime streaming
+
+- status: `COMPLETE`
+- design: documented and approved the shared SSE event contract, engine observer
+  boundary, backend content negotiation, persistence ordering, and React-only
+  runtime stage state in
+  `docs/superpowers/specs/2026-08-16-sandbox-security-evaluation-runtime-streaming-design.md`
+- implementation:
+  - added strict shared `sandbox-security-evaluation-stream.v1` types and
+    normalizer
+  - added real SOURCE/RULE/MODEL/JUDGE observer points and explicit skipped
+    observations in the sandbox engine
+  - added ordered SSE delivery, replay synthesis, post-header error framing,
+    client disconnect cancellation, and JSON compatibility to the existing
+    evaluation route
+  - replaced the loading shimmer with five fixed runtime-stage rows; the final
+    decision continues to the existing result DOM without structural changes
+- tests:
+  - RED was verified for the missing shared normalizer, engine observer,
+    backend stream, frontend stream client, and Workbench stage rendering
+  - frontend full suite: `32/32` files, `414/414` tests passed
+  - post-review Workbench/service regression: `39/39` passed; production Vite
+    build passed (existing bundle-size warning only)
+  - shared suite: `227/227` tests passed; `npm run typecheck:shared` passed
+  - GENERAL-006 backend service/integration: `4/4` passed
+  - GENERAL-006 sandbox engine: `3/3` passed
+  - full sandbox engine suite: `1018/1033`; the 15 failures are confined to
+    existing GENERAL-001 fake-monotonic budget/termination assertions and are
+    outside this requirement's observer path
+  - the complete backend integration file still has three unrelated production
+    startup failures (`SANDBOX_SECURITY_STARTUP_FAILED`) in existing SQLite
+    restart/sentinel/HMAC scenarios; the new SSE integration remains green
+  - frontend `tsc` remains blocked by repository-wide NodeNext import-extension,
+    path, JSX, and pre-existing component/spec type errors; the standard Vite
+    build and Vitest gates are green
+- files: shared stream contract, sandbox engine observer, backend evaluation
+  gateway/service/controller/HTTP wiring, frontend stream service and Workbench
+  Inspector, focused tests, and the API/architecture/README documentation
+- suggested commit: `feat(sandbox): stream evaluation runtime stages`

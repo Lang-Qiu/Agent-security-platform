@@ -12,6 +12,8 @@ import {
   sandboxSecurityServiceErrorToHttpError
 } from "./http-admission.ts";
 import type { SandboxSecurityAuditRepository } from "./ports/audit.repository.ts";
+import type { SandboxSecurityEvaluationStreamEvent } from "../../../../shared/types/sandbox-security-api.ts";
+import type { SandboxSecurityDecision } from "../../../../shared/types/sandbox-security.ts";
 import type { SandboxSecurityRuntimePort } from "./ports/runtime.ts";
 import {
   isSandboxSecurityServiceError,
@@ -265,6 +267,14 @@ function mapServiceError(error: unknown): SandboxSecurityHttpError {
   });
 }
 
+export interface SandboxSecurityEvaluationDelivery {
+  signal?: AbortSignal;
+  on_stage?: (
+    event: Extract<SandboxSecurityEvaluationStreamEvent, { event_type: "stage" }>
+  ) => void;
+  on_decision?: (decision: Readonly<SandboxSecurityDecision>) => void;
+}
+
 export function createSandboxSecurityController(input: Readonly<{
   composition_binding: string;
   authenticator: SandboxSecurityCapabilityAuthenticator;
@@ -277,7 +287,11 @@ export function createSandboxSecurityController(input: Readonly<{
   audit_repository: SandboxSecurityAuditRepository;
   runtime: SandboxSecurityRuntimePort;
 }>): {
-  evaluate(request: IncomingMessage, requestId: string): Promise<HttpResponse>;
+  evaluate(
+    request: IncomingMessage,
+    requestId: string,
+    delivery?: Readonly<SandboxSecurityEvaluationDelivery>
+  ): Promise<HttpResponse>;
   listAuditEvents(
     request: IncomingMessage,
     url: URL,
@@ -357,7 +371,11 @@ export function createSandboxSecurityController(input: Readonly<{
     void requestId;
   }
 
-  async function evaluate(request: IncomingMessage, requestId: string): Promise<HttpResponse> {
+  async function evaluate(
+    request: IncomingMessage,
+    requestId: string,
+    delivery?: Readonly<SandboxSecurityEvaluationDelivery>
+  ): Promise<HttpResponse> {
     const startedAt = safeMonotonic(runtime);
     let capability: SandboxSecurityAuthorizedCapability | null = null;
     let submission: SandboxSecurityRequest | null = null;
@@ -534,8 +552,11 @@ export function createSandboxSecurityController(input: Readonly<{
       const decision = await evaluationService.evaluate({
         capability,
         idempotency_key: idempotencyKey,
-        submission
+        submission,
+        ...(delivery?.signal ? { signal: delivery.signal } : {}),
+        ...(delivery?.on_stage ? { on_stage: delivery.on_stage } : {})
       });
+      delivery?.on_decision?.(decision);
       return createSuccessHttpResponse({
         requestId,
         message: "Sandbox security evaluation completed",

@@ -4,6 +4,7 @@ import {
   evaluateSandboxSecurityRequest,
   readSandboxSecurityAuditPage
 } from "./sandbox-security-service";
+import * as sandboxSecurityService from "./sandbox-security-service";
 
 const DECISION = {
   schema_version: "sandbox-security-decision.v1",
@@ -194,5 +195,98 @@ describe("REQ-SBX-GENERAL-005 sandbox security service", () => {
     expect(
       (fetchImpl.mock.calls[1][1].headers as Record<string, string>).authorization
     ).toBe("Bearer tok-b");
+  });
+});
+
+describe("REQ-SBX-GENERAL-006 sandbox security evaluation stream", () => {
+  it("parses incremental stage events and returns the final decision", async () => {
+    expect(typeof sandboxSecurityService.streamSandboxSecurityEvaluation).toBe(
+      "function"
+    );
+    const chunks: string[] = [];
+    let streamController!: ReadableStreamDefaultController<Uint8Array>;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        streamController = controller;
+      }
+    });
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(body, {
+        status: 200,
+        headers: { "content-type": "text/event-stream; charset=utf-8" }
+      })
+    );
+    const stages: unknown[] = [];
+    const stream = sandboxSecurityService.streamSandboxSecurityEvaluation({
+      capabilityToken: "tok",
+      idempotencyKey: "key-1",
+      requestId: "req-1",
+      stage: "user_input",
+      policyProfileId: "sandbox-security-balanced.v1",
+      contentItems: [ITEM],
+      onStage: (event) => stages.push(event),
+      options: { fetchImpl }
+    });
+    const encoder = new TextEncoder();
+    const send = (event: string, data: unknown) => {
+      const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+      chunks.push(frame);
+      streamController.enqueue(encoder.encode(frame));
+    };
+    send("stage", {
+      schema_version: "sandbox-security-evaluation-stream.v1",
+      event_type: "stage",
+      request_id: "req-1",
+      sequence: 1,
+      stage: "source",
+      status: "completed",
+      delivery: "live",
+      result: { source_count: 1, tool_request_present: false, elapsed_ms: 0 }
+    });
+    await vi.waitFor(() => expect(stages).toHaveLength(1));
+    for (const [sequence, stage, detectorKind, skipReason] of [
+      [2, "rule", "rule", null],
+      [3, "model", "local_model", "optional_not_configured"],
+      [4, "judge", "external_judge", "routing_not_selected"]
+    ] as const) {
+      send("stage", {
+        schema_version: "sandbox-security-evaluation-stream.v1",
+        event_type: "stage",
+        request_id: "req-1",
+        sequence,
+        stage,
+        status: skipReason === null ? "no_match" : "skipped",
+        delivery: "live",
+        result: {
+          detector_id: `detector://sandbox/security/${stage}/default/v1`,
+          detector_version: "1.0.0",
+          detector_kind: detectorKind,
+          obligation: skipReason === null ? "profile_required" : "optional_not_selected",
+          elapsed_ms: 1,
+          ...(skipReason === null ? {} : { skip_reason: skipReason })
+        }
+      });
+    }
+    send("decision", {
+      schema_version: "sandbox-security-evaluation-stream.v1",
+      event_type: "decision",
+      request_id: "req-1",
+      sequence: 5,
+      stage: "decision",
+      delivery: "live",
+      decision: DECISION
+    });
+    streamController.close();
+
+    const result = await stream;
+    expect(result.kind).toBe("ok");
+    expect(stages).toHaveLength(4);
+    const init = fetchImpl.mock.calls[0][1] as RequestInit;
+    expect(init.headers).toMatchObject({
+      accept: "text/event-stream",
+      authorization: "Bearer tok",
+      "idempotency-key": "key-1"
+    });
+    expect(chunks).toHaveLength(5);
   });
 });

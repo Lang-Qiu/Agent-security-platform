@@ -783,27 +783,55 @@ a {
 
 .workbench-inspector-running__rows {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   margin-top: 18px;
 }
 
-.workbench-shimmer-row {
-  position: relative;
-  min-height: 42px;
-  padding: 12px 14px;
+.workbench-runtime-stage-row {
+  display: grid;
+  grid-template-columns: 88px minmax(76px, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 10px 12px;
   border: 1px solid var(--console-border);
-  border-radius: 10px;
+  border-radius: 6px;
   background: var(--console-surface-raised);
-  color: var(--console-muted-dim);
-  overflow: hidden;
 }
 
-.workbench-shimmer-row::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, transparent, var(--console-veil), transparent);
-  animation: workbench-shimmer 1.5s linear infinite;
+.workbench-runtime-stage-row__label {
+  color: var(--console-ink);
+  font-weight: 700;
+}
+
+.workbench-runtime-stage-row__status {
+  color: var(--console-muted-dim);
+}
+
+.workbench-runtime-stage-row__metadata {
+  min-width: 0;
+  color: var(--console-muted-dim);
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+.workbench-runtime-stage-row:not([data-stage-status="pending"]) {
+  border-color: var(--console-border-interactive);
+}
+
+.workbench-runtime-stage-row:not([data-stage-status="pending"])
+  .workbench-runtime-stage-row__status {
+  color: var(--console-action-allow);
+}
+
+.workbench-runtime-stage-row[data-stage-status="error"]
+  .workbench-runtime-stage-row__status {
+  color: var(--console-action-deny);
+}
+
+.workbench-runtime-stage-row[data-stage-status="skipped"]
+  .workbench-runtime-stage-row__status {
+  color: var(--console-severity-medium);
 }
 
 .workbench-decision-hero {
@@ -1226,15 +1254,6 @@ a {
   }
 }
 
-@keyframes workbench-shimmer {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(200%);
-  }
-}
-
 @media (max-width: 1100px) {
   .workbench-insight-grid {
     grid-template-columns: 1fr;
@@ -1290,12 +1309,10 @@ a {
     transition: none;
   }
 
-  .workbench-evaluating-badge,
-  .workbench-shimmer-row::after {
+  .workbench-evaluating-badge {
     animation: none;
   }
 
-  .workbench-shimmer-row::after,
   .workbench-evidence-trace__decision-glow {
     display: none;
   }

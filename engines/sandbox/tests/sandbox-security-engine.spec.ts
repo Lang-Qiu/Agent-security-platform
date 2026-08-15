@@ -4339,6 +4339,109 @@ test("REQ-SBX-GENERAL-001 work budget starts at evaluate entry", async () => {
   assert.ok(track.mono >= 1);
 });
 
+test("REQ-SBX-GENERAL-006 observes SOURCE RULE MODEL JUDGE at real terminal points", async () => {
+  const observations: Array<Record<string, unknown>> = [];
+  let releaseLocal!: () => void;
+  const localBlocked = new Promise<void>((resolve) => {
+    releaseLocal = resolve;
+  });
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never,
+      local: {
+        async detect() {
+          await localBlocked;
+          return { candidates: [], clearances: [] };
+        }
+      } as never
+    }),
+    runtime: createRuntime().ports
+  });
+
+  const evaluation = (engine.evaluate as (...args: any[]) => Promise<unknown>)(
+    makeEvalRequest() as never,
+    undefined,
+    (observation: Record<string, unknown>) => observations.push(observation)
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(
+    observations.map((observation) => observation.stage),
+    ["source", "rule"]
+  );
+
+  releaseLocal();
+  await evaluation;
+  assert.deepEqual(
+    observations.map((observation) => [observation.stage, observation.status]),
+    [
+      ["source", "completed"],
+      ["rule", "no_match"],
+      ["model", "no_match"],
+      ["judge", "skipped"]
+    ]
+  );
+  assert.equal(observations[3]?.skip_reason, "routing_not_selected");
+});
+
+test("REQ-SBX-GENERAL-006 reports short-circuited MODEL and JUDGE as skipped", async () => {
+  const observations: Array<Record<string, unknown>> = [];
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: matchDetector({ severity: "critical" }) as never,
+      local: noMatchDetector() as never
+    }),
+    runtime: createRuntime().ports
+  });
+
+  await (engine.evaluate as (...args: any[]) => Promise<unknown>)(
+    makeEvalRequest() as never,
+    undefined,
+    (observation: Record<string, unknown>) => observations.push(observation)
+  );
+
+  assert.deepEqual(
+    observations.map((observation) => [
+      observation.stage,
+      observation.status,
+      observation.skip_reason ?? null
+    ]),
+    [
+      ["source", "completed", null],
+      ["rule", "matched", null],
+      ["model", "skipped", "risk_short_circuit"],
+      ["judge", "skipped", "risk_short_circuit"]
+    ]
+  );
+});
+
+test("REQ-SBX-GENERAL-006 emits no observation before source authority succeeds", async () => {
+  const observations: Array<Record<string, unknown>> = [];
+  const engine = createSandboxSecurityEngine({
+    registry: createSandboxSecurityDetectorRegistry({
+      rule: noMatchDetector() as never
+    }),
+    runtime: createRuntime().ports
+  });
+
+  await assert.rejects(() =>
+    (engine.evaluate as (...args: any[]) => Promise<unknown>)(
+      {
+        submission: makeSubmission(),
+        authoritative_context: {
+          schema_version: "sandbox-security-authoritative-context.v1",
+          evaluation_mode: "enforcement",
+          stage: "user_input",
+          policy_profile_id: "sandbox-security-balanced.v1",
+          sources: []
+        }
+      },
+      undefined,
+      (observation: Record<string, unknown>) => observations.push(observation)
+    )
+  );
+  assert.deepEqual(observations, []);
+});
+
 test("REQ-SBX-GENERAL-002 P6 seam preserves the frozen public Engine dependency-bag behavior", async () => {
   let injectedResolverCalls = 0;
   const deps = {
