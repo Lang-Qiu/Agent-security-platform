@@ -1,0 +1,416 @@
+\section{作品设计与实现}
+
+\subsection{系统方案}
+
+\subsubsection{三级升级式级联总图}
+
+沙箱安全引擎接受统一的评估请求（\verb|SandboxSecurityRequest|），依次经过规则、本地模型和脱敏外部裁判三个级别，最终返回统一决策（\verb|SandboxSecurityDecision|）。它不是三个检测器的并列投票，而是一条\textbf{只在未解决时升级、在高危命中时短路、在故障时闭合}的状态机。图~\ref{fig:cascade} 是本作品的核心技术总图。
+
+\begin{figure}[htbp]
+\centering
+\reportFigureLead{三级级联按风险确定性逐级升级：明确高危立即短路，只有未解决信号才进入下一层。}
+\begin{tikzpicture}[
+  font=\small,
+  box/.style={draw, rounded corners=2pt, minimum width=3.8cm,
+              minimum height=0.72cm, align=center, fill=reportSystem!10, draw=reportSystem},
+  stage/.style={draw, rounded corners=2pt, minimum width=3.8cm,
+                minimum height=0.8cm, align=center, fill=reportSystem!18, draw=reportSystem},
+  dec/.style={draw, diamond, aspect=2.7, inner sep=1.2pt,
+              align=center, font=\scriptsize, fill=reportEscalate!13, draw=reportEscalate},
+  action/.style={draw, rounded corners=5pt, minimum width=3.5cm,
+                 minimum height=0.8cm, align=center, fill=reportPass!14, draw=reportPass},
+  note/.style={draw, dashed, rounded corners=2pt, minimum width=3.2cm,
+               minimum height=0.65cm, align=center, font=\scriptsize},
+  a/.style={-{Stealth[length=1.8mm]}, thick},
+  af/.style={-{Stealth[length=1.6mm]}, dashed, draw=reportBlock}
+]
+
+\node[box] (adapter) at (0,0) {框架适配层\\OpenClaw 四执行点 / 其他智能体框架};
+\node[stage] (rule) at (0,-1.35) {第一级：确定性规则};
+\node[dec] (high) at (0,-2.65) {高危命中？};
+\node[stage] (local) at (0,-4.0) {第二级：本地模型 \texttt{qwen3:8b}};
+\node[dec] (unresolved) at (0,-5.3) {仍有未解决信号？};
+\node[stage] (sanitize) at (0,-6.65) {本地确定性脱敏与令牌化};
+\node[stage] (judge) at (0,-7.9) {第三级：外部裁判};
+
+\node[action] (reduce) at (5.2,-4.0) {策略归约\\allow / ask / deny / allow\_sanitized};
+\node[box] (tool) at (5.2,-5.55) {返回真实执行点\\deny / ask 时工具不执行};
+\node[note] (fail) at (5.2,-1.45) {检测器失败 / 预算耗尽\\执行层健康失败};
+\node[note] (audit) at (5.2,-7.25) {内容无关审计\\记录状态、动作与哈希引用};
+
+\draw[a] (adapter) -- (rule);
+\draw[a] (rule) -- (high);
+\draw[a] (high) -- (local) node[midway,left,font=\scriptsize] {否};
+\draw[a] (local) -- (unresolved);
+\draw[a] (unresolved) -- (sanitize) node[midway,left,font=\scriptsize] {是};
+\draw[a] (sanitize) -- (judge);
+
+\draw[a] (high.east) -- ++(1.55,0) |- (reduce.north)
+  node[pos=0.16,above,font=\scriptsize] {是：高危短路};
+\draw[a] (unresolved.east) -- ++(1.25,0) |- (reduce.west)
+  node[pos=0.18,above,font=\scriptsize] {否};
+\draw[a] (judge.east) -- ++(1.15,0) |- (reduce.south);
+\draw[a] (reduce) -- (tool);
+
+\draw[af] (fail) -- (reduce) node[midway,right,font=\scriptsize] {失效闭合};
+\draw[af] (reduce) -- (audit);
+\draw[af] (tool.south) -- ++(0,-0.55) -| (adapter.east);
+
+\end{tikzpicture}
+\caption{三级升级式级联总图。规则层高危命中直接短路；只有未解决信号进入本地模型与脱敏外部裁判；任何检测器或执行层故障都沿虚线进入失效闭合归约。}
+\label{fig:cascade}
+\end{figure}
+
+规则层在 NFKC 归一化后执行确定性匹配，高危命中立即完成判定；摘要锁定的本地模型 \verb|qwen3:8b| 只处理语义模糊样本；外部裁判仅接收前两级仍未解决且已确定性脱敏、令牌化的载荷。高危短路把后续调用降为 0，脱敏升级则在不外送私有字段的前提下获得更强语义判定，两者共同构成不可替代的安全边界。
+
+\subsubsection{框架适配与四执行点}
+
+引擎自身不持有智能体，也不代理智能体与模型之间的流量。目标框架的适配层在真实执行点构造评估请求，并把四值决策映射回原有控制流。这使核心引擎与框架解耦，同时保留动作发生前的强制执行能力。OpenClaw 的接入关系如图~\ref{fig:arch} 所示。
+
+\begin{figure}[htbp]
+\centering
+\reportFigureLead{安全判断嵌入四个真实执行点，工具和消息只有在决策归约后才可能产生副作用。}
+\resizebox{0.98\linewidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  loop/.style={draw, rounded corners=2pt, minimum width=3.1cm,
+               minimum height=0.72cm, align=center, fill=reportSystem!10, draw=reportSystem},
+  hook/.style={draw, circle, inner sep=1pt, minimum size=0.5cm,
+               fill=reportEvidence, draw=reportEvidence, text=white, font=\scriptsize\bfseries},
+  eng/.style={draw, rounded corners=2pt, minimum width=3.3cm,
+              minimum height=0.72cm, align=center, fill=reportEvidence!12, draw=reportEvidence},
+  state/.style={draw=reportSystem, rounded corners=2pt, fill=reportSystem!8,
+               text width=3.3cm, minimum height=2.25cm, align=left, inner sep=6pt},
+  execute/.style={draw=reportPass, rounded corners=2pt, fill=reportPass!12,
+                 minimum width=3.15cm, minimum height=1.0cm, align=center},
+  call/.style={-{Stealth[length=1.6mm]}, thick, draw=reportSystem},
+  flow/.style={-{Stealth[length=1.8mm]}, thick}
+]
+
+\node[loop] (run)  at (0,0)      {智能体运行开始};
+\node[loop] (mout) at (0,-1.25)  {模型输出生成};
+\node[loop] (tool) at (0,-2.5)   {工具执行};
+\node[loop] (msg)  at (0,-3.75)  {消息交付};
+\draw[flow] (run)  -- (mout);
+\draw[flow] (mout) -- (tool);
+\draw[flow] (tool) -- (msg);
+
+\node[hook] (h1) at (1.85,0)     {1};
+\node[hook] (h2) at (1.85,-1.25) {2};
+\node[hook] (h3) at (1.85,-2.5)  {3};
+\node[hook] (h4) at (1.85,-3.75) {4};
+\foreach \a/\b in {run/h1, mout/h2, tool/h3, msg/h4}
+  \draw[reportEvidence!60] (\a) -- (\b);
+
+\node[state] (shared) at (4.0,-1.88) {\textbf{共享请求 / 评估状态}\\[2pt]
+  \texttt{request\_id + call\_id}\\
+  身份与来源投影\\
+  待执行参数哈希\\
+  决策与证据引用};
+
+\node[eng] (core) at (7.8,-1.25) {三级级联安全引擎};
+\node[eng] (act) at (7.8,-2.7) {四值动作与内容无关审计};
+\begin{scope}[on background layer]
+  \node[draw=reportEvidence, dashed, rounded corners=3pt, fill=reportEvidence!5,
+        fit=(core)(act), inner sep=8pt] (engbox) {};
+\end{scope}
+\node[above=1pt of engbox, font=\small\bfseries] {框架无关中间件};
+\node[execute] (realtool) at (11.7,-2.7) {\textbf{真实工具 / 消息调用}\\仅在策略闭合后执行};
+
+\draw[call] (h1) -- (shared.west);
+\draw[call] (h2) -- (shared.west);
+\draw[call] (h3) -- (shared.west);
+\draw[call] (h4) -- (shared.west);
+\draw[call] (shared.east) -- (engbox.west);
+\draw[flow,reportSystem] (core) -- (act);
+\draw[-{Stealth[length=1.8mm]},thick,draw=reportPass] (act) -- (realtool)
+  node[midway,above,font=\scriptsize] {allow / allow\_sanitized};
+\draw[-{Stealth[length=1.8mm]},dashed,thick,draw=reportBlock] (act.south) -- ++(0,-0.65)
+  node[below,font=\scriptsize] {ask / deny：副作用 0};
+
+\end{tikzpicture}
+}
+\caption{框架无关中间件与 OpenClaw 四执行点的接入关系。四点共用同一请求/评估状态，真实工具与消息调用只出现在策略闭合之后；图中实线均为已实现路径。}
+\label{fig:arch}
+\end{figure}
+
+\subsubsection{四值动作与两个命名策略档}
+
+引擎把所有路径归约为\textbf{允许 / 询问 / 拒绝 / 脱敏后允许}四值。图~\ref{fig:four-actions} 展示其执行语义：允许继续原调用，询问与拒绝冻结副作用，脱敏后允许则丢弃原载荷，只把确定性变换后的载荷交给工具。
+
+\begin{figure}[htbp]
+\centering
+\reportFigureLead{四值决策不是风险标签，而是直接控制执行屏障的终局动作。}
+\resizebox{0.98\linewidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  action/.style={draw, rounded corners=2pt, minimum width=2.75cm,
+                 minimum height=1.65cm, align=center, inner sep=5pt},
+  a/.style={-{Stealth[length=1.6mm]}, thick}
+]
+\node[font=\small\bfseries] (reduce) at (5.1,1.55) {策略归约：\texttt{allow / ask / deny / allow\_sanitized}};
+\draw[thick] (-0.1,1.05) -- (10.3,1.05);
+\draw[a] (reduce.south) -- (5.1,1.05);
+
+\node[action,fill=reportPass!12,draw=reportPass]  (allow) at (0,0) {\textbf{允许 allow}\\原始请求合规\\继续原调用};
+\node[action,fill=reportEscalate!15,draw=reportEscalate] (ask) at (3.4,0) {\textbf{询问 ask}\\冻结工具副作用\\等待操作员裁量};
+\node[action,fill=reportBlock!12,draw=reportBlock] (deny) at (6.8,0) {\textbf{拒绝 deny}\\阻断工具副作用\\返回拒绝结果};
+\node[action,fill=reportSystem!12,draw=reportSystem,minimum width=3.15cm] (sanitized) at (10.2,0) {\textbf{脱敏后允许}\\\texttt{allow\_sanitized}\\仅执行变换载荷};
+
+\foreach \n in {allow,ask,deny,sanitized}
+  \draw[a] (\n.north) -- (\n.north |- 0,1.05);
+\node[below=0.28cm of allow, font=\scriptsize] {原载荷继续};
+\node[below=0.28cm of ask, font=\scriptsize\bfseries] {副作用为 0};
+\node[below=0.28cm of deny, font=\scriptsize\bfseries] {副作用为 0};
+\node[below=0.28cm of sanitized, font=\scriptsize\bfseries] {原载荷不执行};
+\end{tikzpicture}%
+}
+\caption{四值动作的执行语义。允许继续原调用；询问与拒绝在副作用发生前停住工具；脱敏后允许只把变换载荷送入真实执行点，原载荷不会进入工具。}
+\label{fig:four-actions}
+\end{figure}
+
+均衡档（\code{sandbox-security-balanced.v1}）与严格档（\code{sandbox-security-strict.v1}）维持机器校验的严格度偏序：严格档在任何输入上都不比均衡档更宽松。模块加载时以 \texttt{assert\allowbreak Strict\allowbreak Not\allowbreak Less\allowbreak Restrictive} 强制该关系，其设计对应策略收紧与契约精化思路\cite{progent2025,contracts2026}。
+
+\subsubsection{九类风险标签}
+
+引擎覆盖提示注入、越狱、指令覆写、权限提升、敏感数据暴露、工具调用劫持、不安全副作用、记忆中毒、信任边界越界九类风险；每类均对应可触发的检测路径并直接映射为四值动作。
+
+\subsubsection{失效闭合语义}
+
+全局失效闭合在执行层健康失败时强制覆盖正常判定：
+
+\begin{lstlisting}[language=TypeScript, caption={全局失效闭合覆盖（\texttt{plugin.ts}）}]
+const effectiveBarrier =
+  health.enforcement === "failed"
+    ? mapDecision({ point: "before_tool_execution",
+                    failure: "startup_recovery" }).barrier
+    : barrier;
+\end{lstlisting}
+
+检测器失败或预算耗尽同样归约为拒绝或询问。
+
+\subsection{实现原理}
+
+\subsubsection{四执行点集成}
+
+OpenClaw 四个钩子由同一闭包处理并共享优先级与超时配置：
+
+\begin{lstlisting}[language=TypeScript, caption={四执行点注册（\texttt{plugin.ts}）}]
+export const OPENCLAW_SECURITY_HOOK_NAMES = [
+  "before_agent_run",
+  "before_model_output_delivery",
+  "before_tool_execution",
+  "before_message_delivery"
+] as const;
+
+for (const name of OPENCLAW_SECURITY_HOOK_NAMES) {
+  hostApi.on(name,
+    (hookEvent, hookContext) => handle(name, hookEvent, hookContext),
+    Object.freeze({
+      priority: OPENCLAW_SECURITY_HOOK_PRIORITY,
+      timeoutMs: OPENCLAW_SECURITY_HOOK_TIMEOUT_MS
+    }));
+}
+\end{lstlisting}
+
+\verb|before_agent_run| 由上游原生支持，其余三点由本作品面向 OpenClaw \verb|2026.6.34| 的补丁引入；清单锁定 13 个目标文件的变更前后哈希（打包哈希 \verb|d0edcbc9...|，补丁哈希 \verb|8e64e9fd...|），可逐字节校验集成变更。
+
+\subsubsection{助手绑定：工具点不孤立评估工具调用}
+
+工具执行点要求即将执行的工具与模型工具调用在\textbf{调用标识、工具名、参数深比较}三项上完全匹配，否则拒绝：
+
+\begin{lstlisting}[language=TypeScript, caption={助手绑定校验（\texttt{authority-builder.ts}）}]
+const match = assistant.tool_calls.find((call) =>
+  call.call_id === tool.call_id &&
+  call.tool_name === tool.tool_name &&
+  deepEqualJson(call.arguments, tool.arguments)
+);
+if (match === undefined ||
+    normalizedCorrelation.callId !== tool.call_id) {
+  invalidAuthority();
+}
+\end{lstlisting}
+
+图~\ref{fig:assistant-binding} 展示三重绑定：工具点同时观测用户输入、模型输出投影和工具请求，任一漂移均形成无效权限并保持工具零执行。
+
+\begin{figure}[htbp]
+\centering
+\reportFigureLead{身份、请求与决策三重绑定阻止“评估一个调用、执行另一个调用”。}
+\resizebox{0.96\linewidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  src/.style={draw=reportSystem, rounded corners=2pt, fill=reportSystem!10, minimum width=3.45cm,
+              minimum height=0.88cm, align=center},
+  gate/.style={draw=reportEvidence, rounded corners=2pt, fill=reportEvidence!10, text width=5.35cm,
+               minimum height=3.15cm, align=left, inner sep=7pt},
+  dec/.style={draw=reportEscalate, diamond, aspect=2.0, fill=reportEscalate!12, align=center,
+              inner sep=1.5pt, font=\scriptsize},
+  resultbox/.style={draw, rounded corners=2pt, text width=3.05cm,
+                   minimum height=0.95cm, align=center, font=\scriptsize,
+                   inner sep=3pt},
+  a/.style={-{Stealth[length=1.7mm]}, thick},
+  ok/.style={-{Stealth[length=1.7mm]}, thick, draw=reportPass},
+  bad/.style={-{Stealth[length=1.7mm]}, thick, dashed, draw=reportBlock}
+]
+\node[src] (identity) at (0,1.35) {\textbf{身份绑定}\\用户 / 会话 / 助手身份};
+\node[src] (request) at (0,0) {\textbf{请求绑定}\\\texttt{call\_id / tool\_name / arguments}};
+\node[src] (evidence) at (0,-1.35) {\textbf{决策--证据绑定}\\策略版本 / 决策哈希 / 签名收据};
+\node[gate] (checks) at (4.75,0) {\textbf{三条独立闭包}\\[3pt]
+  1. 身份闭包：发起者、会话与助手投影一致\\
+  2. 请求闭包：\texttt{call\_id}、工具名与参数深比较\\
+  3. 决策--证据闭包：决策哈希、策略版本与收据绑定\\[3pt]
+  任一闭包不得借另一条绑定补偿};
+\node[dec] (all) at (8.55,0) {三条均\\闭合？};
+\node[resultbox,fill=reportPass!12,draw=reportPass] (valid) at (11.7,0.9) {有效权限\\进入真实执行点};
+\node[resultbox,fill=reportBlock!12,draw=reportBlock] (invalid) at (11.7,-0.9) {\texttt{invalidAuthority}\\失败闭合，工具 0 次};
+
+\draw[a] (identity.east) -- (checks.west);
+\draw[a] (request.east) -- (checks.west);
+\draw[a] (evidence.east) -- (checks.west);
+\draw[a] (checks.east) -- (all.west);
+\draw[ok] (all.east) -- ++(0.75,0) |- (valid.west);
+\draw[bad] (all.east) -- ++(0.75,0) |- (invalid.west);
+\node[anchor=west,font=\scriptsize,text=reportPass] at (9.1,0.52) {全部一致};
+\node[anchor=west,font=\scriptsize,text=reportBlock] at (9.1,-0.52) {任一漂移};
+\end{tikzpicture}%
+}
+\caption{身份、请求、决策--证据三重绑定。三条闭包独立校验，只有全部一致才进入真实执行点；任一漂移沿红色虚线失败闭合，工具执行次数保持为 0。}
+\label{fig:assistant-binding}
+\end{figure}
+
+\subsubsection{内容无关审计}
+
+审计事件只保留判定、动作、风险、类别、运行状态与执行结果，并由机器断言禁止原始内容：
+
+\begin{lstlisting}[language=TypeScript, caption={内容无关性由测试强制：审计投影中出现任何原文即失败}]
+assertNoContent(auditEvent);
+\end{lstlisting}
+
+因此决策链可在数据不出域的前提下留存和移交复核。
+
+\subsubsection{跨执行点共享状态不承载判定}
+
+跨点共享状态仅用于存活性与相关性追踪：
+
+\begin{lstlisting}[language=TypeScript, caption={跨点共享状态（\texttt{plugin.ts}）}]
+type RunState = {
+  sessionKey: string;
+  callIds: Set<string>;
+  active: number
+};
+const opaqueState = new Map<string, RunState>();
+\end{lstlisting}
+
+该结构无判定、动作或来源分类，且评估过程不读取它。
+
+\subsubsection{信任类别与其在集成路径中的实际可达性}
+
+引擎按“来源权威 $\times$ 声称类型”派生四类信任级别：
+
+\begin{table}[htbp]
+\centering
+\caption{四类信任级别及其判定含义}
+\label{tab:trust}
+\small
+\begin{tabular}{@{}llp{6.4cm}@{}}
+\toprule
+信任级别 & 典型通道 & 判定含义 \\
+\midrule
+\textbf{可信指令} & 用户直接输入 & 视为授权意图的来源，可作为动作的正当依据 \\
+\textbf{模型自述} & 模型生成输出 & 不自动获得授权效力，其请求的动作须独立判定 \\
+\textbf{外部数据} & 工具返回值、检索结果 & 一律视为数据而非指令，其中出现的指令式内容按注入处理 \\
+\textbf{持久化上下文} & 长期记忆、历史归档 & 可被此前动作写入，故按可污染通道对待，读入时重新判定 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+信任类别把来源权威显式带入判定，阻止外部数据或持久化上下文中的指令式内容自动取得授权。
+
+\subsubsection{确定性脱敏外部边界}
+
+外部裁判只接收允许字段；原始正文、来源句柄、真实工具名与参数均不得越界。图~\ref{fig:redaction} 以完全虚拟的数据展示脱敏前后字段。
+
+\begin{figure}[htbp]
+\centering
+\reportFigureLead{外部裁判只接收确定性脱敏后的最小载荷，原始字段始终留在本地边界。}
+\resizebox{0.96\linewidth}{!}{%
+\begin{tikzpicture}[
+  font=\scriptsize,
+  raw/.style={draw=reportBlock, rounded corners=2pt, fill=reportBlock!8, inner sep=7pt,
+              text width=5.6cm, align=left},
+  safe/.style={draw=reportPass, rounded corners=2pt, fill=reportPass!12, inner sep=7pt,
+               text width=6.35cm, align=left},
+  tool/.style={draw=reportEvidence, rounded corners=2pt, fill=reportEvidence!10, inner sep=7pt,
+               text width=3.5cm, align=center},
+  a/.style={-{Stealth[length=1.8mm]}, thick},
+  ok/.style={-{Stealth[length=1.8mm]}, thick, draw=reportPass}
+]
+\node[raw] (before) at (0,0) {\textbf{本地私有快照（虚拟示例）}\\[2pt]
+\textcolor{reportPass}{\textbf{[保留]}} \texttt{risk\_class}: \texttt{sensitive\_data\_exposure}\\
+\textcolor{reportEscalate}{\textbf{[替换]}} \texttt{value}: “将 Q3 预算表发送到外部邮箱”\\
+\textcolor{reportBlock}{\textbf{[移除]}} \texttt{provenance\_ref}: \texttt{internal://docs/q3-budget}\\
+\textcolor{reportBlock}{\textbf{[移除]}} \texttt{tool\_name}: \texttt{send\_email}\\
+\textcolor{reportBlock}{\textbf{[移除]}} \texttt{arguments.to}: \texttt{review@external.test}\\
+\textcolor{reportBlock}{\textbf{[移除]}} \texttt{arguments.attachment}: \texttt{Q3-budget.xlsx}};
+
+\node[safe] (after) at (7.7,0) {\textbf{确定性脱敏后的唯一外送载荷}\\[2pt]
+\textcolor{reportPass}{\textbf{[保留]}} \texttt{risk\_class}: \texttt{sensitive\_data\_exposure}\\
+\textcolor{reportEscalate}{\textbf{[替换]}} \texttt{sanitized\_value}: \texttt{[internal-document:redacted]}\\
+\textcolor{reportMuted}{\textbf{[已移除]}} 原始来源、工具名、收件人、附件名\\
+\textcolor{reportSystem}{\textbf{[新增派生]}} \texttt{request\_token}: \texttt{etok:req:a7...}\\
+\textcolor{reportSystem}{\textbf{[新增派生]}} \texttt{source\_token}: \texttt{etok:src:a7...:0001}\\
+\textcolor{reportSystem}{\textbf{[新增派生]}} \texttt{sanitized\_arguments}: \texttt{\{domain:external.test,file:spreadsheet\}}};
+
+\node[tool] (toolcall) at (15.0,0) {\textbf{外部裁判 / 真实工具}\\[3pt]
+仅接收 \texttt{sanitized\_value}\\与 \texttt{sanitized\_arguments}\\[3pt]
+\textcolor{reportPass}{\textbf{原始载荷永不执行}}};
+
+\draw[a] (before) -- (after)
+  node[midway,above,align=center,font=\scriptsize\bfseries] {本地确定性\\脱敏与令牌化};
+\draw[ok] (after) -- (toolcall)
+  node[midway,above,align=center,font=\scriptsize\bfseries] {仅脱敏版\\进入调用};
+\node[below=0.45cm of after, align=center, font=\scriptsize]
+  {出现任一禁止原始字段 $\Rightarrow$ \texttt{external\_redaction\_failed} $\Rightarrow$ 外部裁判调用 0 次};
+\node[below=0.45cm of before, align=center, font=\scriptsize\bfseries, text=reportBlock]
+  {原始快照留在本地，不存在直达工具的边};
+\end{tikzpicture}
+}
+\caption{脱敏前后字段对照。完全虚拟的记录明确区分保留、替换、移除和新增派生字段；图中只有脱敏载荷连接外部裁判与真实工具，原始快照不存在执行路径。}
+\label{fig:redaction}
+\end{figure}
+
+发送前强制校验键集合、令牌归属、来源类型与结构限额；任一失败触发 \verb|external_redaction_failed|，外部裁判调用数为 0。
+
+\subsubsection{其他防护机制}
+
+能力令牌绑定监督阶段、策略档与运行模式；HMAC 指纹在 24 小时窗口内去重；语义验证器复核决策与台账；结构化输入限制深度 12、节点 4096、数组 64，文本限制 128 KB，并拒绝原型污染键、控制字符和孤立代理项。
+
+\subsection{评测语料的构造与许可}
+
+300 条结构化评估夹具均有唯一标识、内容哈希与真值标签，构成如表~\ref{tab:corpus}。
+
+\begin{table}[htbp]
+\centering
+\caption{评测语料构成（300 条结构化评估夹具）}
+\label{tab:corpus}
+\small
+\begin{tabular}{@{}lrp{5.9cm}@{}}
+\toprule
+夹具来源 & 夹具数 & 准入范围与构造方式 \\
+\midrule
+AgentDojo & 27 & 仅第一方追踪的 v1 任务与注入制品 \\
+ToolEmu & 60 & 仅第一方官方用例制品，无外部下载 \\
+deepset/prompt-injections & 39 & 仅具备许可元数据证据的修订钉死行 \\
+OASST1 & 120 & 仅经审阅的人工撰写英文与中文消息 \\
+\midrule
+上游直采与人工翻译小计 & 246 & 与去重上游记录一对一对应（直接采用 156、人工翻译 90）\\
+\textbf{对抗变换构造} & \textbf{54} & 第一方英文构造：同义替换、分词切分、空白、编码、大小写变形与跨源复合，每条携带回指种子标识 \\
+\midrule
+\textbf{合计} & \textbf{300} & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+246 条上游记录逐条锁定修订与内容哈希；54 条均为第一方英文对抗变换，其中 34 条形成干净/扰动配对，20 条为跨源复合。许可准入同时强制许可白名单与逐源许可钉死，不兼容、未知或跨源错配的许可证据均无法进入语料。
+
+\input{chapters/ch2-attack-scenarios}

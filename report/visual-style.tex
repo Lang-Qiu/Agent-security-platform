@@ -1,0 +1,68 @@
+% Shared semantic visual language for the competition report.
+\definecolor{reportCanvas}{HTML}{F7F9FB}
+\definecolor{reportSystem}{HTML}{237A8E}
+\definecolor{reportPass}{HTML}{3C9D70}
+\definecolor{reportEscalate}{HTML}{E59B45}
+\definecolor{reportBlock}{HTML}{C44A53}
+\definecolor{reportEvidence}{HTML}{263645}
+\definecolor{reportInk}{HTML}{17212B}
+\definecolor{reportMuted}{HTML}{5E6B75}
+
+\tikzset{
+  reportStep/.style={draw=reportSystem, fill=reportSystem!10, rounded corners=3pt,
+    minimum width=2.65cm, minimum height=0.82cm, align=center,
+    line width=0.8pt, inner sep=5pt},
+  reportDecision/.style={draw=reportEscalate, fill=reportEscalate!13,
+    diamond, aspect=2.0, align=center, line width=0.9pt, inner sep=3pt},
+  reportAnnotation/.style={draw=reportEvidence, fill=reportEvidence!8,
+    rounded corners=2pt, align=center, line width=0.7pt, inner sep=4pt},
+  reportProcess/.style={draw=reportSystem, fill=reportSystem!10, rounded corners=3pt,
+    line width=0.75pt, align=center, inner sep=5pt},
+  reportExecution/.style={draw=reportSystem, fill=reportSystem!18, rounded corners=3pt,
+    line width=1pt, align=center, inner sep=5pt},
+  reportPassNode/.style={draw=reportPass, fill=reportPass!12, rounded corners=3pt,
+    line width=0.8pt, align=center, inner sep=5pt},
+  reportEscalateNode/.style={draw=reportEscalate, fill=reportEscalate!13, rounded corners=3pt,
+    line width=0.8pt, align=center, inner sep=5pt},
+  reportBlockNode/.style={draw=reportBlock, fill=reportBlock!10, rounded corners=3pt,
+    line width=0.9pt, align=center, inner sep=5pt},
+  reportEvidenceNode/.style={draw=reportEvidence, fill=reportEvidence!10, rounded corners=3pt,
+    line width=0.9pt, align=center, inner sep=5pt},
+  reportArrow/.style={-{Stealth[length=2mm]}, draw=reportSystem, line width=0.9pt},
+  reportSuccessArrow/.style={-{Stealth[length=2mm]}, draw=reportPass, line width=1pt},
+  reportFailedArrow/.style={-{Stealth[length=2mm]}, draw=reportBlock, dashed, line width=1pt},
+  reportBlockedArrow/.style={-{Stealth[length=2mm]}, draw=reportBlock, dashed, line width=0.9pt},
+  reportEvidenceArrow/.style={-{Stealth[length=2mm]}, draw=reportEvidence, dashed, line width=0.9pt}
+}
+
+\newcommand{\reportFigureLead}[1]{%
+  \par\smallskip\noindent\colorbox{reportEvidence}{%
+    \parbox{0.96\linewidth}{\color{white}\small\textbf{读图结论：}#1}}\par\medskip}
+
+\newcommand{\reportEvidencePanel}[2]{%
+  \par\smallskip\noindent\colorbox{reportEvidence}{%
+    \parbox{0.96\linewidth}{\color{white}\scriptsize%
+      \textbf{#1}\par\smallskip #2}}\par\smallskip}
+
+\newcommand{\reportScreenshotMeta}[4]{%
+  \par\smallskip\noindent\fcolorbox{reportEvidence}{reportCanvas}{%
+    \parbox{0.96\linewidth}{\scriptsize\color{reportInk}%
+      \textbf{场景}~#1\quad\textbf{攻击后果}~#2\quad
+      \textbf{终局动作}~#3\quad\textbf{真实工具执行}~#4}}\par\smallskip}
+
+\newcommand{\reportEvidenceStrip}[4]{\reportScreenshotMeta{#1}{#2}{#3}{#4}}
+
+\newcommand{\reportOptionalImage}[2]{%
+  \IfFileExists{#1}{%
+    \includegraphics[width=\linewidth]{#1}%
+  }{%
+    \fcolorbox{reportEvidence}{reportCanvas}{%
+      \parbox{0.92\linewidth}{\centering\vspace{0.28cm}%
+        \textcolor{reportEvidence}{\textbf{待生成介绍图}}\\[-1pt]
+        \scriptsize\textcolor{reportMuted}{#2}\vspace{0.28cm}}}%
+  }%
+}
+
+\newcommand{\reportFramedScreenshot}[1]{%
+  \fcolorbox{reportEvidence}{white}{\includegraphics[width=0.98\linewidth]{#1}}%
+}

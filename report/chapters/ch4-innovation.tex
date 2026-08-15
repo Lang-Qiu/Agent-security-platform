@@ -1,0 +1,74 @@
+\section{创新性说明}
+
+本作品把运行时判定、真实执行点、隐私边界和可复现证据组合为完整中间件。图~\ref{fig:innovation-loop} 概括“机制、落地、证据”的闭环。
+
+\begin{figure}[htbp]
+\centering
+\reportFigureLead{机制、真实执行点与可复现证据三条能力链共同形成可复用的运行时安全闭环。}
+\resizebox{0.97\linewidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  lane/.style={draw=reportSystem, rounded corners=3pt, minimum width=4.75cm,
+               minimum height=1.15cm, align=left, fill=reportSystem!10, inner sep=7pt},
+  core/.style={draw=reportEvidence, rounded corners=4pt, minimum width=4.0cm,
+               minimum height=2.2cm, align=center, fill=reportEvidence, text=white,
+               line width=1.1pt},
+  loop/.style={draw=reportPass, rounded corners=4pt, minimum width=3.75cm,
+               minimum height=1.7cm, align=center, fill=reportPass!15, line width=1pt},
+  a/.style={-{Stealth[length=1.8mm]}, draw=reportEvidence, thick},
+  feedback/.style={-{Stealth[length=1.8mm]}, draw=reportPass, dashed, thick}
+]
+\node[lane] (mechanism) at (0,2.0) {\textbf{安全机制通道}\\三级级联 + 四值归约 + 确定性脱敏};
+\node[lane,fill=reportPass!12,draw=reportPass] (enforce) at (0,0) {\textbf{真实执行通道}\\OpenClaw 四执行点 + 三重绑定 + 工具阻断};
+\node[lane,fill=reportEvidence!12,draw=reportEvidence] (evidence) at (0,-2.0) {\textbf{可复现证据通道}\\300 条签名哈希绑定 + P6 结构 + P7 封印响应重放};
+
+\node[core] (middleware) at (6.3,0) {\textbf{可复用运行时安全中间件}\\[3pt]
+统一请求 / 决策契约\\策略、执行与证据同源闭合};
+\node[loop] (closed) at (11.5,0) {\textbf{可复用闭环}\\动作前强制\\运行后可核验\\结果回灌回归基线};
+
+\draw[a] (mechanism.east) -- (middleware.west) node[midway,above,font=\scriptsize] {如何判};
+\draw[a] (enforce.east) -- (middleware.west) node[midway,above,font=\scriptsize] {如何强制};
+\draw[a] (evidence.east) -- (middleware.west) node[midway,below,font=\scriptsize] {如何核验};
+\draw[a] (middleware) -- (closed);
+\draw[feedback] (closed.south) -- ++(0,-1.25) -| (evidence.east)
+  node[pos=0.45,below,font=\scriptsize\bfseries] {签名结果进入下一轮跨版本 / 跨模型 / 跨框架回归};
+\end{tikzpicture}%
+}
+\caption{三条并行能力通道汇聚为可复用运行时安全闭环。安全机制、真实执行点和可复现证据分别回答“如何判”“如何强制”和“如何核验”，签名结果继续进入下一轮回归。}
+\label{fig:innovation-loop}
+\end{figure}
+
+\subsection{创新一：面向不同智能体框架的三级级联安全中间件}
+
+统一请求与决策契约使核心引擎不持有框架会话，也不代理模型或工具；OpenClaw 已完成首个适配，其他框架只需映射四类生命周期。规则、本地模型和外部裁判按固定次序升级并拥有递减的内容权限：高危先短路，未解决信号才进入下一级，外部裁判只接收脱敏载荷。
+
+\begin{table}[htbp]
+\centering
+\caption{三级级联各层的触发条件与安全结果}
+\label{tab:innovation-cascade}
+\small
+\begin{tabular}{@{}lp{4.6cm}p{5.3cm}@{}}
+\toprule
+级别 & 进入条件 & 安全结果 \\
+\midrule
+规则层 & 每个合法评估请求 & 确定性识别；满足阈值的高危发现立即短路 \\
+本地模型层 & 未发生短路且配置要求语义判断 & 原始内容留在本地；输出候选风险或清除结果 \\
+外部裁判层 & 存在未解决升级义务 & 只接收令牌化、确定性脱敏并通过边界校验的载荷 \\
+策略归约 & 任一终止态或失效态 & 输出 allow / ask / deny / allow\_sanitized；故障时拒绝或询问 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+高危短路使后两级调用数为 0，并以 \verb|risk_short_circuit| 留下完整台账；失效闭合保证故障不转化为授权。允许、询问、拒绝、脱敏后允许四值动作直接控制执行屏障，其中询问冻结副作用，脱敏后允许只执行变换载荷。
+
+\subsection{创新二：在真实动作边界机器强制关键安全性质}
+
+OpenClaw 集成将中间件置于运行前、模型输出交付前、工具执行前和消息交付前四个 awaited 屏障；补丁以版本、包摘要、补丁摘要及 13 个文件的变更前后哈希锁定。邮件参数劫持在工具点被拒绝，拦截 1 次、工具执行 0 次；受保护文件读取归约为询问，同样保持零执行。
+
+作品把不可替代的安全性质写成机器不变式：\textbf{助手绑定}保证评估对象等于执行对象；\textbf{确定性脱敏}保证私有内容不直接进入外部裁判；\textbf{内容无关审计}保证留证不复制原文；\textbf{严格度偏序}保证严格档不放宽路径\cite{progent2025,contracts2026}；\textbf{失效闭合}保证系统故障不等于授权。
+
+\subsection{创新三：300 条签名哈希绑定、可离线重放的评测证据}
+
+300 条结构化夹具整体为英文、中文各 150 条，覆盖九类风险；其中 54 条第一方对抗变换均为英文。每条夹具均有唯一标识、内容哈希、决策投影和重放信封。P6 以捕获、封印、签名收据和树哈希锁定完整结构；P7 回放 300 个信封中封印的 provider 响应，并重新执行安全引擎与评测器，复现决策树哈希与指标。P6 证明结构完整，P7 验证产物级确定性重放，不是 LLM 推理确定性。
+
+因此，三级级联决定如何判，OpenClaw 四执行点负责在副作用前强制，300 条签名哈希证据负责核验结果来源，三者形成可跨版本、跨模型和跨框架复用的闭环。

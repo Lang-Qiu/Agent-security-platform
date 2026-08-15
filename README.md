@@ -364,6 +364,36 @@ Sandbox Security Core 当前仍未包含生产级通用 detector、sanitizer 和
 这些 GENERAL-002 能力由相邻的 `security-production/` 模块
 组合，冻结 Core 仅通过既有契约被调用。
 
+### 亟待解决的问题：审计完整性弱于执行强制性
+
+以下两处为已定位、**尚未修复**的审计路径缺陷。执行侧的强制（fail-closed、
+policy reduction）不受影响，但审计投影存在"动作已执行而审计记录缺失"的窗口。
+修复优先级高于新增功能。
+
+**缺陷一：中断事件仅条件入审**
+
+```ts
+if (!AUDITABLE_INTERRUPTION_CODES.has(code)) return null;
+if (appliedAction !== "ask" && appliedAction !== "deny") return null;
+```
+
+不在 `AUDITABLE_INTERRUPTION_CODES` 白名单内的中断码、以及 `allow`/`alert`
+两种动作下的中断事件，不产生审计记录。后果：部分中断在审计流中不可见。
+
+**缺陷二：审计标识分配失败时静默返回，执行流程继续**
+
+```ts
+const issued = runtime.nextAuditEventId();
+if (issued.kind === "interrupted") { return; }
+```
+
+审计标识分配被中断时函数直接 `return`，**不抛错、不阻断执行**。后果：审计可
+静默丢失，而被评估的动作已经放行或已经拦截——即审计的完整性弱于执行的强制性。
+
+**期望的修复方向**：审计标识分配失败应视为 fail-closed 条件之一，纳入全局
+失效闭合覆盖（降级为 `deny`/`ask`），使"无审计即不执行"成为不变式；中断事件
+入审条件应放宽到全部四值动作，白名单仅用于分级而非过滤。
+
 ### GENERAL-003 production startup
 
 生产后端启动前必须提供且只读取以下四个 GENERAL-003 配置项：

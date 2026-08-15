@@ -1,0 +1,225 @@
+% !TeX program = xelatex
+% 第十九届全国大学生信息安全竞赛（作品赛）
+% 暨第三届"长城杯"网数智安全大赛（作品赛）
+% 作品名称：灵鉴Agentscope（聚焦 Sandbox 引擎）
+%
+% ⚠️ 匿名要求：本文件及所有插图、截图不得出现学校名称、缩写、标志、指导教师姓名、
+%    含学校缩写的邮箱地址。提交前须逐项复查。
+
+\documentclass[12pt, a4paper]{ctexart}
+
+% ---------- 页面与字体（宋体小四，1.5 倍行距）----------
+\usepackage[top=2.54cm, bottom=2.54cm, left=3.17cm, right=3.17cm]{geometry}
+\setmainfont{Times New Roman}
+% 宋体无粗体/斜体字形，显式指定回退：粗体用黑体，斜体用楷体
+\setCJKmainfont{SimSun}[
+  BoldFont = SimHei,
+  ItalicFont = KaiTi
+]
+\setCJKsansfont{SimHei}
+\setCJKmonofont{FangSong}
+% 模板指定的方正小标宋简体在本机由 Word 按 OOXML altName 替换为微软雅黑
+\newCJKfontfamily\coverTitleFont{Microsoft YaHei}
+\newCJKfontfamily\coverSongBold[FakeBold=2]{SimSun}
+\linespread{1.5}
+
+% ---------- 通用宏包 ----------
+\usepackage{graphicx}
+% 兼容在 report/ 或仓库根目录下编译两种情形
+\graphicspath{{figures/}{report/figures/}}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{caption}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, shapes.geometric, fit, backgrounds, calc, matrix, shapes.multipart, decorations.pathreplacing}
+\input{visual-style.tex}
+
+% ---------- 可断行的标识符/原因码 ----------
+% \verb 内部不允许断行，长原因码（如 base_filter_email_parameter_hijacking）
+% 会顶出版面。\code 基于 url 宏包，在 _ - / . : 处允许断行，且断行处不插入连字符，
+% 因此不会歪曲标识符本身。用法：\code{base_filter_no_match}（花括号内无需转义）。
+\DeclareUrlCommand\code{%
+  \urlstyle{tt}%
+  \def\UrlBreaks{\do\_\do\-\do\/\do\.\do\:\do\?\do\&\do\=\do\+\do\#}%
+}
+% 中英混排段落的可伸缩量有限，允许最后一趟断行额外拉伸，避免正文顶出右边界。
+\setlength{\emergencystretch}{3em}
+
+% ---------- 参考文献：GB/T 7714-2015 ----------
+\usepackage[backend=biber, style=gb7714-2015, gbpub=false]{biblatex}
+\addbibresource{references.bib}
+
+% ---------- 代码环境 ----------
+\definecolor{codegray}{gray}{0.95}
+\definecolor{codekey}{RGB}{0,0,180}
+\definecolor{codecmt}{RGB}{0,128,0}
+% listings 无内置 JavaScript/TypeScript，此处自定义
+\lstdefinelanguage{TypeScript}{
+  keywords={const, let, var, function, return, if, else, for, of, in, type,
+            export, import, from, as, new, class, interface, extends,
+            implements, async, await, true, false, null, undefined, void,
+            readonly, private, public, static},
+  keywordstyle=\color{codekey}\bfseries,
+  ndkeywords={string, number, boolean, Set, Map, Object, Promise},
+  ndkeywordstyle=\color{codekey},
+  identifierstyle=\color{black},
+  sensitive=true,
+  comment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  commentstyle=\color{codecmt}\itshape,
+  stringstyle=\color{codecmt},
+  morestring=[b]',
+  morestring=[b]",
+  morestring=[b]`
+}
+
+\lstset{
+  language=TypeScript,
+  basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{codegray},
+  breaklines=true,
+  frame=single,
+  numbers=left,
+  numberstyle=\tiny,
+  captionpos=b,
+  showstringspaces=false,
+  columns=flexible,
+  extendedchars=true,
+  literate={－}{-}1
+}
+
+% ---------- 标题格式 ----------
+\ctexset{
+  section/name = {第,章},
+  section/format = \centering\zihao{3}\sffamily,
+  subsection/format = \raggedright\zihao{4}\sffamily,
+  subsubsection/format = \raggedright\zihao{-4}\sffamily
+}
+
+\captionsetup{font=small, labelsep=quad}
+
+\begin{document}
+
+% ---------- 前两页（附件2模板的实际分页与版面）----------
+\newgeometry{top=2.54cm, bottom=2.54cm, left=2.8575cm, right=2.5868cm}
+
+\begin{titlepage}
+\thispagestyle{empty}
+\begin{tikzpicture}[remember picture, overlay]
+  \node[anchor=north west, inner sep=0pt,
+    font=\linespread{1}\heiti\fontsize{16}{31.5}\selectfont]
+    at ([xshift=81pt,yshift=-77pt]current page.north west) {附件2：};
+  \node[anchor=north west, inner sep=0pt,
+    font=\linespread{1}\coverTitleFont\fontsize{22}{47}\selectfont]
+    at ([xshift=81pt,yshift=-170pt]current page.north west)
+    {\makebox[441pt][s]{第十九届全国大学生信息安全竞赛（作品赛）}};
+  \node[anchor=north west, inner sep=0pt,
+    font=\linespread{1}\coverTitleFont\fontsize{22}{47}\selectfont]
+    at ([xshift=81pt,yshift=-217pt]current page.north west)
+    {\scalebox{0.9546}[1]{暨第三届“长城杯”网数智安全大赛（作品赛）}};
+  \node[anchor=north, inner sep=0pt,
+    font=\linespread{1}\coverTitleFont\fontsize{22}{47}\selectfont]
+    at ([xshift=302.6pt,yshift=-263.5pt]current page.north west) {作品报告};
+  \node[anchor=north west, inner sep=0pt,
+    font=\linespread{1}\songti\fontsize{16}{23.5}\selectfont]
+    at ([xshift=161pt,yshift=-334.5pt]current page.north west)
+    {□{\coverSongBold 命题赛道}\hspace{104pt}□{\coverSongBold 自由赛道}};
+  \node[anchor=north west, inner sep=0pt,
+    font=\linespread{1}\heiti\fontsize{16}{31}\selectfont]
+    at ([xshift=81pt,yshift=-436pt]current page.north west)
+    {\makebox[80pt][l]{作品名称：}\rule{337.5pt}{0.4pt}};
+  \node[anchor=north west, inner sep=0pt,
+    font=\linespread{1}\heiti\fontsize{16}{31}\selectfont]
+    at ([xshift=81pt,yshift=-467pt]current page.north west)
+    {\makebox[80pt][l]{电子邮箱：}\rule{337.5pt}{0.4pt}};
+  \node[anchor=north west, inner sep=0pt,
+    font=\linespread{1}\heiti\fontsize{16}{31}\selectfont]
+    at ([xshift=81pt,yshift=-498pt]current page.north west)
+    {\makebox[80pt][l]{提交日期：}\rule{337.5pt}{0.4pt}};
+\end{tikzpicture}
+\end{titlepage}
+
+\begin{titlepage}
+\thispagestyle{empty}
+\begin{tikzpicture}[remember picture, overlay]
+  \node[anchor=north, inner sep=0pt,
+    font=\linespread{1}\heiti\fontsize{16}{23.5}\selectfont]
+    at ([xshift=302.6pt,yshift=-72pt]current page.north west) {填写说明};
+  \node[anchor=north west, inner sep=0pt,
+    font=\linespread{1}\songti\fontsize{12}{23.5}\selectfont]
+    at ([xshift=81pt,yshift=-107pt]current page.north west)
+    {\makebox[441pt][s]{1. 所有参赛项目必须为一个基本完整的设计。作品报告书旨在能够清晰准确地阐述}};
+  \node[anchor=north west, inner sep=0pt,
+    font=\linespread{1}\songti\fontsize{12}{23.5}\selectfont]
+    at ([xshift=81pt,yshift=-130.5pt]current page.north west)
+    {（或图示）该参赛队的参赛项目（或方案）。};
+  \node[anchor=north west, inner sep=0pt,
+    font=\linespread{1}\songti\fontsize{12}{23.5}\selectfont]
+    at ([xshift=81pt,yshift=-154pt]current page.north west)
+    {\scalebox{0.9593}[1]{2. 作品报告采用A4纸撰写。除标题外，所有内容必需为宋体、小四号字、1.5倍行距。}};
+  \node[anchor=north west, inner sep=0pt,
+    font=\linespread{1}\songti\fontsize{12}{23.5}\selectfont]
+    at ([xshift=81pt,yshift=-177.5pt]current page.north west)
+    {\makebox[441pt][s]{3. 作品报告中各项目说明文字部分仅供参考，作品报告书撰写完毕后，请删除所有}};
+  \node[anchor=north west, inner sep=0pt,
+    font=\linespread{1}\songti\fontsize{12}{23.5}\selectfont]
+    at ([xshift=81pt,yshift=-201pt]current page.north west)
+    {说明文字。(本页不删除)};
+  \node[anchor=north west, inner sep=0pt,
+    font=\linespread{1}\songti\fontsize{12}{23.5}\selectfont]
+    at ([xshift=81pt,yshift=-224pt]current page.north west)
+    {\makebox[441pt][s]{4. 作品报告模板里已经列的内容仅供参考，作者可以在此基础上增加内容或对文档}};
+  \node[anchor=north west, inner sep=0pt,
+    font=\linespread{1}\songti\fontsize{12}{23.5}\selectfont]
+    at ([xshift=81pt,yshift=-247.5pt]current page.north west)
+    {结构进行微调。};
+  \node[anchor=north west, inner sep=0pt,
+    font=\linespread{1}\songti\fontsize{12}{23.5}\selectfont]
+    at ([xshift=81pt,yshift=-271pt]current page.north west)
+    {\makebox[441pt][s]{5. 为保证网评的公平、公正，作品报告中应避免出现作者所在学校、院系和指导教}};
+  \node[anchor=north west, inner sep=0pt,
+    font=\linespread{1}\songti\fontsize{12}{23.5}\selectfont]
+    at ([xshift=81pt,yshift=-294.5pt]current page.north west)
+    {师等泄露身份的信息。};
+\end{tikzpicture}
+\end{titlepage}
+
+% 目录页：不显示页码（按模板顺延到第 3 页）
+\restoregeometry
+\pagestyle{empty}
+\tableofcontents
+
+% 正文页码从摘要开始计为第 1 页
+\newpage
+\setcounter{page}{1}
+\pagestyle{plain}
+
+\input{chapters/abstract}
+
+\newpage
+\input{chapters/ch1-overview}
+
+\newpage
+\input{chapters/ch2-design}
+
+\newpage
+\input{chapters/ch3-testing}
+
+\newpage
+\input{chapters/ch4-innovation}
+
+\newpage
+\input{chapters/ch5-summary}
+
+\newpage
+\printbibliography[title=参考文献]
+
+\end{document}

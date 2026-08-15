@@ -1,0 +1,211 @@
+% 参考文献 — GB/T 7714-2015
+%
+% ⚠️ Tier 标注纪律（对应研究状态记录的引用红线）：
+%   Tier 1 = 已由第三方权威页面确认 venue（ACL Anthology / OpenReview / 出版社页）
+%   Tier 2 = arXiv 预印本，页面无 venue，或仅 workshop 待刊
+%   凡 venue 仅为作者自述、未经独立确认者，一律按 Tier 2 标注为预印本，
+%   不得写成主会论文。
+%
+% ⚠️ 以下条目的数值与结论均经一手页面核实；未核实项不得进入本文件。
+
+% ===================== Tier 1：venue 已由 ACL Anthology 确认 =====================
+
+@inproceedings{jailbreakradar2025,
+  author    = {Chu, Junjie and Liu, Yugeng and Yang, Ziqing and Shen, Xinyue and Backes, Michael and Zhang, Yang},
+  title     = {JailbreakRadar: Comprehensive Assessment of Jailbreak Attacks Against LLMs},
+  booktitle = {Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers)},
+  pages     = {21538--21566},
+  year      = {2025},
+  address   = {Vienna, Austria},
+  publisher = {Association for Computational Linguistics},
+  doi       = {10.18653/v1/2025.acl-long.1045},
+  note      = {ACL Anthology: 2025.acl-long.1045}
+}
+
+% ===================== Tier 2：arXiv 预印本，页面无 venue =====================
+
+@misc{agentdog2026,
+  author       = {Liu, Dongrui and Ren, Qihan and Qian, Chen and others},
+  title        = {AgentDoG: A Diagnostic Guardrail Framework for AI Agent Safety and Security},
+  year         = {2026},
+  eprint       = {2601.18491},
+  archivePrefix= {arXiv},
+  primaryClass = {cs.AI},
+  doi          = {10.48550/arXiv.2601.18491},
+  note         = {预印本，v2（2026-04-23）；共 43 位作者；页面未标注发表venue}
+}
+
+@misc{safiron2025,
+  author       = {Huang, Yue and Hua, Hang and Zhou, Yujun and others},
+  title        = {Building a Foundational Guardrail for General Agentic Systems via Synthetic Data},
+  year         = {2025},
+  eprint       = {2510.09781},
+  archivePrefix= {arXiv},
+  primaryClass = {cs.LG},
+  doi          = {10.48550/arXiv.2510.09781},
+  note         = {预印本，v1（2025-10-10）；共 14 位作者；含 AuraGen 数据引擎、Safiron 护栏模型与 Pre-Exec Bench 基准；页面未标注发表 venue；许可 CC BY-NC-SA 4.0}
+}
+
+@misc{dfah2026,
+  author       = {Khatchadourian, Raffi},
+  title        = {Replayable Financial Agents: A Determinism-Faithfulness Assurance Harness for Tool-Using LLM Agents},
+  year         = {2026},
+  eprint       = {2601.15322},
+  archivePrefix= {arXiv},
+  primaryClass = {cs.AI},
+  doi          = {10.48550/arXiv.2601.15322},
+  note         = {预印本，v2（2026-03-07）；待刊于 2nd ICLR Workshop on Advances in Financial AI (ICLR 2026)，为 workshop 而非主会}
+}
+
+@misc{progent2025,
+  author       = {Shi, Tianneng and He, Jingxuan and Wang, Zhun and Li, Hongwei and Wu, Linyu and Guo, Wenbo and Song, Dawn},
+  title        = {Progent: Securing {AI} Agents with Privilege Control},
+  year         = {2025},
+  eprint       = {2504.11703},
+  archivePrefix= {arXiv},
+  primaryClass = {cs.CR},
+  doi          = {10.48550/arXiv.2504.11703},
+  url          = {https://arxiv.org/abs/2504.11703},
+  note         = {预印本；其 4.3 节以 SMT 求解器（Z3）判定策略间收紧关系；Monotonic Confinement 出自第 6 节证明梗概而非编号定理}
+}
+
+@misc{contracts2026,
+  author       = {David, Isaac and Guarnieri, Marco and Gervais, Arthur},
+  title        = {Alignment Contracts for Agentic Security Systems},
+  year         = {2026},
+  eprint       = {2605.00081},
+  archivePrefix= {arXiv},
+  primaryClass = {cs.CR},
+  doi          = {10.48550/arXiv.2605.00081},
+  note         = {预印本，v1（2026-04-30）；定义 7.1 给出契约精化关系七条子句，定理 7.2 经 Lean 4 机器验证（\texttt{Formal.refinement\_soundness}）；须注意定理 6.5 为有限迹结论，定理 9.2 与 9.7 为条件性 schema}
+}
+
+@misc{cascade2026,
+  author       = {Bouchard, Dylan},
+  title        = {Is Escalation Worth It? A Decision-Theoretic Characterization of LLM Cascades},
+  year         = {2026},
+  eprint       = {2605.06350},
+  archivePrefix= {arXiv},
+  primaryClass = {cs.LG},
+  doi          = {10.48550/arXiv.2605.06350},
+  note         = {预印本，v1（2026-05-07）；独作；成本-质量优化研究，五个基准均为能力基准，不含安全内容；其"4/5"含 MATH 一处 0.001 的实质平手，TriviaQA 级联反胜}
+}
+
+@misc{guidedbench2025,
+  author       = {Huang, Ruixuan and Wang, Xunguang and Li, Zongjie and Wu, Daoyuan and Wang, Shuai},
+  title        = {GuidedBench: Measuring and Mitigating the Evaluation Discrepancies of In-the-wild LLM Jailbreak Methods},
+  year         = {2025},
+  eprint       = {2502.16903},
+  archivePrefix= {arXiv},
+  primaryClass = {cs.CL},
+  doi          = {10.48550/arXiv.2502.16903},
+  note         = {预印本，v2（2025-07-09）；覆盖自 2022 年起 37 项越狱研究；报告评测者间方差降幅至少 76.03\%}
+}
+
+@misc{guardrailformal2026,
+  author       = {Kezins, Nikita and Ekka, Urbas and Berrang, Pascal and Arnaboldi, Luca},
+  title        = {Beyond Red-Teaming: Formal Guarantees of LLM Guardrail Classifiers},
+  year         = {2026},
+  eprint       = {2605.10901},
+  archivePrefix= {arXiv},
+  primaryClass = {cs.LG},
+  doi          = {10.48550/arXiv.2605.10901},
+  note         = {预印本，v1（2026-05-11）；单分类器在预激活空间的可靠性证明；报告全部超矩形配置均返回 SAT，BERT 在最优阈值处覆盖率坍缩至 55\%}
+}
+
+@misc{enforceable2026,
+  author       = {Ray, Shawn},
+  title        = {What Can Be Enforced? A Theory of Certified Runtime Safety for Tool-Using Agents},
+  year         = {2026},
+  eprint       = {2607.22868},
+  archivePrefix= {arXiv},
+  primaryClass = {cs.AI},
+  doi          = {10.48550/arXiv.2607.22868},
+  note         = {预印本，v1（2026-07-24）；独作；其可分离单调片段将坏前缀可达性判定置于 PSPACE，单调性指计数器只增不减且不做零测试}
+}
+
+@misc{policyalgebra2026,
+  author       = {Anonymous},
+  title        = {Agentic Permissions Policy Algebra for Taint Confinement in LLM Agents},
+  year         = {2026},
+  eprint       = {2607.24625},
+  archivePrefix= {arXiv},
+  primaryClass = {cs.CR},
+  note         = {预印本；其限制性偏序定义在标签状态（读者集合与信任级别）之上，非策略之上；作者信息待补}
+}
+
+@misc{adaptive2025,
+  author       = {Anonymous},
+  title        = {Adaptive Attacks Break Defenses Against Indirect Prompt Injection in LLM Agents},
+  year         = {2025},
+  eprint       = {2503.00061},
+  archivePrefix= {arXiv},
+  primaryClass = {cs.CR},
+  note         = {预印本；报告自适应攻击可破全部八项受测防御，检测器类与大模型判别类方案的拦截效果大幅下降；作者信息待补}
+}
+
+% ===================== 权威标准与框架 =====================
+
+@techreport{nistairmf2023,
+  author      = {Tabassi, Elham},
+  title       = {Artificial Intelligence Risk Management Framework ({AI RMF} 1.0)},
+  institution = {National Institute of Standards and Technology},
+  type        = {NIST AI},
+  number      = {100-1},
+  year        = {2023},
+  month       = {1},
+  day         = {26},
+  doi         = {10.6028/NIST.AI.100-1},
+  url         = {https://doi.org/10.6028/NIST.AI.100-1},
+  note        = {官方页面标注 "is being revised"；须注意其正文 MEASURE 子类别无可追溯性/可审计性条目，相关表述出自非规范性 Playbook}
+}
+
+@techreport{nistgenai2024,
+  author      = {Autio, Chloe and Schwartz, Reva and Dunietz, Jesse and Jain, Shomik and Stanley, Martin and Tabassi, Elham and Hall, Patrick and Roberts, Kamie},
+  title       = {Artificial Intelligence Risk Management Framework: Generative Artificial Intelligence Profile},
+  institution = {National Institute of Standards and Technology},
+  type        = {NIST AI},
+  number      = {600-1},
+  year        = {2024},
+  month       = {7},
+  day         = {26},
+  doi         = {10.6028/NIST.AI.600-1},
+  url         = {https://doi.org/10.6028/NIST.AI.600-1}
+}
+
+@misc{acmbadging2020,
+  author       = {{Association for Computing Machinery}},
+  title        = {Artifact Review and Badging --- Version 1.1},
+  year         = {2020},
+  month        = {8},
+  day          = {24},
+  howpublished = {\url{https://www.acm.org/publications/policies/artifact-review-and-badging-current}},
+  note         = {3 个 badge 家族、5 个具名 badge}
+}
+
+@misc{mitreatlas2026,
+  author       = {{The MITRE Corporation}},
+  title        = {MITRE ATLAS: Adversarial Threat Landscape for Artificial-Intelligence Systems},
+  year         = {2026},
+  howpublished = {\url{https://atlas.mitre.org/}},
+  note         = {版本 2026.07。本报告引用的技术编号 AML.T0084（含 .000--.003）、AML.T0081、AML.T0083、AML.T0097、AML.T0105 经第三方镜像页核实}
+}
+
+@misc{owaspllm2026,
+  author       = {{OWASP GenAI Security Project}},
+  title        = {{OWASP GenAI LLM Top 10 2026}},
+  year         = {2026},
+  month        = {8},
+  day          = {4},
+  url          = {https://genai.owasp.org/resource/owasp-genai-llm-top-10-2026/}
+}
+
+@misc{csaaicm2026,
+  author       = {{Cloud Security Alliance}},
+  title        = {AI Controls Matrix (AICM) v1.1},
+  year         = {2026},
+  month        = {6},
+  day          = {22},
+  howpublished = {\url{https://cloudsecurityalliance.org/artifacts/ai-controls-matrix-v1-1}},
+  note         = {18 个域下 247 项控制}
+}
