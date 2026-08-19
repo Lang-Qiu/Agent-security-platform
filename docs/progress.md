@@ -1,3 +1,93 @@
+# 2026-08-18 - Product Landing integration into the main worktree
+
+- type: frontend route integration; no backend API or shared contract changed
+- status: `COMPLETE`
+- integration boundary:
+  - synchronized the Landing-owned page, components, motion hooks, stylesheet,
+    fonts, image assets, and metadata from `feat/product-landing`
+  - changed `/` to lazy-load the Landing Page and added `/console` as the
+    explicit redirect entry to `/overview`
+  - preserved the main worktree's newer Console layout, Sandbox workbench,
+    streaming, API client, and `app.css` changes instead of overwriting them
+- TDD:
+  - RED: the main-worktree route contract failed 3/4 tests because `/` still
+    rendered the Console, `/console` returned 404, and route titles were unset
+  - GREEN: Landing-focused tests passed 48/48 after route, title, source, and
+    asset integration
+- verification:
+  - source Landing worktree: full frontend 396/396; production build passed
+  - integrated main worktree: full frontend 466/466; production build passed
+    with the existing main-chunk size warning only
+  - existing frontend theme repository guard: 4/4; `git diff --check` passed
+  - `npm run test:repo`: 339/358, unchanged from the recorded pre-integration
+    baseline; all 19 failures remain in existing Sandbox/OpenClaw/Track 1 gates
+  - live main-worktree Vite server returned HTTP 200 for `/`, `/console`, the
+    Landing route module, representative image, and representative font
+- suggested commit: `feat(frontend): integrate product landing into main route`
+
+# 2026-08-17 - REQ-SBX-GENERAL-005 audit browser-runtime compatibility
+
+- type: frontend/shared bugfix; no backend route or public response schema changed
+- status: `COMPLETE`
+- design: keep audit pagination and opaque cursor grammar unchanged; make shared
+  cursor validation runtime-neutral, normalize edge whitespace at the
+  authenticated client boundary, reject interior C0/C1 controls before fetch,
+  and expose a distinct `invalid_token` result
+- TDD:
+  - RED verified for a missing `Buffer` global, unnormalized authorization
+    whitespace, interior control characters, SSE preflight, failure copy, and
+    audit-page rendering
+  - GREEN focused shared, API client, sandbox service, copy, and audit-page
+    suites passed
+- implementation:
+  - replaced the shared cursor validator's Node `Buffer` dependency with a
+    canonical base64url bit check
+  - applied one capability-token normalizer to JSON and SSE authenticated calls
+  - added `invalid_token` UI copy so malformed pasted credentials are not shown
+    as service outages
+- verification:
+  - shared audit contract: 15/15
+  - frontend focused suites: API client 8/8, sandbox service 10/10, copy 10/10,
+    audit page 8/8
+  - full shared suite: 228/228; shared typecheck passed
+  - full frontend suite, run in serial batches: 32/32 files and 420/420 tests;
+    production build passed with the existing bundle-size warning only
+  - sandbox frontend repository gate: 4/4
+  - `npm run test:repo`: 339/358; the 19 failures remain outside this
+    requirement: existing GENERAL-006 export/static-text gate drift, legacy
+    active-sprint assumptions, Windows path/hash/budget/import baselines, and
+    dirty frontend visual/CSS changes
+  - `git diff --check` passed
+- files: shared audit normalizer/tests, authenticated client/service/tests,
+  sandbox-security failure copy, audit/workbench error unions, README, API
+  contract, architecture, and progress documentation
+- suggested commit: `fix(sandbox): harden browser audit token and cursor handling`
+
+# 2026-08-16 - Sandbox workbench live-SSE elapsed clamp + visual convergence pass
+
+- REQ scope: visual convergence of /sandbox-security/workbench toward
+  .runtime/landing-audit/target.png (21 codex visual audits; overall 31 -> 78,
+  layout 24 -> 87 best), plus one production bug found and fixed via TDD on the
+  way
+- bug fixed (RED -> GREEN, tests first):
+  - live SSE stage events crashed every real evaluation after 0640e10 because
+    the engine emits fractional elapsed_ms (performance.now) and judge slots
+    may exceed 60000 ms, while the stream contract requires safe integers in
+    0..60000
+  - added backend/src/modules/sandbox-security/stream-elapsed.ts clamp helper,
+    applied at both the live gateway mapper and the replay synthesizer
+  - 2 new tests in backend/tests/sandbox-security-evaluation.service.spec.ts;
+    sandbox specs 315/319 in WSL (4 pre-existing sqlite failures verified
+    unrelated via stash)
+- theme gate updates that codified shipped design decisions from 0640e10
+  (shimmer assertions) and the new reference layout (grid ratio, unified
+  composer panel); audit-route nav assertion adjusted for banner+page headings
+- workbench visual changes: route-aware EN banner titles, unified request
+  composer panel, evidence trace icon tiles, decision hero risk composition,
+  runtime enclosure, sidebar status card, deepened navy tokens, dense tables
+- engineering gates each iteration: frontend build, 414/414 vitest, theme
+  literal gate 4/4
+
 # 2026-08-12 - Competition report Stage 4.5 integrity correction
 
 - type: documentation-only correction and final integrity verification; full

@@ -72,6 +72,16 @@ describe("REQ-SBX-GENERAL-005 failure copy", () => {
     expect(describeSandboxSecurityFailure({ kind: "invalid" }).title.length).toBeGreaterThan(0);
     expect(describeSandboxSecurityFailure({ kind: "unavailable" }).title.length).toBeGreaterThan(0);
   });
+
+  it("distinguishes a locally invalid capability token from an unavailable service", () => {
+    const invalidToken = describeSandboxSecurityFailure({ kind: "invalid_token" });
+    const unavailable = describeSandboxSecurityFailure({ kind: "unavailable" });
+
+    expect(invalidToken.title).toContain("令牌");
+    expect(invalidToken.title).not.toBe(unavailable.title);
+    expect(invalidToken.remedy).not.toBe(unavailable.remedy);
+    expect(invalidToken.requiresNewCapability).toBe(false);
+  });
 });
 
 describe("REQ-SBX-GENERAL-005 client pre-flight violation copy", () => {

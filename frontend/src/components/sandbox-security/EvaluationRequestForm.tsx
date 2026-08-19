@@ -1,5 +1,6 @@
 import { useMemo } from "react";
-import { Button, Typography } from "antd";
+import { SendOutlined } from "@ant-design/icons";
+import { Button, Switch, Typography } from "antd";
 
 import {
   SANDBOX_SECURITY_MAX_CONTENT_ITEMS,
@@ -90,7 +91,7 @@ export function EvaluationRequestForm({
 
   return (
     <form
-      className="console-panel workbench-request-composer"
+      className="workbench-request-composer"
       onSubmit={(event) => {
         event.preventDefault();
         if (!submitDisabled) onSubmit();
@@ -115,6 +116,12 @@ export function EvaluationRequestForm({
       />
 
       <div className="workbench-source-stack">
+        <div className="workbench-source-stack__bar">
+          <span className="workbench-section-eyebrow">SOURCE STACK · 来源</span>
+          <Button size="small" onClick={handleAddItem} disabled={addDisabled}>
+            新增来源
+          </Button>
+        </div>
         {contentItems.map((item, index) => (
           <ContentItemRow
             key={item.source_id}
@@ -138,10 +145,6 @@ export function EvaluationRequestForm({
         ))}
       </div>
 
-      <Button onClick={handleAddItem} disabled={addDisabled}>
-        新增来源
-      </Button>
-
       {stage === "tool_request" && toolRequest !== null ? (
         <ToolRequestFields
           toolRequest={toolRequest}
@@ -153,6 +156,16 @@ export function EvaluationRequestForm({
         usedBytes={usedBytes}
         limitBytes={SANDBOX_SECURITY_MAX_REQUEST_BYTES}
       />
+
+      <aside className="workbench-failclosed" aria-label="失败关闭策略">
+        <span className="workbench-failclosed__title">
+          FAIL-CLOSED (ENFORCED)
+        </span>
+        <p className="workbench-failclosed__copy">
+          评估失败或超时时按拒绝处理：不静默放行任何未完成的风险判定。
+        </p>
+        <Switch size="small" checked disabled aria-label="失败关闭已启用" />
+      </aside>
 
       {violations.length > 0 ? (
         <div aria-live="polite" className="sandbox-security-violations">
@@ -177,7 +190,13 @@ export function EvaluationRequestForm({
         loading={submitting}
         disabled={submitDisabled}
       >
-        {submitting ? "评估中..." : "开始评估"}
+        <span className="workbench-evaluate-btn__label">
+          <SendOutlined aria-hidden="true" />
+          <span>{submitting ? "评估中..." : "开始评估"}</span>
+        </span>
+        <span className="workbench-evaluate-btn__hint">
+          Run sandbox evaluation pipeline
+        </span>
       </Button>
     </form>
   );

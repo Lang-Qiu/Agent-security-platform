@@ -21,7 +21,7 @@ export function StageSelector({ stage, onStageChange }: StageSelectorProps) {
 
   return (
     <fieldset aria-describedby={descriptionId}>
-      <legend className="sandbox-security-legend">阶段</legend>
+      <legend className="sandbox-security-legend">EVALUATION STAGE · 阶段</legend>
       <div className="workbench-stage-tabs">
         {SANDBOX_SECURITY_STAGES.map((option) => (
           <Radio

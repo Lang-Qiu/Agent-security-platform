@@ -2499,6 +2499,15 @@ surfaced. `SANDBOX_SECURITY_UNAUTHORIZED`/`SANDBOX_SECURITY_FORBIDDEN` prompt fo
 a fresh capability without discarding the typed payload;
 `SANDBOX_SECURITY_IDEMPOTENCY_CONFLICT` prompts a fresh key.
 
+Before an authenticated request, the frontend trims edge whitespace from the
+capability value and rejects any remaining C0/C1 control character without
+calling `fetch`. It returns the local `invalid_token` result, which has
+dedicated operator copy and is distinct from transport `unavailable`. The same
+normalization is applied to JSON and SSE evaluation calls. Shared audit-page
+cursor validation accepts only canonical unpadded base64url segments without
+depending on a Node runtime global, so browser and Node validation have the
+same result.
+
 Content-free rendering: the capability bearer token lives only in React state,
 is never rendered back after entry, and never enters a URL, storage, history,
 `document.title`, console, or log. Submitted content appears only in the owning

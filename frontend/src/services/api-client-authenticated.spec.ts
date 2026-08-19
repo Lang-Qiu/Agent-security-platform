@@ -121,6 +121,39 @@ describe("REQ-SBX-GENERAL-005 authenticated transport", () => {
     expect(result).toEqual({ kind: "unavailable" });
   });
 
+  it("trims safe edge whitespace before constructing the authorization header", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(OK_ENVELOPE));
+
+    const result = await requestAuthenticatedJson({
+      path: "/api/sandbox/security/audit-events?limit=50",
+      method: "GET",
+      capabilityToken: `\r\n tok-abc \n`,
+      normalize: (value) => value as { value: number },
+      options: { fetchImpl }
+    });
+
+    expect(result.kind).toBe("ok");
+    const [, init] = fetchImpl.mock.calls[0];
+    expect((init.headers as Record<string, string>).authorization).toBe(
+      "Bearer tok-abc"
+    );
+  });
+
+  it("rejects interior control characters before calling fetch", async () => {
+    const fetchImpl = vi.fn();
+
+    const result = await requestAuthenticatedJson({
+      path: "/api/sandbox/security/audit-events?limit=50",
+      method: "GET",
+      capabilityToken: `tok-${String.fromCharCode(13)}abc`,
+      normalize: (value) => value as { value: number },
+      options: { fetchImpl }
+    });
+
+    expect(result).toEqual({ kind: "invalid_token" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("never writes the capability token to storage", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(OK_ENVELOPE));
     const setItem = vi.spyOn(Storage.prototype, "setItem");

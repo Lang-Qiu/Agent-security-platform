@@ -101,6 +101,24 @@ describe("REQ-SBX-GENERAL-005 audit page", () => {
     expect(screen.getByRole("button", { name: /重新开始/ })).toBeInTheDocument();
   });
 
+  it("reports an invalid pasted token without calling it a service outage", async () => {
+    const fetchImpl = vi.fn();
+    render(<SandboxSecurityAuditPage fetchImpl={fetchImpl} />);
+
+    const tokenInput = document.querySelector<HTMLInputElement>(
+      "#sandbox-security-capability-token"
+    );
+    expect(tokenInput).not.toBeNull();
+    fireEvent.change(tokenInput!, {
+      target: { value: `tok-${String.fromCharCode(9)}abc` }
+    });
+    fireEvent.click(document.querySelector("button.ant-btn-primary")!);
+
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    expect(screen.getByRole("alert").textContent).toContain("令牌格式无效");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("drops the previously loaded page when a forward read fails", async () => {
     // Regression: a failed read used to leave the prior page's rows and pager on
     // screen next to the error banner, so an operator could read a stale page as

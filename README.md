@@ -284,7 +284,8 @@ npm.cmd run dev -- --host 127.0.0.1 --port 5173
 
 ### 访问入口
 
-- 前端控制台：`http://127.0.0.1:5173/`
+- 产品 Landing Page：`http://127.0.0.1:5173/`
+- 前端控制台：`http://127.0.0.1:5173/console`（进入后重定向到 `/overview`）
 - 后端健康检查：`http://127.0.0.1:3000/health`
 
 前端页面访问到的 `/api/*` 和 `/health` 请求会通过 Vite 代理转发到后端，无需额外配置。
@@ -497,6 +498,13 @@ history, and logs neither. A privacy leak sentinel and a static storage gate
 enforce this. Every decision is labelled `simulation` and is not usable for
 real interception. The full operator acceptance sequence lives in
 `docs/superpowers/2026-08-07-general-005-frontend-acceptance-runbook.md`.
+
+Authenticated frontend calls trim edge whitespace from a pasted capability and
+reject interior control characters before constructing `Authorization`; these
+local input failures are shown as `invalid_token` rather than as service
+outages. Audit cursor validation is runtime-neutral and does not depend on the
+Node-only `Buffer` global, so pages with a forward cursor validate in browsers
+as well as in Node-based tests.
 
 The Workbench now presents the same one-shot response as a finite runtime
 sequence: a static causal evidence rail, a fixed-position decision hero,

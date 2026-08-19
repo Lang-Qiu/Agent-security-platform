@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Typography } from "antd";
 import { useReducedMotion } from "motion/react";
 
 import type {
@@ -35,6 +34,7 @@ export interface SandboxSecurityWorkbenchPageProps {
 
 type ErrorResult =
   | { kind: "error"; httpStatus: number; errorCode: string | null; retryAfterSeconds: number | null }
+  | { kind: "invalid_token" }
   | { kind: "invalid" }
   | { kind: "unavailable" };
 
@@ -185,19 +185,14 @@ export function SandboxSecurityWorkbenchPage({ fetchImpl }: SandboxSecurityWorkb
 
   return (
     <section className="sandbox-security-workbench-page">
-      <header className="sandbox-workbench-header">
-        <div>
-          <p className="workbench-section-eyebrow">沙箱安全 · 评估工作台</p>
-          <Typography.Title level={3}>评估工作台</Typography.Title>
-          <Typography.Paragraph type="secondary">
-            提交内容以在模拟模式下评估沙箱安全策略。结果仅供分析，不用于实际拦截。
-          </Typography.Paragraph>
-        </div>
-        <span className="sandbox-simulation-badge">SIMULATION / 仿真</span>
-      </header>
-
       <div className="sandbox-workbench-grid">
-        <div className="sandbox-workbench-input">
+        <div className="sandbox-workbench-input console-panel workbench-composer">
+          <div className="workbench-composer__heading">
+            <span className="workbench-section-eyebrow">REQUEST COMPOSER</span>
+            <span className="workbench-composer__mode" data-mono="true">
+              simulation · local_and_judge
+            </span>
+          </div>
           <CapabilitySessionPanel
             hasToken={capabilityToken.trim().length > 0}
             requiresNewCapability={requiresNewCapability}

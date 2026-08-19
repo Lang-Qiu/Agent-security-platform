@@ -27,7 +27,10 @@ export function RequestLimitMeter({ usedBytes, limitBytes }: RequestLimitMeterPr
         />
       </div>
       <div className="workbench-byte-meter__copy" data-mono="true">
-        <span>{usedBytes} / {limitBytes} B</span>
+        <span className="workbench-byte-meter__label">BYTE USAGE · 字节用量</span>
+        <span>
+          {usedBytes} / {limitBytes} B
+        </span>
         {nearLimit ? <span className="workbench-byte-meter__warning">接近上限</span> : null}
       </div>
     </div>

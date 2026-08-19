@@ -2,11 +2,11 @@
 
 ## Requirement ID
 
-REQ-SBX-GENERAL-006
+REQ-SBX-GENERAL-005
 
 ## Requirement Name
 
-Sandbox security evaluation runtime streaming
+Sandbox security audit browser-runtime compatibility
 
 ## Status
 
@@ -14,49 +14,39 @@ COMPLETE
 
 ## Goal
 
-Deliver real ordered `SOURCE -> RULE -> MODEL -> JUDGE -> DECISION` results in
-the sandbox-security workbench. Each stage appears when its real engine stage
-terminates, and the final decision continues into the existing result
-presentation without changing that presentation.
+Keep sandbox-security audit pagination working in browsers and distinguish
+malformed pasted capability tokens from genuine transport outages.
 
 ## In Scope
 
-- Add an exact-key, content-free shared evaluation stream event contract.
-- Add an optional engine stage observer at real execution terminal points.
-- Add `text/event-stream` representation negotiation to the existing
-  `POST /api/sandbox/security/evaluations` route.
-- Preserve the current JSON response when the SSE Accept header is absent.
-- Emit explicit `skipped` results for MODEL/JUDGE short-circuit or routing
-  decisions.
-- Emit DECISION only after normalization and idempotent completion persistence.
-- Keep runtime stage state only in React memory and preserve the final result
-  component/DOM structure.
+- Validate canonical audit cursors without Node-only runtime globals.
+- Trim capability-token edge whitespace before authenticated requests.
+- Reject remaining C0/C1 control characters before calling `fetch`.
+- Return a distinct `invalid_token` result and render dedicated operator copy.
+- Apply the same token boundary to JSON and SSE authenticated calls.
+- Add shared, service, and audit-page regression coverage.
 
 ## Out of Scope
 
-- New public routes or changes to existing decision semantics.
-- Raw input, detector output, rule snippets, findings, credentials, or token
-  material in stage events.
-- Browser storage, URL state, telemetry, or audit persistence for runtime stages.
-- Changes to enforcement behavior or unrelated sandbox-security requirements.
+- Backend routes, capability issuance, token grammar, or audit response schema.
+- Audit rate limits, SQLite persistence, WSL networking, or startup recovery.
+- Browser storage, URL state, telemetry, or token logging.
 
 ## Canonical Inputs
 
 - `AGENTS.md`
 - `metadata.md`
-- `docs/superpowers/specs/2026-08-16-sandbox-security-evaluation-runtime-streaming-design.md`
-- `docs/superpowers/plans/2026-08-16-sandbox-security-evaluation-runtime-streaming.md`
 - `docs/api-contract.md`
 - `docs/architecture.md`
+- `shared/contracts/sandbox-security-api.ts`
+- `frontend/src/services/api-client.ts`
 
 ## Acceptance Criteria
 
-1. SOURCE, RULE, MODEL, JUDGE, and DECISION arrive in sequence and render as
-   each event is received.
-2. Skipped detector stages are visible as explicit terminal results.
-3. Non-SSE clients retain the current JSON behavior.
-4. DECISION is never emitted before completion persistence succeeds.
-5. Stream events remain content-free and exact-key validated.
-6. The existing final result presentation remains unchanged after DECISION.
-7. Focused and repository regression tests are green, apart from documented
-   pre-existing environment failures.
+1. A canonical audit page with `next_cursor` normalizes when `Buffer` is absent.
+2. Edge whitespace is removed before constructing `Authorization`.
+3. Interior control characters return `invalid_token` without calling `fetch`.
+4. Audit and evaluation UI distinguish `invalid_token` from `unavailable`.
+5. Existing audit pagination, JSON, and SSE behavior remains green.
+6. Focused and full frontend/shared tests pass, apart from documented unrelated
+   repository environment failures.

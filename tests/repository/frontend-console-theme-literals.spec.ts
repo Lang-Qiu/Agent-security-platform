@@ -110,10 +110,11 @@ test("app.css contains the complete sandbox Workbench redesign contract", () => 
   }
   assert.match(
     css,
-    /grid-template-columns:\s*minmax\(300px,\s*0\.75fr\)\s+minmax\(500px,\s*1\.25fr\)/
+    /grid-template-columns:\s*minmax\(420px,\s*445px\)\s+minmax\(0,\s*1fr\)/
   );
   assert.match(css, /@keyframes\s+workbench-pulse-badge/);
-  assert.match(css, /@keyframes\s+workbench-shimmer/);
+  // The shimmer loading animation was removed with the streamed runtime stage
+  // rows (0640e10); the evaluating badge is the remaining infinite animation.
 
   // Asserting the keyframes merely exist does not prove they are ever switched
   // off. Both Workbench loading animations are infinite, so the reduced-motion
@@ -128,10 +129,7 @@ test("app.css contains the complete sandbox Workbench redesign contract", () => 
     block.includes(".workbench-")
   );
   assert.ok(workbenchQuiet, "missing Workbench reduced-motion shutdown");
-  for (const selector of [
-    ".workbench-evaluating-badge",
-    ".workbench-shimmer-row::after"
-  ]) {
+  for (const selector of [".workbench-evaluating-badge"]) {
     assert.ok(
       workbenchQuiet.includes(selector),
       `${selector} runs an infinite animation and must be quieted under reduced motion`
@@ -203,11 +201,19 @@ test("app.css contains the complete sandbox Workbench redesign contract", () => 
     }
   }
 
+  // The credential card and the form are chrome-less sections inside the
+  // unified `.workbench-composer` panel; neither may re-introduce its own
+  // non-zero border-radius against the wrapper's frame.
   const composerOverride = css.match(
-    /\.workbench-credential-panel,\s*\.workbench-request-composer\s*\{([^}]*)\}/s
+    /\.workbench-credential-panel\s*\{([^}]*)\}/s
   );
   assert.ok(composerOverride);
-  assert.doesNotMatch(composerOverride[1], /border-radius/);
+  assert.doesNotMatch(composerOverride[1], /border-radius:\s*[1-9]/);
+  const composerFormOverride = css.match(
+    /\.workbench-request-composer\s*\{([^}]*)\}/s
+  );
+  assert.ok(composerFormOverride);
+  assert.doesNotMatch(composerFormOverride[1], /border-radius:\s*[1-9]/);
   const insightOverride = css.match(
     /\.workbench-insight-grid\s*>\s*\.console-panel\s*\{([^}]*)\}/s
   );

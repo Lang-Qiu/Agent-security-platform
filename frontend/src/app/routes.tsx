@@ -15,12 +15,19 @@ import { TaskListPage } from "../pages/TaskListPage";
 export const appRoutes: RouteObject[] = [
   {
     path: "/",
+    lazy: async () => {
+      const { LandingPage } = await import("../pages/LandingPage");
+
+      return { Component: LandingPage };
+    }
+  },
+  {
+    path: "/console",
+    element: <Navigate to="/overview" replace />
+  },
+  {
     element: <ConsoleLayout />,
     children: [
-      {
-        index: true,
-        element: <Navigate to="/overview" replace />
-      },
       {
         path: "overview",
         element: <OverviewPage />

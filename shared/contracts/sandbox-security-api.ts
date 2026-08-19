@@ -211,14 +211,40 @@ function isElapsedMs(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0 && (value as number) <= 60000;
 }
 
+function base64UrlDigit(value: string): number {
+  const code = value.charCodeAt(0);
+  if (code >= 65 && code <= 90) return code - 65;
+  if (code >= 97 && code <= 122) return code - 97 + 26;
+  if (code >= 48 && code <= 57) return code - 48 + 52;
+  if (value === "-") return 62;
+  if (value === "_") return 63;
+  return -1;
+}
+
 function isCursorSegmentCanonical(value: string): boolean {
-  if (value.length % 4 === 1) return false;
-  try {
-    const decoded = Buffer.from(value, "base64url");
-    return decoded.length > 0 && decoded.toString("base64url") === value;
-  } catch {
+  if (
+    value.length === 0 ||
+    value.length % 4 === 1 ||
+    !/^[A-Za-z0-9_-]+$/.test(value)
+  ) {
     return false;
   }
+
+  // Decode only the final partial byte. A canonical unpadded base64url value
+  // has zero bits in that position; this avoids Buffer/atob runtime globals.
+  let bitBuffer = 0;
+  let bitCount = 0;
+  for (const character of value) {
+    const digit = base64UrlDigit(character);
+    if (digit < 0) return false;
+    bitBuffer = (bitBuffer << 6) | digit;
+    bitCount += 6;
+    while (bitCount >= 8) {
+      bitCount -= 8;
+      bitBuffer &= bitCount === 0 ? 0 : (1 << bitCount) - 1;
+    }
+  }
+  return bitCount === 0 || bitBuffer === 0;
 }
 
 function isCursor(value: unknown): value is string {

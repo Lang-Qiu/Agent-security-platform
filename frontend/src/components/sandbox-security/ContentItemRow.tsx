@@ -116,7 +116,7 @@ export function ContentItemRow({
         id={valueFieldId}
         className="workbench-source-card__value"
         aria-label={`内容值 ${item.source_id}`}
-        rows={2}
+        rows={1}
         value={displayValue}
         onChange={(event) =>
           onChange({

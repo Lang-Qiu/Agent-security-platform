@@ -1,11 +1,12 @@
 :root {
   color-scheme: dark;
-  --console-bg: #0d1520;
-  --console-surface: rgba(18, 28, 40, 0.9);
-  --console-surface-raised: #16222f;
+  --console-bg: #050e18;
+  --console-surface: rgba(8, 20, 32, 0.92);
+  --console-surface-raised: #0b1a28;
+  --console-surface-deep: #071521;
   --console-ink: #e4edf5;
   --console-muted: #8fa3b8;
-  --console-muted-dim: #7d92a8;
+  --console-muted-dim: #93a9bd;
   --console-accent: #22d3ee;
   --console-accent-soft: #0f2a35;
   --console-accent-strong: #0e7490;
@@ -26,11 +27,11 @@
   --console-hero-tint-soft: rgba(34, 211, 238, 0.08);
   --console-grid-line: rgba(228, 237, 245, 0.04);
   --console-veil: rgba(228, 237, 245, 0.05);
-  --console-sider-bg: rgba(18, 28, 40, 0.88);
+  --console-sider-bg: rgba(5, 15, 26, 0.92);
   --console-sider-inset: rgba(255, 255, 255, 0.05);
   --console-avatar-fill: rgba(34, 211, 238, 0.16);
   --console-brand-shadow: rgba(0, 0, 0, 0.4);
-  --console-tile-bg: rgba(22, 34, 47, 0.96);
+  --console-tile-bg: rgba(10, 24, 37, 0.96);
   --console-case-bg: rgba(22, 34, 47, 0.6);
   --console-attempt-bg: rgba(22, 34, 47, 0.92);
   /* Showcase route. These live in :root because the repository colour gate
@@ -104,7 +105,55 @@ a {
 }
 
 .console-navigation {
-  padding: 8px 12px 20px;
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 96px);
+  padding: 8px 12px 16px;
+}
+
+.console-navigation .console-menu {
+  flex: 0 1 auto;
+}
+
+.console-sider-status {
+  margin-top: auto;
+  padding: 12px 12px 10px;
+  border: 1px solid var(--console-border);
+  border-radius: 10px;
+  background: var(--console-surface-raised);
+}
+
+.console-sider-status dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.console-sider-status dl > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.console-sider-status dt {
+  color: var(--console-muted-dim);
+  font-family: var(--console-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+}
+
+.console-sider-status dd {
+  margin: 0;
+  color: var(--console-muted);
+  font-family: var(--console-mono);
+  font-size: 0.68rem;
+}
+
+.console-sider-copyright {
+  margin: 10px 4px 0;
+  color: var(--console-muted-dim);
+  font-size: 0.64rem;
 }
 
 .console-menu.ant-menu {
@@ -113,7 +162,22 @@ a {
 }
 
 .console-main {
-  background: transparent;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent 30px,
+      var(--console-grid-line) 30px,
+      var(--console-grid-line) 31px
+    ),
+    repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 30px,
+      var(--console-grid-line) 30px,
+      var(--console-grid-line) 31px
+    ),
+    transparent;
 }
 
 .console-header.ant-layout-header {
@@ -122,21 +186,23 @@ a {
   justify-content: space-between;
   gap: 16px;
   height: auto;
-  padding: 24px 28px 0;
+  padding: 2px 24px 0;
   background: transparent;
 }
 
 .console-header-label {
   display: block;
-  margin-bottom: 6px;
+  margin-bottom: 3px;
   color: var(--console-muted);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
 }
 
 .console-header-title.ant-typography {
   margin: 0;
+  font-size: 1.5rem;
+  line-height: 1.25;
 }
 
 .console-avatar.ant-avatar {
@@ -145,7 +211,7 @@ a {
 }
 
 .console-content.ant-layout-content {
-  padding: 24px 28px 28px;
+  padding: 14px 12px 24px;
 }
 
 .console-panel {
@@ -180,10 +246,22 @@ a {
 .sandbox-security-workbench-page,
 .sandbox-security-audit-page {
   display: grid;
-  gap: 20px;
+  gap: 12px;
 }
 
-.sandbox-security-workbench-page legend,
+/* Reference density: workbench panels use a tighter 16px frame and 12px radius
+   than the generic 24px console panel. The decision hero is tighter still —
+   its target height is ~193px. */
+.sandbox-security-workbench-page .console-panel {
+  padding: 16px;
+  border-radius: 12px;
+}
+
+.sandbox-security-workbench-page .workbench-decision-hero {
+  padding: 10px 14px;
+}
+
+ .sandbox-security-workbench-page legend-x-never,
 .sandbox-security-workbench-page label,
 .sandbox-security-audit-page label {
   color: var(--console-muted);
@@ -193,6 +271,15 @@ a {
   margin: 0;
   padding: 0;
   border: none;
+}
+
+.sandbox-security-legend {
+  padding: 0;
+  color: var(--console-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
 }
 
 /* antd Radio renders as a <label>; space the options inline and let them wrap
@@ -230,8 +317,8 @@ a {
 
 .sandbox-workbench-grid {
   display: grid;
-  grid-template-columns: minmax(300px, 0.75fr) minmax(500px, 1.25fr);
-  gap: 20px;
+  grid-template-columns: minmax(420px, 445px) minmax(0, 1fr);
+  gap: 12px;
   /* Required for the sticky results pane: a stretched grid item cannot stick. */
   align-items: start;
 }
@@ -244,12 +331,34 @@ a {
 .sandbox-workbench-results,
 .sandbox-workbench-failure {
   display: grid;
-  gap: 20px;
+  gap: 12px;
 }
 
 .sandbox-workbench-results {
   position: sticky;
-  top: 24px;
+  top: 12px;
+}
+
+/* One continuous runtime enclosure (reference): the results column is a single
+   bordered shell; the inner modules render as inset surfaces without their own
+   outer borders. The decision hero keeps its dedicated risk frame. */
+.sandbox-workbench-results .workbench-evaluation-inspector {
+  padding: 14px;
+  border: 1px solid var(--console-border-strong);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--console-bg) 55%, var(--console-surface));
+  box-shadow: var(--console-shadow);
+}
+
+.sandbox-workbench-results .workbench-evidence-trace {
+  border-color: transparent;
+  background: var(--console-surface-raised);
+}
+
+.sandbox-workbench-results .workbench-insight-grid > .console-panel,
+.sandbox-workbench-results .workbench-execution-trace {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--console-bg) 40%, var(--console-surface-raised));
 }
 
 /* The retry control sits under its alert at intrinsic width, not stretched
@@ -324,22 +433,46 @@ a {
 
 /* REQ-SBX-GENERAL-005 / R2: cinematic runtime Workbench. */
 
-.sandbox-workbench-header {
+/* Workbench context injected into the banner row: badge + amber disclaimer
+   share the title's horizontal band (reference header composition). */
+.console-header-workbench {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 20px;
-  max-width: none;
+  flex: 1 1 420px;
+  flex-wrap: nowrap;
+  align-items: center;
+  align-self: center;
+  gap: 12px;
+  min-width: 0;
+  /* Align the badge strip with the title's baseline band (the title block
+     stacks eyebrow + title, so its optical center sits lower). */
+  line-height: 1.4;
+  margin-top: 16px;
 }
 
-.sandbox-workbench-header > div {
-  display: grid;
-  gap: 4px;
-  max-width: 68ch;
+.console-header-workbench .sandbox-simulation-badge {
+  flex: none;
+  align-self: center;
+  padding: 5px 12px;
+  font-size: 0.7rem;
+  line-height: 1.4;
+  white-space: nowrap;
 }
 
-.sandbox-workbench-header .ant-typography {
-  margin-block: 0;
+.sandbox-workbench-notice {
+  flex: 0 1 520px;
+  min-width: 0;
+  margin: 0;
+  padding: 5px 12px;
+  border: 1px solid color-mix(in srgb, var(--console-severity-medium) 45%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--console-severity-medium) 10%, transparent);
+  color: var(--console-severity-medium);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
 }
 
 .sandbox-security-workbench-page [data-mono="true"] {
@@ -347,42 +480,71 @@ a {
   font-variant-numeric: tabular-nums;
 }
 
-.sandbox-security-workbench-page .sandbox-simulation-badge {
-  font-family: var(--console-mono);
-}
 
 .workbench-section-eyebrow {
   margin: 0;
   color: var(--console-accent);
-  font-family: var(--console-mono);
   font-size: 0.72rem;
   letter-spacing: 0.14em;
   line-height: 1.4;
   text-transform: uppercase;
 }
 
-.workbench-evaluation-inspector,
-.workbench-request-composer {
+.workbench-evaluation-inspector {
   display: grid;
-  gap: 20px;
+  gap: 12px;
 }
 
-.workbench-credential-panel,
-.workbench-request-composer {
-  padding: 18px;
+/* Unified request composer: one continuous panel (credential + form) filling
+   the viewport column — the reference composer spans y92..925 with the byte
+   meter, enforcement notice, and Evaluate anchored near the bottom. */
+.workbench-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: calc(100vh - 124px);
+}
+
+.workbench-composer__heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workbench-composer__mode {
+  color: var(--console-muted-dim);
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
 }
 
 .workbench-credential-panel {
   display: grid;
-  gap: 14px;
+  gap: 12px;
+  padding: 0 0 14px;
+  border: 0;
+  border-bottom: 1px solid var(--console-border);
+  background: transparent;
   transition:
     border-color 180ms ease,
     background-color 180ms ease;
 }
 
 .workbench-credential-panel--held {
-  border-color: var(--console-accent-strong);
-  background: var(--console-accent-soft);
+  border-bottom-color: var(--console-accent-strong);
+}
+
+.workbench-request-composer {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: 14px;
+  padding: 0;
+}
+
+.workbench-request-composer > .workbench-evaluate-btn {
+  margin-top: auto;
 }
 
 .workbench-credential-panel__heading {
@@ -391,6 +553,48 @@ a {
   align-items: center;
   justify-content: space-between;
   gap: 8px 16px;
+}
+
+.workbench-credential-panel__actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.workbench-credential-panel__actions .ant-btn {
+  padding: 0 4px;
+  color: var(--console-muted);
+  font-size: 0.7rem;
+}
+
+.workbench-credential-panel__field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 7px 12px;
+  border: 1px solid var(--console-accent-strong);
+  border-radius: 9px;
+  background: var(--console-accent-soft);
+  color: var(--console-accent);
+  font-size: 0.76rem;
+  overflow: hidden;
+}
+
+.workbench-credential-panel__field > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.workbench-credential-panel__field .workbench-credential-status {
+  margin-left: auto;
+  color: var(--console-action-allow);
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
 }
 
 .workbench-credential-panel__entry {
@@ -472,7 +676,7 @@ a {
   position: relative;
   display: flex;
   align-items: center;
-  padding: 13px 14px;
+  padding: 10px 12px;
   border: 1px solid var(--console-border);
   border-radius: 12px;
   background: var(--console-surface-raised);
@@ -500,33 +704,45 @@ a {
 .workbench-policy-card__id {
   min-width: 0;
   color: var(--console-muted-dim);
-  font-size: 0.7rem;
+  font-size: 0.64rem;
+  line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
 .workbench-policy-status {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-items: center;
   gap: 5px 12px;
   grid-column: 1 / -1;
-  margin: 10px 0 0;
-  padding: 10px 12px;
+  margin: 8px 0 0;
+  padding: 6px 10px;
   border-left: 3px solid var(--console-accent);
   background: var(--console-accent-soft);
   color: var(--console-muted);
-  font-family: var(--console-mono);
-  font-size: 0.78rem;
+  font-size: 0.7rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .workbench-source-stack {
   display: grid;
-  gap: 10px;
+  gap: 8px;
+}
+
+.workbench-source-stack__bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .workbench-source-card {
   display: grid;
-  gap: 8px;
-  padding: 11px;
+  gap: 5px;
+  padding: 6px;
   border: 1px solid var(--console-border);
   border-radius: 12px;
   background: var(--console-showcase-chip);
@@ -538,35 +754,100 @@ a {
 
 .workbench-source-card__header {
   display: grid;
-  grid-template-columns: minmax(58px, auto) minmax(0, 0.8fr) minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(44px, auto) minmax(0, 1.15fr) minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .workbench-source-card__header .ant-select {
   width: 100%;
   min-width: 0;
+  font-size: 0.7rem;
+}
+
+/* Tighten the antd Select chrome so long type names stay readable in the
+   382px composer column. */
+.workbench-source-card__header .ant-select .ant-select-selector {
+  padding-inline-start: 7px;
+  padding-inline-end: 18px;
+}
+
+.workbench-source-card__header .ant-select .ant-select-selection-item {
+  line-height: 18px;
+}
+
+.workbench-source-card__header .ant-select .ant-select-selector {
+  min-height: 24px;
+  padding-block: 1px;
+}
+
+.workbench-source-card__header .ant-select .ant-select-arrow {
+  inset-inline-end: 4px;
+  font-size: 8px;
 }
 
 .workbench-source-card__id {
   color: var(--console-accent);
-  font-size: 0.75rem;
+  font-size: 0.68rem;
 }
 
 .workbench-source-card__size {
   color: var(--console-muted-dim);
-  font-size: 0.72rem;
+  font-size: 0.66rem;
   white-space: nowrap;
+}
+
+.workbench-source-card__header .ant-btn {
+  padding-inline: 4px;
+  min-width: 22px;
 }
 
 .workbench-source-card__value {
   font-family: var(--console-mono);
+  font-size: 0.7rem;
   resize: vertical;
+}
+
+.workbench-source-card__value.ant-input {
+  min-height: 20px;
+  padding: 2px 6px;
+  font-size: 0.66rem;
 }
 
 .workbench-request-composer .sandbox-security-violations ul {
   margin: 4px 0 0;
   padding-inline-start: 20px;
+}
+
+.workbench-evidence-heading {
+  margin: -2px 0 -2px 2px;
+}
+
+.workbench-failclosed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 14px;
+  padding: 11px 14px;
+  border: 1px solid color-mix(in srgb, var(--console-severity-medium) 45%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--console-severity-medium) 8%, transparent);
+}
+
+.workbench-failclosed__title {
+  color: var(--console-severity-medium);
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+}
+
+.workbench-failclosed__copy {
+  flex: 1 1 240px;
+  min-width: 0;
+  margin: 0;
+  color: var(--console-muted);
+  font-size: 0.7rem;
+  line-height: 1.45;
 }
 
 .workbench-byte-meter {
@@ -594,10 +875,19 @@ a {
 
 .workbench-byte-meter__copy {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
-  gap: 12px;
+  gap: 6px 12px;
   color: var(--console-muted-dim);
   font-size: 0.72rem;
+}
+
+.workbench-byte-meter__label {
+  color: var(--console-muted);
+  font-size: 0.64rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
 }
 
 .workbench-byte-meter__warning {
@@ -605,11 +895,36 @@ a {
 }
 
 .workbench-evaluate-btn.ant-btn {
-  min-height: 46px;
-  border-radius: 12px;
-  box-shadow: 0 12px 30px var(--console-hero-tint-strong);
+  min-height: 58px;
+  border: none;
+  border-radius: 10px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--console-accent) 88%, transparent),
+    var(--console-accent-strong)
+  );
+  color: var(--console-ink);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--console-ink) 18%, transparent),
+    0 12px 30px var(--console-hero-tint-strong);
   font-weight: 700;
   letter-spacing: 0.04em;
+}
+
+.workbench-evaluate-btn.ant-btn .workbench-evaluate-btn__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.95rem;
+}
+
+.workbench-evaluate-btn.ant-btn .workbench-evaluate-btn__hint {
+  display: block;
+  margin-top: 2px;
+  color: color-mix(in srgb, var(--console-ink) 72%, transparent);
+  font-size: 0.64rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
 }
 
 .workbench-runtime-header {
@@ -618,6 +933,12 @@ a {
   justify-content: space-between;
   gap: 12px;
   min-width: 0;
+  margin: -14px 0 2px -14px;
+  padding: 8px 16px 8px 14px;
+  border: 1px solid var(--console-border-strong);
+  border-bottom: 0;
+  border-radius: 10px 10px 0 0;
+  background: var(--console-surface-raised);
 }
 
 .workbench-runtime-header__chips {
@@ -630,12 +951,13 @@ a {
 }
 
 .workbench-runtime-header__chips > span:not(.sandbox-simulation-badge) {
-  max-width: 220px;
-  padding: 5px 9px;
+  max-width: 210px;
+  padding: 2px 9px;
   border: 1px solid var(--console-border);
   border-radius: 999px;
-  color: var(--console-muted-dim);
-  font-size: 0.68rem;
+  background: transparent;
+  color: var(--console-muted);
+  font-size: 0.66rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -643,10 +965,11 @@ a {
 
 .workbench-evidence-trace {
   display: grid;
-  grid-template-columns: auto minmax(20px, 1fr) auto minmax(20px, 1fr) auto minmax(20px, 1fr) auto minmax(20px, 1fr) auto;
+  grid-template-columns: auto minmax(28px, 1fr) auto minmax(28px, 1fr) auto minmax(28px, 1fr) auto minmax(28px, 1fr) auto;
   align-items: center;
-  gap: 8px;
-  padding: 14px 16px;
+  gap: 10px;
+  min-height: 70px;
+  padding: 11px 14px;
   border: 1px solid var(--console-border);
   border-radius: 12px;
   background: var(--console-surface);
@@ -656,8 +979,33 @@ a {
 .workbench-evidence-trace__item {
   position: relative;
   display: grid;
-  justify-items: center;
-  gap: 5px;
+  grid-template-columns: 38px minmax(0, auto);
+  align-items: center;
+  gap: 9px;
+}
+
+.workbench-evidence-trace__tile {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border: 1px solid var(--console-border);
+  border-radius: 11px;
+  background: var(--console-surface-raised);
+  color: var(--console-muted);
+  font-size: 1.05rem;
+}
+
+.workbench-evidence-trace__tile[data-state="active"] {
+  border-color: var(--console-accent-strong);
+  color: var(--console-accent);
+}
+
+.workbench-evidence-trace__item-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
 }
 
 .workbench-evidence-trace__rail {
@@ -668,10 +1016,12 @@ a {
 }
 
 .workbench-evidence-trace__node {
-  position: relative;
+  position: absolute;
+  top: -3px;
+  right: -3px;
   z-index: 1;
-  width: 12px;
-  height: 12px;
+  width: 9px;
+  height: 9px;
   border: 2px solid var(--console-border-interactive);
   border-radius: 999px;
   background: var(--console-surface-raised);
@@ -717,10 +1067,11 @@ a {
 
 .workbench-evidence-trace__decision-glow {
   position: absolute;
-  top: 0;
-  width: 28px;
-  height: 28px;
-  margin-top: -8px;
+  top: 50%;
+  left: 50%;
+  width: 34px;
+  height: 34px;
+  transform: translate(-50%, -50%);
   border: 1px solid var(--console-accent);
   border-radius: 999px;
   pointer-events: none;
@@ -728,9 +1079,16 @@ a {
 
 .workbench-evidence-trace__label {
   color: var(--console-muted);
-  font-family: var(--console-mono);
-  font-size: 0.62rem;
+  font-size: 0.66rem;
+  font-weight: 600;
   letter-spacing: 0.06em;
+}
+
+.workbench-evidence-trace__role {
+  color: var(--console-muted-dim);
+  font-size: 0.6rem;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
 }
 
 .workbench-evidence-trace[data-state="idle"] .workbench-evidence-trace__label,
@@ -792,8 +1150,8 @@ a {
   grid-template-columns: 88px minmax(76px, auto) minmax(0, 1fr);
   align-items: center;
   gap: 12px;
-  min-height: 44px;
-  padding: 10px 12px;
+  min-height: 40px;
+  padding: 8px 10px;
   border: 1px solid var(--console-border);
   border-radius: 6px;
   background: var(--console-surface-raised);
@@ -836,30 +1194,210 @@ a {
 
 .workbench-decision-hero {
   position: relative;
-  min-height: 250px;
+  min-height: 0;
   overflow: hidden;
 }
 
+/* Reference decision hero: a compact risk surface on the deepest navy panel
+   with a red-black ambient wash behind a large emblem region. Red tints the
+   border/glow/wash; low/info fall back to accent. */
+.workbench-decision-hero[data-risk="critical"],
+.workbench-decision-hero[data-risk="high"],
+.workbench-decision-hero[data-risk="medium"] {
+  border-color: color-mix(in srgb, var(--console-action-deny) 55%, transparent);
+  background:
+    radial-gradient(
+      circle at 18% 50%,
+      color-mix(in srgb, var(--console-action-deny) 14%, transparent),
+      transparent 46%
+    ),
+    var(--console-surface-deep);
+  box-shadow: 0 0 32px color-mix(in srgb, var(--console-action-deny) 12%, transparent);
+}
+
 .workbench-decision-hero__reserve {
-  min-height: 190px;
+  min-height: 150px;
   display: grid;
   align-content: center;
 }
 
 .workbench-decision-hero__content {
   display: grid;
-  gap: 14px;
+  gap: 7px;
 }
 
-.workbench-decision-hero .showcase-verdict__tags {
-  font-size: 1.15rem;
+/* The simulation caveat shares the metadata footer row as its trailing cell. */
+.workbench-decision-hero__content > .ant-typography {
+  margin: 0;
+  font-size: 0.66rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.workbench-decision-hero .showcase-verdict__tags .ant-tag {
+.workbench-decision-hero__stage {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+}
+
+/* Large emblem region: a layered target/shield mark with concentric rings on
+   the red-black wash. */
+.workbench-decision-hero__emblem {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 104px;
+  height: 104px;
+  color: var(--console-action-deny);
+  font-size: 2.6rem;
+}
+
+.workbench-decision-hero__emblem::before,
+.workbench-decision-hero__emblem::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.workbench-decision-hero__emblem::before {
+  border: 1px solid color-mix(in srgb, var(--console-action-deny) 40%, transparent);
+  background: color-mix(in srgb, var(--console-action-deny) 9%, transparent);
+}
+
+.workbench-decision-hero__emblem::after {
+  inset: 14px;
+  border: 1px solid color-mix(in srgb, var(--console-action-deny) 55%, transparent);
+}
+
+.workbench-decision-hero__emblem[data-risk="low"] ,
+.workbench-decision-hero__emblem[data-risk="info"] {
+  color: var(--console-accent);
+}
+
+.workbench-decision-hero__emblem[data-risk="low"]::before,
+.workbench-decision-hero__emblem[data-risk="info"]::before {
+  border-color: color-mix(in srgb, var(--console-accent) 40%, transparent);
+  background: color-mix(in srgb, var(--console-accent) 9%, transparent);
+}
+
+.workbench-decision-hero__emblem[data-risk="low"]::after,
+.workbench-decision-hero__emblem[data-risk="info"]::after {
+  border-color: color-mix(in srgb, var(--console-accent) 55%, transparent);
+}
+
+.workbench-decision-hero__body {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+}
+
+.workbench-decision-hero__title {
+  margin: 0;
+  color: var(--console-action-deny);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  line-height: 1.1;
+}
+
+.workbench-decision-hero[data-risk="low"] .workbench-decision-hero__title,
+.workbench-decision-hero[data-risk="info"] .workbench-decision-hero__title {
+  color: var(--console-accent);
+}
+
+.workbench-decision-hero__action {
+  margin: 0;
+  color: var(--console-ink);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+}
+
+.workbench-decision-hero__tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.75rem;
+}
+
+.workbench-decision-hero__tags .ant-tag {
   display: inline-flex;
   align-items: center;
-  min-height: 32px;
-  font-size: 1.15rem;
+  min-height: 24px;
+  margin: 0;
+  font-size: 0.72rem;
+}
+
+.workbench-decision-hero__stats {
+  display: grid;
+  grid-auto-flow: column;
+  gap: 18px;
+  margin: 0;
+}
+
+.workbench-decision-hero__stats > div {
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+}
+
+.workbench-decision-hero__stats dt {
+  margin: 0;
+  color: var(--console-muted-dim);
+  font-family: var(--console-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.workbench-decision-hero__stats dd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--console-ink);
+  font-size: 0.82rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.workbench-decision-hero__confidence-track {
+  display: block;
+  width: 56px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--console-border-strong);
+  overflow: hidden;
+}
+
+.workbench-decision-hero__confidence-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--console-severity-high);
+}
+
+.workbench-decision-hero__summary {
+  margin: 0;
+  max-width: 52ch;
+  color: var(--console-muted);
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+.workbench-decision-hero__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 24px;
+  padding-top: 8px;
+  border-top: 1px solid var(--console-border);
 }
 
 .workbench-decision-hero__context-chips {
@@ -869,74 +1407,88 @@ a {
 }
 
 .workbench-decision-hero__context-chips > span {
-  padding: 5px 9px;
+  padding: 3px 8px;
   border: 1px solid var(--console-border);
   border-radius: 999px;
   color: var(--console-muted);
-  font-size: 0.7rem;
-  overflow-wrap: anywhere;
-}
-
-.workbench-decision-hero__meta {
-  display: grid;
-  gap: 10px;
-  margin-top: 2px;
-}
-
-.workbench-decision-hero__meta > summary {
-  color: var(--console-muted);
-  cursor: pointer;
-  font-size: 0.75rem;
+  font-size: 0.66rem;
   overflow-wrap: anywhere;
 }
 
 .workbench-decision-hero__meta dl {
-  display: grid;
-  gap: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 26px;
   margin: 0;
 }
 
 .workbench-decision-hero__meta dl > div {
-  display: grid;
-  grid-template-columns: minmax(110px, 0.35fr) minmax(0, 1fr);
-  gap: 10px;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
 }
 
-.workbench-decision-hero__meta dt,
+.workbench-decision-hero__meta dt {
+  margin: 0;
+  color: var(--console-muted-dim);
+  font-family: var(--console-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
 .workbench-decision-hero__meta dd {
   margin: 0;
+  color: var(--console-muted);
+  font-family: var(--console-mono);
+  font-size: 0.68rem;
   overflow-wrap: anywhere;
 }
 
-/* RISK FINDINGS spans the full column with DETECTOR EXECUTION stacked beneath.
-   Six columns plus a readable Chinese sentence do not fit a half-width panel:
-   at 2-up the panel was 375px while the fixed columns alone needed ~512px, so
-   the SUMMARY column was starved and clipped off the panel edge. Full width
-   gives the sentence real room; the height cost is measured, not assumed. */
+/* RISK FINDINGS and DETECTOR EXECUTION share one row at reference proportions
+   (545/411 ≈ 1.32fr/1fr). The earlier full-width rule was measured when the
+   results column was ~700px; at the 382px composer grid the results track is
+   wide enough for both tables, and the SUMMARY column keeps ≥20ch. */
 .workbench-insight-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.32fr) minmax(0, 1fr);
   align-items: start;
-  gap: 16px;
+  gap: 12px;
 }
 
 .workbench-insight-grid > .console-panel {
   min-width: 0;
-  padding: 18px;
+  padding: 16px;
 }
 
 .workbench-insight-grid__findings,
 .workbench-insight-grid__detectors {
   display: grid;
   gap: 14px;
+  min-height: 238px;
 }
 
 /* Result tables: dense, monospace-numeric, horizontally scrollable inside their
-   own panel so a long detector id never widens the page. */
+   own panel so a long detector id never widens the page. The findings table
+   also scrolls vertically beyond the reference ~200px panel height, so a
+   seventh finding never grows the page or pushes the trace below the fold. */
 .workbench-findings-table__scroll,
 .workbench-detector-table__scroll {
   min-width: 0;
-  overflow-x: auto;
+  overflow: auto;
+}
+
+.workbench-findings-table__scroll {
+  max-height: 148px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--console-border-strong) transparent;
+}
+
+.workbench-detector-table__scroll {
+  max-height: 186px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--console-border-strong) transparent;
 }
 
 .workbench-findings-table,
@@ -948,10 +1500,9 @@ a {
 
 .workbench-findings-table thead th,
 .workbench-detector-table thead th {
-  padding: 0 8px 7px;
+  padding: 0 7px 5px;
   border-bottom: 1px solid var(--console-border-strong);
   color: var(--console-accent);
-  font-family: var(--console-mono);
   font-size: 0.64rem;
   font-weight: 500;
   letter-spacing: 0.12em;
@@ -961,7 +1512,7 @@ a {
 
 .workbench-findings-table tbody td,
 .workbench-detector-table tbody td {
-  padding: 8px;
+  padding: 3px 7px;
   border-bottom: 1px solid var(--console-border);
   color: var(--console-ink);
   vertical-align: top;
@@ -1039,12 +1590,11 @@ a {
 
 .workbench-findings-table__more {
   margin-inline-start: 6px;
-  padding: 1px 6px;
+  padding: 1px 7px;
   border: 1px solid var(--console-border-interactive);
   border-radius: 999px;
   background: transparent;
   color: var(--console-accent);
-  font-family: var(--console-mono);
   font-size: 0.64rem;
   cursor: pointer;
   white-space: nowrap;
@@ -1062,6 +1612,7 @@ a {
 .workbench-findings-table__conf {
   width: 1%;
   white-space: nowrap;
+  text-align: right;
 }
 
 .workbench-findings-table__conf-track {
@@ -1096,8 +1647,8 @@ a {
 .workbench-findings-table__detail-label {
   margin: 0;
   color: var(--console-accent);
-  font-family: var(--console-mono);
-  font-size: 0.62rem;
+  font-size: 0.64rem;
+  font-weight: 500;
   letter-spacing: 0.1em;
 }
 
@@ -1123,8 +1674,8 @@ a {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 19px;
-  height: 19px;
+  width: 16px;
+  height: 16px;
   border: 1px solid var(--console-border-interactive);
   border-radius: 999px;
   color: var(--console-muted);
@@ -1133,7 +1684,7 @@ a {
 
 .workbench-detector-table__detector {
   display: grid;
-  gap: 2px;
+  gap: 0;
   min-width: 0;
   max-width: 26ch;
 }
@@ -1146,7 +1697,8 @@ a {
 
 .workbench-detector-table__meta {
   color: var(--console-muted-dim);
-  font-size: 0.66rem;
+  font-size: 0.62rem;
+  line-height: 1.3;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -1156,6 +1708,7 @@ a {
   width: 1%;
   text-align: right;
   white-space: nowrap;
+  font-family: var(--console-mono);
 }
 
 .workbench-detector-table__row[data-status="matched"] .workbench-detector-table__badge {
@@ -1179,7 +1732,8 @@ a {
 .workbench-execution-trace {
   display: grid;
   gap: 12px;
-  padding: 18px;
+  min-height: 262px;
+  padding: 16px;
   border: 1px solid var(--console-border-strong);
   border-radius: 20px;
   background: var(--console-surface);
@@ -1199,7 +1753,7 @@ a {
   align-items: start;
   gap: 10px;
   min-width: 0;
-  padding: 9px 0;
+  padding: 5px 0;
   border-bottom: 1px solid var(--console-border);
 }
 
@@ -1238,7 +1792,7 @@ a {
   min-width: 0;
   color: var(--console-muted);
   font-family: var(--console-mono);
-  font-size: 0.76rem;
+  font-size: 0.7rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

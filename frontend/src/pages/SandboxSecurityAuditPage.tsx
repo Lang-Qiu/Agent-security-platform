@@ -19,6 +19,7 @@ export interface SandboxSecurityAuditPageProps {
 
 type ErrorResult =
   | { kind: "error"; httpStatus: number; errorCode: string | null; retryAfterSeconds: number | null }
+  | { kind: "invalid_token" }
   | { kind: "invalid" }
   | { kind: "unavailable" };
 

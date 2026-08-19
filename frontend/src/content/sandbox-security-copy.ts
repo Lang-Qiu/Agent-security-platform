@@ -171,6 +171,11 @@ const INVALID_COPY: CopyEntry = {
   remedy: "服务返回的数据未通过校验，请稍后重试。"
 };
 
+const INVALID_TOKEN_COPY: CopyEntry = {
+  title: "令牌格式无效",
+  remedy: "请重新粘贴能力令牌，确保令牌前后和内部没有换行或控制字符。"
+};
+
 const UNAVAILABLE_COPY: CopyEntry = {
   title: "服务不可达",
   remedy: "网络或服务暂时不可用，请检查连接后重试。"
@@ -239,6 +244,15 @@ export function describeSandboxSecurityFailure(
   if (result.kind === "invalid") {
     return {
       ...INVALID_COPY,
+      requiresNewCapability: false,
+      requiresNewIdempotencyKey: false,
+      retryAfterSeconds: null
+    };
+  }
+
+  if (result.kind === "invalid_token") {
+    return {
+      ...INVALID_TOKEN_COPY,
       requiresNewCapability: false,
       requiresNewIdempotencyKey: false,
       retryAfterSeconds: null

@@ -291,6 +291,63 @@ test("REQ-SBX-GENERAL-006 production gateway maps engine observations to exact l
   );
 });
 
+test("REQ-SBX-GENERAL-006 production gateway clamps fractional and over-budget engine elapsed times to the stream contract", async () => {
+  // The real engine measures elapsed time with performance.now() and emits
+  // fractional milliseconds (e.g. 0.5616...), and a judge slot may legitimately
+  // run longer than the stream contract's 60000 ms bound. Both must be clamped
+  // to safe integers in 0..60000 instead of failing stage normalization.
+  const fixture = makeGatewayPortsFixture({
+    stage_observations: [
+      {
+        stage: "source",
+        status: "completed",
+        source_count: 3,
+        tool_request_present: false,
+        elapsed_ms: 0.5616939999999886
+      },
+      {
+        stage: "rule",
+        status: "no_match",
+        detector_id: "detector://sandbox/security/rule/default/v1",
+        detector_version: "1.0.0",
+        detector_kind: "rule",
+        obligation: "profile_required",
+        elapsed_ms: 0.5616939999999886
+      },
+      {
+        stage: "judge",
+        status: "matched",
+        detector_id: "detector://sandbox/security/judge/default/v1",
+        detector_version: "1.0.0",
+        detector_kind: "external_judge",
+        obligation: "optional_not_selected",
+        elapsed_ms: 121000.4
+      }
+    ]
+  });
+  const gateway = await createGatewayWithPorts(fixture.ports);
+  const events: SandboxSecurityEvaluationStreamEvent[] = [];
+
+  await (gateway.evaluate as (...args: any[]) => Promise<unknown>)(
+    FIXED_EVALUATION_REQUEST,
+    undefined,
+    (event: SandboxSecurityEvaluationStreamEvent) => events.push(event)
+  );
+
+  assert.deepEqual(
+    events.map((event) =>
+      event.event_type === "stage"
+        ? [event.stage, event.result.elapsed_ms]
+        : []
+    ),
+    [
+      ["source", 1],
+      ["rule", 1],
+      ["judge", 60000]
+    ]
+  );
+});
+
 test("REQ-SBX-GENERAL-003 production gateway rejects invalid Decisions and defensively normalizes valid Decisions", async () => {
   const invalid = makeGatewayPortsFixture({ decision: { invalid: true } });
   const invalidGateway = await createGatewayWithPorts(invalid.ports);
@@ -846,6 +903,69 @@ test("REQ-SBX-GENERAL-006 synthesizes four replayed stages without an Engine cal
       [2, "rule", "no_match", "replayed"],
       [3, "model", "skipped", "replayed"],
       [4, "judge", "skipped", "replayed"]
+    ]
+  );
+});
+
+test("REQ-SBX-GENERAL-006 replayed stages clamp fractional and over-budget detector elapsed times to the stream contract", async () => {
+  // A cached decision may carry fractional elapsed milliseconds (real engine
+  // measurement) or a judge run longer than the stream contract's 60000 ms
+  // bound; both are valid inside the decision but must be clamped when the
+  // replay path synthesizes stage events.
+  const replayDecision: SandboxSecurityDecision = {
+    ...FIXED_DECISION,
+    detector_runs: [
+      {
+        detector_id: "detector://sandbox/security/rule/default/v1",
+        detector_version: "1.0.0",
+        detector_kind: "rule",
+        obligation: "profile_required",
+        elapsed_ms: 0.5616939999999886,
+        status: "no_match",
+        finding_ids: []
+      },
+      {
+        detector_id: "detector://sandbox/security/local/default/v1",
+        detector_version: "1.0.0",
+        detector_kind: "local_model",
+        obligation: "optional_not_selected",
+        elapsed_ms: 0,
+        status: "skipped",
+        skip_reason: "optional_not_configured"
+      },
+      {
+        detector_id: "detector://sandbox/security/judge/default/v1",
+        detector_version: "1.0.0",
+        detector_kind: "external_judge",
+        obligation: "optional_not_selected",
+        elapsed_ms: 121000,
+        status: "skipped",
+        skip_reason: "routing_not_selected"
+      }
+    ]
+  };
+  const fixture = makeEvaluationFixture({
+    claim: { kind: "completed", response: replayDecision },
+    replay_decision: replayDecision
+  });
+  const events: SandboxSecurityEvaluationStreamEvent[] = [];
+
+  await fixture.service.evaluate({
+    ...evaluateInput(),
+    on_stage: (event: SandboxSecurityEvaluationStreamEvent) => events.push(event)
+  } as never);
+
+  assert.deepEqual(
+    events.map((event) =>
+      event.event_type === "stage"
+        ? [event.stage, event.result.elapsed_ms]
+        : []
+    ),
+    [
+      ["source", 0],
+      ["rule", 1],
+      ["model", 0],
+      ["judge", 60000]
     ]
   );
 });

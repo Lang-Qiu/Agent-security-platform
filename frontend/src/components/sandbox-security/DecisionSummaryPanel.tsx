@@ -1,12 +1,31 @@
+import { ExclamationCircleFilled, SafetyOutlined } from "@ant-design/icons";
 import { Alert, Space, Typography } from "antd";
 import { motion } from "motion/react";
 
 import type { SandboxSecurityDecision } from "../../../../shared/types/sandbox-security";
 import { SandboxSecurityValueTag } from "./SandboxSecurityValueTag";
-import { VerdictHero } from "./showcase/VerdictHero";
 import { REDUCED_TRANSITION, verdictSpring } from "./showcase/showcase-motion";
 
 const { Text } = Typography;
+
+const VERDICT_TITLES: Record<SandboxSecurityDecision["verdict"], string> = {
+  risk_detected: "RISK DETECTED",
+  no_detected_risk: "NO DETECTED RISK"
+};
+
+function severityRank(level: string): number {
+  return { critical: 4, high: 3, medium: 2, low: 1, info: 0 }[level] ?? 0;
+}
+
+function formatDurationMs(ms: number): string {
+  const rounded = Math.max(0, Math.round(ms));
+  if (rounded >= 60000) {
+    const minutes = Math.floor(rounded / 60000);
+    const seconds = Math.round((rounded % 60000) / 1000);
+    return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  }
+  return `${rounded.toLocaleString("en-US")} ms`;
+}
 
 export interface DecisionSummaryPanelProps {
   decision: SandboxSecurityDecision;
@@ -74,6 +93,33 @@ function WorkbenchVariant({
 }) {
   const visible = active || reduceMotion;
 
+  const acceptedFindings = decision.findings.length;
+  const detectorsRun = decision.detector_runs.filter(
+    (run) => run.status !== "skipped"
+  ).length;
+  const totalElapsedMs = decision.detector_runs.reduce(
+    (sum, run) => sum + run.elapsed_ms,
+    0
+  );
+  const maxSeverity = decision.findings.reduce(
+    (top, finding) => (severityRank(finding.severity) > severityRank(top) ? finding.severity : top),
+    "info" as SandboxSecurityDecision["risk_level"]
+  );
+  const maxConfidence = decision.findings.reduce(
+    (top, finding) => Math.max(top, finding.confidence),
+    0
+  );
+  const riskDetected = decision.verdict === "risk_detected";
+  const topFinding = decision.findings.reduce(
+    (top, finding) =>
+      severityRank(finding.severity) > severityRank(top.severity) ||
+      (severityRank(finding.severity) === severityRank(top.severity) &&
+        finding.confidence > top.confidence)
+        ? finding
+        : top,
+    decision.findings[0]
+  );
+
   return (
     <motion.section
       className="console-panel workbench-decision-hero"
@@ -81,6 +127,7 @@ function WorkbenchVariant({
       aria-hidden={visible ? undefined : true}
       inert={!visible}
       data-reveal-state={visible ? "visible" : "pending"}
+      data-risk={decision.risk_level}
       initial={false}
       animate={{ opacity: visible ? 1 : 0, scale: visible ? 1 : 0.95 }}
       transition={
@@ -89,16 +136,80 @@ function WorkbenchVariant({
     >
       {visible ? (
         <div className="workbench-decision-hero__content">
-          <div
-            className="workbench-decision-hero__context-chips"
-            aria-hidden="true"
-          >
-            <span data-mono="true">{decision.stage}</span>
-            <span data-mono="true">{decision.policy_profile_id}</span>
+          <div className="workbench-decision-hero__stage">
+            <span
+              className="workbench-decision-hero__emblem"
+              aria-hidden="true"
+              data-risk={decision.risk_level}
+            >
+              {riskDetected ? <ExclamationCircleFilled /> : <SafetyOutlined />}
+            </span>
+            <div className="workbench-decision-hero__body">
+              <p className="workbench-decision-hero__title">
+                {VERDICT_TITLES[decision.verdict]}
+              </p>
+              <p
+                className="workbench-decision-hero__action"
+                data-mono="true"
+              >
+                {decision.action === "ask"
+                  ? "REQUIRE REVIEW"
+                  : decision.action === "deny"
+                    ? "DENY · 拒绝"
+                    : decision.action === "alert"
+                      ? "ALERT · 告警"
+                      : "ALLOW · 放行"}
+              </p>
+              <div className="workbench-decision-hero__tags">
+                <SandboxSecurityValueTag domain="verdict" value={decision.verdict} />
+                <SandboxSecurityValueTag domain="action" value={decision.action} />
+                <SandboxSecurityValueTag domain="risk_level" value={decision.risk_level} />
+              </div>
+              <p className="workbench-decision-hero__summary">
+                {acceptedFindings > 0 && topFinding
+                  ? `${acceptedFindings} 项风险发现 · 最高严重级别 ${maxSeverity} · 首要类别 ${topFinding.category}`
+                  : "未产生风险发现"}
+              </p>
+            </div>
+            <dl className="workbench-decision-hero__stats">
+              <div>
+                <dt>SEVERITY</dt>
+                <dd data-mono="true">{decision.risk_level}</dd>
+              </div>
+              <div>
+                <dt>CONFIDENCE</dt>
+                <dd>
+                  <span
+                    className="workbench-decision-hero__confidence-track"
+                    aria-hidden="true"
+                  >
+                    <span
+                      className="workbench-decision-hero__confidence-fill"
+                      style={{ width: `${Math.round(maxConfidence * 100)}%` }}
+                    />
+                  </span>
+                  <span data-mono="true">{maxConfidence.toFixed(2)}</span>
+                </dd>
+              </div>
+              <div>
+                <dt>检测器</dt>
+                <dd data-mono="true">{detectorsRun}</dd>
+              </div>
+              <div>
+                <dt>耗时</dt>
+                <dd data-mono="true">{formatDurationMs(totalElapsedMs)}</dd>
+              </div>
+            </dl>
           </div>
-          <VerdictHero decision={decision} active reduceMotion={reduceMotion} />
-          <details className="workbench-decision-hero__meta">
-            <summary data-mono="true">决策标识 · {decision.decision_id}</summary>
+
+          <div className="workbench-decision-hero__meta">
+            <div
+              className="workbench-decision-hero__context-chips"
+              aria-hidden="true"
+            >
+              <span data-mono="true">{decision.stage}</span>
+              <span data-mono="true">{decision.policy_profile_id}</span>
+            </div>
             <dl>
               <div>
                 <dt>decision_id</dt>
@@ -113,8 +224,8 @@ function WorkbenchVariant({
                 <dd data-mono="true">{decision.evaluation_mode}</dd>
               </div>
             </dl>
-          </details>
-          <DecisionCaveats decision={decision} />
+            <DecisionCaveats decision={decision} />
+          </div>
         </div>
       ) : (
         <div className="workbench-decision-hero__reserve" aria-hidden="true" />

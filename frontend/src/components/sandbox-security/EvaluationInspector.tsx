@@ -166,10 +166,10 @@ function RunningInspector({
               data-testid={`runtime-stage-${stage}`}
               data-stage-status={status}
             >
-              <span className="workbench-runtime-stage-row__label" data-mono="true">
+              <span className="workbench-runtime-stage-row__label">
                 {label}
               </span>
-              <span className="workbench-runtime-stage-row__status" data-mono="true">
+              <span className="workbench-runtime-stage-row__status">
                 {status}
               </span>
               <span className="workbench-runtime-stage-row__metadata" data-mono="true">
@@ -228,6 +228,10 @@ export function EvaluationInspector({
       data-reveal-phase={state.kind === "result" ? phase : undefined}
     >
       <RuntimeHeader state={state} />
+
+      <p className="workbench-section-eyebrow workbench-evidence-heading">
+        EVIDENCE TRACE
+      </p>
 
       {/* The single persistent Workbench decision live region. Stays mounted and
           empty until the Decision gate opens, then updates in place. */}
@@ -310,7 +314,11 @@ export function EvaluationInspector({
               transition={reduceMotion ? { duration: 0 } : CALM_SPRING}
             >
               <p className="workbench-section-eyebrow">DETECTOR EXECUTION</p>
-              <WorkbenchDetectorTable runs={state.decision.detector_runs} />
+              <WorkbenchDetectorTable
+                runs={state.decision.detector_runs}
+                decision={state.decision}
+                requestFacts={state.requestFacts}
+              />
             </motion.section>
           </div>
           <ExecutionTrace

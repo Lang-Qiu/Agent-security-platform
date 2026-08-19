@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { SafetyOutlined } from "@ant-design/icons";
 import { Alert, Button, Input, Typography } from "antd";
 
 const { Text } = Typography;
@@ -24,19 +25,38 @@ export function CapabilitySessionPanel({
     <section
       className={
         held
-          ? "console-panel workbench-credential-panel workbench-credential-panel--held"
-          : "console-panel workbench-credential-panel"
+          ? "workbench-credential-panel workbench-credential-panel--held"
+          : "workbench-credential-panel"
       }
       aria-label="令牌会话"
     >
       <div className="workbench-credential-panel__heading">
-        <span className="workbench-section-eyebrow">SECURITY CREDENTIAL</span>
-        {held ? (
+        <span className="workbench-section-eyebrow">CAPABILITY TOKEN</span>
+        <span className="workbench-credential-panel__actions">
+          <Button
+            type="text"
+            size="small"
+            aria-label="清除令牌"
+            onClick={() => {
+              onClear();
+              setEditing(true);
+            }}
+            disabled={!hasToken}
+          >
+            清除令牌
+          </Button>
+        </span>
+      </div>
+
+      {held ? (
+        <div className="workbench-credential-panel__field" aria-hidden="true">
+          <SafetyOutlined />
+          <span data-mono="true">sbxcap_v1 ···· 掩码持有</span>
           <span className="workbench-credential-status" data-mono="true">
             TOKEN HELD · 令牌已持有
           </span>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
       {held ? null : (
         <div className="workbench-credential-panel__entry">
@@ -67,16 +87,6 @@ export function CapabilitySessionPanel({
           title="后端已拒绝当前令牌，请粘贴一个新的能力令牌。"
         />
       ) : null}
-
-      <Button
-        onClick={() => {
-          onClear();
-          setEditing(true);
-        }}
-        disabled={!hasToken}
-      >
-        清除令牌
-      </Button>
     </section>
   );
 }

@@ -199,6 +199,24 @@ describe("REQ-SBX-GENERAL-005 sandbox security service", () => {
 });
 
 describe("REQ-SBX-GENERAL-006 sandbox security evaluation stream", () => {
+  it("rejects an invalid capability token before opening the stream", async () => {
+    const fetchImpl = vi.fn();
+
+    const result = await sandboxSecurityService.streamSandboxSecurityEvaluation({
+      capabilityToken: `tok-${String.fromCharCode(13)}abc`,
+      idempotencyKey: "key-1",
+      requestId: "req-1",
+      stage: "user_input",
+      policyProfileId: "sandbox-security-balanced.v1",
+      contentItems: [ITEM],
+      onStage: () => undefined,
+      options: { fetchImpl }
+    });
+
+    expect(result).toEqual({ kind: "invalid_token" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("parses incremental stage events and returns the final decision", async () => {
     expect(typeof sandboxSecurityService.streamSandboxSecurityEvaluation).toBe(
       "function"

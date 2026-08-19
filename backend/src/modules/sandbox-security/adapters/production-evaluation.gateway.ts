@@ -21,6 +21,7 @@ import type {
   SandboxSecurityProductionMode
 } from "../sandbox-security.types.ts";
 import { createSandboxSecurityServiceError } from "../sandbox-security.errors.ts";
+import { clampSandboxSecurityStreamElapsedMs } from "../stream-elapsed.ts";
 
 const FINGERPRINT_PATTERN = /^hmac-sha256:[a-f0-9]{64}$/;
 const STAGE_SEQUENCE = { source: 1, rule: 2, model: 3, judge: 4 } as const;
@@ -41,7 +42,7 @@ function mapStageObservation(
         result: {
           source_count: observation.source_count,
           tool_request_present: observation.tool_request_present,
-          elapsed_ms: observation.elapsed_ms
+          elapsed_ms: clampSandboxSecurityStreamElapsedMs(observation.elapsed_ms)
         }
       }
     : {
@@ -57,7 +58,7 @@ function mapStageObservation(
           detector_version: observation.detector_version,
           detector_kind: observation.detector_kind,
           obligation: observation.obligation,
-          elapsed_ms: observation.elapsed_ms,
+          elapsed_ms: clampSandboxSecurityStreamElapsedMs(observation.elapsed_ms),
           ...(observation.error_code ? { error_code: observation.error_code } : {}),
           ...(observation.skip_reason ? { skip_reason: observation.skip_reason } : {})
         }

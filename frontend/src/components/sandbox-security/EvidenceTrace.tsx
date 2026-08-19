@@ -1,4 +1,11 @@
 import { Fragment } from "react";
+import {
+  AuditOutlined,
+  DatabaseOutlined,
+  FileSearchOutlined,
+  RobotOutlined,
+  ThunderboltOutlined
+} from "@ant-design/icons";
 import { motion } from "motion/react";
 
 import type {
@@ -6,6 +13,17 @@ import type {
   SandboxSecurityDecision
 } from "../../../../shared/types/sandbox-security";
 import { CALM_SPRING } from "./showcase/showcase-motion";
+
+// Stage icon tiles + secondary descriptors mirror the reference evidence
+// strip: each stage reads as an icon tile with its technical role, not a bare
+// dot. Purely presentational (the strip stays aria-hidden).
+const STAGE_VISUALS: Record<EvidenceNodeId, { icon: JSX.Element; role: string }> = {
+  source: { icon: <DatabaseOutlined />, role: "Input Intake" },
+  rule: { icon: <FileSearchOutlined />, role: "Policy Engine" },
+  model: { icon: <RobotOutlined />, role: "Local Detectors" },
+  judge: { icon: <AuditOutlined />, role: "External Judge" },
+  decision: { icon: <ThunderboltOutlined />, role: "Final Action" }
+};
 
 // Private visual-tuning targets only. Tests assert relative node order and
 // eventual settlement; they never import, mirror, or assert these numbers.
@@ -161,31 +179,39 @@ export function EvidenceTrace(props: EvidenceTraceProps) {
             />
           ) : null}
           <span className="workbench-evidence-trace__item">
-            <motion.span
-              className="workbench-evidence-trace__node"
-              data-testid={`evidence-node-${node.id}`}
-              data-node={node.id}
-              data-outcome={node.outcome}
-              initial={presenting ? { opacity: 0.15, scale: 0.8 } : false}
-              animate={{
-                opacity: hasResult ? 1 : 0.15,
-                scale: hasResult ? 1 : 0.8
-              }}
-              transition={
-                presenting
-                  ? { ...CALM_SPRING, delay: NODE_REVEAL_AT[index] }
-                  : { duration: 0 }
-              }
-            />
-            {node.id === "decision" && presenting ? (
+            <span className="workbench-evidence-trace__tile">
+              <span aria-hidden="true">{STAGE_VISUALS[node.id].icon}</span>
               <motion.span
-                className="workbench-evidence-trace__decision-glow"
-                initial={{ opacity: 0, scale: 0.7 }}
-                animate={{ opacity: [0, 1, 0], scale: [0.7, 1.6, 1.9] }}
-                transition={{ duration: 0.6, delay: 1.8, ease: "easeOut" }}
+                className="workbench-evidence-trace__node"
+                data-testid={`evidence-node-${node.id}`}
+                data-node={node.id}
+                data-outcome={node.outcome}
+                initial={presenting ? { opacity: 0.15, scale: 0.8 } : false}
+                animate={{
+                  opacity: hasResult ? 1 : 0.15,
+                  scale: hasResult ? 1 : 0.8
+                }}
+                transition={
+                  presenting
+                    ? { ...CALM_SPRING, delay: NODE_REVEAL_AT[index] }
+                    : { duration: 0 }
+                }
               />
-            ) : null}
-            <span className="workbench-evidence-trace__label">{node.label}</span>
+              {node.id === "decision" && presenting ? (
+                <motion.span
+                  className="workbench-evidence-trace__decision-glow"
+                  initial={{ opacity: 0, scale: 0.7 }}
+                  animate={{ opacity: [0, 1, 0], scale: [0.7, 1.6, 1.9] }}
+                  transition={{ duration: 0.6, delay: 1.8, ease: "easeOut" }}
+                />
+              ) : null}
+            </span>
+            <span className="workbench-evidence-trace__item-text">
+              <span className="workbench-evidence-trace__label">{node.label}</span>
+              <span className="workbench-evidence-trace__role">
+                {STAGE_VISUALS[node.id].role}
+              </span>
+            </span>
           </span>
         </Fragment>
       ))}

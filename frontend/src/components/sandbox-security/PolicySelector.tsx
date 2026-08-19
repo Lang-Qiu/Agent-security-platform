@@ -35,7 +35,7 @@ export function PolicySelector({
 }: PolicySelectorProps) {
   return (
     <fieldset>
-      <legend className="sandbox-security-legend">策略配置</legend>
+      <legend className="sandbox-security-legend">POLICY PROFILE · 策略配置</legend>
       <div className="workbench-policy-selector">
         {SANDBOX_SECURITY_POLICY_PROFILE_IDS.map((option) => {
           const presentation = POLICY_PRESENTATION[option];

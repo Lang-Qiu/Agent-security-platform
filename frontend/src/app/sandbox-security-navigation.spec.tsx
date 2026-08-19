@@ -27,14 +27,19 @@ describe("REQ-SBX-GENERAL-005 route and navigation registration", () => {
   it("renders the workbench route", async () => {
     await renderAppAtRoute("/sandbox-security/workbench");
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: /评估工作台/ })).toBeInTheDocument()
+      // The banner carries the English workspace title for this route.
+      expect(
+        screen.getByRole("heading", { name: /Sandbox Security Workbench/i })
+      ).toBeInTheDocument()
     );
   });
 
   it("renders the audit route", async () => {
     await renderAppAtRoute("/sandbox-security/audit");
+    // The route title now also renders in the console banner, so both the
+    // banner heading and the page's own heading may match.
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: /审计事件/ })).toBeInTheDocument()
+      expect(screen.getAllByRole("heading", { name: /审计事件/ }).length).toBeGreaterThan(0)
     );
   });
 

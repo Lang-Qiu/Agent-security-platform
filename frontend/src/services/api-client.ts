@@ -26,6 +26,7 @@ export type SandboxSecurityCallResult<T> =
       errorCode: string | null;
       retryAfterSeconds: number | null;
     }
+  | { kind: "invalid_token" }
   | { kind: "invalid" }
   | { kind: "unavailable" };
 
@@ -53,6 +54,18 @@ function extractErrorCode(payload: unknown): string | null {
   return null;
 }
 
+const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001F\u007F-\u009F]/;
+
+export function normalizeSandboxSecurityCapabilityToken(
+  value: string
+): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim();
+  return normalized.length > 0 && !CONTROL_CHARACTER_PATTERN.test(normalized)
+    ? normalized
+    : null;
+}
+
 export async function requestAuthenticatedJson<T>(input: {
   path: string;
   method: "GET" | "POST";
@@ -62,6 +75,11 @@ export async function requestAuthenticatedJson<T>(input: {
   normalize: (value: unknown) => T | null;
   options?: AuthenticatedRequestOptions;
 }): Promise<SandboxSecurityCallResult<T>> {
+  const capabilityToken = normalizeSandboxSecurityCapabilityToken(input.capabilityToken);
+  if (capabilityToken === null) {
+    return { kind: "invalid_token" };
+  }
+
   const fetchImpl = resolveFetchImpl(input.options?.fetchImpl);
   if (!fetchImpl) {
     return { kind: "unavailable" };
@@ -69,7 +87,7 @@ export async function requestAuthenticatedJson<T>(input: {
 
   const headers: Record<string, string> = {
     accept: "application/json",
-    authorization: `Bearer ${input.capabilityToken}`
+    authorization: `Bearer ${capabilityToken}`
   };
   const requestInit: RequestInit = {
     method: input.method,

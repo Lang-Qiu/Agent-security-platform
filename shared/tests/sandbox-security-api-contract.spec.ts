@@ -390,6 +390,8 @@ test("REQ-SBX-GENERAL-003 normalizes audit pages and cursor grammar", () => {
 
   for (const cursor of [
     "sbxcur_v1.A.Yg",
+    "sbxcur_v1.YR.Yg",
+    "sbxcur_v1.YWJ.Yg",
     "sbxcur_v1.YQ=.Yg",
     "sbxcur_v1.YQ.",
     "sbxcur_v1..Yg",
@@ -417,6 +419,23 @@ test("REQ-SBX-GENERAL-003 normalizes audit pages and cursor grammar", () => {
 
   const sparseEvents = { ...validPage, events: new Array(1) };
   assert.equal(normalizePage(sparseEvents), null);
+});
+
+test("REQ-SBX-GENERAL-005 validates canonical audit cursors without a Buffer global", () => {
+  const { normalizePage } = getNormalizers();
+  const event = makeRevokedEvent();
+  const page = {
+    schema_version: "sandbox-security-audit-page.v1",
+    events: [event],
+    next_cursor: "sbxcur_v1.YQ.Yg"
+  };
+  const originalBuffer = globalThis.Buffer;
+  try {
+    Reflect.set(globalThis, "Buffer", undefined);
+    assert.ok(normalizePage(page));
+  } finally {
+    Reflect.set(globalThis, "Buffer", originalBuffer);
+  }
 });
 
 test("REQ-SBX-GENERAL-003 rejects page unknown fields and preserves input arrays", () => {

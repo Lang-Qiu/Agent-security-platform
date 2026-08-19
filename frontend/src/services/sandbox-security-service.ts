@@ -18,6 +18,7 @@ import type {
   SandboxSecurityToolRequest
 } from "../../../shared/types/sandbox-security";
 import {
+  normalizeSandboxSecurityCapabilityToken,
   requestAuthenticatedJson,
   type AuthenticatedRequestOptions,
   type SandboxSecurityCallResult
@@ -122,6 +123,8 @@ export async function streamSandboxSecurityEvaluation(
     toolRequest: input.toolRequest
   });
   if (!preflight.ok) return { kind: "invalid" };
+  const capabilityToken = normalizeSandboxSecurityCapabilityToken(input.capabilityToken);
+  if (capabilityToken === null) return { kind: "invalid_token" };
   const fetchImpl = input.options?.fetchImpl ?? globalThis.fetch;
   if (!fetchImpl) return { kind: "unavailable" };
 
@@ -139,7 +142,7 @@ export async function streamSandboxSecurityEvaluation(
       method: "POST",
       headers: {
         accept: "text/event-stream",
-        authorization: `Bearer ${input.capabilityToken}`,
+        authorization: `Bearer ${capabilityToken}`,
         "content-type": "application/json",
         "idempotency-key": input.idempotencyKey
       },

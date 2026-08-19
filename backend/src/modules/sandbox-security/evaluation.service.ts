@@ -6,6 +6,7 @@ import type {
 } from "../../../../shared/types/sandbox-security.ts";
 import type { SandboxSecurityEvaluationStreamEvent } from "../../../../shared/types/sandbox-security-api.ts";
 import { createSandboxSecuritySimulationEvaluationRequest } from "./simulation-authority.ts";
+import { clampSandboxSecurityStreamElapsedMs } from "./stream-elapsed.ts";
 import {
   createSandboxSecurityServiceError,
   isSandboxSecurityServiceError
@@ -145,7 +146,7 @@ function replayStageEvents(
         detector_version: run.detector_version,
         detector_kind: run.detector_kind,
         obligation: run.obligation,
-        elapsed_ms: run.elapsed_ms,
+        elapsed_ms: clampSandboxSecurityStreamElapsedMs(run.elapsed_ms),
         ...(run.status === "failed" ||
         run.status === "timeout" ||
         run.status === "invalid_result"

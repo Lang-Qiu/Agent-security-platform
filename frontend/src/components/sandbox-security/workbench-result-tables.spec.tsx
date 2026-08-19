@@ -285,6 +285,53 @@ describe("WorkbenchDetectorTable", () => {
     expect(screen.queryByText("default")).not.toBeInTheDocument();
   });
 
+  it("renders the six-step execution pipeline when decision facts are provided", () => {
+    // The reference DETECTOR EXECUTION panel reads as six sequential steps.
+    // The decision contract only carries three detector runs, so the pipeline
+    // view derives the surrounding steps (intake, reduction, judgment) from
+    // the same decision and request facts the ExecutionTrace uses — no
+    // fabricated detector data.
+    const decision = {
+      schema_version: "sandbox-security-decision.v1",
+      decision_id: "decision:pipe-1",
+      request_id: "req-pipe-1",
+      evaluation_mode: "simulation",
+      stage: "user_input",
+      policy_profile_id: "sandbox-security-balanced.v1",
+      verdict: "risk_detected",
+      action: "deny",
+      risk_level: "high",
+      findings: [],
+      detector_runs: RUNS,
+      evidence_refs: [],
+      created_at: "2026-08-16T00:00:00.000Z"
+    } as const;
+    render(
+      <WorkbenchDetectorTable
+        runs={RUNS}
+        decision={decision}
+        requestFacts={{
+          clientSubmittedAt: "2026-08-16T00:00:00.000Z",
+          sourceCount: 3,
+          requestBytes: 4132
+        }}
+      />
+    );
+    const rows = screen
+      .getByTestId("detector-table")
+      .querySelectorAll("tbody tr");
+    expect(rows).toHaveLength(6);
+    expect(rows[0]?.textContent).toContain("SOURCE INTAKE");
+    expect(rows[0]?.textContent).toContain("3 sources");
+    expect(rows[1]?.textContent).toContain("rule");
+    expect(rows[4]?.textContent).toContain("POLICY REDUCTION");
+    expect(rows[5]?.textContent).toContain("JUDGMENT");
+    expect(rows[5]?.textContent).toContain("risk_detected");
+    // Real detector costs stay in the pipeline view.
+    expect(screen.getByText("212")).toBeInTheDocument();
+    expect(screen.getByText("1200")).toBeInTheDocument();
+  });
+
   it("keeps a non-default variant, which does discriminate", () => {
     const tuned: SandboxDetectorRun[] = [
       { ...RUNS[0], detector_id: "detector://sandbox/security/rule/strict/v1" }

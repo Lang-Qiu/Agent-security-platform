@@ -42,8 +42,9 @@ flowchart TD
 - 提供资产视图、任务列表、检测详情、告警看板、汇总报表等页面。
 - 负责用户发起扫描任务、查看状态、筛选风险、追踪处置。
 - 对接后端 API，不直接依赖各引擎内部实现。
+- 站点根路由 `/` 懒加载公共产品 Landing Page；`/console` 作为控制台入口重定向到 `/overview`，既有控制台业务路由保持不变。
 - 第一版已落地统一后台壳子，包含固定侧边导航、顶部上下文栏、`Overview` 路由与结果路由占位页。
-- 当前路由骨架包括：`/overview`、`/tasks`、`/tasks/:taskId`、`/results/assets`、`/results/static-analysis`、`/results/sandbox`、`/sandbox-security/workbench`、`/sandbox-security/audit`、`/review-demo`。
+- 当前路由骨架包括：`/`、`/console`、`/overview`、`/tasks`、`/tasks/:taskId`、`/results/assets`、`/results/static-analysis`、`/results/sandbox`、`/sandbox-security/workbench`、`/sandbox-security/audit`、`/review-demo`。
 
 前端只消费平台统一后的视图模型，不直接拼接不同引擎的原始数据格式。
 
@@ -60,6 +61,10 @@ flowchart TD
   `Authorization` 头发出，`Idempotency-Key` 仅在评估路由（POST）发送，且在负载
   编辑后重新生成；提交内容、令牌与审计游标都不写入 URL、浏览器存储、`history.state`、
   `document.title` 或日志。审计视图只渲染内容无关的事件联合体。
+- 认证请求在构造 `Authorization` 前去除令牌边缘空白，并拒绝剩余 C0/C1
+  控制字符；这类输入错误在前端以 `invalid_token` 呈现，不伪装成服务不可达。
+  审计游标的 canonical base64url 校验不依赖 Node `Buffer`，保证浏览器与 Node
+  测试运行时的契约结果一致。
 - R2 保持页面为请求状态、能力令牌、幂等键和 API 调用的唯一所有者；页面只冻结
   `client_submitted_at`、来源数量和请求字节数三个 content-free 提交事实，并将它们与
   同一次响应的 decision 绑定。表单后续编辑不能改变已返回结果的执行轨迹。

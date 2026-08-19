@@ -55,7 +55,7 @@ function ControlledEvaluationRequestForm() {
 describe("REQ-SBX-GENERAL-005 evaluation request form", () => {
   it("renders radio-semantic horizontal stage tabs with the selected Chinese description", () => {
     render(<ControlledEvaluationRequestForm />);
-    const group = screen.getByRole("group", { name: "阶段" });
+    const group = screen.getByRole("group", { name: "EVALUATION STAGE · 阶段" });
     expect(within(group).getAllByRole("radio")).toHaveLength(3);
     expect(screen.getByText("评估用户输入内容，检测注入与越权意图")).toBeInTheDocument();
 
@@ -291,13 +291,13 @@ async function selectOnlyMediaTypeOption(
 }
 
 describe("REQ-SBX-WORKBENCH-R2 compact request composer", () => {
-  it("renders a compact two-row source card with inline named controls", () => {
+  it("renders a compact source card with a one-line value preview and inline named controls", () => {
     render(<CompactRequestComposerHarness />);
     expect(screen.getByText("src-0")).toBeInTheDocument();
     expect(screen.getByText("5 B")).toBeInTheDocument();
     expect(screen.getByLabelText("来源类型 src-0")).toBeInTheDocument();
     expect(screen.getByLabelText("媒体类型 src-0")).toBeInTheDocument();
-    expect(screen.getByLabelText("内容值 src-0")).toHaveAttribute("rows", "2");
+    expect(screen.getByLabelText("内容值 src-0")).toHaveAttribute("rows", "1");
   });
 
   it("REQ-SBX-WORKBENCH-R2 renders an existing structured JSON value and its compact byte size", () => {

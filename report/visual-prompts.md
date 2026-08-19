@@ -6,7 +6,7 @@ the corresponding placeholder automatically.
 
 ## 1. Untrusted Content to Real Action
 
-Target file: `report/figures/gpt-agent-action-risk.png`
+Target file: `report/figures/page_2.png`
 
 Recommended aspect ratio: 16:7, landscape, minimum 2400 x 1050 px.
 
@@ -38,7 +38,7 @@ claim a measured detection result.
 
 ## 2. Cross-Framework Runtime Safety Middleware
 
-Target file: `report/figures/gpt-cross-framework-middleware.png`
+Target file: `report/figures/page_33.png`
 
 Recommended aspect ratio: 16:7, landscape, minimum 2400 x 1050 px.
 
