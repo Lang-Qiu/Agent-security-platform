@@ -1,3 +1,36 @@
+# 2026-08-19 - REQ-SBX-CHINESE-RISK-RULES Chinese user-input risk rules
+
+- type: sandbox production rule catalog behavior; no backend route, frontend
+  behavior, shared contract, or Engine orchestration change
+- status: `COMPLETE`
+- design: four high-confidence Chinese phrase-pair rules restricted to the
+  `user_input` stage and `user_input`/`retrieved_content`/`memory_content`
+  sources; each rule uses `severity: high`, `confidence: 0.8`, and
+  `whole_source`
+- implementation:
+  - added prompt injection, jailbreak, sensitive-data exposure, and privilege
+    escalation Chinese descriptors to the frozen v1 catalog
+  - reused existing NFKC phrase matching and qualification; no new operator or
+    short-circuit state was added
+- TDD:
+  - RED: catalog, detector, and Engine tests failed for the intended missing
+    Chinese candidates before the catalog change
+  - GREEN: focused catalog + detector suite passed `64/64`; balanced Engine
+    short-circuit test passed `1/1`
+- verification:
+  - full sandbox Engine suite: `254/268`; 14 existing budget/epilogue
+    expectation failures remain outside this requirement
+  - production sandbox suite: `85` passed, `12` failed, and `328` were
+    cancelled after existing benchmark replay composition failures
+    (`sandbox_security_benchmark_composition_invalid`)
+  - sandbox production repository gates: `206/207`; the remaining failure is
+    the pre-existing network-import ownership assertion for
+    `security-production/http-transport.ts`
+  - `git diff --check` passed
+- docs: API contract and shared types remain unchanged; see the design and
+  implementation plan in `docs/superpowers/specs/` and `docs/superpowers/plans/`
+- suggested commit: `feat(sandbox): add Chinese user-input risk rules`
+
 # 2026-08-18 - Product Landing integration into the main worktree
 
 - type: frontend route integration; no backend API or shared contract changed

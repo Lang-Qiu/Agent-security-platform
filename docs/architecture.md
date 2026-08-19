@@ -395,6 +395,19 @@ tool request。composite system prompt、通用 history、workspace、memory、r
 audit 与被选 host action 正交：使用 backend 注入的 identity/server time、replay-safe
 event ID，且不含 raw/sanitized/hashed/provider 内容。
 
+### GENERAL-002 Chinese user-input rule coverage
+
+`engines/sandbox/src/security-production/rule-catalog.ts` contains four
+additional deterministic descriptors for Chinese attack prompts:
+`prompt_injection`, `jailbreak`, `sensitive_data_exposure`, and
+`privilege_escalation`. They are restricted to the `user_input` stage and the
+`user_input`, `retrieved_content`, and `memory_content` source types. Each
+descriptor uses two `text_contains_phrase` conditions over one whole source,
+with `high` severity and `0.8` confidence. A match is therefore eligible for
+the existing balanced/strict qualification thresholds and can terminate
+optional detector runs with `risk_short_circuit`; no new Engine state or public
+contract is introduced.
+
 部署为 digest-pin 的隔离镜像（`deploy/sandbox-security/Dockerfile.openclaw`），
 只构建 nested general-security 包及其公开 Engine/shared 构建输入，校验并应用经封存的
 patch，然后以非 root（`node`）用户、只读根文件系统运行。启动时重新校验

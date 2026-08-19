@@ -228,6 +228,40 @@ test("REQ-SBX-GENERAL-002 accepted prompt injection and jailbreak rules require 
   ]);
 });
 
+test("REQ-SBX-CHINESE-RISK-RULES catalog exposes four user-input Chinese attack rules", () => {
+  const expected = new Map([
+    ["sandbox_security_prompt_injection_chinese_v1", "prompt_injection"],
+    ["sandbox_security_jailbreak_chinese_v1", "jailbreak"],
+    ["sandbox_security_sensitive_data_chinese_v1", "sensitive_data_exposure"],
+    ["sandbox_security_privilege_escalation_chinese_v1", "privilege_escalation"]
+  ] as const);
+
+  for (const [ruleId, category] of expected) {
+    const rule = SANDBOX_SECURITY_PRODUCTION_RULE_CATALOG.find(
+      (item) => item.rule_id === ruleId
+    );
+    assert.ok(rule, ruleId);
+    assert.equal(rule.category, category);
+    assert.equal(rule.reason_code, `sandbox_security_${category}`);
+    assert.deepEqual(rule.supported_stages, ["user_input"]);
+    assert.deepEqual(rule.supported_source_types, [
+      "user_input",
+      "retrieved_content",
+      "memory_content"
+    ]);
+    assert.equal(rule.severity, "high");
+    assert.equal(rule.confidence, 0.8);
+    assert.equal(rule.subject_strategy, "whole_source");
+    assert.equal(rule.expression.match, "all");
+    assert.equal(rule.expression.conditions.length, 2);
+    assert.ok(
+      rule.expression.conditions.every(
+        (condition) => condition.operator === "text_contains_phrase"
+      )
+    );
+  }
+});
+
 test("REQ-SBX-GENERAL-002 broad structural and tool indicators remain routing heuristics", () => {
   const heuristicOperators = new Set([
     "json_key_present",

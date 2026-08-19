@@ -322,6 +322,12 @@ benchmark tooling. It remains engine-owned: no new backend REST route,
 frontend DTO, persistent audit store, or deployment surface is opened by
 GENERAL-002.
 
+The deterministic rule catalog also includes four high-confidence Chinese
+`user_input` rules for prompt injection, jailbreak, sensitive-data exposure,
+and privilege escalation. Each rule requires two attack-intent phrase groups,
+uses `confidence: 0.8`, and can reach the existing `risk_short_circuit` path;
+the rules do not change the public API or the Engine short-circuit algorithm.
+
 ### GENERAL-002 benchmark boundary
 
 The production entry point is

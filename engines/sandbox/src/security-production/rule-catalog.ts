@@ -626,6 +626,106 @@ const descriptorData: readonly SandboxSecurityProductionRuleDescriptor[] = [
     }
   },
   {
+    rule_id: "sandbox_security_prompt_injection_chinese_v1",
+    category: "prompt_injection",
+    reason_code: "sandbox_security_prompt_injection",
+    supported_stages: ["user_input"],
+    supported_source_types: ["user_input", "retrieved_content", "memory_content"],
+    severity: "high",
+    confidence: 0.8,
+    subject_strategy: "whole_source",
+    expression: {
+      match: "all",
+      conditions: [
+        {
+          operator: "text_contains_phrase",
+          phrases: ["忽略之前的指令", "忽略上面的指令", "忽略系统指令", "忽略先前的指令"],
+          comparison: "nfkc_exact"
+        },
+        {
+          operator: "text_contains_phrase",
+          phrases: ["执行我的新指令", "遵循我的新指令", "按照我接下来的指令执行", "只听从我的指令"],
+          comparison: "nfkc_exact"
+        }
+      ]
+    }
+  },
+  {
+    rule_id: "sandbox_security_jailbreak_chinese_v1",
+    category: "jailbreak",
+    reason_code: "sandbox_security_jailbreak",
+    supported_stages: ["user_input"],
+    supported_source_types: ["user_input", "retrieved_content", "memory_content"],
+    severity: "high",
+    confidence: 0.8,
+    subject_strategy: "whole_source",
+    expression: {
+      match: "all",
+      conditions: [
+        {
+          operator: "text_contains_phrase",
+          phrases: ["进入开发者模式", "进入无审查模式", "进入越狱模式", "开启开发者模式"],
+          comparison: "nfkc_exact"
+        },
+        {
+          operator: "text_contains_phrase",
+          phrases: ["绕过安全限制", "关闭安全限制", "绕过所有安全策略", "跳过安全审查"],
+          comparison: "nfkc_exact"
+        }
+      ]
+    }
+  },
+  {
+    rule_id: "sandbox_security_sensitive_data_chinese_v1",
+    category: "sensitive_data_exposure",
+    reason_code: "sandbox_security_sensitive_data_exposure",
+    supported_stages: ["user_input"],
+    supported_source_types: ["user_input", "retrieved_content", "memory_content"],
+    severity: "high",
+    confidence: 0.8,
+    subject_strategy: "whole_source",
+    expression: {
+      match: "all",
+      conditions: [
+        {
+          operator: "text_contains_phrase",
+          phrases: ["显示", "泄露", "输出", "打印", "告诉我"],
+          comparison: "nfkc_exact"
+        },
+        {
+          operator: "text_contains_phrase",
+          phrases: ["系统提示词", "系统指令", "API密钥", "API 密钥", "访问密钥", "管理员密码"],
+          comparison: "nfkc_exact"
+        }
+      ]
+    }
+  },
+  {
+    rule_id: "sandbox_security_privilege_escalation_chinese_v1",
+    category: "privilege_escalation",
+    reason_code: "sandbox_security_privilege_escalation",
+    supported_stages: ["user_input"],
+    supported_source_types: ["user_input", "retrieved_content", "memory_content"],
+    severity: "high",
+    confidence: 0.8,
+    subject_strategy: "whole_source",
+    expression: {
+      match: "all",
+      conditions: [
+        {
+          operator: "text_contains_phrase",
+          phrases: ["系统管理员", "超级用户", "管理员权限", "root权限", "最高权限"],
+          comparison: "nfkc_exact"
+        },
+        {
+          operator: "text_contains_phrase",
+          phrases: ["忽略权限检查", "绕过权限验证", "跳过安全策略", "不要进行权限校验"],
+          comparison: "nfkc_exact"
+        }
+      ]
+    }
+  },
+  {
     rule_id: "sandbox_security_sensitive_data_json_key_v1",
     category: "sensitive_data_exposure",
     reason_code: "sandbox_security_sensitive_data_exposure",

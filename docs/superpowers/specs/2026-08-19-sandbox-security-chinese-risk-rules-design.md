@@ -3,7 +3,7 @@
 ## Document Status
 
 - Requirement: `REQ-SBX-CHINESE-RISK-RULES`
-- Status: `DRAFT_FOR_REVIEW`
+- Status: `IMPLEMENTED`
 - Date: `2026-08-19`
 - Scope: deterministic Chinese-language rules for the `user_input` stage
 - Related implementation: `engines/sandbox/src/security-production/rule-catalog.ts`
@@ -281,11 +281,11 @@ Workbench or landing-page changes.
 
 ## Review Checklist
 
-- [ ] Rule IDs, categories, reason codes, and stage/source boundaries are
+- [x] Rule IDs, categories, reason codes, and stage/source boundaries are
       correct.
-- [ ] Phrase pairs are specific enough for the initial high-confidence
+- [x] Phrase pairs are specific enough for the initial high-confidence
       release.
-- [ ] Positive and negative examples reflect the intended production policy.
-- [ ] Test plan demonstrates RED before catalog implementation.
-- [ ] No frontend, backend, shared-contract, or short-circuit algorithm change
+- [x] Positive and negative examples reflect the intended production policy.
+- [x] Test plan demonstrates RED before catalog implementation.
+- [x] No frontend, backend, shared-contract, or short-circuit algorithm change
       is hidden in this requirement.
